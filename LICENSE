@@ -1,0 +1,17 @@
+Morrowind Workshop
+Copyright (c) 2026 Nemo
+
+The Workshop's own code and documentation in this repository are licensed under the Creative
+Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0). You may share and
+adapt them, with credit to the author, for non-commercial purposes. The full licence is in
+LICENSE.cc-by-nc-4.0.txt, and at https://creativecommons.org/licenses/by-nc/4.0/
+
+Mods that people make with the Workshop belong to them; this licence doesn't cover them.
+
+Third-party files keep their own licences:
+  app/web/vendor/three.min.js, DDSLoader.js, TGALoader.js, TransformControls.js
+      three.js r128, MIT License (app/web/vendor/licenses/three.js-LICENSE.txt)
+  app/web/vendor/font-cinzel-*.woff2
+      Cinzel, SIL Open Font License 1.1 (app/web/vendor/licenses/Cinzel-OFL.txt)
+  app/web/vendor/font-inter-*.woff2
+      Inter, SIL Open Font License 1.1 (app/web/vendor/licenses/Inter-OFL.txt)
