@@ -245,6 +245,15 @@ $('#world').addEventListener('contextmenu', e => {
   e.preventDefault();
   cfMenuAt(e, [W.key, r], null);
 });
+// no browser menu (Back, Reload, Print…) anywhere in the Workshop. The 3D view opens its menu as the button comes up,
+// so the browser's right-click lands on that new menu, not the view. Text boxes and selected text keep it, for Copy and Paste.
+document.addEventListener('contextmenu', e => {
+  const t = e.target;
+  if (t.closest && t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+  const s = getSelection();
+  if (s && !s.isCollapsed && String(s).trim()) return;
+  e.preventDefault();
+});
 
 // the menus at the top (Help, OpenMW…) stay inside the window, however narrow it is
 function cfKeepInside(m){
