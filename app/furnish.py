@@ -86,6 +86,124 @@ def purpose_for(name, tiles, w, h):
 
 
 # ------------------------------------------------------------------ rooms
+FLOOR_T = 128            # the grid traced floors are cut into
+_geo = {}
+
+
+def _turned(rx, ry, rz):
+    """The game's rotation of an object as a matrix (turned by -x, -y, -z in Z-Y-X order, like the 3D view)."""
+    a, b, c = -rx, -ry, -rz
+    ca, sa, cb, sb, cc, sc = math.cos(a), math.sin(a), math.cos(b), math.sin(b), math.cos(c), math.sin(c)
+    X = ((1, 0, 0), (0, ca, -sa), (0, sa, ca))
+    Y = ((cb, 0, sb), (0, 1, 0), (-sb, 0, cb))
+    Z = ((cc, -sc, 0), (sc, cc, 0), (0, 0, 1))
+    mul = lambda A, B: tuple(tuple(sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)) for i in range(3))
+    return mul(Z, mul(Y, X))
+
+
+def _floor_tiles(db, m, G=32):
+    """The walkable floor of a place, traced from its own walls and floors: level surfaces are floor,
+    steep ones at head height are walls. Cut into tiles of FLOOR_T, with a wall on each side where the
+    floor ends or a step is too high. Same shape as the tiles of a kit-built place, or None."""
+    T = FLOOR_T
+    floor, walls = {}, {}
+    for r in m['refs']:
+        if not r.get('arch') or r['type'] != 'STAT':
+            continue
+        key = r['id'].lower()
+        if key not in _geo:
+            ri = db.resolve_id(r['id'])
+            _geo[key] = kits._model(db, ri) if ri is not None else None
+        shapes = _geo[key]
+        if not shapes:
+            continue
+        s = r['s'] or 1.0
+        px, py, pz, rx, ry, rz = r['p']
+        R = _turned(rx, ry, rz)
+        for sh in shapes:
+            p, idx = sh['p'], sh['i']
+            V = []
+            for k in range(0, len(p) - 2, 3):
+                x, y, z = p[k] * s, p[k + 1] * s, p[k + 2] * s
+                V.append((px + R[0][0] * x + R[0][1] * y + R[0][2] * z, py + R[1][0] * x + R[1][1] * y + R[1][2] * z,
+                          pz + R[2][0] * x + R[2][1] * y + R[2][2] * z))
+            for t in range(0, len(idx) - 2, 3):
+                A, B, C = V[idx[t]], V[idx[t + 1]], V[idx[t + 2]]
+                ux, uy, uz = B[0] - A[0], B[1] - A[1], B[2] - A[2]
+                vx, vy, vz = C[0] - A[0], C[1] - A[1], C[2] - A[2]
+                nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+                area = math.sqrt(nx * nx + ny * ny + nz * nz)
+                if area < 1:
+                    continue
+                if abs(nz) / area > 0.8:
+                    # level: floor at every grid point inside it (the lowest one, if there are several)
+                    i0, i1 = int(math.floor(min(A[0], B[0], C[0]) / G)), int(math.ceil(max(A[0], B[0], C[0]) / G))
+                    j0, j1 = int(math.floor(min(A[1], B[1], C[1]) / G)), int(math.ceil(max(A[1], B[1], C[1]) / G))
+                    if (i1 - i0) * (j1 - j0) > 40000:
+                        continue
+                    d = ux * vy - uy * vx
+                    if abs(d) < 1e-6:
+                        continue
+                    for i in range(i0, i1 + 1):
+                        for j in range(j0, j1 + 1):
+                            qx, qy = (i + 0.5) * G - A[0], (j + 0.5) * G - A[1]
+                            l1, l2 = (qx * vy - qy * vx) / d, (ux * qy - uy * qx) / d
+                            if l1 < 0 or l2 < 0 or l1 + l2 > 1:
+                                continue
+                            zz = A[2] + l1 * uz + l2 * vz
+                            if (i, j) not in floor or zz < floor[(i, j)]:
+                                floor[(i, j)] = zz
+                elif abs(nz) / area < 0.5:
+                    # steep: a wall in each grid square along it, from its bottom to its top
+                    zlo, zhi = min(A[2], B[2], C[2]), max(A[2], B[2], C[2])
+                    pts = (A, B, C)
+                    L = max(math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1]) for a, b in ((0, 1), (1, 2), (0, 2)))
+                    n = max(1, int(L / (G / 2)))
+                    for a, b in ((0, 1), (1, 2), (0, 2)):
+                        for k in range(n + 1):
+                            x = pts[a][0] + (pts[b][0] - pts[a][0]) * k / n
+                            y = pts[a][1] + (pts[b][1] - pts[a][1]) * k / n
+                            walls.setdefault((int(math.floor(x / G)), int(math.floor(y / G))), []).append((zlo, zhi))
+    if not floor:
+        return None
+    # standing room: nothing solid from knee to head height above the floor
+    ok = {c: z for c, z in floor.items() if not any(lo < z + 150 and hi > z + 35 for lo, hi in walls.get(c, ()))}
+    n = T // G
+    tiles = {}
+    for (i, j) in {(c[0] // n, c[1] // n) for c in ok}:
+        zs = [ok[(i * n + a, j * n + b)] for a in range(n) for b in range(n) if (i * n + a, j * n + b) in ok]
+        if len(zs) < n * n * 0.7:
+            continue
+        zs.sort()
+        tiles[(i, j)] = zs[len(zs) // 2]
+    out = {}
+    for (i, j), z in tiles.items():
+        pat = {'cover': {}, 'offset': {}}
+        for s, (dx, dy) in STEP.items():
+            o = tiles.get((i + dx, j + dy))
+            pat[s] = 'open' if o is not None and abs(o - z) < 40 else 'wall'
+            pat['offset'][s] = T / 2 - 4
+            pat['cover'][s] = 0.0
+        x, y = (i + 0.5) * T, (j + 0.5) * T
+        out[(x, y, round(z / 64))] = {'pat': pat, 'x': x, 'y': y, 'floor': z}
+    return out or None
+
+
+def _overlap_area(a, b):
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def _is_floor_piece(db, rid):
+    """A kit's floor tile, wall, door frame or stairs (the building itself), not something standing in it."""
+    prefix = kits.kit_prefix(rid)
+    kp = kits.kit_pieces(db, prefix) if prefix and prefix in kits.kits(db) else None
+    low = rid.lower()
+    if kp and any(p['id'].lower() == low for p in kp['pieces'] + kp['jambs'] + kp['walls']):
+        return True
+    return any(w in low for w in ('wall', 'floor', 'ceiling', 'stair', 'ramp', 'jamb', 'door', 'room', 'hall', 'corner',
+                                  'side', 'center', 'centre', 'entry', 'end', 'cap', 'shell', 'cave', 'arch'))
+
+
 def rooms(db, cell_key, names=None):
     """The rooms of a place, from its kit floor pieces: [{id, name, purpose, tiles, x_min, ...}]."""
     m = mapdata.cellmap(db, cell_key)
@@ -108,6 +226,15 @@ def rooms(db, cell_key, names=None):
         pat = kits.rotate(piece['pattern'], q)
         floor = r['p'][2] + piece['zmin']
         tiles[(r['p'][0], r['p'][1], round(floor / 64))] = {'pat': pat, 'x': r['p'][0], 'y': r['p'][1], 'floor': floor}
+    # places not (only) built from tiles: yurts, caves, Dwemer halls, Velothi's ready-made rooms
+    premade = any(r.get('arch') and r.get('b') and (r['b'][3] - r['b'][0]) * (r['b'][4] - r['b'][1]) * (r['s'] or 1) ** 2 > 2.5 * 256 * 256
+                  and not (kits.kit_prefix(r['id']) and any(p['id'].lower() == r['id'].lower() for p in
+                           (kits.kit_pieces(db, kits.kit_prefix(r['id'])) or {}).get('pieces', [])))
+                  for r in m['refs'])
+    if not tiles or premade:
+        traced = _floor_tiles(db, m)
+        if traced:
+            tiles, T = traced, FLOOR_T
     if not tiles:
         return {'tile': None, 'rooms': [], 'refs': m['refs']}
     # a place made with "Build from pieces" remembers its rooms
@@ -137,11 +264,18 @@ def rooms(db, cell_key, names=None):
         mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
         return any(abs(fx - mx) < 40 and abs(fy - my) < 40 for fx, fy in frames)
 
+    near = {}
+    for kk in tiles:
+        near.setdefault((round(kk[0] / 32), round(kk[1] / 32), kk[2]), []).append(kk)
+
     def nb(k, s):
         x, y, lv = k
-        for kk in tiles:
-            if kk[2] == lv and abs(kk[0] - (x + STEP[s][0] * T)) < 24 and abs(kk[1] - (y + STEP[s][1] * T)) < 24:
-                return kk
+        tx, ty = x + STEP[s][0] * T, y + STEP[s][1] * T
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for kk in near.get((round(tx / 32) + dx, round(ty / 32) + dy, lv), ()):
+                    if abs(kk[0] - tx) < 24 and abs(kk[1] - ty) < 24:
+                        return kk
         return None
     seen, out = set(), []
     for k in sorted(tiles):
@@ -348,7 +482,7 @@ def related_cells(db, culture, limit=40):
     for oid, cells in db.used_in.items():
         if not kits.kit_prefix(oid):
             continue                                  # only building pieces say what a place is
-        label = next((mapdata.STYLE_WORDS[w] for w in oid.split('_')[:4] if w in mapdata.STYLE_WORDS), None)
+        label = mapdata.style_of(oid)
         if not label or STYLE_SET.get(label, 'imperial') != culture:
             continue
         for ci in cells:
@@ -410,7 +544,8 @@ DECOR_SETS = {'dunmer': ('furn_de_', 't_de_', 'light_de_', 'furn_banner', 'furn_
 STYLE_SET = {'Hlaalu': 'dunmer', 'Redoran': 'dunmer', 'Telvanni': 'dunmer', 'Velothi': 'dunmer', 'Dunmer': 'dunmer',
              'Daedric': 'dunmer', 'Common': 'imperial', 'Imperial': 'imperial', 'Breton': 'imperial', 'Cyrodiilic': 'imperial',
              'Nordic': 'nordic', 'Skyrim': 'nordic', 'Ashlander': 'dunmer', 'Redguard': 'imperial',
-             'High Elf': 'imperial', 'Stronghold': 'imperial'}
+             'High Elf': 'imperial', 'Stronghold': 'imperial', 'Mournhold': 'dunmer', 'Indoril': 'dunmer', 'Dres': 'dunmer',
+             'Dwemer': 'dunmer', 'Cave': 'dunmer', 'Reach': 'nordic'}
 CULTURE_NAMES = {'dunmer': 'other Dunmer places', 'imperial': 'common and Imperial places', 'nordic': 'other Nordic places'}
 _decor_global = {}
 
@@ -500,7 +635,8 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng):
                           'corner': len(walls_here) >= 2})
     rng.shuffle(spots)
     spots.sort(key=lambda sp: sp['corner'])                              # the middle of a wall first
-    want = max(1, int(round(len(spots) * DECOR_PER_PURPOSE.get(purpose, 0.4))))
+    # (walls of traced floors come in finer pieces; and a long hall gets a few things, not one per step)
+    want = max(1, min(8, int(round(len(spots) * (T / 256.0) * DECOR_PER_PURPOSE.get(purpose, 0.4)))))
     kinds = DECOR_KINDS.get(purpose)
     pool = [d for d in decor if not kinds or d[2] in kinds] or decor
     lights = [d for d in pool if d[2] in ('sconce', 'light')]
@@ -563,6 +699,18 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False):
     for r in refs:
         if r.get('b') and not r.get('arch') and r['type'] not in ('LIGH',):
             taken.append(_footprint(r['b'], r['p'][5], r['p'][0], r['p'][1]))
+        elif r.get('b') and r.get('arch') and info['tile'] != FLOOR_T and (r['b'][5] - r['b'][2]) * (r['s'] or 1) > 30 \
+                and not _is_floor_piece(db, r['id']):
+            # (traced floors already leave out what stands in the way; rugs are flat)
+            # big things standing in a room that aren't its floor and walls: a tree, a pillar, a statue
+            s = r['s'] or 1.0
+            fp = _footprint([v * s for v in r['b']], r['p'][5], r['p'][0], r['p'][1])
+            # (one that covers most of a room is the building itself, like a hut's shell)
+            area = (fp[2] - fp[0]) * (fp[3] - fp[1])
+            shell = any(_overlap_area(fp, (rm['x_min'], rm['y_min'], rm['x_max'], rm['y_max'])) >
+                        0.4 * (rm['x_max'] - rm['x_min']) * (rm['y_max'] - rm['y_min']) for rm in info['rooms'])
+            if area < 700 * 700 and not shell:
+                taken.append(fp)
     # keep doorways clear: doors, and room sides that open into other rooms
     for r in refs:
         if r['type'] == 'DOOR':
@@ -630,7 +778,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False):
                 slots.append({'x': wx, 'y': wy, 'in': inward, 'corner': len(walls_here) >= 2, 'side': s})
         rng.shuffle(slots)
         cx, cy = (room['x_min'] + room['x_max']) / 2, (room['y_min'] + room['y_max']) / 2
-        area_k = max(1.0, room['tiles'] / 9.0)
+        # how big the room is, in standard 256-unit tiles (traced floors are cut finer); a huge hall
+        # doesn't get endless furniture
+        area_k = max(1.0, min(3.0, room['tiles'] * (T / 256.0) ** 2 / 9.0))
         tables = []
         got = []
 

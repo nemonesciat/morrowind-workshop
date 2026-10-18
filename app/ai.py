@@ -488,7 +488,7 @@ class Assistant:
                 if not shells:
                     raise ToolError('No outside buildings in the game lead into the %s style; build it with just a door.' % style)
                 entrance.update(building=shells[0]['id'], facing={'N': 0, 'E': math.pi / 2, 'S': math.pi, 'W': 3 * math.pi / 2}[outside_building])
-        out = builder.build_interior(self.db, name, style, rooms, doors, exit, entrance, lighting)
+        out = builder.build_house(self.db, name, style, rooms, doors, exit, entrance, lighting)
         # from now on, work inside the new place
         r0 = out['rooms'][0]
         self.ctx = dict(self.ctx, cell=out['key'], focus=[(r0['x_min'] + r0['x_max']) / 2, (r0['y_min'] + r0['y_max']) / 2], sel=None)

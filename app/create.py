@@ -80,11 +80,9 @@ def interior_templates(db):
                     break
             if not (rid.startswith('in_') or '_in_' in rid or '_i_' in rid):
                 continue
-            for w in rid.split('_')[:4]:
-                label = mapdata.STYLE_WORDS.get(w)
-                if label:
-                    votes[label] = votes.get(label, 0) + 1
-                    break
+            label = mapdata.style_of(rid)
+            if label:
+                votes[label] = votes.get(label, 0) + 1
         style = max(votes, key=votes.get) if votes else 'Other'
         out.append({'key': k[1], 'name': db.recs[live[-1]][1], 'objects': n, 'style': style})
     out.sort(key=lambda t: (t['style'], t['objects']))

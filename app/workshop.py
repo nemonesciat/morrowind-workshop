@@ -547,6 +547,12 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/scatter/sets':
                 import scatter
                 self._json(scatter.sets(db, q.get('cell', '')))
+            elif u.path == '/api/brushes':
+                import scatter
+                self._json({'brushes': [scatter._clean(db, b) for b in scatter.load_brushes()]})
+            elif u.path == '/api/brushes/item':
+                import scatter
+                self._json(dict(scatter.item_defaults(db, q.get('id', '')), id=q.get('id', '')))
             elif u.path == '/api/item':
                 import items_ed
                 self._json(items_ed.read(db, q.get('id', '')))
@@ -816,19 +822,30 @@ class Handler(BaseHTTPRequestHandler):
                     m = mapdata.cellmap(db, body['cell'])
                     m['made'] = r
                     return self._json(m)
+                if u.path == '/api/brushes/save':
+                    import scatter
+                    return self._json(scatter.save_brush(db, body.get('brush') or {}))
+                if u.path == '/api/brushes/delete':
+                    import scatter
+                    scatter.delete_brush(str(body.get('id') or ''))
+                    return self._json({'ok': True})
+                if u.path == '/api/brushes/import':
+                    import scatter
+                    added, skipped = scatter.import_brushes(db, body.get('data') or {})
+                    return self._json({'added': added, 'skipped': skipped})
                 if u.path == '/api/furnish':
                     return self._json(furnish.furnish(db, body['cell'], body.get('plan'), walls=body.get('walls', True) is not False,
                                                       walls_only=bool(body.get('walls_only'))))
                 if u.path == '/api/build/interior':
-                    return self._json(builder.build_interior(
+                    return self._json(builder.build_house(
                         db, body.get('name'), body.get('style'), body.get('rooms') or [], body.get('doors'),
                         body.get('exit'), body.get('entrance'), body.get('lighting') or 'normal',
-                        body.get('lights', True), body.get('door'), body.get('stairs')))
+                        body.get('lights', True), body.get('door'), body.get('stairs'), body.get('floors_as') or 'auto'))
                 if u.path == '/api/build/outside':
                     import outside
                     return self._json(outside.for_rooms(db, body.get('style'), float(body.get('w') or 768), float(body.get('d') or 768)))
                 if u.path == '/api/build/plan':
-                    return self._json(builder.plan(db, body.get('style'), body.get('rooms') or []))
+                    return self._json(builder.plan(db, body.get('style'), body.get('rooms') or [], body.get('stairs'), body.get('floors_as') or 'auto'))
                 if u.path == '/api/dlg/topic/new':
                     return self._json({'key': dialogue.create_topic(db, body.get('name'), int(body.get('kind') or 0))})
                 if u.path == '/api/dlg/line/save':
@@ -986,6 +1003,9 @@ def changes_list():
 
 
 def free_port(preferred=8763):
+    # (WORKSHOP_PORT: a different one, e.g. for a test copy running beside the real Workshop; 0 = any)
+    if os.environ.get('WORKSHOP_PORT', '').isdigit():
+        preferred = int(os.environ['WORKSHOP_PORT'])
     for port in (preferred, 0):
         s = socket.socket()
         try:

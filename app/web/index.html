@@ -2080,7 +2080,7 @@ function renderWside(){
         <div class="msg">${esc(S.typeLabels[sel.type] || 'unknown type')} · ${sel.mine ? '<span class="mine">your mod</span>' : 'from ' + esc(sel.src)}</div></div></div>
       <div class="xyz"><div><label>X</label><input class="inp" id="s-x" value="${sel.p[0].toFixed(1)}"></div><div><label>Y</label><input class="inp" id="s-y" value="${sel.p[1].toFixed(1)}"></div><div><label>Height</label><input class="inp" id="s-z" value="${sel.p[2].toFixed(1)}"></div></div>
       <div class="two"><div><label>Turn (degrees)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div></div>
-      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
+      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
       <div class="dd" style="margin-top:10px"><input class="inp" id="w-swap" placeholder="Swap for… (search for a replacement)" autocomplete="off"><div class="ddlist" id="w-swap-l"></div></div>
       ${sel.type === 'DOOR' ? `<h3>Leads to</h3>
         ${sel.to ? `<div style="font-size:13.5px">→ <span class="lnk" data-sa="gotodest">${esc(sel.to.cell || sel.to.label || 'outdoors (' + sel.to.key.slice(1) + ')')}</span></div>
@@ -2424,6 +2424,7 @@ async function selAction(a){
   const sel = W.sel && findRef(W.sel.cell, W.sel.k); if (!sel) return;
   if (a === 'talk') return openCharacterDialogue(sel.id);
   if (a === 'char') return cOpen(sel.id);
+  if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
   if (a === 'gotodest' && sel.to){ await worldOpen(sel.to.key); return; }
   if (!await needProject()) return;
   if (a === 'unlink'){
@@ -2596,12 +2597,9 @@ function formHtml(kind){
   if (kind === 'build') return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds the floors, walls, ceilings, doorways and a way out from the style's own pieces, so it looks like the base game. Furnish it afterwards on the World map, or ask the assistant.</p>
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
       <label>Style</label><div><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div></div>
-      <label>Layout</label><div class="radios"><label><input type="radio" name="cr-blay" value="row" ${CR.blay !== 'hall' ? 'checked' : ''}>Rooms side by side, each opening into the next</label><label><input type="radio" name="cr-blay" value="hall" ${CR.blay === 'hall' ? 'checked' : ''}>Rooms along a hallway</label></div>
-      <label>Rooms</label><div><div id="cr-brooms"></div><button class="btn sm" id="cr-baddroom">+ Add room</button>
-        <div class="hint">Sizes are in tiles. One tile is about 3.5 m (the size of one floor piece). A cosy room is about 3 × 3. Put rooms upstairs or in a cellar and stairs are added for you.</div></div>
-      <label>Plan</label><div><canvas id="cr-bplan" width="640" height="250" style="width:100%;max-width:640px;background:#0f0d0a;border:1px solid var(--line);border-radius:8px"></canvas>
-        <div class="hint" id="cr-bplannote">Seen from above, north is up. ▮ doorways, ▲ the way out.</div></div>
-      <label>Way out</label><div style="display:flex;gap:6px"><select class="inp" id="cr-bexit"></select><select class="inp" id="cr-bside" style="max-width:130px"><option value="S">south side</option><option value="N">north side</option><option value="E">east side</option><option value="W">west side</option></select></div>
+    </div>
+    <div id="pl-root" style="margin:10px 0 14px"></div>
+    <div class="frow">
       <label>Lighting</label><div style="display:flex;gap:10px;align-items:center">${sel('cr-blight', [['dim', 'Dim'], ['normal', 'Normal'], ['bright', 'Bright'], ['dark', 'Dark']], 'normal')}
         <label class="msg" style="display:flex;gap:5px;align-items:center;white-space:nowrap"><input type="checkbox" id="cr-blamps" checked> Hang lanterns</label></div>
       <label>Furnish</label><div><label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="cr-bfurnish" checked> Furnish the rooms too, going by their names (Bedroom, Kitchen, Storeroom, Study, Shop…)</label>
@@ -2812,187 +2810,18 @@ function bindSpell(){
   ddSearch('sp-give', 'NPC_,CREA', r => { $('#sp-give').value = r.id; });
 }
 
-// ----- Build from pieces: a few rooms, laid out for you
-CR.brooms = CR.brooms || [{name: 'Main room', w: 3, h: 3}];
-const B_FLOORS = [[1, 'Upstairs'], [0, 'Ground floor'], [-1, 'Cellar']];
-const bFloorName = f => (B_FLOORS.find(x => x[0] === f) || [0, 'Floor ' + f])[1];
-function bLayout(){
-  const seen = {'hallway': 1};
-  const rooms = CR.brooms.map((r, n) => {
-    let name = (r.name || '').trim() || 'Room ' + (n + 1);
-    const k = name.toLowerCase(); if (seen[k]){ seen[k]++; name += ' ' + seen[k]; } else seen[k] = 1;
-    return {name, w: Math.max(1, Math.min(12, +r.w || 1)), h: Math.max(1, Math.min(12, +r.h || 1)), floor: +r.floor || 0};
-  });
-  const out = {rooms: [], doors: []};
-  // each floor is laid out on its own, all starting from the same corner so they stack up
-  const floors = [...new Set(rooms.map(r => r.floor))].sort((a, b) => a - b);
-  for (const f of floors){
-    const here = rooms.filter(r => r.floor === f);
-    let x = 0;
-    if (CR.blay === 'hall' && f === 0){
-      const total = here.reduce((s, r) => s + r.w, 0);
-      out.rooms.push({name: 'Hallway', x: 0, y: 0, w: Math.max(1, total), h: 1, floor: 0});
-      for (const r of here){ out.rooms.push({...r, x, y: 1}); out.doors.push({rooms: ['Hallway', r.name]}); x += r.w; }
-    } else {
-      here.forEach((r, n) => { out.rooms.push({...r, x, y: 0}); if (n) out.doors.push({rooms: [here[n - 1].name, r.name]}); x += r.w; });
-    }
-  }
-  const ex = $('#cr-bexit'), side = $('#cr-bside');
-  const ground = out.rooms.filter(r => r.floor === 0).length ? out.rooms.filter(r => r.floor === 0) : out.rooms;
-  out.exit = {room: ex && ex.value && ground.some(r => r.name === ex.value) ? ex.value : ground[0].name, side: side ? side.value : 'S'};
-  return out;
-}
-// where the stairs go is worked out by the Workshop (it depends on the style's stair pieces)
-let bPlanT = 0, bShellT = 0;
-function bAskPlan(){
-  const L = bLayout(), st = $('#cr-bstyle');
-  const floors = new Set(L.rooms.map(r => r.floor));
-  const key = JSON.stringify([st && st.value, L.rooms]);
-  if (floors.size < 2){ CR.bplan = null; CR.bplanKey = key; return; }
-  if (!CR.bstyles || !CR.bstyles.some(x => x.id === st.value)){ CR.bplanKey = null; return; }   // styles still loading
-  if (CR.bplanKey === key) return;
-  clearTimeout(bPlanT);
-  bPlanT = setTimeout(async () => {
-    CR.bplanKey = key;
-    try { CR.bplan = await post('/api/build/plan', {style: st.value, rooms: L.rooms}); CR.bplan.key = key; }
-    catch (e){ CR.bplan = {error: e.message, key}; }
-    bDraw();
-  }, 350);
-}
-function bDraw(){
-  const cv = $('#cr-bplan'); if (!cv) return;
-  bAskPlan();
-  if (CR.bstyles){ clearTimeout(bShellT); bShellT = setTimeout(bShells, 600); }   // house sizes follow the rooms
-  const L = bLayout(), g = cv.getContext('2d'), W = cv.width, H = cv.height;
-  g.clearRect(0, 0, W, H);
-  const floors = [...new Set(L.rooms.map(r => r.floor))].sort((a, b) => a - b);
-  const plan = CR.bplan && CR.bplan.key === CR.bplanKey && !CR.bplan.error ? CR.bplan : null;
-  // every floor's tiles (from the Workshop's plan when there are stairs: it may add a landing)
-  const tiles = plan ? plan.tiles.map(t => ({x: t[0], y: t[1], f: t[2], r: L.rooms[t[3]]}))
-    : L.rooms.flatMap(r => Array.from({length: r.w * r.h}, (_, i) => ({x: r.x + i % r.w, y: r.y + Math.floor(i / r.w), f: r.floor, r})));
-  const stairs = plan ? plan.stairs : [];
-  const all = tiles.concat(stairs.flatMap(s => s.tiles.map(t => ({x: t[0], y: t[1]}))));
-  const x0 = Math.min(...all.map(t => t.x)), x1 = Math.max(...all.map(t => t.x)) + 1;
-  const y0 = Math.min(...all.map(t => t.y)), y1 = Math.max(...all.map(t => t.y)) + 1;
-  const n = floors.length, gap = 24, top = n > 1 ? 18 : 0;
-  const s = Math.min((W - 30 - gap * (n - 1)) / (n * (x1 - x0)), (H - 30 - top) / (y1 - y0), 46);
-  const pw = (x1 - x0) * s, ox0 = (W - (pw * n + gap * (n - 1))) / 2, oy = (H + top + (y1 - y0) * s) / 2;
-  const cols = ['#5a4420', '#3e4f2c', '#2c4656', '#56324a', '#4d4a24', '#2f3c5c', '#5a3a26'];
-  const roomCol = r => cols[L.rooms.indexOf(r) % cols.length];
-  floors.forEach((f, fi) => {
-    const ox = ox0 + fi * (pw + gap);
-    const P = (x, y) => [ox + (x - x0) * s, oy - (y - y0) * s];
-    if (n > 1){ g.fillStyle = '#b9ad94'; g.font = '11px Inter, sans-serif'; g.textAlign = 'center'; g.fillText(bFloorName(f), ox + pw / 2, 12); }
-    const mine = tiles.filter(t => t.f === f);
-    for (const t of mine){
-      const [a, b] = P(t.x, t.y + 1);
-      g.fillStyle = roomCol(t.r); g.fillRect(a, b, s, s);
-      g.strokeStyle = '#ffffff14'; g.lineWidth = 1; g.strokeRect(a + 0.5, b + 0.5, s - 1, s - 1);
-    }
-    // outline where a room ends
-    g.strokeStyle = '#ebe2cf'; g.lineWidth = 2;
-    const at = (x, y) => mine.find(t => t.x === x && t.y === y);
-    for (const t of mine){
-      const [a, b] = P(t.x, t.y + 1);
-      for (const [dx, dy, x1_, y1_, x2_, y2_] of [[0, 1, 0, 0, 1, 0], [0, -1, 0, 1, 1, 1], [1, 0, 1, 0, 1, 1], [-1, 0, 0, 0, 0, 1]]){
-        const o = at(t.x + dx, t.y + dy);
-        if (o && o.r === t.r) continue;
-        g.beginPath(); g.moveTo(a + x1_ * s, b + y1_ * s); g.lineTo(a + x2_ * s, b + y2_ * s); g.stroke();
-      }
-    }
-    // room names in the middle of their tiles
-    for (const r of L.rooms.filter(r => r.floor === f)){
-      const ts = mine.filter(t => t.r === r); if (!ts.length) continue;
-      const cx = ts.reduce((a, t) => a + t.x, 0) / ts.length + 0.5, cy = ts.reduce((a, t) => a + t.y, 0) / ts.length + 0.5;
-      const [px, py] = P(cx, cy);
-      g.fillStyle = '#ebe2cf'; g.font = '12px Inter, sans-serif'; g.textAlign = 'center';
-      const label = r.name.length > 14 ? r.name.slice(0, 13) + '…' : r.name;
-      g.fillText(label, px, py + 4);
-    }
-    // stairs: from this floor up (and arriving from the floor below)
-    for (const st of stairs){
-      if (st.floor !== f && st.floor + 1 !== f) continue;
-      st.tiles.forEach((t, i) => {
-        const [a, b] = P(t[0], t[1] + 1);
-        g.fillStyle = '#2a2620'; g.fillRect(a, b, s, s);
-        g.strokeStyle = '#f0cd87'; g.lineWidth = 1;
-        const vert = st.up === 'N' || st.up === 'S';
-        for (let k = 1; k < 5; k++){
-          g.beginPath();
-          if (vert){ g.moveTo(a + 3, b + k * s / 5); g.lineTo(a + s - 3, b + k * s / 5); }
-          else { g.moveTo(a + k * s / 5, b + 3); g.lineTo(a + k * s / 5, b + s - 3); }
-          g.stroke();
-        }
-      });
-      // an arrow pointing up the stairs
-      const f0 = st.tiles[0], fl = st.tiles[st.tiles.length - 1];
-      const [ax, ay] = P(f0[0] + 0.5, f0[1] + 0.5), [bx, by] = P(fl[0] + 0.5, fl[1] + 0.5);
-      const d = {N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0]}[st.up];
-      const sx = ax - d[0] * s * 0.3, sy = ay - d[1] * s * 0.3, ex = bx + d[0] * s * 0.3, ey = by + d[1] * s * 0.3;
-      g.strokeStyle = '#f0cd87'; g.lineWidth = 2; g.beginPath(); g.moveTo(sx, sy); g.lineTo(ex, ey); g.stroke();
-      g.fillStyle = '#f0cd87'; g.beginPath(); g.moveTo(ex + d[0] * 6, ey + d[1] * 6); g.lineTo(ex - d[1] * 5, ey + d[0] * 5); g.lineTo(ex + d[1] * 5, ey - d[0] * 5); g.closePath(); g.fill();
-    }
-    // doorways: the middle of each shared edge
-    const room = nm => L.rooms.find(r => r.name === nm);
-    for (const d of L.doors){
-      const a = room(d.rooms[0]), b = room(d.rooms[1]);
-      if (!a || !b || a.floor !== f) continue;
-      let mx, my, vertical;
-      if (a.x + a.w === b.x || b.x + b.w === a.x){ mx = a.x + a.w === b.x ? b.x : a.x; const lo = Math.max(a.y, b.y), hi = Math.min(a.y + a.h, b.y + b.h); my = Math.floor((lo + hi - 1) / 2) + 0.5; vertical = true; }
-      else { my = a.y + a.h === b.y ? b.y : a.y; const lo = Math.max(a.x, b.x), hi = Math.min(a.x + a.w, b.x + b.w); mx = Math.floor((lo + hi - 1) / 2) + 0.5; vertical = false; }
-      const [px, py] = P(mx, my);
-      g.fillStyle = '#f0cd87'; vertical ? g.fillRect(px - 3, py - s * 0.3, 6, s * 0.6) : g.fillRect(px - s * 0.3, py - 3, s * 0.6, 6);
-    }
-    // the way out
-    const e = room(L.exit.room) || L.rooms[0];
-    if (e.floor === f){
-      const sd = L.exit.side, mid = (lo, k) => lo + Math.floor((k - 1) / 2) + 0.5;
-      const [ex, ey] = sd === 'S' ? P(mid(e.x, e.w), e.y) : sd === 'N' ? P(mid(e.x, e.w), e.y + e.h) : sd === 'E' ? P(e.x + e.w, mid(e.y, e.h)) : P(e.x, mid(e.y, e.h));
-      g.save(); g.translate(ex, ey); g.rotate({N: 0, E: Math.PI / 2, S: Math.PI, W: -Math.PI / 2}[sd]);
-      g.fillStyle = '#ff8a5c'; g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 2); g.lineTo(-8, 2); g.closePath(); g.fill(); g.restore();
-    }
-  });
-  const note = $('#cr-bplannote');
-  if (note){
-    const busy = floors.length > 1 && !(CR.bplan && CR.bplan.key === CR.bplanKey);
-    note.className = 'hint' + (CR.bplan && CR.bplan.error && floors.length > 1 ? ' err' : '');
-    note.textContent = floors.length < 2 ? 'Seen from above, north is up. ▮ doorways, ▲ the way out.'
-      : busy ? 'Working out where the stairs go…'
-      : CR.bplan && CR.bplan.error ? CR.bplan.error
-      : 'Each floor seen from above, north is up. ▮ doorways, ▲ the way out, ≡ stairs (the arrow points up).' + (plan && plan.notes.length ? ' ' + plan.notes.join(' ') : '');
-  }
-}
-function bRooms(){
-  const box = $('#cr-brooms'); if (!box) return;
-  const st = (CR.bstyles || []).find(x => x.id === CR.bstyle);
-  const canFloors = !st || st.floors || CR.brooms.some(r => +r.floor);
-  box.innerHTML = CR.brooms.map((r, n) => `<div class="itemrow" data-br="${n}"><input class="inp" data-bf="name" value="${esc(r.name)}" placeholder="Room name" style="max-width:200px">
-    <input class="inp" type="number" min="1" max="12" data-bf="w" value="${r.w}" style="width:64px" title="Width, east to west"><span class="msg">×</span>
-    <input class="inp" type="number" min="1" max="12" data-bf="h" value="${r.h}" style="width:64px" title="Depth, north to south"><span class="msg">tiles</span>
-    ${canFloors ? `<select class="inp" data-bf="floor" style="max-width:140px" title="Which floor this room is on">${B_FLOORS.map(([v, l]) => `<option value="${v}" ${v === (+r.floor || 0) ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}
-    ${CR.brooms.length > 1 ? '<button class="btn sm" data-bdel>✕</button>' : ''}</div>`).join('');
-  box.querySelectorAll('[data-bf]').forEach(el => el.oninput = el.onchange = () => { CR.brooms[+el.closest('[data-br]').dataset.br][el.dataset.bf] = el.dataset.bf === 'name' ? el.value : +el.value; bExits(); bDraw(); });
-  box.querySelectorAll('[data-bdel]').forEach(b => b.onclick = () => { CR.brooms.splice(+b.closest('[data-br]').dataset.br, 1); bRooms(); bExits(); bDraw(); });
-}
-function bExits(){
-  const ex = $('#cr-bexit'); if (!ex) return;
-  const keep = ex.value, L = bLayout();
-  const ground = L.rooms.filter(r => r.floor === 0).length ? L.rooms.filter(r => r.floor === 0) : L.rooms;
-  ex.innerHTML = ground.map(r => `<option ${r.name === keep ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
-}
+// ----- Build from pieces: the rooms are laid out in the planner (planner.js)
+let bShellT = 0;
 async function bindBuild(){
-  bRooms(); bExits(); bDraw();
-  $('#cr-baddroom').onclick = () => { CR.brooms.push({name: ['Bedroom', 'Kitchen', 'Storeroom', 'Study', 'Shrine'][CR.brooms.length - 1] || 'Room ' + (CR.brooms.length + 1), w: 2, h: 3, floor: 0}); bRooms(); bExits(); bDraw(); };
-  document.querySelectorAll('[name=cr-blay]').forEach(r => r.onchange = () => { CR.blay = r.value; bExits(); bDraw(); });
-  $('#cr-bexit').onchange = bDraw; $('#cr-bside').onchange = bDraw;
+  plMount();
   const st = $('#cr-bstyle'), hint = $('#cr-bstylehint');
   if (!CR.bstyles) CR.bstyles = await api('/api/build/styles');
   if (!st.isConnected) return;
   st.innerHTML = CR.bstyles.map(s => `<option value="${esc(s.id)}" ${s.id === (CR.bstyle || 'in_hlaalu') ? 'selected' : ''}>${esc(s.name)}${s.floors ? ' ⇅' : ''}</option>`).join('');
   const showHint = () => {
     const s = CR.bstyles.find(x => x.id === st.value); CR.bstyle = st.value; if (!s) return;
-    hint.textContent = `${s.pieces} floor pieces · tiles of ${s.tile} units${s.doorways ? ' · proper door frames between rooms' : ' · rooms join through open gaps (no door frames in this style)'}${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : ' · one floor only (no stair pieces)'}.`;
-    bRooms(); bDraw(); bShells();
+    hint.textContent = `${s.pieces} floor pieces · tiles of ${s.tile} units (about ${(s.tile / 72).toFixed(1)} m)${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : ' · one floor only (no stair pieces)'}. Doorways are built the way the game builds them in this style.${s.uses ? '' : ' No place in your game is built in this style yet, so the Workshop can\'t learn how its doorways go together: expect rough edges.'}`;
+    plStyleChanged(); bShells();
   };
   st.onchange = showHint; showHint();
   // what goes outside: just a door, or a whole building in the style
@@ -3061,12 +2890,15 @@ async function createGo(){
         entrance.building = val('cr-bshell'); entrance.facing = +val('cr-bface');
       }
       r = await post('/api/build/interior', {name: val('cr-name'), style: val('cr-bstyle'), rooms: L.rooms, doors: L.doors, exit: L.exit,
-        entrance, lighting: val('cr-blight'), lights: $('#cr-blamps').checked});
+        stairs: L.stairs, floors_as: L.floors_as, entrance, lighting: val('cr-blight'), lights: $('#cr-blamps').checked});
       label = val('cr-name');
       if ($('#cr-bfurnish').checked){
         msg.innerHTML = '<span class="spin"></span>Furnishing…';
-        try { await post('/api/furnish', {cell: r.key}); }
-        catch (e){ toast('Built it, but could not furnish it: ' + e.message, true); }
+        // (every floor, when the floors are places of their own)
+        for (const c of (r.cells && r.cells.length ? r.cells : [{key: r.key, name: label}])){
+          try { await post('/api/furnish', {cell: c.key}); }
+          catch (e){ toast('Built it, but could not furnish ' + c.name + ': ' + e.message, true); }
+        }
       }
     } else if (CR.kind === 'item'){
       if (!CR.itTpl) throw new Error('Pick an item to start from.');
@@ -3254,7 +3086,10 @@ async function aiSend(){
 
 poll();
 </script>
+<script src="/web/planner.js"></script>
+<script src="/web/brushes.js"></script>
 <script src="/web/loadorder.js"></script>
 <script src="/web/help.js"></script>
+<script src="/web/demo.js"></script>
 </body>
 </html>

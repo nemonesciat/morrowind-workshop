@@ -226,6 +226,8 @@ async function openFromLink(hash){
   if (h.get('quest')){ showView('dialog'); await dOpen('quest', h.get('quest').toLowerCase()); }
   if (h.get('topic')){ showView('dialog'); await dOpen('topic', h.get('topic').toLowerCase()); }
   if (h.get('view')) showView(h.get('view'));
+  if (h.get('demo') === 'furnish' && typeof demoFurnish === 'function') DEMO.result = await demoFurnish({name: h.get('name') || undefined});
+  if (h.get('demo') === 'shot' && typeof demoShot === 'function') await demoShot(h.get('s'), h.get('arg'));
 }
 
 // ----- first start: show the guide once the game data is read (unless a link says where to go)

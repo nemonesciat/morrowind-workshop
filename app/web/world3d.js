@@ -959,15 +959,19 @@ async function v3ScatterPanel(){
     catch (e){ box.innerHTML = `<div class="faint">${esc(e.message)}</div>`; return; }
   }
   const S_ = V3.scatSets, B = V3.land;
-  if (!S_.sets.length){ box.innerHTML = '<div class="faint">Nothing grows in the cells around here to learn from.</div>'; return; }
+  if (!S_.sets.length){ box.innerHTML = '<div class="faint">Nothing grows in the cells around here to learn from. <button class="btn sm" id="v3lnewbr">+ New brush</button> makes one of your own.</div>';
+    $('#v3lnewbr').onclick = async () => { try { await brNew(); v3ScatterPanel(); } catch (e){ toast(e.message, true); } }; return; }
   if (!S_.sets.some(s => s.key === B.scatSet)) B.scatSet = S_.sets[0].key;
   const set = S_.sets.find(s => s.key === B.scatSet);
   B.scatOff = B.scatOff || {};
   B.scatThick = B.scatThick || 5;
-  box.innerHTML = `<div class="v3lrow">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}">${esc(s.label)}</button>`).join('')}</div>
-    <label class="v3lrow">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>
-    <div class="faint" style="margin:4px 0">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</div>
-    <div class="v3scat">${set.items.map(it => `<label class="${B.scatOff[it.id.toLowerCase()] ? '' : 'on'}" title="${esc(it.id)} — used ${it.n} times nearby"><input type="checkbox" data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}> ${esc(it.name || it.id)}</label>`).join('')}</div>`;
+  box.innerHTML = `<div class="v3lrow" style="flex-wrap:wrap">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="${s.mine ? 'One of your own brushes' : 'What grows in this region'}">${s.mine ? '★ ' : ''}${esc(s.label)}</button>`).join('')}
+      <button class="btn sm" id="v3lnewbr" title="A brush of your own: any objects, from mods too">+ New brush</button></div>
+    <label class="v3lrow">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>` +
+    (set.mine ? '' : `<div class="faint" style="margin:4px 0">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</div>
+    <div class="v3scat">${set.items.map(it => `<label class="${B.scatOff[it.id.toLowerCase()] ? '' : 'on'}" title="${esc(it.id)} — used ${it.n} times nearby"><input type="checkbox" data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}> ${esc(it.name || it.id)}</label>`).join('')}</div>`);
+  if (set.mine) brEditor(box, set);
+  $('#v3lnewbr').onclick = async () => { try { await brNew(); v3ScatterPanel(); } catch (e){ toast(e.message, true); } };
   if (B.scatSet === 'grass'){
     // grass can go in as OpenMW groundcover: no collision, drawn fast, swaying, kept in its own file
     if (B.scatGrass === undefined) B.scatGrass = true;
@@ -1067,7 +1071,8 @@ function v3ScatterDab(at, erase){
     }
     v3ScatterShow(); return;
   }
-  const gap = (V3_SCATTER_GAP[B.scatSet] || 200) * (11 - B.scatThick) / 6;
+  const cur = V3.scatSets && V3.scatSets.sets.find(s => s.key === B.scatSet);
+  const gap = (V3_SCATTER_GAP[B.scatSet] || (cur && cur.gap) || 200) * (11 - B.scatThick) / 6;
   const tries = Math.max(1, Math.round(Math.PI * R * R / (gap * gap)));
   const total = items.reduce((a, i) => a + i.n, 0);
   for (let t = 0; t < tries; t++){

@@ -89,8 +89,9 @@ def measure(db, ri, tile):
         middle = sum(g[i][j] for i in range(G // 2 - 2, G // 2 + 2) for j in low) / float(4 * len(low))
         out['cover'][side] = round(cover, 2)
         out['offset'][side] = round(where[side][0] / where[side][1], 1) if where[side][1] else half - 16
-        if cover >= 0.7:
-            out[side] = 'wall'
+        out.setdefault('middle', {})[side] = round(middle, 2)
+        if cover >= 0.7 or (cover >= 0.55 and middle >= 0.8):
+            out[side] = 'wall'                      # (rounded corners leave the ends of a wall open)
         elif cover >= 0.25 and middle < 0.2:
             out[side] = 'door'                      # a wall with a doorway cut into it
         else:
@@ -180,6 +181,48 @@ def frame_hole(db, ri):
     return _holes[key]
 
 
+def _curved(pat, rid):
+    """Styles with curved walls (Telvanni) bow the walls into the tile, away from its edge, so they
+    measure as only partly there. A piece named as a corner or a side whose walls are clearly where
+    its name says gets them counted as walls."""
+    c = pat.get('cover', {})
+    if not c:
+        return pat
+    # how many walls the name says it has, and how they stand: corners two side by side, halls two
+    # facing each other, end caps three, a three-way one
+    if re.search(r'4way|center|centre', rid):
+        return pat
+    if re.search(r'endcap|_end|_cap', rid):
+        want, shape = 3, 'any'
+    elif re.search(r'corner|cornr|_cnr', rid):
+        want, shape = 2, 'adjacent'
+    elif re.search(r'3way', rid):
+        want, shape = 1, 'any'
+    elif re.search(r'hall', rid):
+        want, shape = 2, 'opposite'
+    elif re.search(r'side|wall', rid):
+        want, shape = 1, 'any'
+    else:
+        return pat
+    if sum(1 for s in SIDES if pat[s] == 'wall') >= want:
+        return pat
+    # (the doorways of a hall piece are its ends, not walls)
+    order = sorted((s for s in SIDES if pat[s] != 'door'), key=lambda s: -c.get(s, 0))
+    if len(order) < want:
+        return pat
+    top, rest = order[:want], order[want:]
+    if shape == 'adjacent' and (SIDES.index(top[1]) - SIDES.index(top[0])) % 2 != 1:
+        return pat
+    if shape == 'opposite' and (SIDES.index(top[1]) - SIDES.index(top[0])) % 2 != 0:
+        return pat
+    low_rest = max((c.get(s, 0) for s in rest), default=0)
+    if min(c.get(s, 0) for s in top) >= 0.3 and low_rest <= min(c.get(s, 0) for s in top) * 0.75:
+        pat = dict(pat)
+        for s in top:
+            pat[s] = 'wall'
+    return pat
+
+
 def rotate(pattern, quarter):
     """The pattern after turning the piece clockwise by quarter * 90 degrees."""
     out = dict(pattern)
@@ -267,12 +310,14 @@ def kit_pieces(db, prefix):
         pat = measure(db, ri, tile)
         if not pat or not pat['floor']:
             continue
+        pat = _curved(pat, low)
         pieces.append({'id': rid, 'ri': ri, 'pattern': pat, 'uses': len(db.used_in.get(low, ())),
                        'zmin': b[2], 'height': h})
     # door frames that sit in a doorway between two tiles, and plain wall sections
     jambs, walls = [], []
     heights = sorted(p['height'] for p in pieces) or [tile]
     full_h = heights[len(heights) // 2]
+    pieces = [p for p in pieces if p['height'] >= full_h * 0.5]      # (not a ceiling slab on its own)
     for ri in k['ris']:
         low = db.recs[ri][1].lower()
         b = mapdata.object_bounds(db, ri)
@@ -280,7 +325,8 @@ def kit_pieces(db, prefix):
             continue
         w, d, h = b[3] - b[0], b[4] - b[1], b[5] - b[2]
         thin, long_ = min(w, d), max(w, d)
-        if thin > tile * 0.35 or long_ < tile * 0.6 or long_ > tile * 1.15 or h < full_h * 0.8 or h > full_h * 1.2:
+        named_jamb = 'jamb' in low and thin <= tile * 0.35 and tile * 0.25 <= long_ <= tile * 1.15 and full_h * 0.45 <= h <= full_h * 1.2
+        if not named_jamb and (thin > tile * 0.35 or long_ < tile * 0.6 or long_ > tile * 1.15 or h < full_h * 0.8 or h > full_h * 1.2):
             continue
         if 'jamb' not in low and long_ < tile * 0.8:
             continue
@@ -289,8 +335,8 @@ def kit_pieces(db, prefix):
         if 'jamb' in low or 'doorway' in low or ('door' in low and 'load' not in low and 'jamb' in low):
             item['load'] = 'load' in low
             jambs.append(item)
-        elif 'wall' in low and 'door' not in low:
-            walls.append(item)
+        elif 'wall' in low and 'door' not in low and thin >= 3 and 'addon' not in low:
+            walls.append(item)          # (not the paper-thin panels laid over walls for decoration)
     k['pieces'] = sorted(pieces, key=lambda p: -p['uses'])
     k['jambs'] = sorted(jambs, key=lambda p: -p['uses'])
     k['walls'] = sorted(walls, key=lambda p: -p['uses'])
@@ -404,6 +450,7 @@ def door_fits(db, prefix):
 
 
 _stairs = {}
+MEASURED_STAIRS = True           # (stairs measured from their models, where the game's own use can't teach them)
 
 
 def stairs(db, prefix):
@@ -504,15 +551,31 @@ def stairs(db, prefix):
                     # what covers the joins where an open side meets the walls beside it
                     'post': db.recs[post_ri][1] if post_ri is not None else None})
     res = None
+    if not out and MEASURED_STAIRS:
+        # the game never puts these stairs beside the kit's own floor tiles where they could be learnt
+        # from: measure them instead
+        z0 = -k['zmin']
+        for ri in k['ris']:
+            sid = db.recs[ri][1].lower()
+            if is_stair(sid):
+                g = stair_shape(db, ri, T, k['height'])
+                if g:
+                    out.append(dict(g, id=db.recs[ri][1], ri=ri, z_low=z0 + g['bottom'], open=[], post=None,
+                                    uses=len(db.used_in.get(sid, ()))))
     if out:
-        top = max(p['rise'] for p in out)
-        storey = top if top >= T * 0.75 else top * 2
-        if k['height'] <= storey <= k['height'] * 1.4:
+        # the height between floors: what most stairs climb (or two short flights do), a little more
+        # than a room is tall
+        cands = [r for p in out for r in (p['rise'], p['rise'] * 2) if k['height'] * 0.95 <= r <= k['height'] * 1.45]
+        storey = max(set(cands), key=lambda r: (cands.count(r), -r)) if cands else 0
+        if storey:
             pieces = [p for p in out if any(abs(p['rise'] * n - storey) < 8 for n in (1, 2))]
             # closed-in stairs first (nothing to patch around them), then the ones used most
             pieces.sort(key=lambda p: (len(p['open']), -p['uses']))
             if pieces:
-                res = {'storey': storey, 'pieces': pieces}
+                # a proper staircase that climbs a whole floor (not only ramps meant for halls): the
+                # style looks right with stairs, so they are the default
+                proper = any(abs(p['rise'] - storey) < 8 and 'ramp' not in p['id'].lower() for p in pieces)
+                res = {'storey': storey, 'pieces': pieces, 'proper': proper}
     _stairs[prefix] = (db.recs, res)
     return res
 
@@ -520,9 +583,271 @@ def stairs(db, prefix):
 _VEC = {'N': (0, 1), 'E': (1, 0), 'S': (0, -1), 'W': (-1, 0)}
 
 
+def stair_shape(db, ri, T, room_h):
+    """A stair piece measured from its model: which side its low end is on ('low', in its own frame),
+    how high its bottom and top steps are ('bottom', 'rise'), how many tiles long it is ('len'), and
+    where the middle of the model is ('cx', 'cy'). None if it doesn't look like one tile-wide flight
+    that climbs about one storey."""
+    shapes = _model(db, ri)
+    b = mapdata.object_bounds(db, ri)
+    if not shapes or not b:
+        return None
+    ups = []                                         # (x, y, z, area) of faces you could stand on
+    for s in shapes:
+        p, idx = s['p'], s['i']
+        for t in range(0, len(idx) - 2, 3):
+            A, B, C = (p[idx[t + k] * 3:idx[t + k] * 3 + 3] for k in range(3))
+            ux, uy, uz = B[0] - A[0], B[1] - A[1], B[2] - A[2]
+            vx, vy, vz = C[0] - A[0], C[1] - A[1], C[2] - A[2]
+            nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            area = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if area > 1 and nz / area > 0.9:
+                ups.append(((A[0] + B[0] + C[0]) / 3, (A[1] + B[1] + C[1]) / 3, (A[2] + B[2] + C[2]) / 3, area))
+    if len(ups) < 4:
+        return None
+    best = None
+    for axis, (lo, hi) in (('x', (b[0], b[3])), ('y', (b[1], b[4]))):
+        ai = 0 if axis == 'x' else 1
+        L = hi - lo
+        if L < T * 0.8:
+            continue
+        width = (b[4] - b[1]) if axis == 'x' else (b[3] - b[0])
+        ci = 1 - ai
+        mid = (b[ci] + b[ci + 3]) / 2
+        # the walking line up the middle: in slices along this axis, the heights you could stand at
+        # (near the middle across, so the tops of side walls don't count), then the longest run of
+        # them that only climbs, a step at a time
+        N = 16
+        bins = [{} for _ in range(N)]
+        for u in ups:
+            if abs(u[ci] - mid) > width * 0.3:
+                continue
+            k = min(N - 1, max(0, int((u[ai] - lo) / L * N)))
+            z = round(u[2] / 4) * 4
+            bins[k][z] = bins[k].get(z, 0) + u[3]
+        res_axis = None
+        for direction in (1, -1):
+            order = bins if direction == 1 else bins[::-1]
+            # paths[z] = (covered slices, area, first z) for paths ending at height z
+            paths = {}
+            for sl in order:
+                nxt = dict(paths)
+                for z, a in sl.items():
+                    cand = (1, a, z)
+                    for pz, (n, pa, z0) in paths.items():
+                        if -6 <= z - pz <= room_h * 0.3 and (n + 1, pa + a) > cand[:2]:
+                            cand = (n + 1, pa + a, z0)
+                    if z not in nxt or cand[:2] > nxt[z][:2]:
+                        nxt[z] = cand
+                paths = nxt
+            if not paths:
+                continue
+            ztop, (n, _a, zbot) = max(paths.items(), key=lambda kv: (kv[1][0], kv[0] - kv[1][2]))
+            if n >= N * 0.5 and ztop - zbot >= room_h * 0.8 and (res_axis is None or ztop - zbot > res_axis[1] - res_axis[0]):
+                res_axis = (zbot, ztop, direction)
+        if not res_axis:
+            continue
+        za, zc, direction = res_axis
+        # the treads stop a step short of a floor at one end or the other: one step's height, from
+        # the heights the treads stand at
+        levels = sorted({z for sl in bins for z in sl if za - 2 <= z <= zc + 2})
+        diffs = sorted(d for d in (b_ - a_ for a_, b_ in zip(levels, levels[1:])) if d >= 8)
+        step = diffs[len(diffs) // 2] if diffs else 0
+        if step and 2 < za - b[2] <= step * 1.5:
+            za = b[2]                                 # the first tread is a step up from the floor below
+        # and floors stand on the game's 64-unit grid: the climb is a whole number of those
+        rise = max(64, round((zc - za) / 64.0) * 64)
+        low = ('W' if axis == 'x' else 'S') if direction == 1 else ('E' if axis == 'x' else 'N')
+        if width > T * 1.2:
+            continue                                 # (wider than a tile: a stairwell of its own)
+        n = max(1, int(round(L / T)))
+        if n > 3:
+            continue
+        score = rise
+        if best is None or score > best[0]:
+            best = (score, {'low': low, 'bottom': za, 'rise': rise, 'len': n, 'cx': (b[0] + b[3]) / 2,
+                            'cy': (b[1] + b[4]) / 2, 'height': b[5] - b[2]})
+    return best[1] if best else None
+
+
+_YAW = {'N': 0.0, 'E': math.pi / 2, 'S': math.pi, 'W': 3 * math.pi / 2}
+_edges = {}
+NOT_PART = ('furn', 'light', 'rug', 'active', 'flora', 'misc', 'contain', 'com_', 'book', 'banner', 'tapestr')
+
+
+def edge_doors(db, prefix):
+    """How the original game makes doorways on the edge between two of this kit's floor tiles (or
+    between a tile and the outside), learnt from the places built with it. Many styles have no floor
+    piece with a doorway in it: they leave the tile's side open and stand a separate door frame,
+    a door and maybe a short wall or pillar on the edge instead.
+    Returns [{'a': the tile's side ('open'|'door'|'wall'), 'b': the other tile's side, or 'out' when
+    nothing is beyond, 'load': the door leads somewhere else, 'door': the door's id or None,
+    'parts': [(id, along, across, z, rz, scale)], 'uses'}], commonest first. Positions are relative
+    to the middle of the edge at the tile's floor piece, 'across' pointing out of the tile and
+    'along' to its right; rz is relative to the side's direction (clockwise, like the game)."""
+    k = kit_pieces(db, prefix)
+    if not k:
+        return []
+    if prefix in _edges and _edges[prefix][0] is db.recs:
+        return _edges[prefix][1]
+    from mapdata import ref_info
+    T = k['tile']
+    floor_ids = {p['id'].lower(): p for p in k['pieces']}
+    family = '_'.join(prefix.split('_')[:3]) if prefix.startswith('t_') else '_'.join(prefix.split('_')[:2])
+    tag_of = {}
+
+    def tag(rid):
+        if rid not in tag_of:
+            ri = db.resolve_id(rid)
+            tag_of[rid] = db.recs[ri][0] if ri is not None else None
+        return tag_of[rid]
+
+    def part_like(rid):
+        if rid in floor_ids or any(w in rid for w in NOT_PART):
+            return False
+        if any(w in rid for w in ('trap', 'hatch', 'jail', 'cage', 'secret', 'hidden')):
+            return False                         # (not the doors and frames of an ordinary doorway)
+        return rid.startswith(family) or any(w in rid for w in ('jamb', 'frame', 'arch', 'door', 'pillar', 'post', 'column'))
+
+    bottoms = {}
+
+    def bottom(rid, z, sc):
+        """How high the bottom of an object stands, from where its origin is."""
+        if rid not in bottoms:
+            b = mapdata.object_bounds(db, db.resolve_id(rid))
+            bottoms[rid] = b[2] if b else 0.0
+        return z + bottoms[rid] * sc
+    stand = T * 0.2          # how far off the floor a door or frame may stand and still belong to it
+    widths = {}
+
+    def widest(rid):
+        if rid not in widths:
+            b = mapdata.object_bounds(db, db.resolve_id(rid))
+            widths[rid] = max(b[3] - b[0], b[4] - b[1]) if b else 0.0
+        return widths[rid]
+
+    def covered(parts):
+        """How much of the edge (along it) the parts stand across."""
+        spans = sorted((max(-T / 2, p[1] - widest(p[0]) * p[5] / 2), min(T / 2, p[1] + widest(p[0]) * p[5] / 2)) for p in parts)
+        total, end = 0.0, -T / 2
+        for lo, hi in spans:
+            lo = max(lo, end)
+            if hi > lo:
+                total += hi - lo
+                end = hi
+        return total
+
+    cells = {}
+    for pid in floor_ids:
+        for ci in db.used_in.get(pid, ()):
+            cells[ci] = cells.get(ci, 0) + 1
+    counts = {}
+    for ci in sorted(cells, key=lambda c: -cells[c])[:120]:
+        r = db.recs[ci]
+        if r[0] != 'CELL':
+            continue
+        refs, _h = db.cell_refs(r[7])
+        floors, others = [], []
+        for ref in refs.values():
+            rid, pos, sc, dead = ref_info(ref['subs'])
+            if dead:
+                continue
+            low = rid.lower()
+            sc = sc or 1.0
+            if low in floor_ids and abs(sc - 1) < 0.01:
+                floors.append((low, pos))
+            elif tag(low) in ('STAT', 'DOOR') and part_like(low):
+                others.append((low, pos, sc, any(t == 'DODT' for t, _d in ref['subs'])))
+        if not floors:
+            continue
+        at = {}
+        for low, pos in floors:
+            at[(round(pos[0] / 8), round(pos[1] / 8), round(pos[2] / 8))] = (low, pos)
+
+        def tile_near(x, y, z):
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        got = at.get((round(x / 8) + dx, round(y / 8) + dy, round(z / 8) + dz))
+                        if got:
+                            return got
+            return None
+
+        # each edge with a door or a door frame on it, from the tiles on both sides
+        seen_edges = set()
+        for oid, opos, osc, oload in others:
+            if tag(oid) != 'DOOR' and not any(w in oid for w in ('jamb', 'frame', 'doorway', 'arch')):
+                continue
+            for low, pos in floors:
+                floor_z = pos[2] + floor_ids[low]['zmin']
+                if abs(bottom(oid, opos[2], osc) - floor_z) > stand:
+                    continue                     # (on another floor: places like Vivec stack them close)
+                dx, dy = opos[0] - pos[0], opos[1] - pos[1]
+                if abs(dx) > T or abs(dy) > T:
+                    continue
+                for s, (vx, vy) in _VEC.items():
+                    out = dx * vx + dy * vy
+                    along = dx * vy - dy * vx
+                    if not (T * 0.3 < out < T * 0.66 and abs(along) < T * 0.3):
+                        continue
+                    ek = (round(pos[0] + vx * T / 2), round(pos[1] + vy * T / 2), round(pos[2]), s in 'NS')
+                    if (ek, low, round(pos[0]), round(pos[1])) in seen_edges:
+                        continue
+                    seen_edges.add((ek, low, round(pos[0]), round(pos[1])))
+                    q = round(((pos[5] % (2 * math.pi)) / (math.pi / 2))) % 4
+                    a = rotate(floor_ids[low]['pattern'], q)[s]
+                    nbt = tile_near(pos[0] + vx * T, pos[1] + vy * T, pos[2])
+                    if nbt:
+                        q2 = round(((nbt[1][5] % (2 * math.pi)) / (math.pi / 2))) % 4
+                        b = rotate(floor_ids[nbt[0]]['pattern'], q2)[SIDES[(SIDES.index(s) + 2) % 4]]
+                    else:
+                        b = 'out'
+                    # everything standing on this edge, in the edge's own frame
+                    th = _YAW[s]
+                    ox, oy = pos[0] + vx * T / 2, pos[1] + vy * T / 2
+                    parts, door, load = [], None, False
+                    for pid, ppos, psc, pload in others:
+                        pb = bottom(pid, ppos[2], psc)
+                        if pb < floor_z - stand or pb > floor_z + floor_ids[low]['height'] * 0.8 or \
+                                (tag(pid) == 'DOOR' and abs(pb - floor_z) > stand):
+                            continue
+                        ex, ey = ppos[0] - ox, ppos[1] - oy
+                        lx, ly = ex * math.cos(th) - ey * math.sin(th), ex * math.sin(th) + ey * math.cos(th)
+                        if abs(ly) > T * 0.22 or abs(lx) > T * 0.56:
+                            continue
+                        if tag(pid) == 'DOOR':
+                            if door is not None:
+                                continue
+                            door, load = pid, pload
+                        parts.append((pid, round(lx, 1), round(ly, 1), round(ppos[2] - pos[2], 1),
+                                      round((ppos[5] - th) % (2 * math.pi), 3), round(psc, 3)))
+                    if not parts:
+                        continue
+                    framey = [p for p in parts if any(w in p[0] for w in ('jamb', 'frame', 'arch', 'doorway')) or
+                              re.search(r'_dj(_|\d|$)', p[0])]
+                    if any(abs(p[1]) > T * 0.25 for p in framey):
+                        continue                 # a doorway on the corner between two tiles: not one edge's
+                    if a == 'open' and b == 'out' and covered(parts) < T * 0.85:
+                        continue                 # something else filled the rest of that edge in the game
+                    key = (a, b, load, tuple(sorted((p[0], round(p[1] / 8), round(p[2] / 8), round(p[3] / 8),
+                                                     round(p[4] / (math.pi / 2)) % 4) for p in parts)))
+                    c = counts.setdefault(key, {'n': 0, 'sample': None})
+                    c['n'] += 1
+                    if c['sample'] is None:
+                        c['sample'] = {'a': a, 'b': b, 'load': load, 'door': door, 'parts': parts}
+    res = [dict(c['sample'], uses=c['n']) for _k, c in sorted(counts.items(), key=lambda kv: -kv[1]['n']) if c['n'] >= 2]
+    _edges[prefix] = (db.recs, res)
+    return res
+
+
 def friendly(prefix):
     """A readable name for a kit, e.g. in_hlaalu -> Hlaalu, t_de_setind_i -> Indoril (TR)."""
-    words = [w for w in prefix.split('_') if w not in ('in', 't', 'i', 'set', 'int')]
+    fixed = {'in_t_s': 'Telvanni (small)', 'in_t_l': 'Telvanni (large)', 'in_t_s_plain': 'Telvanni (small, plain)',
+             'in_r_s_int': 'Redoran (small)', 'in_r_l_int': 'Redoran (large)', 'in_v_s_int': 'Vivec (small)',
+             'in_v_l_int': 'Vivec (large)', 'in_mh_int': 'Mournhold', 'in_m_sewer': 'Mournhold sewer'}
+    if prefix in fixed:
+        return fixed[prefix]
+    words =[w for w in prefix.split('_') if w not in ('in', 't', 'i', 'set', 'int')]
     names = {'hlaalu': 'Hlaalu', 'velothismall': 'Velothi (small)', 'velothilarge': 'Velothi (large)', 'dae': 'Daedric ruin',
              'impsmall': 'Imperial (small)', 'c': 'Common', 'plain': 'plain', 'rich': 'rich', 'stone': 'stone',
              'mh': 'Mournhold', 'dwrv': 'Dwemer', 'strong': 'Stronghold', 'stronghold': 'Stronghold', 'om': 'Old Mournhold',

@@ -96,7 +96,30 @@ STYLE_WORDS = {'hlaalu': 'Hlaalu', 'hla': 'Hlaalu', 'redoran': 'Redoran', 'red':
                'imp': 'Imperial', 'nord': 'Nordic', 'nor': 'Nordic', 'ashl': 'Ashlander', 'cave': 'Cave',
                'mine': 'Mine', 'sewer': 'Sewer', 'de': 'Dunmer', 'c': 'Common', 'com': 'Common', 'bre': 'Breton',
                'cyr': 'Cyrodiilic', 'sky': 'Skyrim', 'he': 'High Elf', 'rga': 'Redguard', 'strong': 'Stronghold',
-               'ruin': 'Ruin', 'v': 'Velothi'}
+               'ruin': 'Ruin', 'v': 'Velothi', 'velothismall': 'Velothi', 'velothilarge': 'Velothi', 'veloth': 'Velothi',
+               'dae': 'Daedric', 'mh': 'Mournhold', 'om': 'Mournhold', 'impsmall': 'Imperial', 'dwe': 'Dwemer',
+               'stronghold': 'Stronghold', 'mold': 'Cave', 'mud': 'Cave', 'lava': 'Cave', 'py': 'Cave',
+               'moldcave': 'Cave', 'mudcave': 'Cave', 'lavacave': 'Cave', 'pycave': 'Cave', 'sethla': 'Hlaalu',
+               'setred': 'Redoran', 'settel': 'Telvanni', 'setveloth': 'Velothi', 'setind': 'Indoril', 'setdres': 'Dres',
+               'setmh': 'Mournhold', 'setom': 'Mournhold', 'setnecrom': 'Dunmer', 'setgc': 'Imperial', 'setmw': 'Imperial',
+               'setanv': 'Imperial', 'setstr': 'Imperial', 'setkvaurb': 'Imperial', 'setreach': 'Reach'}
+# the original game's Redoran and Telvanni pieces are just in_r_... and in_t_...
+STYLE_FIRST = {'r': 'Redoran', 't': 'Telvanni'}
+
+
+def style_of(rid):
+    """The building style a piece's ID names (in_hlaalu_..., in_r_s_int_..., T_De_SetInd_I_...), or None."""
+    parts = rid.lower().split('_')
+    if parts[0] in ('in', 'ex') and len(parts) > 2 and parts[1] in STYLE_FIRST:
+        return STYLE_FIRST[parts[1]]
+    # Tamriel Data's set name (t_de_setind_...) says more than "de" does
+    if parts[0] == 't' and len(parts) > 2 and STYLE_WORDS.get(parts[2]):
+        return STYLE_WORDS[parts[2]]
+    # otherwise the style word comes early in the name (in_hlaalu_..., ex_de_..., T_Imp_...)
+    for w in parts[:4]:
+        if w in STYLE_WORDS:
+            return STYLE_WORDS[w]
+    return None
 
 
 def is_architecture(tag, rid, b):
@@ -181,13 +204,9 @@ def palette(db, cell_key, limit=24):
     # style label from architecture names
     votes = {}
     for a in arch_ids:
-        parts = a.split('_')
-        # the style word comes early in the name (in_hlaalu_..., ex_de_..., T_Imp_Set...)
-        for w in parts[:4]:
-            label = STYLE_WORDS.get(w)
-            if label:
-                votes[label] = votes.get(label, 0) + 1
-                break
+        label = style_of(a)
+        if label:
+            votes[label] = votes.get(label, 0) + 1
     style = max(votes, key=votes.get) if votes else ''
     # find similar cells: ones built from the same pieces
     overlap = {}
