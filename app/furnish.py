@@ -6,6 +6,7 @@ furniture. Which way each piece of furniture faces is learnt from where it stand
 interiors (it faces into the room), so beds and shelves end up with their backs to the wall."""
 import math
 import random
+import re
 import struct
 
 import editing
@@ -40,6 +41,8 @@ FAMILIES = {
     'book': (('',), ('BOOK',)),
     'food': (('',), ('INGR',)),
     'candle': (('candle',), ('LIGH',)),
+    'bedroll': (('bedroll', 'bedding', 'hammock'), ('STAT', 'ACTI')),
+    'fire': (('firepit', 'fire_pit', 'campfire', 'fireplace_ashl', 'cookingfire'), ('STAT', 'ACTI', 'LIGH')),
 }
 NOT = {'table': ('tablet',), 'bed': ('bedroll',), 'shelf': ('bookshelf', 'bookcase'), 'chest': ('chestnut',)}
 
@@ -62,6 +65,10 @@ RECIPES = {
     'shrine': [('rug', 1, 'centre'), ('shrine', 1, 'wall'), ('bench', 2, 'wall'), ('urn', 2, 'corner'),
                ('candle', 2, 'on_table')],
     'hall': [('rug', 1, 'centre'), ('bench', 1, 'wall'), ('urn', 2, 'corner')],
+    # caves, mines and camps: people sleep rough here; ruins: what's left lying about
+    'camp': [('bedroll', 2, 'wall'), ('fire', 1, 'centre'), ('crate', 2, 'wall'), ('barrel', 2, 'corner'), ('sack', 2, 'wall'),
+             ('chest', 1, 'wall'), ('urn', 1, 'corner')],
+    'ruin': [('crate', 2, 'wall'), ('barrel', 2, 'corner'), ('urn', 2, 'corner'), ('chest', 1, 'wall'), ('sack', 1, 'wall')],
     'tavern': [('counter', 1, 'wall'), ('table', 2, 'centre'), ('chair', 5, 'by_table'), ('barrel', 3, 'corner'),
                ('bench', 1, 'wall'), ('bottle', 4, 'on_table'), ('dish', 4, 'on_table'), ('food', 2, 'on_table')],
 }
@@ -70,7 +77,8 @@ PURPOSE_WORDS = {'bed': 'bedroom', 'sleep': 'bedroom', 'kitchen': 'kitchen', 'co
                  'office': 'study', 'shop': 'shop', 'store front': 'shop', 'trader': 'shop', 'shrine': 'shrine',
                  'chapel': 'shrine', 'temple': 'shrine', 'hall': 'hall', 'corridor': 'hall', 'tavern': 'tavern',
                  'inn': 'tavern', 'club': 'tavern', 'bar': 'tavern', 'living': 'living', 'main': 'living',
-                 'common': 'living', 'dining': 'living', 'parlor': 'living', 'parlour': 'living'}
+                 'common': 'living', 'dining': 'living', 'parlor': 'living', 'parlour': 'living',
+                 'camp': 'camp', 'cave': 'camp', 'mine': 'camp', 'den': 'camp', 'ruin': 'ruin', 'vault': 'ruin'}
 
 
 def purpose_for(name, tiles, w, h):
@@ -606,9 +614,9 @@ def wall_decor(db, cell_key):
     return out
 
 
-DECOR_PER_PURPOSE = {'storage': 0.15, 'kitchen': 0.25, 'hall': 0.3}       # share of free wall spots used (default 0.4)
+DECOR_PER_PURPOSE = {'storage': 0.15, 'kitchen': 0.25, 'hall': 0.3, 'camp': 0.1}       # share of free wall spots used (default 0.4)
 DECOR_KINDS = {'shrine': ('banner', 'tapestry', 'sconce'), 'storage': ('rack', 'herbs', 'decor', 'sconce'),
-               'kitchen': ('herbs', 'decor', 'sconce', 'tapestry')}
+               'kitchen': ('herbs', 'decor', 'sconce', 'tapestry'), 'camp': ('herbs', 'sconce', 'light')}
 
 
 def _decorate(db, room, purpose, T, decor, refs, placed, put, rng):
@@ -690,6 +698,25 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False):
                         '(like the ones "Build from pieces" makes, and most town interiors).')
     T = info['tile']
     fam, style = candidates(db, cell_key)
+    # caves, camps and ruins aren't homes: rough sleeping and stores there, unless a room was named
+    ROUGH = {'Cave': 'camp', 'Ashlander': 'camp', 'Mine': 'camp', 'Dwemer': 'ruin', 'Daedric': 'ruin', 'Ruin': 'ruin'}
+    rough = ROUGH.get(style)
+    if not rough:
+        # the walls say it better than the furniture: a yurt full of Dunmer things is still a tent
+        shell = {}
+        for r in mapdata.cellmap(db, cell_key).get('refs', []):
+            low = r['id'].lower()
+            if low.startswith(('in_', 'ex_')) or kits.kit_prefix(low):
+                st = mapdata.style_of(low)
+                if st:
+                    shell[st] = shell.get(st, 0) + 1
+        if shell:
+            top = max(shell, key=shell.get)
+            rough = ROUGH.get(top)
+    if rough:
+        for rm in info['rooms']:
+            if re.match(r'^room \d+$', (rm['name'] or '').lower()) or not rm['name']:
+                rm['purpose'] = rough
     decor = wall_decor(db, cell_key) if (walls or walls_only) else []
     rng = random.Random(seed if seed is not None else cell_key)
     wanted = {p['id']: p.get('purpose') for p in (plan or [])}
@@ -871,7 +898,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False):
                 got.append(rid)
                 if kind in ('table', 'counter'):
                     tables.append({'box': done[3], 'items': []})
-        if walls or walls_only:
+        if (walls or walls_only) and purpose != 'ruin':      # (nobody hangs tapestries in a ruin)
             got += _decorate(db, room, purpose, T, decor, refs, placed, put, rng)
         report.append({'room': room['name'], 'purpose': purpose, 'placed': len(got)})
     if not placed:

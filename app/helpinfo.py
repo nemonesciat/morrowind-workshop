@@ -59,7 +59,7 @@ def components():
             'by': 'The Cinzel Project Authors', 'url': 'https://github.com/NDISCOVER/Cinzel', 'text': 'Cinzel-OFL.txt'},
            {'name': 'Inter (font)', 'version': '', 'license': 'SIL Open Font License 1.1',
             'by': 'The Inter Project Authors', 'url': 'https://github.com/rsms/inter', 'text': 'Inter-OFL.txt'}]
-    seen, todo = set(), ['anthropic']
+    seen, todo = set(), ['anthropic', 'zstandard']
     while todo:
         n = todo.pop()
         key = re.sub(r'[-_.]+', '-', n).lower()

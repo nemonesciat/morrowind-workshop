@@ -9,10 +9,11 @@ Nothing is downloaded during the build.
 - **Python 3.13, 64-bit**, from [python.org](https://www.python.org/downloads/) (the release
   installer was built with Python 3.13.5). The build copies this Python into the installer, so the
   people who install the Workshop don't need Python.
-- Anthropic's Python library, for the optional AI assistant. The release used version 1.14.0:
+- Anthropic's Python library, for the optional AI assistant, and `zstandard`, which opens Blender's
+  compressed .blend files in the Library. The release used these versions:
 
   ```
-  py -3 -m pip install anthropic==1.14.0
+  py -3 -m pip install anthropic==1.14.0 zstandard==0.23.0
   ```
 
 - The C# compiler of the .NET Framework 4.8, which is part of Windows:
@@ -30,7 +31,7 @@ It takes a minute or two and makes `packaging\out\Morrowind Workshop Setup.exe`,
 
 1. Copies `app/` and writes the version from `packaging/version.txt` into it.
 2. Assembles a private Python for the installer: Python's own files and standard library (without
-   tests, IDLE and tkinter), the `anthropic` library and its dependencies (found from their package
+   tests, IDLE and tkinter), the `anthropic` and `zstandard` libraries and their dependencies (found from their package
    metadata), and the DLLs these need (found by reading the programs' import tables). The libraries
    are precompiled to `.pyc` files.
 3. Checks that this Python can import everything the Workshop uses, with nothing else on the PATH.

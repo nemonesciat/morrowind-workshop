@@ -9,12 +9,16 @@ repository is the source code it is built from.
 
 ## What it is made of
 
-- **`app/`**: the Workshop itself, a small web server written in Python (standard library only, plus
-  Anthropic's `anthropic` library for the optional AI assistant) and its page (`app/web`, plain
-  HTML and JavaScript, with three.js and two fonts bundled in `app/web/vendor`).
+- **`app/`**: the Workshop itself, a small web server written in Python (standard library, plus
+  Anthropic's `anthropic` library for the optional AI assistant and `zstandard` for Blender files)
+  and its page (`app/web`, plain HTML and JavaScript, with three.js and two fonts bundled in
+  `app/web/vendor`).
   - `workshop.py` starts it. `database.py` and `esm.py` read OpenMW's settings, plugins and archives;
     `editing.py` and `project.py` keep your mod; the other files are the editors (dialogue,
     building, furnishing, regions, Lua scripts and so on).
+  - `library.py` brings your own models, pictures and sounds in: it reads OBJ, glTF, COLLADA, FBX
+    (`library.py`) and Blender files (`blendread.py`) and writes Morrowind models (`nifwrite.py`);
+    `pack.py` makes and opens shareable packs.
   - `link_scripts/` are the OpenMW Lua scripts for the live link with the running game.
 - **`packaging/`**: everything that turns `app/` into the Windows installer.
   - `build.py` makes `packaging/out/Morrowind Workshop Setup.exe`.
@@ -26,7 +30,7 @@ repository is the source code it is built from.
 
 1. Install OpenMW and set it up with its Launcher, so it knows where Morrowind is.
 2. Install [Python 3.13](https://www.python.org/downloads/) (64-bit).
-3. Double-click **`Start Morrowind Workshop.bat`**. It installs the `anthropic` library the first
+3. Double-click **`Start Morrowind Workshop.bat`**. It installs the `anthropic` and `zstandard` libraries the first
    time and opens the Workshop in your browser.
 
 ## Building the installer
@@ -47,8 +51,8 @@ change it, with credit, but not for commercial purposes. See [LICENSE](LICENSE).
 
 The bundled third-party files keep their own licences: three.js (MIT) and the Cinzel and Inter fonts
 (SIL Open Font License 1.1), in `app/web/vendor` with their licence texts in
-`app/web/vendor/licenses`. The installer also includes Python (PSF License) and the `anthropic`
-library and its dependencies (MIT, BSD, Apache 2.0); the built installer lists them all in
+`app/web/vendor/licenses`. The installer also includes Python (PSF License), the `anthropic`
+library and its dependencies (MIT, BSD, Apache 2.0) and `zstandard` (BSD); the built installer lists them all in
 `THIRD_PARTY_NOTICES.txt`.
 
 Not made by or affiliated with Bethesda Softworks or the OpenMW project. Contains no Morrowind files.

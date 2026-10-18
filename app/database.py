@@ -262,7 +262,12 @@ class Database:
         assets = set()
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.meshes = MeshIndex(os.path.join(app_dir, 'cache', 'mesh_sizes.json'))
-        for d in self.config['data']:
+        # the folder your mods (and the Library's files) live in counts too, last: OpenMW always reads it
+        mine = os.environ.get('WORKSHOP_PLUGIN_DIR') or self.config.get('data_local')
+        dirs = list(self.config['data'])
+        if mine and os.path.normcase(os.path.abspath(mine)) not in {os.path.normcase(os.path.abspath(d)) for d in dirs}:
+            dirs.append(mine)
+        for d in dirs:
             if not os.path.isdir(d):
                 continue
             n_before = len(assets)

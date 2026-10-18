@@ -396,7 +396,10 @@ function v3Build(r){
     geo.translate((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
     g.add(new T.Mesh(geo, new T.MeshLambertMaterial({color: col, transparent: true, opacity: 0.45})));
   } else if (m !== undefined){
-    g.add(new T.Mesh(new T.SphereGeometry(10, 10, 8), new T.MeshLambertMaterial({color: col, emissive: r.type === 'LIGH' ? 0x664411 : 0})));
+    // (a sound source from the Library: a teal ball, so it's told apart from a light)
+    const snd = r.type === 'LIGH' && /^sound_/i.test(r.id);
+    g.add(new T.Mesh(new T.SphereGeometry(snd ? 14 : 10, 10, 8), new T.MeshLambertMaterial({color: snd ? 0x4fd1c5 : col,
+      emissive: snd ? 0x0f4a44 : r.type === 'LIGH' ? 0x664411 : 0})));
   }
   return g;
 }
@@ -1083,7 +1086,7 @@ function v3ScatterDab(at, erase){
     let pick = Math.random() * total, it = items[0];
     for (const i of items){ pick -= i.n; if (pick <= 0){ it = i; break; } }
     const s = it.smin + Math.random() * Math.max(0, it.smax - it.smin);
-    S_.add.push({id: it.id, x, y, z: g - it.sink * s - it.zmin * s, rz: Math.random() * Math.PI * 2, s: Math.round(s * 100) / 100});
+    S_.add.push({id: it.id, lib: it.lib, x, y, z: g - it.sink * s - it.zmin * s, rz: Math.random() * Math.PI * 2, s: Math.round(s * 100) / 100});
     S_.near.push([x, y]);
   }
   v3ScatterShow();
@@ -1121,7 +1124,7 @@ async function v3ScatterEnd(S_){
       const cx = S_.add.reduce((a, p) => a + p.x, 0) / S_.add.length, cy = S_.add.reduce((a, p) => a + p.y, 0) / S_.add.length;
       const set = V3.scatSets.sets.find(s => s.key === V3.land.scatSet);
       await post('/api/group/place', {cell: cellKeyAt(cx, cy), x: cx, y: cy, z: 0, yaw: 0, label: (set ? set.label : 'plants').toLowerCase(),
-        items: S_.add.map(p => ({id: p.id, dx: p.x - cx, dy: p.y - cy, dz: p.z, rz: p.rz, s: p.s}))});
+        items: S_.add.map(p => ({id: p.id, lib: p.lib, type: p.lib ? 'STAT' : undefined, dx: p.x - cx, dy: p.y - cy, dz: p.z, rz: p.rz, s: p.s}))});
       msg = `Scattered ${S_.add.length} ${set ? set.label.toLowerCase() : 'things'}`;
     }
     toast(msg + '. Undo takes the whole stroke back.');

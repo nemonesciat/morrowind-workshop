@@ -22,15 +22,94 @@ local lastTp = nil
 local timer = 0
 local cleanupPending = nil
 local failed = {}      -- refkey -> true when it could not be applied (don't retry every frame)
-local ghosts = {}      -- preview objects following the crosshair: obj -> true
+local ghosts = {}      -- preview objects following the crosshair: object id -> object (by id: an object
+                       -- passed in an event is a new handle, so it can't be a table key itself)
 local placedGhosts = {}  -- previews set down with Shift+J, waiting for the Workshop to confirm: { obj, t }
 local clock = 0
 local lastArm = nil
 local doorDest = {}    -- object id -> where a door placed while the game runs leads (it has no link of its own)
 local doorHandler = false
-
+local librecs = {}     -- Library records of the mod (lower-case id -> { tag, model, name })
+local alias = {}       -- Library record made after the game started -> the stand-in record made for it here
 local function say(fmt, ...)
   print('[WSLINK] ' .. string.format(fmt, ...))
+end
+
+-- Objects of a record: the game's own, or (for a Library model your mod got after the game started)
+-- a stand-in record with the same model, made here once
+local TYPES = { STAT = 'Static', ACTI = 'Activator', CONT = 'Container', MISC = 'Miscellaneous', DOOR = 'Door', LIGH = 'Light' }
+local function create(rid)
+  local ok, obj = pcall(world.createObject, rid, 1)
+  if ok and obj then return obj end
+  local lr = librecs[rid:lower()]
+  if not lr then return nil end
+  if not alias[rid:lower()] then
+    local made = nil
+    -- (a light is tried with all its settings, then fewer, in case this OpenMW doesn't take some)
+    local tries = lr.tag == 'LIGH' and { { 'Light', 3 }, { 'Light', 2 }, { 'Light', 1 }, { 'Static', 0 } }
+      or { { TYPES[lr.tag] or 'Static', 0 }, { 'Static', 0 } }
+    for _, try in ipairs(tries) do
+      local tname, level = try[1], try[2]
+      local t = types[tname]
+      local okR, rec = pcall(function()
+        local fields = { model = lr.model }
+        if tname ~= 'Static' then fields.name = lr.name ~= '' and lr.name or rid end
+        if tname == 'Miscellaneous' then fields.value = 1; fields.weight = 1 end
+        if tname == 'Container' then fields.weight = 0; fields.capacity = 100 end
+        if tname == 'Light' and lr.radius then
+          local f = lr.flags or 1
+          fields.radius = lr.radius
+          fields.color = util.color.rgb(lr.r / 255, lr.g / 255, lr.b / 255)
+          if level >= 2 then
+            fields.isDynamic = f % 2 == 1
+            fields.isFlicker = math.floor(f / 8) % 2 == 1
+            fields.isFire = math.floor(f / 16) % 2 == 1
+            fields.isFlickerSlow = math.floor(f / 64) % 2 == 1
+            fields.isPulse = math.floor(f / 128) % 2 == 1
+            fields.isPulseSlow = math.floor(f / 256) % 2 == 1
+            fields.isCarriable = math.floor(f / 2) % 2 == 1
+            fields.duration = -1
+            fields.weight = 0
+            fields.value = 0
+          end
+          if level >= 3 and lr.sound then fields.sound = lr.sound end
+        end
+        if fields.model == '' then fields.model = nil end
+        return world.createRecord(t.createRecordDraft(fields))
+      end)
+      if okR and rec then made = rec; break end
+    end
+    if not made then return nil end
+    alias[rid:lower()] = made.id
+    say('alias\t%s\t%s', made.id, rid)
+  end
+  local ok2, obj2 = pcall(world.createObject, alias[rid:lower()], 1)
+  if ok2 then return obj2 end
+  return nil
+end
+
+-- An object being moved this frame has a count of 0 until the move is done (end of the frame), and
+-- can't be removed until then: such ones are removed on a later frame.
+local toRemove = {}
+local function removeSoon(o)
+  if not (o and o:isValid()) then return end
+  if (o.count or 0) > 0 and pcall(function() o:remove() end) then return end
+  toRemove[#toRemove + 1] = { obj = o, tries = 0 }
+end
+local function removeLater()
+  for i = #toRemove, 1, -1 do
+    local r = toRemove[i]
+    r.tries = r.tries + 1
+    if not r.obj:isValid() or r.tries > 120 then
+      table.remove(toRemove, i)
+    elseif (r.obj.count or 0) > 0 and pcall(function() r.obj:remove() end) then
+      table.remove(toRemove, i)
+    end
+  end
+end
+
+local function same(objRid, rid)
+  return objRid == rid or (alias[rid] ~= nil and objRid:lower() == alias[rid]:lower())
 end
 
 local function split(s, sep)
@@ -177,6 +256,10 @@ local function parse(text)
       newWatch[f[2]][f[3]] = true
     elseif f[1] == 'version' then
       version = tonumber(f[2]) or 0
+    elseif f[1] == 'librec' and f[2] and f[2] ~= '' then
+      librecs[f[2]:lower()] = { tag = f[3], model = f[4], name = f[5] or '', radius = tonumber(f[6]),
+                                r = tonumber(f[7]) or 255, g = tonumber(f[8]) or 255, b = tonumber(f[9]) or 255,
+                                flags = tonumber(f[10]), sound = f[11] ~= '' and f[11] or nil }
     elseif f[1] == 'arm' then
       arm = { seq = tonumber(f[2]), id = f[3], name = f[4] }
     elseif f[1] == 'tp' then
@@ -213,7 +296,7 @@ local function findOriginal(e)
   if not e.orig then return nil end
   -- something the player is moving / has moved by hand: match where it originally stood
   for i, a in ipairs(adopted) do
-    if a.obj:isValid() and a.obj.recordId == e.recordId and (a.pos - e.orig[1]):length() < 24 then
+    if a.obj:isValid() and same(a.obj.recordId, e.recordId) and (a.pos - e.orig[1]):length() < 24 then
       table.remove(adopted, i)
       return a.obj, a
     end
@@ -222,7 +305,7 @@ local function findOriginal(e)
   if not cell then return nil end
   local best, bestD = nil, 24
   for _, o in ipairs(cell:getAll()) do
-    if o.recordId == e.recordId then
+    if same(o.recordId, e.recordId) then
       local d = (o.position - e.orig[1]):length()
       if d < bestD then best, bestD = o, d end
     end
@@ -235,6 +318,8 @@ local function place(obj, cell, t)
   if t[3] and math.abs((obj.scale or 1) - t[3]) > 0.001 then obj:setScale(t[3]) end
 end
 
+local putBack
+
 -- Put one entry into the state the Workshop asked for. Returns true when done.
 local function apply(e)
   if not playerNear(e) then return false end
@@ -245,7 +330,7 @@ local function apply(e)
     -- a preview the player just set down with Shift+J becomes the real thing (no flicker, no double)
     if not (l and l.obj:isValid()) then
       for i, gh in ipairs(placedGhosts) do
-        if gh.obj:isValid() and gh.obj.recordId == e.recordId and (gh.obj.position - e.target[1]):length() < 48 then
+        if gh.obj:isValid() and same(gh.obj.recordId, e.recordId) and (gh.obj.position - e.target[1]):length() < 48 then
           table.remove(placedGhosts, i)
           live[e.key] = { obj = gh.obj, kind = 'created' }
           l = live[e.key]
@@ -256,8 +341,8 @@ local function apply(e)
     if l and l.obj:isValid() then
       place(l.obj, cell, e.target)
     else
-      local ok, obj = pcall(world.createObject, e.recordId, 1)
-      if not ok then
+      local obj = create(e.recordId)
+      if not obj then
         say('error\tcannot create %s (new records only appear after restarting the game)', e.recordId)
         failed[e.key] = true
         return true
@@ -268,7 +353,13 @@ local function apply(e)
     doorDest[live[e.key].obj.id] = e.door
     return true
   end
-  -- mod / del: an object that already exists in the game
+  -- mod / del: an object that already exists in the game. (Something made here for this entry that
+  -- is now a different object, e.g. a lamp swapped back: that goes, and the original is found again.)
+  if l and l.kind == 'created' and l.obj:isValid() and not same(l.obj.recordId, e.recordId) then
+    putBack(l)
+    live[e.key] = nil
+    l = nil
+  end
   local obj = l and l.obj
   if not (obj and obj:isValid()) then
     local a
@@ -297,11 +388,11 @@ local function apply(e)
   return true
 end
 
-local function putBack(l)
+putBack = function(l)
   if not (l.obj and l.obj:isValid()) then return end
   if l.kind == 'created' then
     doorDest[l.obj.id] = nil
-    l.obj:remove()
+    removeSoon(l.obj)
   elseif l.orig then
     doorDest[l.obj.id] = nil
     local a = l.orig[2]
@@ -323,11 +414,12 @@ local pending = {}
 
 local function sync(text)
   local version, entries, tp, arm = parse(text)
+  -- requests already there when the game started are old: skip those, but not ones that come later
+  if lastArm == nil then lastArm = arm and arm.seq or 0 end
+  if lastTp == nil then lastTp = tp and tp.seq or 0 end
   -- something chosen in the Workshop to place in game
   if arm and arm.seq then
-    if lastArm == nil then
-      lastArm = arm.seq
-    elseif arm.seq > lastArm then
+    if arm.seq > lastArm then
       lastArm = arm.seq
       local player = world.players[1]
       if player then
@@ -338,9 +430,7 @@ local function sync(text)
   end
   -- teleport requests run once each
   if tp and tp.seq then
-    if lastTp == nil then
-      lastTp = tp.seq              -- ignore a request that was already there when the game started
-    elseif tp.seq > lastTp then
+    if tp.seq > lastTp then
       lastTp = tp.seq
       local player = world.players[1]
       local cell = tp.kind == 'int' and world.getCellByName(tp.cellName) or world.getExteriorCell(tp.gx, tp.gy)
@@ -404,8 +494,9 @@ local function onUpdate(dt)
   for i = #placedGhosts, 1, -1 do
     local gh = placedGhosts[i]
     if not gh.obj:isValid() then table.remove(placedGhosts, i)
-    elseif clock - gh.t > 15 then gh.obj:remove(); table.remove(placedGhosts, i) end
+    elseif clock - gh.t > 15 then removeSoon(gh.obj); table.remove(placedGhosts, i) end
   end
+  removeLater()
   timer = timer + dt
   if timer >= POLL then
     timer = 0
@@ -437,7 +528,7 @@ return {
     onSave = function()
       local list = {}
       for _, l in pairs(live) do list[#list + 1] = l end
-      for o in pairs(ghosts) do list[#list + 1] = { obj = o, kind = 'created' } end
+      for _, o in pairs(ghosts) do list[#list + 1] = { obj = o, kind = 'created' } end
       for _, gh in ipairs(placedGhosts) do list[#list + 1] = { obj = gh.obj, kind = 'created' } end
       return { live = list }
     end,
@@ -464,8 +555,8 @@ return {
     -- a preview of the object being placed
     WsGhostStart = function(data)
       local player = data.player or world.players[1]
-      local ok, obj = pcall(world.createObject, data.id, 1)
-      if not ok or not obj then
+      local obj = create(data.id)
+      if not obj then
         player:sendEvent('WsGhostFailed', { id = data.id })
         return
       end
@@ -473,28 +564,76 @@ return {
       local okF, pos = pcall(function() return player.position + (player.rotation * util.vector3(0, 150, 0)) end)
       if not okF or not pos then pos = player.position end
       obj:teleport(player.cell, pos, { onGround = false })
-      ghosts[obj] = true
+      ghosts[obj.id] = obj
       player:sendEvent('WsGhostReady', { obj = obj, id = data.id })
     end,
     WsGhostEnd = function(data)
       local o = data.obj
-      if o and ghosts[o] then
-        ghosts[o] = nil
-        if o:isValid() then o:remove() end
+      if o and ghosts[o.id] then
+        ghosts[o.id] = nil
+        removeSoon(o)
       end
     end,
     WsGhostDrop = function(data)
       local o = data.obj
-      if o and ghosts[o] then
-        ghosts[o] = nil
+      if o and ghosts[o.id] then
+        ghosts[o.id] = nil
         placedGhosts[#placedGhosts + 1] = { obj = o, t = clock }
+      end
+    end,
+    -- a prefab's preview: each of its objects the game can make, laid out as in the prefab
+    WsGhostGroupStart = function(data)
+      local player = data.player or world.players[1]
+      local out = {}
+      local okF, pos = pcall(function() return player.position + (player.rotation * util.vector3(0, 200, 0)) end)
+      if not okF or not pos then pos = player.position end
+      for _, it in ipairs(data.items or {}) do
+        local obj = it.id and it.id ~= '' and create(it.id) or nil
+        if obj then
+          obj:teleport(player.cell, pos + util.vector3(it.dx, it.dy, it.dz), { onGround = false })
+          ghosts[obj.id] = obj
+          out[#out + 1] = { obj = obj, dx = it.dx, dy = it.dy, dz = it.dz, rz = it.rz }
+        end
+      end
+      player:sendEvent('WsGhostGroupReady', { objs = out, seq = data.seq })
+    end,
+    WsGhostGroupMove = function(data)
+      local c, s = math.cos(data.yaw or 0), math.sin(data.yaw or 0)
+      for _, g in ipairs(data.objs or {}) do
+        local o = g.obj
+        if o and o:isValid() then
+          -- turned clockwise round the middle, like the Workshop places them
+          local p = data.pos + util.vector3(g.dx * c + g.dy * s, -g.dx * s + g.dy * c, g.dz)
+          if (o.count or 0) > 0 then                    -- (still on its way from the last move: skip a frame)
+            o:teleport(o.cell, p, { rotation = makeRot(0, 0, (g.rz or 0) + (data.yaw or 0)), onGround = false })
+          end
+        end
+      end
+    end,
+    WsGhostGroupEnd = function(data)
+      for _, g in ipairs(data.objs or {}) do
+        local o = g.obj
+        if o and ghosts[o.id] then
+          ghosts[o.id] = nil
+          removeSoon(o)
+        end
+      end
+    end,
+    WsGhostGroupDrop = function(data)
+      for _, g in ipairs(data.objs or {}) do
+        local o = g.obj
+        if o and ghosts[o.id] then
+          ghosts[o.id] = nil
+          placedGhosts[#placedGhosts + 1] = { obj = o, t = clock }
+        end
       end
     end,
     WsGrabMove = function(data)
       local o = data.obj
-      if not (o and o:isValid() and data.pos) then return end
+      if not (o and o:isValid() and data.pos) or (o.count or 0) == 0 then return end   -- (mid-move: next frame)
       local _, y, x = o.rotation:getAnglesZYX()
       o:teleport(o.cell, data.pos, { rotation = makeRot(x, y, data.yaw or 0), onGround = false })
+      if data.scale and math.abs((o.scale or 1) - data.scale) > 0.001 then pcall(function() o:setScale(data.scale) end) end
     end,
   },
 }

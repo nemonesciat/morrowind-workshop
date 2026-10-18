@@ -387,8 +387,11 @@ def _locate(db, rel):
     for c in cands:
         if c in arch:
             return ('archive', arch[c], None, c)
+    # loose files: the mod's own folder first (the Library's files are there; OpenMW always reads it)
+    dirs = [_mine_dir(db)] + [d for d in reversed(db.config['data'])
+                              if os.path.normcase(os.path.abspath(d)) != os.path.normcase(os.path.abspath(_mine_dir(db)))]
     for c in cands:
-        for d in reversed(db.config['data']):
+        for d in dirs:
             fp = os.path.join(d, *c.split('/'))
             if os.path.isfile(fp):
                 return ('loose', d, fp, c)

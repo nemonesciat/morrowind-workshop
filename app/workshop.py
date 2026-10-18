@@ -196,6 +196,11 @@ def _game_content_args():
     link.start_session()
     content += [SPARE_NAME, CONTENT_NAME]
     args += ['--data', link.data_dir()]              # (the link's files live in the Workshop's own folder)
+    # the folder the mod (and the Library's files) is in, when OpenMW's settings don't list it
+    mine = os.path.dirname(editing.plugin_path(db)) if db.project else None
+    known = {os.path.normcase(os.path.abspath(d)) for d in db.config.get('data', [])}
+    if mine and os.path.isdir(mine) and os.path.normcase(os.path.abspath(mine)) not in known:
+        args += ['--data', mine]
     # Pass the whole load order so our plugin is guaranteed to load last
     args += ['--replace', 'content']
     for c in content:
@@ -453,11 +458,12 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/file':
                 # textures for the 3D preview (only from the game's texture folders)
                 path = (q.get('path') or '').lower().replace('\\', '/')
-                data = db.meshes.read(path) if path.startswith('textures/') and '..' not in path else None
+                data = db.meshes.read(path) if path.startswith(('textures/', 'icons/', 'sound/')) and '..' not in path else None
                 if data is None:
                     return self._json({'error': 'not found'}, 404)
                 self.send_response(200)
-                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Type', {'.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.flac': 'audio/flac'}.get(
+                    os.path.splitext(path)[1], 'application/octet-stream'))
                 self.send_header('Content-Length', str(len(data)))
                 self.send_header('Cache-Control', 'max-age=3600')
                 self.end_headers()
@@ -547,6 +553,12 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/scatter/sets':
                 import scatter
                 self._json(scatter.sets(db, q.get('cell', '')))
+            elif u.path == '/api/library':
+                import library
+                self._json(library.listing(db))
+            elif u.path == '/api/library/textures':
+                import library
+                self._json(library.model_textures(db, int(q['i'])))
             elif u.path == '/api/brushes':
                 import scatter
                 self._json({'brushes': [scatter._clean(db, b) for b in scatter.load_brushes()]})
@@ -594,7 +606,47 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         n = int(self.headers.get('Content-Length') or 0)
+        if u.path == '/api/library/upload':
+            # a file dropped into the Library, as it is (not JSON): kept with the others of the same drop
+            import library
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            if n > 400 * 1024 * 1024:
+                return self._json({'error': 'That file is too big (over 400 MB).'}, 400)
+            try:
+                return self._json(library.receive(q.get('batch', ''), q.get('name', ''), self.rfile.read(n)))
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
+        if u.path == '/api/library/icon':
+            import library
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            try:
+                with edit_lock:
+                    return self._json(library.save_icon(db, q.get('id', ''), self.rfile.read(n)))
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
+        if u.path == '/api/pack/open':
+            # a shared pack (a zip), as it is
+            import pack
+            if n > 400 * 1024 * 1024:
+                return self._json({'error': 'That pack is too big (over 400 MB).'}, 400)
+            try:
+                with edit_lock:
+                    return self._json(pack.open_pack(db, self.rfile.read(n)))
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
         body = json.loads(self.rfile.read(n) or b'{}') if n else {}
+        if u.path == '/api/pack/make':
+            import pack
+            try:
+                data = pack.export(db, body.get('name'), body.get('prefabs') or [], body.get('brushes') or [], body.get('library') or [])
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/zip')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         try:
             if u.path == '/api/reload':
                 if db.state != 'loading':
@@ -822,6 +874,37 @@ class Handler(BaseHTTPRequestHandler):
                     m = mapdata.cellmap(db, body['cell'])
                     m['made'] = r
                     return self._json(m)
+                if u.path.startswith('/api/library/'):
+                    import library
+                    act = u.path.rsplit('/', 1)[1]
+                    if act == 'inspect':
+                        return self._json(library.inspect_batch(body.get('batch', '')))
+                    if act == 'import':
+                        return self._json({'added': library.import_batch(db, body.get('batch', ''), body.get('name'),
+                                                                         body.get('up') or 'y', body.get('size'), body.get('kind') or 'static',
+                                                                         body.get('collision') or 'shape', body.get('object'),
+                                                                         {'light': body.get('light'), 'door_sound': body.get('door_sound'),
+                                                                          'reach': body.get('reach')})})
+                    if act == 'record':
+                        return self._json(library.make_record(db, body.get('id', ''), body.get('kind'), body.get('name')))
+                    if act == 'remove':
+                        library.remove(db, body.get('id', ''))
+                        return self._json({'ok': True})
+                    if act == 'sound':
+                        # a Library sound: how loud / how far it carries, and its record for scripts
+                        e = library.set_sound(db, body.get('id', ''), body.get('volume'), body.get('reach'))
+                        if body.get('record'):
+                            e = dict(e, made=library.make_sound(db, e['id']))
+                        return self._json(e)
+                    if act == 'attach':
+                        # a sound playing where a selected object stands
+                        r = library.make_sound_source(db, body.get('id', ''), commit=False)   # (one undo step with the placing)
+                        p = [float(v) for v in body['p']]
+                        rk = editing.place_ref(db, body['cell'], r['id'], [p[0], p[1], p[2], 0, 0, 0], 1.0,
+                                               note='Added the sound "%s" here' % ((library.entry(body.get('id', '')) or {}).get('name') or r['id']))
+                        return self._json({'id': r['id'], 'ref': rk})
+                    if act == 'retexture':
+                        return self._json(library.retexture_record(db, int(body['i']), body.get('mapping') or {}, body.get('name')))
                 if u.path == '/api/brushes/save':
                     import scatter
                     return self._json(scatter.save_brush(db, body.get('brush') or {}))
@@ -944,6 +1027,17 @@ def model_for(q):
     """3D model of a record (by index i or id) for the preview, with resolved texture paths."""
     from esm import iter_subrecords, zstr
     from nif import mesh_from_nif
+    if q.get('model') and not q.get('i') and not q.get('id'):
+        # a model file itself (one in the Library, before anything uses it)
+        model = q['model']
+        if '..' in model:
+            return {'error': 'Unknown model'}
+        path = 'meshes/' + model.lower().replace('\\', '/')
+        raw = db.meshes.read(path)
+        shapes = mesh_from_nif(raw) if raw else None
+        for s in shapes or []:
+            s['tex'] = db.meshes.texture_path(s['tex'])
+        return {'model': model, 'shapes': shapes} if shapes else {'error': 'This model could not be read.', 'model': model}
     ri = int(q['i']) if q.get('i') else db.resolve_id(q.get('id', ''))
     if ri is None:
         return {'error': 'Unknown object'}

@@ -307,7 +307,7 @@ class MeshIndex:
         if not n.startswith('textures/'):
             n = 'textures/' + n
         base = n.rsplit('.', 1)[0]
-        for cand in (base + '.dds', n, base + '.tga', base + '.bmp'):
+        for cand in (base + '.dds', n, base + '.tga', base + '.bmp', base + '.png', base + '.jpg'):
             if cand in self.loose or cand in self.packed:
                 return cand
         return None

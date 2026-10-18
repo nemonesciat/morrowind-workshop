@@ -101,6 +101,8 @@ def decode_record(db, i):
     labels = dict(LABELS)
     if tag == 'INFO':
         labels.update(INFO_LABELS)
+    if tag == 'DOOR':
+        labels.update({'SNAM': 'Open Sound', 'ANAM': 'Close Sound'})
     if tag in ('ARMO', 'CLOT'):
         labels_after_indx = ARMOR_PART_LABELS
     else:

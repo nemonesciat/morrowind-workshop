@@ -81,8 +81,11 @@ def place(db, cell_hint, items, x, y, z=None, yaw=0.0, label=None):
     c_, s_ = math.cos(yaw), math.sin(yaw)
     placed, cells = [], set()
     mine = db.project.plugin.lower()
+    import library
     for it in items:
-        ri = db.resolve_id(it['id'])
+        # (your own Library models: their record is made in this mod when it doesn't have one yet)
+        rid = library.resolve(db, it['id'], it.get('lib'), it.get('type'))
+        ri = db.resolve_id(rid) if rid else None
         if ri is None or db.recs[ri][0] not in PLACEABLE:
             continue
         dx, dy = float(it.get('dx', 0)), float(it.get('dy', 0))
@@ -117,9 +120,16 @@ def from_refs(db, refs):
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     bottoms = [r['p'][2] + ((r['b'] or [0, 0, 0])[2]) * (r['s'] or 1) for r in rows]
     cz = min(bottoms)
-    return [{'id': r['id'], 'name': r['name'], 'type': r['type'], 'dx': round(r['p'][0] - cx, 2), 'dy': round(r['p'][1] - cy, 2),
-             'dz': round(r['p'][2] - cz, 2), 'rx': r['p'][3], 'ry': r['p'][4], 'rz': r['p'][5], 's': r['s'] or 1.0,
-             'b': r['b']} for r in rows]
+    import library
+    out = []
+    for r in rows:
+        it = {'id': r['id'], 'name': r['name'], 'type': r['type'], 'dx': round(r['p'][0] - cx, 2), 'dy': round(r['p'][1] - cy, 2),
+              'dz': round(r['p'][2] - cz, 2), 'rx': r['p'][3], 'ry': r['p'][4], 'rz': r['p'][5], 's': r['s'] or 1.0, 'b': r['b']}
+        e = library.entry_for_record(r['id'], db)
+        if e:
+            it['lib'] = e['id']                 # (one of your own models: it travels with the prefab)
+        out.append(it)
+    return out
 
 
 # ------------------------------------------------------------------ prefabs
@@ -151,7 +161,7 @@ def save_prefab(db, name, items, source=''):
         raise EditError('Select some objects first.')
     os.makedirs(PREFAB_DIR, exist_ok=True)
     path = os.path.join(PREFAB_DIR, _safe(name) + '.json')
-    keep = [{k: it[k] for k in ('id', 'name', 'type', 'dx', 'dy', 'dz', 'rx', 'ry', 'rz', 's', 'b') if k in it} for it in items]
+    keep = [{k: it[k] for k in ('id', 'name', 'type', 'dx', 'dy', 'dz', 'rx', 'ry', 'rz', 's', 'b', 'lib') if k in it} for it in items]
     with open(path, 'w', encoding='utf-8') as f:
         json.dump({'name': name, 'items': keep, 'saved': time.strftime('%Y-%m-%d %H:%M'), 'from': source}, f, indent=1)
     return {'ok': True, 'file': _safe(name)}

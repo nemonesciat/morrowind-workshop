@@ -10,6 +10,8 @@ this module follows like `tail -f`."""
 import json
 import math
 import os
+import random
+import re
 import shutil
 import struct
 import threading
@@ -17,7 +19,14 @@ import time
 
 import mapdata
 from esm import zstr
-from project import APP_DIR, ref_info, unb64
+from project import APP_DIR, join_subs, ref_info, unb64, zs
+
+
+def _num(s):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
 
 
 def editing_label(db, cell_key):
@@ -307,7 +316,8 @@ class LiveLink:
             if ri is None:
                 return False
             r = db.recs[ri]
-            return r[3] != db.proj_pidx or ('%s|%s' % (r[0], r[7])) in base_recs or len(db.versions(ri)) > 1
+            return (r[3] != db.proj_pidx or ('%s|%s' % (r[0], r[7])) in base_recs or len(db.versions(ri)) > 1 or
+                    self._standin_ok(r[0], r[7]))
 
         def reachable(ck):
             """The place exists in the game, for real or as a stand-in spare room."""
@@ -444,7 +454,98 @@ class LiveLink:
             lines += ['watch\titem\t%s' % n for n in sorted(self.watch[1])]
             lines += self.entries()
             lines += getattr(self, 'palette_lines', [])
+            lines += self._library_lines()
             self._write('\n'.join(lines) + '\n')
+
+    def _standin_ok(self, tag, key):
+        """A record made since the game started that the game can still show: it makes a stand-in
+        for Library models and for the mod's own lights (recoloured lamps, sound sources)."""
+        if tag not in ('STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH'):
+            return False
+        p = self.db.project
+        rec = p.records.get('%s|%s' % (tag, key)) if p else None
+        if not rec:
+            return False
+        if tag == 'LIGH':
+            return True
+        import library
+        from esm import iter_subrecords
+        model = next((zstr(d) for t, d in iter_subrecords(unb64(rec['data'])) if t == 'MODL'), '').replace('/', '\\').lower()
+        if not model.startswith(library.SUB + '\\'):
+            return False
+        # (a model file brought in after the game started isn't among the game's files yet)
+        full = os.path.join(library.data_dir(self.db), 'meshes', *model.split('\\'))
+        try:
+            return not self.session or os.path.getmtime(full) < self.session
+        except OSError:
+            return False
+
+    def _library_lines(self):
+        """For the in-game spawn menu: your Library models and prefabs, and the Library records the
+        mod has (the game makes stand-ins for ones made after it started)."""
+        out = []
+        try:
+            import groups
+            import library
+            from esm import iter_subrecords, zstr
+            for e in library.listing(self.db)['items']:
+                if e.get('type') == 'model' and e.get('ok'):
+                    out.append('lib\t%s\t%s\t%s\t%s' % (e['id'], (e.get('name') or e['id']).replace('\t', ' '),
+                                                        e.get('icon') or '', e.get('file') or ''))
+            for p in groups.prefabs():
+                out.append('prefab\t%s\t%s\t%d' % (p['file'], p['name'].replace('\t', ' '), len(p['items'])))
+                # where each of its objects sits, for the preview that follows the aim in game
+                for it in p['items'][:60]:
+                    out.append('pfitem\t%s\t%s\t%.1f\t%.1f\t%.1f\t%.4f' % (p['file'], it['id'], float(it.get('dx', 0)),
+                                                                        float(it.get('dy', 0)), float(it.get('dz', 0)),
+                                                                        float(it.get('rz', 0))))
+            p = self.db.project
+            for k, rec in (p.records.items() if p else []):
+                if rec['tag'] not in ('STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH'):
+                    continue
+                from project import unb64
+                subs = dict((t, d) for t, d in iter_subrecords(unb64(rec['data'])))
+                model = zstr(subs.get('MODL', b'')).replace('/', '\\')
+                # Library models, and lights made in the mod (recoloured in game, sound sources)
+                if model.lower().startswith(library.SUB + '\\') or rec['tag'] == 'LIGH':
+                    line = 'librec\t%s\t%s\t%s\t%s' % (zstr(subs.get('NAME', b'')), rec['tag'], ('meshes\\' + model) if model else '',
+                                                       zstr(subs.get('FNAM', b'')).replace('\t', ' '))
+                    if rec['tag'] == 'LIGH' and len(subs.get('LHDT', b'')) >= 24:
+                        # (a light's stand-in needs its colour and reach)
+                        _w, _v, _t, radius, r_, g_, b_, _a, flags = struct.unpack('<fiiiBBBBI', subs['LHDT'][:24])
+                        line += '\t%d\t%d\t%d\t%d\t%d\t%s' % (radius, r_, g_, b_, flags, zstr(subs.get('SNAM', b'')))
+                    out.append(line)
+        except Exception as e:
+            print('library lines for the game failed:', e)
+        return out
+
+    def _arm_library(self, entry_id):
+        """Chosen from My Library in the game's build menu: its record in the mod (made now if needed),
+        then readied in game like anything chosen in the Workshop."""
+        import library
+        with self.edit_lock:
+            try:
+                r = library.make_record(self.db, entry_id)
+            except Exception as e:
+                self._note('Could not use that Library model: %s' % e)
+                return
+        e = library.entry(entry_id) or {}
+        self.arm_from_workshop(r['id'], e.get('name') or r['id'])
+
+    def _on_placeprefab(self, pf_file, x, y, z, yaw, kind, name):
+        import groups
+        pf = next((p for p in groups.prefabs() if p['file'] == pf_file), None)
+        if not pf:
+            self._note('That prefab is gone.')
+            return
+        key = self._key_for(kind, name, x, y)
+        with self.edit_lock:
+            try:
+                r = groups.place(self.db, key, pf['items'], x, y, z, yaw, pf['name'])
+                self.pick_seq += 1
+                self.pick = {'seq': self.pick_seq, 'cell': key, 'ref': r['placed'][-1]['ref'], 'id': '', 'placed': True}
+            except Exception as e:
+                self._note('Could not place %s: %s' % (pf['name'], e))
 
     def arm_from_workshop(self, rid, name):
         """Something was chosen in the Workshop: ready it in game too (with its preview)."""
@@ -522,6 +623,22 @@ class LiveLink:
         self.last_seen = self.last_event = time.time()
         self.run_linked = True
         kind = f[0]
+        # stand-in records the game made for Library models: the Workshop knows them by their real ids
+        aliases = self.__dict__.setdefault('aliases', {})
+        if kind in ('pick', 'move', 'del', 'lightcolor') and len(f) > 1:
+            f = [f[0], aliases.get(f[1].lower(), f[1])] + list(f[2:])
+        if kind == 'alias' and len(f) >= 3:
+            aliases[f[1].lower()] = f[2]
+            return
+        if kind == 'libarm' and len(f) >= 2:
+            threading.Thread(target=self._arm_library, args=(f[1],), daemon=True).start()
+            return
+        if kind == 'placebrush' and len(f) >= 5:
+            self._on_placebrush(f[1], f[2], f[3], f[4])
+            return
+        if kind == 'placeprefab' and len(f) >= 8:
+            self._on_placeprefab(f[1], float(f[2]), float(f[3]), float(f[4]), float(f[5]), f[6], f[7])
+            return
         if kind == 'pos' and len(f) >= 9:
             self.player = {'kind': f[1], 'name': f[2], 'gx': int(f[3]), 'gy': int(f[4]), 'x': float(f[5]),
                            'y': float(f[6]), 'z': float(f[7]), 'yaw': float(f[8]),
@@ -535,13 +652,18 @@ class LiveLink:
             if len(f) >= 10 and f[9]:
                 self.armed = {'id': f[9], 'name': f[9]}
             exact = len(f) >= 11 and f[10] == 'exact'      # position of the in-game preview, already resting
-            self._on_placeat(float(f[1]), float(f[2]), float(f[3]), float(f[4]), f[5], f[6], exact)
+            scale = _num(f[11]) if len(f) >= 12 else None   # made bigger or smaller in game
+            self._on_placeat(float(f[1]), float(f[2]), float(f[3]), float(f[4]), f[5], f[6], exact, scale)
         elif kind == 'arm' and len(f) >= 2:
             self.armed = {'id': f[1], 'name': f[2] if len(f) > 2 else f[1]}
         elif kind == 'disarm':
             self.armed = None             # stopped placing in game (Shift+X)
         elif kind == 'move' and len(f) >= 13:
-            self._on_move(f[1], [float(v) for v in f[2:5]], [float(v) for v in f[5:8]], float(f[8]), f[9], f[10])
+            self._on_move(f[1], [float(v) for v in f[2:5]], [float(v) for v in f[5:8]], float(f[8]), f[9], f[10],
+                          _num(f[13]) if len(f) >= 14 else None)
+        elif kind == 'lightcolor' and len(f) >= 11:
+            self._on_lightcolor(f[1], float(f[2]), float(f[3]), float(f[4]), f[5], f[6], int(f[7]), int(f[8]), int(f[9]),
+                                float(f[10]))
         elif kind == 'del' and len(f) >= 9:
             self._on_delete(f[1], float(f[2]), float(f[3]), float(f[4]), f[5], f[6])
         elif kind == 'undo':
@@ -599,7 +721,7 @@ class LiveLink:
         self.pick_seq += 1
         self.pick = {'seq': self.pick_seq, 'cell': key, 'ref': best['k'] if best else None, 'id': rid}
 
-    def _on_move(self, rid, orig, new, yaw, kind, name):
+    def _on_move(self, rid, orig, new, yaw, kind, name, scale=None):
         import editing
         key, r = self._find_ref(rid, orig[0], orig[1], orig[2], kind, name)
         if not r:
@@ -607,9 +729,11 @@ class LiveLink:
             return
         p = list(r['p'])
         p[0], p[1], p[2], p[5] = new[0], new[1], new[2], yaw
+        if scale is not None and abs(scale - (r.get('s') or 1.0)) < 0.001:
+            scale = None                                   # (its size didn't change)
         with self.edit_lock:
             try:
-                editing.move_ref(self.db, key, r['k'], p)
+                editing.move_ref(self.db, key, r['k'], p, scale)
                 self.pick_seq += 1
                 self.pick = {'seq': self.pick_seq, 'cell': key, 'ref': r['k'], 'id': rid, 'moved': True}
             except Exception as e:
@@ -656,6 +780,11 @@ class LiveLink:
                     for it in g['items']:
                         name = (it['name'] or '').replace('\t', ' ')
                         lines.append('palette\t%s\t%s\t%s' % (it['id'], name, g['name']))
+                # brushes for painting in game: what grows in this region (outdoors) and your own
+                try:
+                    lines += self._brush_lines(cell)
+                except Exception as e:
+                    print('brushes for game failed:', e)
                 self.palette_lines = lines
                 self.write_state(bump=False)
             except Exception as e:
@@ -664,7 +793,67 @@ class LiveLink:
                 self._palette_busy = False
         threading.Thread(target=work, daemon=True).start()
 
-    def _on_placeat(self, x, y, z, yaw, kind, name, exact=False):
+    BRUSH_GAP = {'grass': 110, 'plants': 200, 'rocks': 380, 'trees': 650, 'logs': 700}
+
+    def _brush_lines(self, cell):
+        import scatter
+        sets = scatter.sets(self.db, cell).get('sets', [])
+        self.brush_sets = {s['key']: s for s in sets}
+        return ['brush\t%s\t%s\t%d\t%d' % (s['key'], s['label'].replace('\t', ' '),
+                                           s.get('gap') or self.BRUSH_GAP.get(s['key'], 200), len(s['items']))
+                for s in sets if s.get('items')]
+
+    def _on_placebrush(self, set_key, kind, name, pts_text):
+        """A patch painted with a brush in game: the game found the ground at each spot; what goes on
+        each (the brush's mix), its size and turn are picked here, as the Workshop's own brush does."""
+        import groups
+        pts = []
+        for p in pts_text.split(';'):
+            try:
+                x, y, z = (float(v) for v in p.split(','))
+                pts.append((x, y, z))
+            except ValueError:
+                continue
+        if not pts:
+            return
+        key = self._key_for(kind, name, pts[0][0], pts[0][1])
+        st = getattr(self, 'brush_sets', {}).get(set_key)
+        if not st:
+            try:
+                self._brush_lines(key)
+                st = self.brush_sets.get(set_key)
+            except Exception:
+                st = None
+        if not st or not st.get('items'):
+            self._note('That brush is gone.')
+            return
+        items = st['items']
+        total = sum(max(1, i.get('n', 1)) for i in items)
+        outdoors = key.startswith('#')
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        rows = []
+        for x, y, z in pts:
+            pick, it = random.random() * total, items[0]
+            for i in items:
+                pick -= max(1, i.get('n', 1))
+                if pick <= 0:
+                    it = i
+                    break
+            s = it['smin'] + random.random() * max(0.0, it['smax'] - it['smin'])
+            sink = it.get('sink', 0.0) if outdoors else 0.0
+            rows.append({'id': it['id'], 'lib': it.get('lib'), 'type': 'STAT' if it.get('lib') else None,
+                         'dx': x - cx, 'dy': y - cy, 'dz': z - sink * s - it.get('zmin', 0.0) * s,
+                         'rz': random.random() * math.pi * 2, 's': round(s, 2)})
+        with self.edit_lock:
+            try:
+                r = groups.place(self.db, key, rows, cx, cy, 0.0, 0.0, st['label'].lower())
+                self.pick_seq += 1
+                self.pick = {'seq': self.pick_seq, 'cell': key, 'ref': r['placed'][-1]['ref'], 'id': '', 'placed': True}
+            except Exception as e:
+                self._note('Could not paint with %s: %s' % (st['label'], e))
+
+    def _on_placeat(self, x, y, z, yaw, kind, name, exact=False, scale=None):
         import editing
         if not self.armed:
             self._note('Pick something to place in the Workshop first (search or palette), then press Shift+J.')
@@ -672,14 +861,66 @@ class LiveLink:
         key = self._key_for(kind, name, x, y)
         ri = self.db.resolve_id(self.armed['id'])
         b = mapdata.object_bounds(self.db, ri) if ri is not None else None
-        z0 = z if exact else z - (b[2] if b else 0.0)      # rest the object's bottom on the surface
+        s = max(0.5, min(2.0, scale)) if scale else 1.0
+        z0 = z if exact else z - (b[2] * s if b else 0.0)      # rest the object's bottom on the surface
         with self.edit_lock:
             try:
-                rk = editing.place_ref(self.db, key, self.armed['id'], [x, y, z0, 0, 0, yaw], 1.0)
+                rk = editing.place_ref(self.db, key, self.armed['id'], [x, y, z0, 0, 0, yaw], s)
                 self.pick_seq += 1
                 self.pick = {'seq': self.pick_seq, 'cell': key, 'ref': rk, 'id': self.armed['id'], 'placed': True}
             except Exception as e:
                 self._note('Could not place %s: %s' % (self.armed['id'], e))
+
+    def _on_lightcolor(self, rid, x, y, z, kind, name, r, g, b, mul):
+        """A light recoloured (or made brighter / dimmer) in game. Colour belongs to the kind of light,
+        so this lamp gets a light record of its own with the new colour (made once, then reused)."""
+        import editing
+        from esm import iter_subrecords
+        key, ref = self._find_ref(rid, x, y, z, kind, name, limit=40.0)
+        ri = self.db.resolve_id(rid)
+        if not ref or ri is None or self.db.recs[ri][0] != 'LIGH':
+            self._note('Could not find that light in the Workshop.')
+            return
+        rec = self.db.recs[ri]
+        _t, _flags, data = self.db.files[rec[3]].record_at(rec[4])
+        subs = [(t, bytes(d)) for t, d in iter_subrecords(data)]
+        lh = next((d for t, d in subs if t == 'LHDT'), None)
+        if not lh or len(lh) < 24:
+            self._note('%s has no light settings to change.' % rid)
+            return
+        w, v, tm, radius, r0, g0, b0, a0, flags = struct.unpack('<fiiiBBBBI', lh[:24])
+        if r < 0:
+            r, g, b = r0, g0, b0
+        radius = int(max(16, min(4096, round(radius * mul))))
+        if abs(mul - 1) < 0.001 and (r, g, b) == (r0, g0, b0):
+            return                                          # (nothing to change)
+        # the same base light in the same colour and reach: one record, reused
+        base = re.sub(r'_c[0-9a-f]{6}(_r\d+)?$', '', rid.lower())
+        base_radius = radius
+        bi = self.db.resolve_id(base)
+        if bi is not None and self.db.recs[bi][0] == 'LIGH':
+            bd = next((d for t, d in iter_subrecords(self.db.files[self.db.recs[bi][3]].record_at(self.db.recs[bi][4])[2])
+                       if t == 'LHDT'), None)
+            if bd and len(bd) >= 16:
+                base_radius = struct.unpack_from('<i', bd, 12)[0]
+        tail = '_c%02x%02x%02x' % (r, g, b) + ('_r%d' % radius if radius != base_radius else '')
+        new_id = base[:31 - len(tail)] + tail                # (IDs can be 31 letters long)
+        new_lh = struct.pack('<fiiiBBBBI', w, v, tm, radius, r, g, b, a0, flags) + lh[24:]
+        with self.edit_lock:
+            try:
+                have = self.db.resolve_id(new_id)
+                p = self.db.project
+                if have is None or p.records.get('LIGH|%s' % new_id.lower()):
+                    out = [(t, zs(new_id) if t == 'NAME' else (new_lh if t == 'LHDT' else d)) for t, d in subs]
+                    p.set_record('LIGH', new_id.lower(), 0, join_subs(out), created=have is None)
+                    self.db.sync_project()
+                elif self.db.recs[have][0] != 'LIGH':
+                    raise ValueError('the name %s is taken' % new_id)
+                editing.swap_ref(self.db, key, ref['k'], new_id)
+                self.pick_seq += 1
+                self.pick = {'seq': self.pick_seq, 'cell': key, 'ref': ref['k'], 'id': new_id, 'placed': True}
+            except Exception as e:
+                self._note('Could not change the light: %s' % e)
 
     def status(self):
         self.resume()

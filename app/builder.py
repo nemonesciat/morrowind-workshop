@@ -421,7 +421,7 @@ def plan(db, style, rooms, stairs=None, floors_as='auto'):
 
 
 def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None, lighting='normal',
-                   lights=True, outside_door=None, stairs=None, commit=True):
+                   lights=True, outside_door=None, stairs=None, commit=True, exit_door=None):
     """rooms: [{'name', 'x', 'y', 'w', 'h', 'floor'}] in tiles (x east, y north, floor 0 = ground,
     1 = upstairs, -1 = cellar). doors: [{'rooms': [a, b]}] on the same floor. stairs: optional
     [{'rooms': [lower room, upper room]}]; floors are joined by stairs anyway.
@@ -515,6 +515,8 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                     break
     # (any door will do for the way out: it gets its own link outside; the game's front doors first)
     exit_ways = sorted((e for e in learned if e['b'] == 'out' and e['door']), key=lambda e: (not e['load'], -e['uses']))[:10]
+    if exit_door:
+        exit_ways = []                   # (a given way out, e.g. a ladder: it stands against the wall)
     learned_edges = []   # (tile, side, way): doorways to build from what the game does
 
     load_jamb = next((j for j in kp['jambs'] if j.get('load') and j['width'] >= T * 0.9), None)
@@ -633,7 +635,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         _sc, exit_tile, exit_side, exit_way = best
         need[exit_tile][exit_side] = exit_way['a']
         exit_how = 'learned'
-    for i in sorted(range(len(outer)), key=lambda i: abs(i - len(outer) // 2)) if not exit_way else []:
+    for i in sorted(range(len(outer)), key=lambda i: abs(i - len(outer) // 2)) if not exit_way and not exit_door else []:
         t, s = outer[i]
         if frame_style and load_jamb:
             need[t][s] = 'open'
@@ -769,6 +771,8 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
     door_id = None
     doors_here = _co_used(db, kp, 'DOOR', lambda k: 'load' in k or 'door' in k)
     door_id = doors_here[0] if doors_here else 'in_hlaalu_loaddoor_01'
+    if exit_door:
+        door_id = exit_door
     db_door = db.resolve_id(door_id)
     if db_door is None:
         raise EditError('Could not find a door to use for the way out.')
@@ -1045,6 +1049,9 @@ def build_house(db, name, style, rooms, doors=None, exit=None, entrance=None, li
     inner = next((e['door'] for e in learned if e['door'] and e['b'] != 'out'), None) or \
         next((e['door'] for e in learned if e['door']), None)
     up_door = inner if inner and db.resolve_id(inner) is not None else 'in_hlaalu_door'
+    # the way up out of a cellar: a ladder, as in the game's own cellars (a door if there's none)
+    ladder = next((l for l in ('t_de_set_ladderload_03', 'ex_mh_pav_ladder_01', 'in_mh_pav_ladder', 't_imp_setkva_ladder_01')
+                   if db.resolve_id(l) is not None), None)
     traps = _co_used(db, kp, 'DOOR', lambda k: 'trapdoor' in k)
     trap = traps[0] if traps else 'in_h_trapdoor_01'
     if db.resolve_id(up_door) is None or db.resolve_id(trap) is None:
@@ -1072,7 +1079,8 @@ def build_house(db, name, style, rooms, doors=None, exit=None, entrance=None, li
             out = build_interior(db, title(f), style, rs, ds, {'room': keep.index(here)},
                                  {'cell': built[parent]['key'], 'x': spot['x'], 'y': spot['y'], 'z': spot['z'],
                                   'rz': spot['rz'], 'arrive': spot['arrive']},
-                                 lighting, lights, up_door if f > 0 else trap, commit=False)
+                                 lighting, lights, up_door if f > 0 else trap, commit=False,
+                                 exit_door=ladder if f < 0 else None)
             built[parent].setdefault('_links', []).append(spot['tile'])
         out['_rooms_in'] = rs
         built[f] = out

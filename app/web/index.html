@@ -564,6 +564,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,#2c261d,#16130f)}
     <button data-view="browse" class="on">Browse</button>
     <button data-view="world">World map</button>
     <button data-view="createv">Create</button>
+    <button data-view="library" title="Your own models and textures">Library</button>
     <button data-view="chars">Characters</button>
     <button data-view="dialog">Dialogue</button>
     <button data-view="scripts">Scripts</button>
@@ -623,6 +624,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,#2c261d,#16130f)}
     <aside class="wside" id="wside"></aside>
   </div>
   <div class="view" id="createv"><div class="wrap" id="createwrap"></div></div>
+  <div class="view" id="library"><div class="wrap" id="librarywrap"></div></div>
   <div class="view" id="guide"><div class="wrap guide" id="guidewrap"></div></div>
   <div class="view" id="settings"><div class="wrap" id="settingswrap" style="max-width:860px"></div></div>
   <div class="view" id="dialog"><aside class="dside" id="dside"></aside><main class="dmain" id="dmain"></main></div>
@@ -1027,6 +1029,7 @@ function showView(v){
   if (v === 'guide') renderGuide();
   if (v === 'settings') renderSettings();
   if (v === 'createv') renderCreate();
+  if (v === 'library') renderLibrary();
   if (v === 'dialog') renderDialog();
   if (v === 'chars') renderChars();
   if (v === 'scripts') renderScripts();
@@ -1930,10 +1933,12 @@ function linkHtml(){
     ${pend ? '<div class="msg" style="margin:4px 0">Your changes are saved. The game keeps your mod file open, so the file itself gets updated the moment you close the game.</div>' : ''}
     ${(LINK.spares || []).length ? `<div class="msg" style="margin:6px 0">New rooms you can visit right away: ${LINK.spares.map(s => esc(s.name)).join(', ')}. Until the next restart the game calls ${LINK.spares.length > 1 ? 'them' : 'it'} "${esc(LINK.spares[0].spare)}"${LINK.spares.length > 1 ? ' etc.' : ''}. Lighting is plain until then.</div>` : ''}
     <div style="line-height:1.7;margin-top:4px">In game (hold Shift):<br>
-      <kbd>Shift+B</kbd> build menu: search &amp; suggestions<br>
+      <kbd>Shift+B</kbd> build menu: search, suggestions, your Library, prefabs and brushes<br>
+      <span class="msg">With a brush: Shift+J paints a patch where you aim, PageUp/PageDown make it bigger or smaller.</span><br>
       <kbd>Shift+J</kbd> place ${LINK.armed ? `<b>${esc(LINK.armed.name)}</b>` : 'the chosen object'} where its preview stands<br>
       <span class="msg">To place something you chose here in game too, press "Place it in game too" above. Shift+X in game stops placing.</span><br>
-      <kbd>Shift+G</kbd> grab &amp; move (wheel turns it) · <kbd>Shift+X</kbd> cancel<br>
+      <kbd>Shift+G</kbd> grab &amp; move (wheel turns it, <kbd>Ctrl</kbd>+wheel or <kbd>+</kbd>/<kbd>-</kbd> resizes) · <kbd>Shift+X</kbd> cancel<br>
+      <kbd>Shift+L</kbd> on a light: change its colour or brightness<br>
       <kbd>Shift+K</kbd> select here · <kbd>Shift+Del</kbd> remove · <kbd>Shift+Z</kbd> undo</div></details>
     ${(LINK.messages || []).filter(m => !LINK_HIDDEN.has(m)).map(m => `<div class="msg err" style="margin-top:4px;display:flex;gap:6px;align-items:flex-start"><span style="flex:1">${esc(m)}</span><button class="xbtn" data-msgx="${esc(m)}" title="Dismiss">✕</button></div>`).join('')}</div>`;
 }
@@ -2080,7 +2085,7 @@ function renderWside(){
         <div class="msg">${esc(S.typeLabels[sel.type] || 'unknown type')} · ${sel.mine ? '<span class="mine">your mod</span>' : 'from ' + esc(sel.src)}</div></div></div>
       <div class="xyz"><div><label>X</label><input class="inp" id="s-x" value="${sel.p[0].toFixed(1)}"></div><div><label>Y</label><input class="inp" id="s-y" value="${sel.p[1].toFixed(1)}"></div><div><label>Height</label><input class="inp" id="s-z" value="${sel.p[2].toFixed(1)}"></div></div>
       <div class="two"><div><label>Turn (degrees)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div></div>
-      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
+      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
       <div class="dd" style="margin-top:10px"><input class="inp" id="w-swap" placeholder="Swap for… (search for a replacement)" autocomplete="off"><div class="ddlist" id="w-swap-l"></div></div>
       ${sel.type === 'DOOR' ? `<h3>Leads to</h3>
         ${sel.to ? `<div style="font-size:13.5px">→ <span class="lnk" data-sa="gotodest">${esc(sel.to.cell || sel.to.label || 'outdoors (' + sel.to.key.slice(1) + ')')}</span></div>
@@ -2425,6 +2430,8 @@ async function selAction(a){
   if (a === 'talk') return openCharacterDialogue(sel.id);
   if (a === 'char') return cOpen(sel.id);
   if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
+  if (a === 'retex'){ if (!await needProject()) return; return libRetexture(sel).catch(e => toast(e.message, true)); }
+  if (a === 'sound'){ if (!await needProject()) return; return libAttachSound(sel, W.sel.cell).catch(e => toast(e.message, true)); }
   if (a === 'gotodest' && sel.to){ await worldOpen(sel.to.key); return; }
   if (!await needProject()) return;
   if (a === 'unlink'){
@@ -3088,6 +3095,7 @@ poll();
 </script>
 <script src="/web/planner.js"></script>
 <script src="/web/brushes.js"></script>
+<script src="/web/library.js"></script>
 <script src="/web/loadorder.js"></script>
 <script src="/web/help.js"></script>
 <script src="/web/demo.js"></script>

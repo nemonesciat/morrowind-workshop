@@ -101,11 +101,19 @@ _item_cache = {}
 
 
 def load_brushes():
+    if not os.path.exists(BRUSH_FILE):
+        return []
     try:
-        with open(BRUSH_FILE, encoding='utf-8') as f:
+        with open(BRUSH_FILE, encoding='utf-8-sig') as f:
             data = json.load(f)
         return [b for b in data.get('brushes', []) if isinstance(b, dict) and b.get('id')]
     except (OSError, ValueError):
+        # (kept aside rather than written over)
+        import time
+        try:
+            os.replace(BRUSH_FILE, BRUSH_FILE + '.unreadable-%d' % int(time.time()))
+        except OSError:
+            pass
         return []
 
 
@@ -124,11 +132,26 @@ def _clean(db, b):
         rid = str(it.get('id') or '').strip()
         if not rid or rid.lower() in seen:
             continue
+        import library
+        lib = it.get('lib') or ((library.entry_for_record(rid, db) or {}).get('id'))
         ri = db.resolve_id(rid)
+        if ri is None and lib and library.entry(lib):
+            # one of your own Library models, not (yet) in this mod: its record is made when it's scattered
+            seen.add(rid.lower())
+            e = library.entry(lib)
+            sz = e.get('size') or [40, 40, 40]
+            d = {'name': e.get('name', ''), 'n': 0, 'smin': 0.9, 'smax': 1.1, 'sink': 0.0, 'size': [round(v) for v in sz], 'zmin': 0.0}
+            num = lambda k, lo, hi, dflt: max(lo, min(hi, float(it[k]))) if isinstance(it.get(k), (int, float)) else dflt
+            smin = num('smin', 0.5, 2.0, d['smin'])
+            items.append(dict(d, id=rid, lib=lib, weight=num('weight', 0.1, 10, 1.0), smin=round(smin, 2),
+                              smax=round(max(smin, num('smax', 0.5, 2.0, d['smax'])), 2), sink=round(num('sink', 0, 500, 0.0), 1)))
+            continue
         if ri is None or db.recs[ri][0] not in ('STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR', 'ALCH', 'APPA', 'BOOK', 'CLOT', 'ARMO', 'WEAP'):
             continue
         seen.add(rid.lower())
         d = item_defaults(db, rid)
+        if lib:
+            d['lib'] = lib
         num = lambda k, lo, hi, dflt: max(lo, min(hi, float(it[k]))) if isinstance(it.get(k), (int, float)) else dflt
         smin = num('smin', 0.5, 2.0, d['smin'])
         smax = max(smin, num('smax', 0.5, 2.0, d['smax']))
