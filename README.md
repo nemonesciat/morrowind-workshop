@@ -26,6 +26,13 @@ repository is the source code it is built from.
     with a secret) and the joining side, sending each change as the undo's before/after diff;
     `upnp.py` asks the home router to open the port. `packshelf.py` is the pack shelf (packs from
     folders and links).
+  - `uses.py` is the Use report (where something is used); `saves.py` reads the start of OpenMW's
+    save files so Play here can start as one of your characters.
+  - In `app/web`: `panels.js` is the panel system (docks, floating windows, tabs, layouts), used by
+    `worldpanels.js` (World map) and `pagepanels.js` (the other pages); `comfort.js` has the status
+    bar, right-click menus, Ctrl+K palette and shortcuts; `qol.js` the modder comforts (changes on
+    the map, hiding, doors, search and replace); `setups.js` Play as and test setups; `theme.js` the
+    themes.
   - `link_scripts/` are the OpenMW Lua scripts for the live link with the running game.
 - **`packaging/`**: everything that turns `app/` into the Windows installer.
   - `build.py` makes `packaging/out/Morrowind Workshop Setup.exe`.
