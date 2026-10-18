@@ -72,7 +72,9 @@ def _pick(kp, need):
             clutter = sum(pat['cover'].get(s, 0) for s in kits.SIDES if need[s] == 'open')
             # pieces no real interior uses are often unfinished or special: only as a last resort
             # (a missing wall can be closed with a loose wall piece, when the style has them)
-            score = ((stubs, len(missing)) if kp['walls'] else (len(missing), stubs)) + (p['uses'] == 0, round(clutter, 1), -p['uses'])
+            # (and a piece with its own ceiling over one without: some styles have both)
+            score = ((stubs, len(missing)) if kp['walls'] else (len(missing), stubs)) + \
+                (p['uses'] == 0, not pat.get('ceiling'), round(clutter, 1), -p['uses'])
             if best is None or score < best[0]:
                 best = (score, p, q, missing, pat)
     if best is None:
@@ -140,6 +142,21 @@ def _facing(db, ri, inward, default):
     return best
 
 
+def plain_wall(kp, db=None):
+    """The style's loose wall for closing a side: a plain one (not an alcove or a thick decorated one)
+    when it has one, else the one used most. With db: of those, one that covers the whole side, seen
+    from the room (some have arched or carved tops that leave the void showing above them)."""
+    walls = kp['walls']
+    plain = [w for w in walls if 'alc' not in w['id'].lower() and 'niche' not in w['id'].lower() and w['thick'] <= 48]
+    pool = plain or walls
+    if db is not None and len(walls) > 1:
+        import seethrough
+        best = max(walls, key=lambda w: (round(seethrough.wall_cover(db, w['ri'], kp['height']), 1), w in pool, w['uses']))
+        if seethrough.wall_cover(db, best['ri'], kp['height']) > seethrough.wall_cover(db, pool[0]['ri'], kp['height']) + 0.05:
+            return best
+    return pool[0]
+
+
 def _centred(db, ri, x, y, rot, scale=1.0):
     """Where to put a model's origin so the middle of the model (not its origin, which for many
     doors is the hinge or somewhere else entirely) lands on (x, y) after turning it by rot."""
@@ -149,6 +166,25 @@ def _centred(db, ri, x, y, rot, scale=1.0):
     cx, cy = (b[0] + b[3]) / 2 * scale, (b[1] + b[4]) / 2 * scale
     wx, wy = cx * math.cos(rot) + cy * math.sin(rot), -cx * math.sin(rot) + cy * math.cos(rot)
     return x - wx, y - wy
+
+
+def _pick_under(kp, want, side, way):
+    """The floor piece the game puts under this doorway (way: from kits.edge_doors), turned so its
+    doorway side faces this side, when it fits the spot: (piece, q, missing walls, pattern) or None."""
+    pid, own = way.get('piece'), way.get('piece_side')
+    p = next((x for x in kp['pieces'] if pid and x['id'].lower() == pid.lower()), None)
+    if not p or way.get('piece_uses', 0) < 3:          # (seen enough to be how the style does it)
+        return None
+    q = (kits.SIDES.index(side) - kits.SIDES.index(own)) % 4
+    pat = kits.rotate(p['pattern'], q)
+    missing = []
+    for s in kits.SIDES:
+        if want[s] == 'wall':
+            if pat[s] != 'wall':
+                missing.append(s)
+        elif pat[s] != want[s]:
+            return None                  # (a wall or doorway where the room carries on)
+    return p, q, missing, pat
 
 
 def _co_used(db, kp, tag, want=None):
@@ -562,7 +598,9 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                 need[t][s], need[n2][o] = way['a'], way['b']
                 bad = badness([t, n2])
                 if bad is not None and bad[0] == 0:
-                    score = (bad[1], rank, wn)
+                    # (where the game's own floor piece for this doorway fits first: elsewhere an
+                    # ordinary piece beside the frame can leave a gap)
+                    score = (bad[1], _pick_under(kp, need[t], s, way) is None, rank, wn)
                     if best is None or score < best[0]:
                         best = (score, t, s, way)
             need[t][s], need[n2][o] = saved
@@ -627,7 +665,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             need[t][s] = way['a']
             bad = badness([t])
             if bad is not None and bad[0] == 0:
-                score = (bad[1], rank, wn)
+                score = (bad[1], _pick_under(kp, need[t], s, way) is None, rank, wn)
                 if best is None or score < best[0]:
                     best = (score, t, s, way)
         need[t][s] = 'wall'
@@ -664,6 +702,29 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         return t[2] * H                          # how high this tile's floor is
 
     # ---- stairs between floors
+    stair_tiles = {s for x_ in stair_list for s in x_['tiles']}
+
+    def put_cap(x, sp, ox_, oy_, oz_, rot):
+        """What the game stands in the same spot as these stairs to close in the stairwell (a room piece
+        with walls and a ceiling but no floor on top, or one the stairs stand inside), where no room of
+        that floor is, its walls never across a room."""
+        cap = sp.get('cap')
+        cri = db.resolve_id(cap[0]) if cap else None
+        cb = mapdata.object_bounds(db, cri) if cri is not None else None
+        if not cb:
+            return
+        cz = oz_ + cap[1]
+        level = int(round((cz + cb[2]) / H))
+        home = min(x['tiles'], key=lambda s_: math.hypot(centre(s_)[0] - ox_, centre(s_)[1] - oy_))
+        spot = (home[0], home[1], level)
+        if spot in grid or (spot in stair_tiles and spot not in x['tiles']):
+            return
+        crot = (rot + cap[2] * math.pi / 2) % (2 * math.pi)
+        cpat = kits.measure(db, cri, T)
+        cq = int(round(crot / (math.pi / 2))) % 4
+        if cpat and not any(kits.rotate(cpat, cq)[d] == 'wall' and nb(spot, d) in grid for d in kits.SIDES):
+            refs.append((cap[0], (ox_, oy_, cz, 0, 0, crot), []))
+
     for x in stair_list:
         sp = x['piece']
         rot = x['q'] * math.pi / 2
@@ -673,13 +734,16 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             mx, my = (a[0] + c[0]) / 2, (a[1] + c[1]) / 2
             ox, oy = sp.get('cx', 0.0), sp.get('cy', 0.0)
             wx, wy = ox * math.cos(rot) + oy * math.sin(rot), -ox * math.sin(rot) + oy * math.cos(rot)
-            refs.append((sp['id'], (mx - wx, my - wy, z0 + zf(x['tiles'][0]) - sp['z_low'], 0, 0, rot), []))
+            oz = z0 + zf(x['tiles'][0]) - sp['z_low']
+            refs.append((sp['id'], (mx - wx, my - wy, oz, 0, 0, rot), []))
+            put_cap(x, sp, mx - wx, my - wy, oz, rot)
         whole = sp.get('len', 1) > 1 or 'cx' in sp
         for i, s in enumerate(x['tiles']):
             sx_, sy_ = centre(s)
             if not whole:                      # a piece per tile, each a step higher
                 sz = z0 + zf(s) - sp['z_low'] + i * sp['rise']
                 refs.append((sp['id'], (sx_, sy_, sz, 0, 0, rot), []))
+                put_cap(x, sp, sx_, sy_, sz, rot)
             # posts where an open side meets the walls beside it, on both floors (as the game does)
             if sp['post'] and x['open']:
                 for ws in x['open']:
@@ -709,8 +773,18 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         refs.append((rid_, (px, py, -rb[2] + zf(t), 0, 0, rot), []))
     # ---- floor tiles
     exit_fit = None
+    # doorways learnt from the game: the floor piece the game itself puts under each (often one made for
+    # it, whose walls meet the door frame: an ordinary piece there leaves a gap beside the frame)
+    under = {}
+    for t, s, way in learned_edges + ([(exit_tile, exit_side, exit_way)] if exit_how == 'learned' else []):
+        under.setdefault(t, []).append((s, way))
     for t, ra in sorted(grid.items()):
         piece, q, missing, pat = _pick(kp, need[t])
+        for s, way in under.get(t, ()):
+            got = _pick_under(kp, need[t], s, way)
+            if got and (not got[2] or kp['walls']):
+                piece, q, missing, pat = got
+                break
         if t == exit_tile and exit_how == 'entry':
             # the way out: a doorway piece the game itself puts a door in, and that same door
             got = _pick_fit(kp, need[t], exit_side, kits.door_fits(db, style))
@@ -732,11 +806,16 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         refs.append((piece['id'], (cx, cy, z0 + zf(t), 0, 0, q * math.pi / 2), []))
         # walls the piece doesn't have
         for s in missing:
-            wall = kp['walls'][0]
+            wall = plain_wall(kp, db)
             off = T / 2 - wall['thick'] / 2 - 2
             wx, wy = cx + STEP[s][0] * off, cy + STEP[s][1] * off
             along_y = s in 'EW'                       # an east/west wall runs north-south
             rot = 0 if along_y == wall['thin_x'] else math.pi / 2
+            # its finished side into the room (many are one-sided: turned the other way, it can't be seen)
+            import seethrough
+            rot = seethrough.facing(db, wall['ri'], (-STEP[s][0], -STEP[s][1]), rot)
+            # (the middle of the wall on the edge: some walls' models don't have their origin in the middle)
+            wx, wy = _centred(db, wall['ri'], wx, wy, rot)
             refs.append((wall['id'], (wx, wy, -wall['zmin'] + zf(t), 0, 0, rot), []))
     # ---- full-width door frames between rooms (styles that build doorways that way)
     for t, s in frames:
@@ -826,10 +905,39 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                 jamb_scale = max(1.0, min(1.35, max(opening[0] / frame[0], opening[1] / frame[1]) * 1.03))
                 # and the door fills the frame's hole
                 hole_w, hole_h = frame[2] * jamb_scale, frame[3] * jamb_scale
-                dwid = max(db_door_b[3] - db_door_b[0], db_door_b[4] - db_door_b[1])
-                dhei = db_door_b[5] - db_door_b[2]
-                if dwid > 1 and dhei > 1:
-                    door_scale = max(0.8, min(1.5, min(hole_w / dwid, hole_h / dhei) * 1.02))
+                # (and at least the floor piece's own doorway: a frame's hole measures small when columns
+                # or carving stand in it, and a door that size leaves the doorway showing beside it)
+                hole_w, hole_h = max(hole_w, opening[0] * 1.04), max(hole_h, opening[1] * 0.95)
+
+                def fill(b):
+                    """How much bigger a door must be to fill the hole (0 when it can't be measured)."""
+                    dwid, dhei = max(b[3] - b[0], b[4] - b[1]), b[5] - b[2]
+                    return max(hole_w / dwid, hole_h / dhei) if dwid > 1 and dhei > 1 else 0
+                if not exit_door:
+                    # of the doors used with this style, the one that fills the hole best when sized to it
+                    # (a big arch with a small door left the void showing round it)
+                    best_d = None
+                    for cand in doors_here[:15]:
+                        if any(w in cand.lower() for w in ('trap', 'hatch', 'cage', 'jail', 'secret', 'hidden', 'gate')):
+                            continue                 # (not an ordinary standing door)
+                        cri = db.resolve_id(cand)
+                        cb = mapdata.object_bounds(db, cri) if cri is not None else None
+                        f = fill(cb) if cb else 0
+                        if f <= 0:
+                            continue
+                        dw, dh = max(cb[3] - cb[0], cb[4] - cb[1]), cb[5] - cb[2]
+                        # (sized to cover, how far past the hole it reaches: a close fit first, and one that
+                        # needs no more than the game's largest size)
+                        over = max(dw * min(f, 2.0) / hole_w, dh * min(f, 2.0) / hole_h)
+                        score = (f > 2.0, abs(math.log(over)) if over > 0 else 9)
+                        if best_d is None or score < best_d[0]:
+                            best_d = (score, cand, cri, cb)
+                    if best_d:
+                        door_id, db_door, db_door_b = best_d[1], best_d[2], best_d[3]
+                        door_thin_x = (db_door_b[3] - db_door_b[0]) < (db_door_b[4] - db_door_b[1])
+                f = fill(db_door_b)
+                if f > 0:
+                    door_scale = max(0.8, min(2.0, f * 1.02))
             px, py = _centred(db, small_jamb['ri'], dx, dy, rot, jamb_scale)
             refs.append((small_jamb['id'], (px, py, -small_jamb['zmin'] * jamb_scale + zf(exit_tile), 0, 0, rot), [], jamb_scale))
     else:
@@ -960,6 +1068,21 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             out.append((t_, d_))
         nk = p.new_ref_key()
         editing._store(oc, nk, mine, int(nk.rsplit('|', 1)[1]), out)
+    # the style's posts where its door frames meet walls, and posts or walls over anything the player
+    # could see through where pieces don't quite meet (a round or two: a post can leave a slit beside it)
+    db.sync_project()
+    try:
+        import fixit
+        for _round in range(5):
+            got = fixit.closing_pieces(db, key)
+            if not got:
+                break
+            for pid, ppos, psc in got:
+                nk = p.new_ref_key()
+                editing._store(c, nk, mine, int(nk.rsplit('|', 1)[1]), set_ref_pos([('NAME', zs(pid))], ppos, psc))
+            db.sync_project()
+    except Exception as e:
+        print('closing the gaps:', e)
     # walking paths for the new place, in the same change
     db.sync_project()
     try:

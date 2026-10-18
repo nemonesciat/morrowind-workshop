@@ -228,6 +228,15 @@ def palette(db, cell_key, limit=24):
             if ck not in weights:
                 weights[ck] = n * 0.2
     groups = palette_from(db, weights, arch_ids, here, limit)
+    if m.get('interior'):
+        # the style's patch pieces (loose walls, door frames, posts, columns) for fixing gaps by hand
+        try:
+            import fixit
+            patch = fixit.patch_pieces(db, cell_key, limit)
+            if patch:
+                groups.insert(0, {'name': 'Fix-it pieces', 'items': patch, 'fixit': True})
+        except Exception as e:
+            print('fix-it pieces:', e)
     return {'style': style, 'similar': len(similar), 'groups': groups,
             'borrowed': furnish.CULTURE_NAMES.get(borrowed) if borrowed else None}
 

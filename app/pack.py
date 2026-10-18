@@ -33,9 +33,9 @@ def _lib_textures(db, e):
     return out
 
 
-def export(db, name, prefab_files=(), brush_ids=(), lib_ids=()):
+def export(db, name, prefab_files=(), brush_ids=(), lib_ids=(), description='', author='', picture=None):
     """The bytes of a pack with these prefabs, brushes and Library entries (and every Library entry
-    they use)."""
+    they use), and what it's about, who made it and a picture (png or jpeg bytes) for the pack shelf."""
     pfs = [p for p in groups.prefabs() if p['file'] in set(prefab_files)]
     brs = [b for b in scatter.load_brushes() if b['id'] in set(brush_ids)]
     want = set(lib_ids)
@@ -70,7 +70,10 @@ def export(db, name, prefab_files=(), brush_ids=(), lib_ids=()):
                     files.add(rel)
             lib_out.append({k: e[k] for k in ('id', 'name', 'type', 'file', 'model', 'texture', 'sound', 'icon', 'size', 'kind',
                                                'from', 'light', 'door_sound', 'volume', 'reach') if k in e})
-        manifest = {'format': FORMAT, 'version': 1, 'name': (name or 'My pack').strip()[:60], 'made': time.strftime('%Y-%m-%d'),
+        if picture:
+            z.writestr('preview.jpg' if picture[:2] == b'\xff\xd8' else 'preview.png', picture)
+        manifest = {'format': FORMAT, 'version': 1, 'name': (name or 'My pack').strip()[:60], 'made': time.strftime('%Y-%m-%d %H:%M'),
+                    'description': (description or '').strip()[:600], 'author': (author or '').strip()[:60],
                     'prefabs': [{'name': p['name'], 'items': p['items']} for p in pfs],
                     'brushes': [{'name': b['name'], 'items': b.get('items', [])} for b in brs],
                     'library': lib_out}

@@ -39,7 +39,7 @@ async function renderLibrary(){
       <input type="file" id="lib-dir" webkitdirectory style="display:none"></div>
     <div style="display:flex;gap:6px;align-items:center;margin-top:12px;flex-wrap:wrap"><b style="color:#f0cd87">Packs</b>
       <span class="msg">Share prefabs, brushes and your models as one file, or open one someone shared.</span>
-      <button class="btn sm" id="lib-mkpack">⤓ Make a pack…</button><button class="btn sm" id="lib-oppack">⤒ Open a pack…</button>
+      <button class="btn sm primary" id="lib-browse">🗂 Browse packs…</button><button class="btn sm" id="lib-mkpack">⤓ Make a pack…</button><button class="btn sm" id="lib-oppack">⤒ Open a pack…</button>
       <input type="file" id="lib-packfile" accept=".wspack,.zip" style="display:none"></div>
     <div class="lib-tabs" id="lib-tabs"></div>
     <div class="lib-grid" id="lib-grid"><div class="msg"><span class="spin"></span>Loading…</div></div>`;
@@ -48,6 +48,7 @@ async function renderLibrary(){
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = async e => { e.preventDefault(); drop.classList.remove('over'); libUpload(await libDropped(e.dataTransfer)); };
   $('#lib-mkpack').onclick = packMake;
+  $('#lib-browse').onclick = packBrowse;
   $('#lib-oppack').onclick = () => $('#lib-packfile').click();
   $('#lib-packfile').onchange = e => { if (e.target.files[0]) packOpen(e.target.files[0]); e.target.value = ''; };
   $('#lib-pick').onclick = () => $('#lib-files').click();
@@ -284,27 +285,128 @@ async function packMake(){
   const group = (title, key, rows, none) => `<label>${title}</label><div style="max-height:150px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:4px 8px">${rows.length
     ? rows.map(r => `<label class="msg" style="display:flex;gap:6px;align-items:center;margin:2px 0"><input type="checkbox" data-pk="${key}" value="${esc(r.v)}"> ${esc(r.t)}</label>`).join('')
     : `<div class="msg">${none}</div>`}</div>`;
+  let shelf = null;
+  try { shelf = await api('/api/packs/browse'); } catch (e){}
+  const folders = shelf ? shelf.sources.filter(s => s.kind === 'folder') : [];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('ws-pack-author') || '{}'); } catch (e){}
   bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>⤓ Make a pack</h2>
     <div class="msg">One file with what you choose. Your own models that the prefabs and brushes use come along by themselves.</div>
     <label>Name</label><input class="inp" id="pk-name" placeholder="e.g. Ashlander camp kit">
-    ${group('Prefabs', 'prefabs', pfs.map(p => ({v: p.file, t: `${p.name} (${p.items.length} objects)`})), 'No prefabs yet: select a few objects on the map and use "Save as a prefab".')}
+    <label>What's in it <span class="msg">(shown on the pack shelf)</span></label><textarea class="inp" id="pk-desc" rows="2" placeholder="e.g. A yurt, a fire pit and bedrolls, with my own hide textures."></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label>Made by</label><input class="inp" id="pk-author" value="${esc(saved.author || '')}" placeholder="Your name"></div>
+      <div><label>A picture <span class="msg">(optional)</span></label><input type="file" id="pk-pic" accept=".png,.jpg,.jpeg" class="inp"></div></div>
+    ${group('Prefabs', 'prefabs', pfs.map(p => ({v: p.file, t: `${p.name} (${p.items.length} object${p.items.length === 1 ? '' : 's'})`})), 'No prefabs yet: select a few objects on the map and use "Save as a prefab".')}
     ${group('Brushes', 'brushes', brs.brushes.map(b => ({v: b.id, t: `${b.name} (${b.items.length})`})), 'No brushes of your own yet.')}
     ${group('Library', 'library', lib.items.map(i => ({v: i.id, t: `${i.name} (${{model: 'model', sound: 'sound'}[i.type] || 'picture'})`})), 'The Library is empty.')}
+    <label>Save it</label><select class="inp" id="pk-where"><option value="file">as a file to download (send it to people yourself)</option>
+      ${folders.map((f, k) => `<option value="${k}">into ${esc(f.name || f.where)} (everyone with that folder sees it on their pack shelf)</option>`).join('')}</select>
     <div class="actions"><button class="btn primary" id="pk-go">Save the pack</button><button class="btn" id="pk-no">Cancel</button><span class="msg" id="pk-msg"></span></div></div>`;
   document.body.appendChild(bg);
   $('#pk-no').onclick = () => bg.remove();
   $('#pk-go').onclick = async () => {
     const pick = k => [...bg.querySelectorAll(`[data-pk="${k}"]:checked`)].map(c => c.value);
     const name = $('#pk-name').value.trim() || 'My pack';
+    const author = $('#pk-author').value.trim(), where = $('#pk-where').value;
+    try { localStorage.setItem('ws-pack-author', JSON.stringify({author})); } catch (e){}
+    let picture = null;
+    const pf = $('#pk-pic').files[0];
+    if (pf) picture = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(pf); });
     try {
       const r = await fetch('/api/pack/make', {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name, prefabs: pick('prefabs'), brushes: pick('brushes'), library: pick('library')})});
+        body: JSON.stringify({name, prefabs: pick('prefabs'), brushes: pick('brushes'), library: pick('library'), description: $('#pk-desc').value,
+                              author, picture, share: where !== 'file', share_to: where === 'file' ? null : +where})});
       if (!r.ok) throw new Error((await r.json()).error || 'Could not make the pack');
+      if (where !== 'file'){
+        const j = await r.json();
+        bg.remove(); return toast('Put the pack in your folder: ' + j.shared);
+      }
       const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob());
       a.download = name.replace(/[^\w\- ]+/g, '_') + '.wspack'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-      bg.remove(); toast('Saved the pack. Share the .wspack file; others open it with ⤒ Open a pack on their Library page.');
+      bg.remove(); toast('Saved the pack. Share the .wspack file; others open it with ⤒ Open a pack, or put it in a folder or online for their pack shelf.');
     } catch (e){ $('#pk-msg').className = 'msg err'; $('#pk-msg').textContent = e.message; }
   };
+}
+
+// ----- the pack shelf: packs other people share, from folders and links you choose
+async function packBrowse(){
+  libCss();
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(1000px,96vw);max-height:92vh;display:flex;flex-direction:column"><h2>🗂 Pack shelf</h2>
+    <div class="lib-tabs"><button class="btn sm primary" data-pt="packs">Packs</button><button class="btn sm" data-pt="places">Places</button>
+      <span style="flex:1"></span><button class="btn sm" id="ps-again" title="Look again">↻</button><button class="btn sm" id="ps-close">Close</button></div>
+    <div id="ps-body" style="overflow:auto;margin-top:10px;min-height:200px"><div class="msg"><span class="spin"></span>Looking through your places…</div></div></div>`;
+  document.body.appendChild(bg);
+  let data = null, tab = 'packs';
+  const kb = n => n == null ? '' : n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  const show = () => {
+    bg.querySelectorAll('[data-pt]').forEach(b => b.classList.toggle('primary', b.dataset.pt === tab));
+    const body = $('#ps-body');
+    if (!data){ body.innerHTML = '<div class="msg"><span class="spin"></span>Looking through your places…</div>'; return; }
+    if (tab === 'places') return showPlaces(body);
+    const probs = data.problems.map(p => `<div class="msg err">${esc(p)}</div>`).join('');
+    if (!data.packs.length){
+      body.innerHTML = probs + `<div class="msg" style="max-width:640px">No packs yet. Packs show up here from the <b>places</b> you list: a folder (one that syncs, like Dropbox or Google Drive,
+        shared with friends; a USB stick) or a link (to a pack, a web page or folder that links to packs, or a packs.json list).
+        Your own folder to start with: <code>${esc(data.shared_folder)}</code>. Put .wspack files in it, or save packs into it from ⤓ Make a pack.</div>`;
+      return;
+    }
+    body.innerHTML = probs + `<div class="lib-grid">${data.packs.map((p, k) => {
+      const what = [p.prefabs && p.prefabs.length && `${p.prefabs.length} prefab${p.prefabs.length === 1 ? '' : 's'}`, p.brushes && p.brushes.length && `${p.brushes.length} brush${p.brushes.length === 1 ? '' : 'es'}`,
+        p.models && `${p.models} model${p.models === 1 ? '' : 's'}`, p.pictures && `${p.pictures} picture${p.pictures === 1 ? '' : 's'}`, p.sounds && `${p.sounds} sound${p.sounds === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+      const pic = p.picture_url ? `<img src="${esc(p.picture_url)}" alt="">` : (p.local && p.has_picture) ? `<img src="/api/packs/picture?source=${p.source}&ref=${encodeURIComponent(p.ref)}" alt="">` : '<span style="font-size:44px;opacity:.6">🗂</span>';
+      return `<div class="lib-card"><div class="pv" data-pk="${k}">${pic}</div><div class="bd"><div class="nm" title="${esc(p.name)}">${esc(p.name)}</div>
+        <div class="sub">${p.author ? 'by ' + esc(p.author) + ' · ' : ''}${esc((data.sources[p.source] || {}).name || (data.sources[p.source] || {}).where || '')}</div>
+        ${p.description ? `<div class="msg" style="max-height:48px;overflow:hidden">${esc(p.description)}</div>` : ''}
+        <div class="sub">${what || (p.local ? 'empty' : 'not looked at yet')}${p.size ? ' · ' + kb(p.size) : ''}</div>
+        <div class="acts"><button class="btn sm ${p.added ? '' : 'primary'}" data-pa="${k}">${p.added ? '✓ Added ' + esc(p.added) + ' (add again)' : '＋ Add to my Library'}</button>
+          ${p.local ? '' : `<button class="btn sm" data-pl="${k}">Look inside</button>`}</div></div></div>`;
+    }).join('')}</div>`;
+    body.querySelectorAll('[data-pa]').forEach(b => b.onclick = async () => {
+      const p = data.packs[+b.dataset.pa]; b.disabled = true; b.textContent = 'Adding…';
+      try {
+        const r = await post('/api/packs/add', {source: p.source, ref: p.ref});
+        const got = [r.library.length && `${r.library.length} Library item${r.library.length === 1 ? '' : 's'}`, r.prefabs.length && `${r.prefabs.length} prefab${r.prefabs.length === 1 ? '' : 's'}`,
+          r.brushes && `${r.brushes} brush${r.brushes === 1 ? '' : 'es'}`].filter(Boolean).join(', ');
+        toast(`Added "${r.name}": ${got || 'nothing new'}.` + (r.missing_count ? ` ${r.missing_count} object${r.missing_count === 1 ? '' : 's'} left out (your load order doesn't have ${r.missing_count === 1 ? 'it' : 'them'}).` : ''));
+        W.prefabs = null; if (window.V3) V3.scatSets = null; LIB.items = null; libLoad();
+        load();
+      } catch (e){ toast(e.message, true); b.disabled = false; b.textContent = '＋ Add to my Library'; }
+    });
+    body.querySelectorAll('[data-pl]').forEach(b => b.onclick = async () => {
+      const p = data.packs[+b.dataset.pl]; b.disabled = true; b.textContent = 'Downloading…';
+      try { Object.assign(p, await post('/api/packs/look', {source: p.source, ref: p.ref}), {local: true}); show(); }
+      catch (e){ toast(e.message, true); b.disabled = false; b.textContent = 'Look inside'; }
+    });
+  };
+  const showPlaces = body => {
+    const rows = data.sources.map((s, k) => `<div style="display:flex;gap:6px;align-items:center;margin:4px 0">
+      <span title="${s.kind === 'folder' ? 'A folder' : 'A link'}">${s.kind === 'folder' ? '📁' : '🔗'}</span>
+      <input class="inp" data-pn="${k}" value="${esc(s.name || '')}" placeholder="A name" style="width:200px">
+      <input class="inp" data-pw="${k}" value="${esc(s.where)}" style="flex:1"><button class="btn sm" data-px="${k}" title="Take it off the list">✕</button></div>`).join('');
+    body.innerHTML = `<div class="msg" style="max-width:760px">Where packs come from. <b>A folder</b>: paste its path, e.g. a Dropbox or Google Drive folder you share with friends
+      (whatever anyone puts in it shows up for everyone), or a USB stick. <b>A link</b>: to one .wspack, to a web page or folder listing that links to packs,
+      or to a <code>packs.json</code> list. Dropbox and Google Drive share links work as they are.</div>
+      <div style="margin:10px 0">${rows || '<div class="msg">No places yet.</div>'}</div>
+      <div style="display:flex;gap:6px"><input class="inp" id="ps-new" placeholder="Paste a folder path or a link" style="flex:1"><button class="btn sm" id="ps-add">＋ Add</button></div>
+      <div class="actions"><button class="btn primary" id="ps-save">Save places</button><span class="msg" id="ps-msg"></span></div>`;
+    const list = () => data.sources.map((s, k) => ({where: (body.querySelector(`[data-pw="${k}"]`) || {}).value || s.where, name: (body.querySelector(`[data-pn="${k}"]`) || {}).value || ''}));
+    body.querySelectorAll('[data-px]').forEach(b => b.onclick = () => { data.sources = list().filter((_s, k) => k !== +b.dataset.px); showPlaces(body); });
+    $('#ps-add').onclick = () => { const v = $('#ps-new').value.trim(); if (!v) return; data.sources = list().concat([{where: v, name: '', kind: /^https?:/i.test(v) ? 'link' : 'folder'}]); showPlaces(body); };
+    $('#ps-save').onclick = async () => {
+      try { await post('/api/packs/sources', {sources: list()}); toast('Saved. Looking through them…'); tab = 'packs'; load(); }
+      catch (e){ $('#ps-msg').className = 'msg err'; $('#ps-msg').textContent = e.message; }
+    };
+  };
+  const load = async () => {
+    data = null; show();
+    try { data = await api('/api/packs/browse'); } catch (e){ $('#ps-body').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    show();
+  };
+  bg.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { tab = b.dataset.pt; show(); });
+  $('#ps-close').onclick = () => bg.remove();
+  $('#ps-again').onclick = load;
+  load();
 }
 async function packOpen(file){
   toast('Opening the pack…');

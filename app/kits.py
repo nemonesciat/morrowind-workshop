@@ -292,7 +292,7 @@ def kit_pieces(db, prefix):
     if 'pieces' in k:
         return k
     tile = k['tile']
-    pieces = []
+    pieces, halves = [], []
     for ri in k['ris']:
         b = mapdata.object_bounds(db, ri)
         if not b:
@@ -311,8 +311,15 @@ def kit_pieces(db, prefix):
         if not pat or not pat['floor']:
             continue
         pat = _curved(pat, low)
-        pieces.append({'id': rid, 'ri': ri, 'pattern': pat, 'uses': len(db.used_in.get(low, ())),
-                       'zmin': b[2], 'height': h})
+        item = {'id': rid, 'ri': ri, 'pattern': pat, 'uses': len(db.used_in.get(low, ())), 'zmin': b[2], 'height': h}
+        # a half-length piece (a hall piece 128 long): open at both short ends, it fills only half a
+        # tile, so it isn't one (two of them end to end are)
+        short = 'x' if w < tile * 0.7 else 'y' if d < tile * 0.7 else None
+        if short and all(pat[s] != 'wall' for s in (('E', 'W') if short == 'x' else ('N', 'S'))):
+            item.update(axis=short, length=w if short == 'x' else d)
+            halves.append(item)
+            continue
+        pieces.append(item)
     # door frames that sit in a doorway between two tiles, and plain wall sections
     jambs, walls = [], []
     heights = sorted(p['height'] for p in pieces) or [tile]
@@ -338,6 +345,7 @@ def kit_pieces(db, prefix):
         elif 'wall' in low and 'door' not in low and thin >= 3 and 'addon' not in low:
             walls.append(item)          # (not the paper-thin panels laid over walls for decoration)
     k['pieces'] = sorted(pieces, key=lambda p: -p['uses'])
+    k['halves'] = sorted(halves, key=lambda p: -p['uses'])
     k['jambs'] = sorted(jambs, key=lambda p: -p['uses'])
     k['walls'] = sorted(walls, key=lambda p: -p['uses'])
     # how this style makes doorways: a full-width frame between two open tiles (Hlaalu), or
@@ -549,7 +557,9 @@ def stairs(db, prefix):
         out.append({'id': db.recs[ri][1], 'ri': ri, 'low': low, 'z_low': z_low, 'rise': rise, 'open': open_,
                     'uses': len(db.used_in.get(sid, ())), 'height': b[5] - b[2],
                     # what covers the joins where an open side meets the walls beside it
-                    'post': db.recs[post_ri][1] if post_ri is not None else None})
+                    'post': db.recs[post_ri][1] if post_ri is not None else None,
+                    # what closes in the stairwell: (id, height over the stairs, quarter turns)
+                    'cap': _stair_cap(db, prefix, sid, T)})
     res = None
     if not out and MEASURED_STAIRS:
         # the game never puts these stairs beside the kit's own floor tiles where they could be learnt
@@ -561,6 +571,7 @@ def stairs(db, prefix):
                 g = stair_shape(db, ri, T, k['height'])
                 if g:
                     out.append(dict(g, id=db.recs[ri][1], ri=ri, z_low=z0 + g['bottom'], open=[], post=None,
+                                    cap=_stair_cap(db, prefix, sid, T),
                                     uses=len(db.used_in.get(sid, ()))))
     if out:
         # the height between floors: what most stairs climb (or two short flights do), a little more
@@ -581,6 +592,36 @@ def stairs(db, prefix):
 
 
 _VEC = {'N': (0, 1), 'E': (1, 0), 'S': (0, -1), 'W': (-1, 0)}
+
+
+def _stair_cap(db, prefix, sid, T):
+    """The piece the game stands in the same spot as these stairs, to close in the stairwell: a room
+    piece with no floor on top (Indoril), or a room piece the stairs stand inside (Redoran): (id, height
+    over the stairs' origin, quarter turns from the stairs') or None."""
+    from mapdata import ref_info
+    caps, seen = {}, 0
+    for ci in list(db.used_in.get(sid, ()))[:40]:
+        r = db.recs[ci]
+        if r[0] != 'CELL':
+            continue
+        refs, _h = db.cell_refs(r[7])
+        items = [(rid.lower(), pos) for rid, pos, _s, dead in (ref_info(x['subs']) for x in refs.values()) if not dead]
+        for rid, pos in items:
+            if rid != sid:
+                continue
+            seen += 1
+            for rid2, p2 in items:
+                if rid2 == sid or 'stair' in rid2 or 'ramp' in rid2 or not rid2.startswith(prefix.lower()):
+                    continue
+                if math.hypot(p2[0] - pos[0], p2[1] - pos[1]) < 24 and -T * 0.6 < p2[2] - pos[2] < T * 2.2:
+                    dq = int(round(((p2[5] - pos[5]) % (2 * math.pi)) / (math.pi / 2))) % 4
+                    k = (rid2, int(round((p2[2] - pos[2]) / 16) * 16), dq)
+                    caps[k] = caps.get(k, 0) + 1
+    if not caps:
+        return None
+    (cid, dz, dq), n = max(caps.items(), key=lambda kv: kv[1])
+    ri = db.resolve_id(cid)
+    return (db.recs[ri][1], dz, dq) if ri is not None and n >= max(2, seen * 0.25) else None
 
 
 def stair_shape(db, ri, T, room_h):
@@ -831,11 +872,19 @@ def edge_doors(db, prefix):
                         continue                 # something else filled the rest of that edge in the game
                     key = (a, b, load, tuple(sorted((p[0], round(p[1] / 8), round(p[2] / 8), round(p[3] / 8),
                                                      round(p[4] / (math.pi / 2)) % 4) for p in parts)))
-                    c = counts.setdefault(key, {'n': 0, 'sample': None})
+                    c = counts.setdefault(key, {'n': 0, 'sample': None, 'under': {}})
                     c['n'] += 1
                     if c['sample'] is None:
                         c['sample'] = {'a': a, 'b': b, 'load': load, 'door': door, 'parts': parts}
-    res = [dict(c['sample'], uses=c['n']) for _k, c in sorted(counts.items(), key=lambda kv: -kv[1]['n']) if c['n'] >= 2]
+                    # the floor piece the game puts under it (often one made for the doorway), by its own side
+                    own = SIDES[(SIDES.index(s) - q) % 4]
+                    c['under'][(low, own)] = c['under'].get((low, own), 0) + 1
+    res = []
+    for _k, c in sorted(counts.items(), key=lambda kv: -kv[1]['n']):
+        if c['n'] < 2:
+            continue
+        (pid, own), n = max(c['under'].items(), key=lambda kv: kv[1])
+        res.append(dict(c['sample'], uses=c['n'], piece=floor_ids[pid]['id'], piece_side=own, piece_uses=n))
     _edges[prefix] = (db.recs, res)
     return res
 

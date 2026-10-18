@@ -140,6 +140,7 @@ function omwRender(){
        <button data-omw="here"><b>Start in a place…</b><small>Pick a spot on the World map ("Play here").</small></button>
        ${OMW.launcher ? '<button data-omw="launcher"><b>OpenMW Launcher</b><small>OpenMW\'s own settings, mods and data files.</small></button>' : ''}
        <button data-omw="order"><b>Load order…</b><small>Switch plugins on or off and change their order.</small></button>
+       <button data-omw="opts"><b>Game start options…</b><small>Controller in the background, your own options, or choose each time.</small></button>
        <div class="omwfoot">OpenMW: ${esc(OMW.install)} · <span class="lnk" data-omw="pick">change</span></div>`
     : `<div class="omwfoot" style="border:0">OpenMW wasn't found on this computer.</div>
        <button data-omw="pick"><b>Choose OpenMW's folder…</b><small>The folder with openmw.exe in it.</small></button>
@@ -152,7 +153,8 @@ $('#omwmenu').addEventListener('click', async e => {
   const b = e.target.closest('[data-omw]'); if (!b) return;
   const a = b.dataset.omw; $('#omwmenu').style.display = 'none';
   try {
-    if (a === 'menu'){ await post('/api/openmw/start', {mode: 'menu'}); toast('Starting OpenMW…'); }
+    if (a === 'menu'){ if (await gameStart('/api/openmw/start', {mode: 'menu'})) toast('Starting OpenMW…'); }
+    else if (a === 'opts') launchModal();
     else if (a === 'launcher'){ await post('/api/openmw/start', {mode: 'launcher'}); toast('Opening OpenMW\'s Launcher…'); }
     else if (a === 'here'){ showView('world'); toast('Open a place on the map, then press "Play here" (or "Pick a spot") on the right.'); }
     else if (a === 'order') showView('plugins');
@@ -165,3 +167,56 @@ $('#omwmenu').addEventListener('click', async e => {
   } catch (err){ toast(err.message, true); }
 });
 omwRefresh();
+
+// ---------- how the game is started: options, saved or picked for one start ----------
+function launchForm(L){
+  return `${L.presets.map(p => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" data-lp="${esc(p.key)}" ${L.on.includes(p.key) ? 'checked' : ''} style="margin-top:3px">
+      <span><b>${esc(p.label)}</b><br><span class="msg">${esc(p.help)}</span></span></label>`).join('')}
+    <details ${L.args || L.env ? 'open' : ''} style="margin-top:8px"><summary>Your own options</summary>
+      <label>Extra OpenMW options</label><input class="inp" id="lp-args" value="${esc(L.args)}" placeholder="e.g. --script-console">
+      <div class="msg">Added to the command that starts openmw.exe, as you'd type them after it.</div>
+      <label>Settings (environment variables), one per line</label><textarea class="inp" id="lp-env" rows="3" placeholder="NAME=value">${esc(L.env)}</textarea>
+      <div class="msg">Like the "set NAME=value" in a shortcut that starts OpenMW through cmd.</div></details>`;
+}
+function launchRead(bg){
+  return {on: [...bg.querySelectorAll('[data-lp]')].filter(c => c.checked).map(c => c.dataset.lp),
+    args: bg.querySelector('#lp-args').value, env: bg.querySelector('#lp-env').value};
+}
+async function launchModal(){
+  const L = await api('/api/launch');
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Game start options</h2>
+    <div class="msg">Used whenever the Workshop starts OpenMW (Start the game, Play here, the clean test).</div>
+    ${launchForm(L)}
+    <label style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="lp-ask" ${L.ask ? 'checked' : ''}> Ask me each time I start the game</label>
+    <div class="actions"><button class="btn primary" id="lp-save">Save</button><button class="btn" id="lp-no">Cancel</button><span class="msg" id="lp-msg"></span></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#lp-no').onclick = () => bg.remove();
+  bg.querySelector('#lp-save').onclick = async () => {
+    try { await post('/api/launch', Object.assign(launchRead(bg), {ask: bg.querySelector('#lp-ask').checked})); bg.remove(); toast('Saved. The next start of the game uses these options.'); }
+    catch (e){ const m = bg.querySelector('#lp-msg'); m.className = 'msg err'; m.textContent = e.message; }
+  };
+}
+// Start the game through the Workshop: when "ask me each time" is on, the options come up first.
+// Returns the server's answer, or null when cancelled.
+async function gameStart(url, body){
+  let L = null;
+  try { L = await api('/api/launch'); } catch (e){}
+  if (!L || !L.ask) return await post(url, body);
+  return await new Promise((resolve, reject) => {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>▶ Start the game</h2>${launchForm(L)}
+      <label style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="lp-keep"> Use these next time too</label>
+      <div class="actions"><button class="btn primary" id="lp-go">Start</button><button class="btn" id="lp-no">Cancel</button></div></div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#lp-no').onclick = () => { bg.remove(); resolve(null); };
+    bg.querySelector('#lp-go').onclick = async () => {
+      const launch = launchRead(bg);
+      try {
+        if (bg.querySelector('#lp-keep').checked) await post('/api/launch', Object.assign({}, launch, {ask: true}));
+        bg.remove();
+        resolve(await post(url, Object.assign({}, body, {launch})));
+      } catch (e){ bg.remove(); reject(e); }
+    };
+  });
+}

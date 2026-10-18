@@ -72,6 +72,12 @@ def commit(db, note=None, reverts=None):
     p.save()
     build(db)
     _notify(db)
+    try:
+        import together
+        if together.active():
+            together.on_commit(db, before, after, note)       # (building together: to everyone else)
+    except Exception as e:                  # sharing must never break editing
+        print('building together:', e)
     return entry
 
 
@@ -92,6 +98,18 @@ def undo(db, to_depth=None):
     """Undo the last change, or every change back to a recorded depth."""
     _require_project(db)
     p = db.project
+    try:
+        import together
+        if together.active() and to_depth is None:
+            # building together: your own last change only (putting the whole mod back would take
+            # other people's work with it)
+            e = together.own_last(p)
+            if not e:
+                raise EditError('Nothing of yours to undo.')
+            undo_entry(db, e['id'])
+            return [e['text']]
+    except ImportError:
+        pass
     stack = getattr(p, 'undo_stack', [])
     if not stack:
         raise EditError('Nothing to undo.')

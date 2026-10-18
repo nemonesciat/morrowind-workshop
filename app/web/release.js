@@ -103,8 +103,8 @@ async function rlReadme(){
 async function rlClean(){
   const b = $('#rl-clean'); b.disabled = true;
   try {
-    const r = await post('/api/release/clean_test', {start: $('#rl-startcell').value});
-    $('#rl-cleanmsg').innerHTML = `Starting OpenMW in <b>${esc(r.start)}</b> with ${r.masters.map(esc).join(', ')} and your mod only
+    const r = await gameStart('/api/release/clean_test', {start: $('#rl-startcell').value});
+    if (r) $('#rl-cleanmsg').innerHTML = `Starting OpenMW in <b>${esc(r.start)}</b> with ${r.masters.map(esc).join(', ')} and your mod only
       (${r.folders.length} data folder${r.folders.length === 1 ? '' : 's'}, archives: ${r.archives.map(esc).join(', ') || 'none'}). Quit the game when you're done.`;
   } catch (e){ toast(e.message, true); }
   b.disabled = false;

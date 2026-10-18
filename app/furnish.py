@@ -502,6 +502,25 @@ def related_cells(db, culture, limit=40):
     return out
 
 
+def _named(low, words):
+    """Is one of these words in the name? Short words only as a word of their own ("urn", not the
+    "urn" in "furn_de_rope"; "bed", not "bedroll"), longer ones anywhere ("chair" in "armchair")."""
+    tokens = None
+    for w in words:
+        w = w.strip('_')
+        if not w:
+            return True
+        if len(w) > 3:
+            if w in low:
+                return True
+            continue
+        if tokens is None:
+            tokens = re.split(r'[^a-z0-9]+', low)
+        if any(t == w or re.fullmatch(w + r'\d*[a-z]?', t) for t in tokens):
+            return True
+    return False
+
+
 def _sort_into(fam, groups):
     for g in groups:
         for it in g['items']:
@@ -509,7 +528,7 @@ def _sort_into(fam, groups):
             for k, (words, types) in FAMILIES.items():
                 if it['type'] not in types:
                     continue
-                if not any(w in low for w in words):
+                if not _named(low, words):
                     continue
                 if any(w in low for w in NOT.get(k, ())):
                     continue

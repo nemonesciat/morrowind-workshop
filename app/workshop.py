@@ -4,6 +4,7 @@ Runs a tiny web server on this computer only (127.0.0.1) and opens it in your br
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -85,6 +86,63 @@ def list_projects():
     return out
 
 
+# Options for starting the game, ticked in the OpenMW menu (or asked for each time). Some are settings
+# for the programs OpenMW is built on (environment variables), some are OpenMW's own options.
+LAUNCH_PRESETS = [
+    ('controller_bg', 'Controller works while the game is in the background',
+     'Your gamepad keeps controlling the game when another window (like the Workshop) is in front.',
+     {'env': {'SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS': '1'}}),
+    ('no_grab', 'Don\'t lock the mouse to the game window',
+     'Move the mouse out of the game to the Workshop without pressing Alt+Tab.', {'args': ['--no-grab']}),
+    ('no_sound', 'No sound', 'Start the game silent.', {'args': ['--no-sound']}),
+    ('script_verbose', 'Extra script messages in the log',
+     'Helps find out why a script doesn\'t work (in openmw.log).', {'args': ['--script-verbose']}),
+]
+_ENV_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def launch_settings():
+    s = load_settings().get('launch') or {}
+    return {'on': [k for k in s.get('on', []) if any(k == p[0] for p in LAUNCH_PRESETS)], 'args': s.get('args', ''),
+            'env': s.get('env', ''), 'ask': bool(s.get('ask')),
+            'presets': [{'key': k, 'label': l, 'help': h} for k, l, h, _w in LAUNCH_PRESETS]}
+
+
+def save_launch(body):
+    env = str(body.get('env') or '')
+    for line in env.splitlines():
+        line = line.strip()
+        if line and ('=' not in line or not _ENV_NAME.match(line.split('=', 1)[0].strip())):
+            raise editing.EditError('Write each setting as NAME=value on its own line (e.g. SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1).')
+    s = load_settings()
+    s['launch'] = {'on': [k for k in body.get('on') or [] if any(k == p[0] for p in LAUNCH_PRESETS)],
+                   'args': str(body.get('args') or '')[:2000], 'env': env[:4000], 'ask': bool(body.get('ask'))}
+    save_settings(s)
+    return launch_settings()
+
+
+def _spawn(args, install, launch=None):
+    """Start the game with the chosen start options (the saved ones, or those picked for this one start)."""
+    opts = launch if isinstance(launch, dict) else launch_settings()
+    env = dict(os.environ)
+    extra = []
+    for key, _l, _h, what in LAUNCH_PRESETS:
+        if key in (opts.get('on') or []):
+            env.update(what.get('env', {}))
+            extra += what.get('args', [])
+    for line in str(opts.get('env') or '').splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            if _ENV_NAME.match(k.strip()):
+                env[k.strip()] = v.strip()
+    # your own options, written as on a command line ("quotes" keep spaces together)
+    extra += [a.strip('"') for a in re.findall(r'"[^"]*"|\S+', str(opts.get('args') or ''))]
+    exe, rest = args[0], args[1:]
+    subprocess.Popen([exe] + extra + rest, cwd=install, env=env,
+                     creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+    return extra
+
+
 def play(body):
     """Launch OpenMW straight into a cell, with the project plugin loaded."""
     install = db.config.get('install')
@@ -121,11 +179,11 @@ def play(body):
         f.write('\n'.join(cmds) + '\n')
     start = info['name'] if info['interior'] else (info['name'] or 'Seyda Neen')
     args = [exe, '--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
-    subprocess.Popen(args, cwd=install, creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+    _spawn(args, install, body.get('launch'))
     return {'ok': True, 'start': start, 'commands': cmds}
 
 
-def start_openmw(mode):
+def start_openmw(mode, launch=None):
     """The OpenMW button: the game to its main menu (with your mod and the live link), or OpenMW's Launcher."""
     install = (db.config or {}).get('install')
     if not install:
@@ -144,7 +202,7 @@ def start_openmw(mode):
         if getattr(db.project, 'pending_write', None):
             raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
     args = [exe] + (_game_content_args() if db.state == 'ready' else [])
-    subprocess.Popen(args, cwd=install, creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+    _spawn(args, install, launch)
     return {'ok': True}
 
 
@@ -228,7 +286,7 @@ def clean_test(body):
         s = release.summary(db)
         start = s['new_places'][0] if s['new_places'] and '(' not in s['new_places'][0] else 'Seyda Neen'
     args, what = release.clean_launch_args(db, start)
-    subprocess.Popen([exe] + args, cwd=install, creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+    _spawn([exe] + args, install, body.get('launch'))
     return dict(what, start=start)
 
 
@@ -237,6 +295,26 @@ def open_folder(path):
     if hasattr(os, 'startfile'):
         os.startfile(path)
     return {'ok': True, 'path': path}
+
+
+def open_project_file(path):
+    """Open a mod file as the mod being worked on (and reload), as choosing it from the list does."""
+    s = load_settings()
+    s['project'] = os.path.relpath(path, APP_DIR)
+    save_settings(s)
+    db.project = Project(path)
+    db.state = 'loading'
+    db.load_async()
+
+
+def _end_together():
+    """Switching to another mod ends building together (cleanly: the others are told)."""
+    try:
+        import together
+        if together.active():
+            together.stop(db)
+    except Exception as e:
+        print('building together:', e)
 
 
 def enable_in_cfg():
@@ -381,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
                 s['projects'] = list_projects()
                 s['outdated'] = code_stamp() > STARTED_CODE + 1
                 self._json(s)
+            elif u.path == '/api/launch':
+                self._json(launch_settings())
             elif u.path == '/api/openmw':
                 self._json(openmw_info())
             elif u.path == '/api/about':
@@ -389,6 +469,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(helpinfo.get_settings(db))
             elif u.path == '/api/backups':
                 self._json(backups.listing(db.project) if db.project else {'folder': backups.BACKUP_DIR, 'backups': []})
+            elif u.path == '/api/together/status':
+                import together                      # (answers while loading too: joining reloads the mod)
+                self._json(together.status())
             elif db.state != 'ready':
                 self._json({'error': 'still loading'}, 503)
             elif u.path == '/api/search':
@@ -550,6 +633,12 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/lua/script':
                 import luascripts
                 self._json(luascripts.read(db, q.get('name', '')))
+            elif u.path == '/api/fixit/scan':
+                import fixit
+                self._json(fixit.scan(db, q.get('cell', '')))
+            elif u.path == '/api/fixit/variants':
+                import fixit
+                self._json(fixit.variants(db, q.get('cell', ''), q.get('ref', '')))
             elif u.path == '/api/scatter/sets':
                 import scatter
                 self._json(scatter.sets(db, q.get('cell', '')))
@@ -559,6 +648,25 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/library/textures':
                 import library
                 self._json(library.model_textures(db, int(q['i'])))
+            elif u.path == '/api/packs/browse':
+                import packshelf
+                self._json(packshelf.browse())
+            elif u.path == '/api/packs/picture':
+                import packshelf
+                try:
+                    got = packshelf.picture(q.get('source', '0'), q.get('ref', ''))
+                except editing.EditError:
+                    got = None
+                if not got:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header('Content-Type', got[1])
+                self.send_header('Content-Length', str(len(got[0])))
+                self.send_header('Cache-Control', 'max-age=600')
+                self.end_headers()
+                self.wfile.write(got[0])
             elif u.path == '/api/brushes':
                 import scatter
                 self._json({'brushes': [scatter._clean(db, b) for b in scatter.load_brushes()]})
@@ -635,10 +743,49 @@ class Handler(BaseHTTPRequestHandler):
             except editing.EditError as e:
                 return self._json({'error': str(e)}, 400)
         body = json.loads(self.rfile.read(n) or b'{}') if n else {}
+        if u.path in ('/api/together/host', '/api/together/join', '/api/together/stop'):
+            import together
+            try:
+                if u.path == '/api/together/host':
+                    if together.active() and body.get('restart'):
+                        together.stop(db, keep_auto=True)        # (again with a new address or a new code)
+                    return self._json(together.host(db, edit_lock, body.get('name', ''), body.get('port'), body.get('public'),
+                                                     bool(body.get('new_code'))))
+                if u.path == '/api/together/stop':
+                    return self._json(together.stop(db))
+                saved = load_settings().get('together_joined') or {}
+                code = body.get('code') or saved.get('code', '')
+                name = body.get('name') or saved.get('name', '')
+                return self._json(dict(together.join(db, edit_lock, code, name, open_project_file), reload=True))
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
+        if u.path in ('/api/packs/sources', '/api/packs/look', '/api/packs/add'):
+            import packshelf
+            try:
+                if u.path == '/api/packs/sources':
+                    return self._json({'sources': packshelf.save_sources(body.get('sources'))})
+                if u.path == '/api/packs/look':
+                    return self._json(packshelf.look(body.get('source', 0), body.get('ref', '')))
+                with edit_lock:
+                    return self._json(packshelf.add(db, body.get('source', 0), body.get('ref', '')))
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
         if u.path == '/api/pack/make':
             import pack
+            pic = None
+            if body.get('picture'):
+                import base64
+                try:
+                    pic = base64.b64decode(str(body['picture']).split(',', 1)[-1])[:8 * 1024 * 1024]
+                except ValueError:
+                    pic = None
             try:
-                data = pack.export(db, body.get('name'), body.get('prefabs') or [], body.get('brushes') or [], body.get('library') or [])
+                data = pack.export(db, body.get('name'), body.get('prefabs') or [], body.get('brushes') or [], body.get('library') or [],
+                                   body.get('description', ''), body.get('author', ''), pic)
+                if body.get('share'):
+                    # straight into a folder of the pack shelf (a synced one: everyone who has it sees it)
+                    import packshelf
+                    return self._json({'shared': packshelf.share(data, body.get('name') or 'My pack', body.get('share_to'))})
             except editing.EditError as e:
                 return self._json({'error': str(e)}, 400)
             self.send_response(200)
@@ -655,7 +802,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok': True})
             # the OpenMW button works even while (or because) the game data couldn't load
             if u.path == '/api/openmw/start':
-                return self._json(start_openmw(body.get('mode', 'menu')))
+                return self._json(start_openmw(body.get('mode', 'menu'), body.get('launch')))
+            if u.path == '/api/launch':
+                return self._json(save_launch(body))
             if u.path == '/api/openmw/pick':
                 return self._json(pick_openmw())
             # help menu and settings (these work while the game data loads, too)
@@ -960,6 +1109,8 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/undo':
                     undone = editing.undo(db, body.get('to'))
                     return self._json({'ok': True, 'undone': undone, 'depth': editing.undo_depth(db)})
+                if u.path in ('/api/project/new', '/api/project/open'):
+                    _end_together()
                 if u.path == '/api/project/new':
                     p = Project.create(body.get('name', 'MyMod'), body.get('author', ''), body.get('description', ''))
                     s = load_settings()
@@ -1004,6 +1155,18 @@ class Handler(BaseHTTPRequestHandler):
                                            body.get('cut'))
                     m = mapdata.cellmap(db, body['cell'])
                     m['placed'] = rk
+                    return self._json(m)
+                if u.path == '/api/fixit/apply':
+                    import fixit
+                    r = fixit.apply(db, body['cell'], body.get('ops') or [], body.get('label'))
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['changed'] = r['changed']
+                    return self._json(m)
+                if u.path == '/api/fixit/all':
+                    import fixit
+                    r = fixit.fix_all(db, body['cell'])
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['changed'], m['left'] = r['changed'], r['left']
                     return self._json(m)
                 if u.path == '/api/ref/swap':
                     editing.swap_ref(db, body['cell'], body['ref'], body['id'])
@@ -1156,6 +1319,11 @@ def main():
     print('=' * 60)
     open_saved_project()
     db.load_async()
+    try:
+        import together
+        together.autostart(db, edit_lock, open_project_file)     # (back to building together, if that's where it was)
+    except Exception as e:
+        print('building together:', e)
     if '--no-browser' not in sys.argv and not os.environ.get('WORKSHOP_NO_BROWSER'):
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

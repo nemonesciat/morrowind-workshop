@@ -578,7 +578,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,#2c261d,#16130f)}
     <input id="q" placeholder="Search anything: names, IDs, dialogue, meshes…  e.g. hlaalu desk" autocomplete="off" spellcheck="false">
     <kbd>/</kbd>
   </div>
-  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="jumpme" style="display:none" title="Show where your character is on the World map (or in 3D)">⌖ Jump to my character</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">? Help ▾</button><div class="omwmenu" id="helpmenu">
+  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥 Build together</button><button class="btn" id="jumpme" style="display:none" title="Show where your character is on the World map (or in 3D)">⌖ Jump to my character</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">? Help ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Getting started</b><small>What the Workshop does and how to make your first mod.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
@@ -1902,7 +1902,7 @@ async function playHere(body){
     return;
   }
   body.god = W.god;
-  try { const r = await post('/api/play', body); toast('Starting OpenMW in ' + r.start + '. The live link connects once you\'re in game.'); }
+  try { const r = await gameStart('/api/play', body); if (r) toast('Starting OpenMW in ' + r.start + '. The live link connects once you\'re in game.'); }
   catch (err){ toast(err.message, true); }
 }
 
@@ -2060,7 +2060,7 @@ function renderWside(){
   h += `<div class="wtabs">${WTABS.map(([k, t]) => `<button data-wtab="${k}" class="${W.tab === k ? 'on' : ''}">${t}${k === 'objs' ? `<b>${fmtN(refs.length)}</b>` : k === 'sel' && sel ? ' ●' : ''}</button>`).join('')}</div>`;
   // --- Place
   h += `<div class="wpane ${W.tab === 'place' ? 'on' : ''}" data-pane="place"><div id="w-placing"></div>
-    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button>' : ''}
+    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button>' : ''}
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
     <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${paletteHtml()}</div></div>`;
@@ -2085,7 +2085,7 @@ function renderWside(){
         <div class="msg">${esc(S.typeLabels[sel.type] || 'unknown type')} · ${sel.mine ? '<span class="mine">your mod</span>' : 'from ' + esc(sel.src)}</div></div></div>
       <div class="xyz"><div><label>X</label><input class="inp" id="s-x" value="${sel.p[0].toFixed(1)}"></div><div><label>Y</label><input class="inp" id="s-y" value="${sel.p[1].toFixed(1)}"></div><div><label>Height</label><input class="inp" id="s-z" value="${sel.p[2].toFixed(1)}"></div></div>
       <div class="two"><div><label>Turn (degrees)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div></div>
-      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
+      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.arch ? '<button class="btn sm" data-sa="variants" title="Other pieces of this building style that fit the same spot">↻ Other pieces</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
       <div class="dd" style="margin-top:10px"><input class="inp" id="w-swap" placeholder="Swap for… (search for a replacement)" autocomplete="off"><div class="ddlist" id="w-swap-l"></div></div>
       ${sel.type === 'DOOR' ? `<h3>Leads to</h3>
         ${sel.to ? `<div style="font-size:13.5px">→ <span class="lnk" data-sa="gotodest">${esc(sel.to.cell || sel.to.label || 'outdoors (' + sel.to.key.slice(1) + ')')}</span></div>
@@ -2251,6 +2251,7 @@ function bindWside(){
     await refAction('/api/ref/swap', {cell: W.sel.cell, ref: selRef.k, id: r.id}, W.sel.cell, selRef.k, 'Swapped for ' + (r.name || r.id));
   }, true);
   const fb = $('#w-furnish'); if (fb) fb.onclick = () => furnishDialog(W.key);
+  const fxb = $('#w-fixit'); if (fxb) fxb.onclick = () => fixitOpen(W.key);
   if (selRef && selRef.type === 'DOOR'){
     const both = $('#w-relink-both'); if (both) both.onchange = () => { W.relinkBoth = both.checked; };
     ddSearch('w-relink', 'CELL', async r => {
@@ -2432,6 +2433,7 @@ async function selAction(a){
   if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
   if (a === 'retex'){ if (!await needProject()) return; return libRetexture(sel).catch(e => toast(e.message, true)); }
   if (a === 'sound'){ if (!await needProject()) return; return libAttachSound(sel, W.sel.cell).catch(e => toast(e.message, true)); }
+  if (a === 'variants') return fixitVariants(W.sel.cell, sel.k, sel.id);
   if (a === 'gotodest' && sel.to){ await worldOpen(sel.to.key); return; }
   if (!await needProject()) return;
   if (a === 'unlink'){
@@ -3096,6 +3098,8 @@ poll();
 <script src="/web/planner.js"></script>
 <script src="/web/brushes.js"></script>
 <script src="/web/library.js"></script>
+<script src="/web/fixit.js"></script>
+<script src="/web/together.js"></script>
 <script src="/web/loadorder.js"></script>
 <script src="/web/help.js"></script>
 <script src="/web/demo.js"></script>

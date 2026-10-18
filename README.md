@@ -19,6 +19,13 @@ repository is the source code it is built from.
   - `library.py` brings your own models, pictures and sounds in: it reads OBJ, glTF, COLLADA, FBX
     (`library.py`) and Blender files (`blendread.py`) and writes Morrowind models (`nifwrite.py`);
     `pack.py` makes and opens shareable packs.
+  - `builder.py` and `kits.py` build places from a style's room pieces (learning how the game uses
+    them); `fixit.py` and `seethrough.py` find and close the gaps, casting rays against the models'
+    real shapes to see what the player would see through.
+  - `together.py` is building together: the host's small session server (its own port, invite code
+    with a secret) and the joining side, sending each change as the undo's before/after diff;
+    `upnp.py` asks the home router to open the port. `packshelf.py` is the pack shelf (packs from
+    folders and links).
   - `link_scripts/` are the OpenMW Lua scripts for the live link with the running game.
 - **`packaging/`**: everything that turns `app/` into the Windows installer.
   - `build.py` makes `packaging/out/Morrowind Workshop Setup.exe`.
