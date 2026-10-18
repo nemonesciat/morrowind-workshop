@@ -156,7 +156,7 @@ $('#omwmenu').addEventListener('click', async e => {
     if (a === 'menu'){ if (await gameStart('/api/openmw/start', {mode: 'menu'})) toast('Starting OpenMW…'); }
     else if (a === 'opts') launchModal();
     else if (a === 'launcher'){ await post('/api/openmw/start', {mode: 'launcher'}); toast('Opening OpenMW\'s Launcher…'); }
-    else if (a === 'here'){ showView('world'); toast('Open a place on the map, then press "Play here" (or "Pick a spot") on the right.'); }
+    else if (a === 'here'){ showView('world'); toast('Open a place on the map, then press "Play here" (or "Pick a spot") in the Place panel.'); }
     else if (a === 'order') showView('plugins');
     else if (a === 'get') window.open('https://openmw.org/downloads/', '_blank');
     else if (a === 'pick'){

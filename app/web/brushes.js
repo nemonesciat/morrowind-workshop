@@ -10,8 +10,8 @@ function brCss(){
   c.textContent = `
   .br-items{display:flex;flex-direction:column;gap:4px;margin:6px 0;max-height:260px;overflow:auto}
   .br-item{display:grid;grid-template-columns:1fr auto;gap:2px 6px;align-items:center;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:#1a1612;font-size:12px}
-  .br-item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6d8b8} .br-item .nm small{color:#a99d84;margin-left:4px}
-  .br-item .ctl{grid-column:1 / -1;display:flex;gap:6px;align-items:center;color:#a99d84}
+  .br-item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-b)} .br-item .nm small{color:var(--muted-b);margin-left:4px}
+  .br-item .ctl{grid-column:1 / -1;display:flex;gap:6px;align-items:center;color:var(--muted-b)}
   .br-item .ctl input[type=range]{width:80px} .br-item .ctl input[type=number]{width:52px}
   .br-bar{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0}`;
   document.head.appendChild(c);

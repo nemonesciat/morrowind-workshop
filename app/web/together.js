@@ -53,7 +53,7 @@ function togOpen(){
   togRender();
 }
 
-const TOG_NEEDS = `<details style="margin-top:10px"><summary class="msg"><b>What you both need</b></summary><div class="msg" style="margin-top:6px">
+const TOG_NEEDS = `<details id="tog-needs" style="margin-top:10px"><summary class="msg"><b>What you both need</b></summary><div class="msg" style="margin-top:6px">
   <ul style="margin:4px 0 0 18px;padding:0">
     <li>Morrowind, OpenMW and the Workshop, the <b>same Workshop version</b>.</li>
     <li>The <b>same game data and mods</b> the mod is built on (its masters, e.g. Tamriel Data if it uses it). Joining tells you if any are missing.
@@ -69,7 +69,10 @@ function togRender(){
   const st = TOG.st || {};
   const active = document.activeElement;
   if (active && m.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT')) return;     // (not while typing)
-  const open = [...m.querySelectorAll('details[open]')].map(d => d.id);
+  // (it's drawn again every few seconds: what you opened stays open, and the window stays scrolled where it was)
+  const open = [...m.querySelectorAll('details[open]')].map(d => d.id), scrolled = m.scrollTop;
+  const typed = {}; for (const id of ['tog-jcode', 'tog-hname', 'tog-jname', 'tog-pub']){ const e = m.querySelector('#' + id); if (e) typed[id] = e.value; }
+  const errWas = (m.querySelector('#tog-err') || {}).textContent || '';
   const who = (st.members || []).map(x => `<span class="badge" style="margin:2px">${x.here === false ? '○' : '●'} ${esc(x.name)}${x.host ? ' (host)' : ''}</span>`).join(' ');
   const feed = (st.feed || []).slice().reverse().map(f => `<div class="msg">• <b>${esc(f.who)}</b>: ${esc(f.text)}</div>`).join('');
   let saved = {};
@@ -123,15 +126,15 @@ function togRender(){
       <div class="msg">Work on one mod with other people at the same time, from wherever they are. One person hosts; the others join with an invite code.
         Everyone sees every change within a second or so, in the Workshop and in their own game.</div>
       ${st.error ? `<div class="msg err" style="margin-top:6px">${esc(st.error)}</div>` : ''}
-      ${copy && st.can_rejoin ? `<div style="border:1px solid #6b5730;border-radius:10px;padding:10px;margin-top:10px;background:#1e1810"><b style="color:#f0cd87">This is your copy of ${esc(st.can_rejoin.mod || '')}</b>
+      ${copy && st.can_rejoin ? `<div style="border:1px solid #6b5730;border-radius:10px;padding:10px;margin-top:10px;background:#1e1810"><b style="color:var(--gold2)">This is your copy of ${esc(st.can_rejoin.mod || '')}</b>
         <div class="msg">Rejoin to keep building with the others. (The mod as the host has it replaces this copy: anything changed here while you weren't joined is left out.)</div>
         <div class="actions"><button class="btn primary" id="tog-rejoin">Rejoin</button></div></div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-        <div style="border:1px solid var(--line);border-radius:10px;padding:10px"><b style="color:#f0cd87">Host ${proj && !copy ? esc(proj.name) : 'a mod'}</b>
+        <div style="border:1px solid var(--line);border-radius:10px;padding:10px"><b style="color:var(--gold2)">Host ${proj && !copy ? esc(proj.name) : 'a mod'}</b>
           <div class="msg">${proj && !copy ? 'Share the mod you have open. Your copy is the one that counts.' : copy ? 'This is a copy of someone else\'s mod: open one of your own to host it.' : 'Open or start a mod first (the button at the top).'}</div>
           <label>Your name</label><input class="inp" id="tog-hname" value="${esc(saved.name || '')}" placeholder="e.g. Nemo">
           <div class="actions"><button class="btn primary" id="tog-host" ${proj && !copy ? '' : 'disabled'}>Start hosting</button></div></div>
-        <div style="border:1px solid var(--line);border-radius:10px;padding:10px"><b style="color:#f0cd87">Join someone</b>
+        <div style="border:1px solid var(--line);border-radius:10px;padding:10px"><b style="color:var(--gold2)">Join someone</b>
           <div class="msg">Paste the invite code they sent you. You get a copy of their mod, as a mod of its own here (your own mods stay as they are).</div>
           <label>Invite code</label><input class="inp" id="tog-jcode" placeholder="WS-…">
           <label>Your name</label><input class="inp" id="tog-jname" value="${esc(saved.name || '')}" placeholder="e.g. Nemo">
@@ -163,6 +166,9 @@ function togRender(){
     if ($('#tog-rejoin')) $('#tog-rejoin').onclick = () => doJoin('', '', $('#tog-rejoin'));
   }
   open.forEach(id => { const d = id && m.querySelector('#' + id); if (d) d.open = true; });
+  for (const [id, v] of Object.entries(typed)){ const e = m.querySelector('#' + id); if (e && v !== '') e.value = v; }
+  const err = m.querySelector('#tog-err'); if (err && errWas) err.textContent = errWas;
+  m.scrollTop = scrolled;
   const stop = $('#tog-stop');
   if (stop) stop.onclick = async () => {
     if (!confirm(st.role === 'host' ? 'Stop hosting? The others can\'t make changes until you host again (they keep their copies).' : 'Leave? You keep your copy of the mod, and can rejoin any time the host is hosting.')) return;

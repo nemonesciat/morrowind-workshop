@@ -739,7 +739,7 @@ class Database:
         return None
 
     # ---------- queries ----------
-    def search(self, q='', types=None, plugin=None, offset=0, limit=200, only_new=False):
+    def search(self, q='', types=None, plugin=None, offset=0, limit=200, only_new=False, sort=''):
         terms = [t for t in q.lower().split() if t]
         recs, st = self.recs, self.search_text
         types = set(types) if types else None
@@ -780,6 +780,14 @@ class Database:
                     return 1
                 return 2
             matches.sort(key=rank)
+        # sorted by a column of the list ("-name": the other way round)
+        col = (sort or '').lstrip('-')
+        if col in ('id', 'name', 'type', 'plugin', 'extra'):
+            plugins = self.plugins
+            get = {'id': lambda i: recs[i][1].lower(), 'name': lambda i: (recs[i][2] or recs[i][1]).lower(),
+                   'type': lambda i: recs[i][0], 'plugin': lambda i: plugins[recs[i][3]]['name'].lower(),
+                   'extra': lambda i: str(recs[i][5] or '').lower()}[col]
+            matches.sort(key=get, reverse=sort.startswith('-'))
         return {'total': len(matches), 'rows': [self._row(i) for i in matches[offset:offset + limit]]}
 
     def key_of(self, i):

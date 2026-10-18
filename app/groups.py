@@ -63,6 +63,52 @@ def delete(db, refs):
     return {'cells': sorted(cells)}
 
 
+def swap(db, refs, new_id):
+    """Replace several placed objects with another one (search and replace), in one change.
+    refs: [{cell, ref}]. Each keeps its spot, turn, scale (and where a door leads)."""
+    editing._require_project(db)
+    ri = db.resolve_id(new_id or '')
+    if ri is None:
+        raise EditError('No object called "%s".' % new_id)
+    if db.recs[ri][0] not in PLACEABLE:
+        raise EditError('"%s" can\'t be placed in the world.' % new_id)
+    cells, n, olds = set(), 0, set()
+    for item in refs:
+        c, all_refs = _cell(db, item['cell'])
+        ref = all_refs.get(item['ref'])
+        if not ref:
+            continue
+        olds.add(ref_info(ref['subs'])[0])
+        subs = [(t, zs(db.recs[ri][1]) if t == 'NAME' else d) for t, d in ref['subs']]
+        if db.recs[ri][0] != 'DOOR':
+            subs = [(t, d) for t, d in subs if t not in ('DODT', 'DNAM')]
+        _store(c, item['ref'], ref['origin'], ref['idx'], subs)
+        cells.add(item['cell'])
+        n += 1
+    if not n:
+        raise EditError('Nothing to replace.')
+    commit(db, 'Replaced %d object%s (%s) with "%s" in %s' % (n, '' if n == 1 else 's', ', '.join(sorted(olds))[:80],
+                                                              db.recs[ri][1], ', '.join(sorted(cell_label(db, k) for k in cells))))
+    return {'cells': sorted(cells), 'n': n}
+
+
+def restore(db, refs):
+    """Bring several objects back as they were before your mod (moved back, or not removed after all)."""
+    editing._require_project(db)
+    cells = set()
+    for item in refs:
+        c = db.project.cells.get(item['cell'])
+        if c and c['refs'].pop(item['ref'], None) is not None:
+            cells.add(item['cell'])
+    for k in cells:
+        editing._drop_empty(db, k)
+    if not cells:
+        raise EditError('Nothing to bring back.')
+    commit(db, 'Brought back %d object%s in %s' % (len(refs), '' if len(refs) == 1 else 's',
+                                                   ', '.join(sorted(cell_label(db, k) for k in cells))))
+    return {'cells': sorted(cells)}
+
+
 def place(db, cell_hint, items, x, y, z=None, yaw=0.0, label=None):
     """Put a group down with its middle at (x, y). items: [{id, dx, dy, dz, rx, ry, rz, s}] relative to the
     group's middle and its lowest point. z None: set the group down on the floor or ground there.

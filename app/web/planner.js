@@ -169,34 +169,34 @@ function plCss(){
   const c = document.createElement('style'); c.id = 'pl-css';
   c.textContent = `
   .cform:has(#pl-root){max-width:1100px}
-  .pl{border:1px solid var(--line);border-radius:10px;background:#0f0d0a}
+  .pl{border:1px solid var(--line);border-radius:10px;background:var(--deep)}
   .pl-body{overflow:hidden}
-  .pl-bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 8px;border-bottom:1px solid var(--line);background:#16130f}
+  .pl-bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 8px;border-bottom:1px solid var(--line);background:var(--bg2)}
   .pl-bar .sep{width:1px;height:20px;background:var(--line);margin:0 2px}
-  .pl-tabs{display:flex;gap:2px} .pl-tabs button{border:1px solid var(--line);background:#1d1914;color:#bfb196;border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer}
-  .pl-tabs button.on{background:#3a2f1c;color:#f0cd87;border-color:#8a6a35} .pl-tabs button .n{opacity:.6;margin-left:3px}
+  .pl-tabs{display:flex;gap:2px} .pl-tabs button{border:1px solid var(--line);background:var(--bg3);color:var(--muted-d);border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer}
+  .pl-tabs button.on{background:var(--sel-b);color:var(--gold2);border-color:var(--goldline)} .pl-tabs button .n{opacity:.6;margin-left:3px}
   .pl-tabs button:disabled{opacity:.35;cursor:default}
   .pl-body{display:grid;grid-template-columns:1fr 260px;min-height:480px}
   @media (max-width:900px){.pl-body{grid-template-columns:1fr}}
   .pl-stage{position:relative;min-height:480px;outline:none;touch-action:none}
   .pl-stage svg,.pl-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-  .pl-side{border-left:1px solid var(--line);padding:10px;background:#14110d;font-size:13px;overflow:auto;max-height:520px}
-  .pl-side h4{margin:4px 0 8px;font:600 14px Inter,sans-serif;color:#f0cd87}
-  .pl-side .row{display:flex;gap:6px;align-items:center;margin:6px 0} .pl-side .row > span{min-width:52px;color:#a99d84;font-size:12px}
+  .pl-side{border-left:1px solid var(--line);padding:10px;background:var(--deep-c);font-size:13px;overflow:auto;max-height:520px}
+  .pl-side h4{margin:4px 0 8px;font:600 14px Inter,sans-serif;color:var(--gold2)}
+  .pl-side .row{display:flex;gap:6px;align-items:center;margin:6px 0} .pl-side .row > span{min-width:52px;color:var(--muted-b);font-size:12px}
   .pl-side .chips{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
-  .pl-side .chips button{font-size:11px;padding:2px 7px;border-radius:10px;border:1px solid var(--line);background:#1d1914;color:#cdbf9f;cursor:pointer}
-  .pl-side .chips button:hover{border-color:#8a6a35;color:#f0cd87}
-  .pl-side .tip{color:#a99d84;font-size:12px;line-height:1.5} .pl-side .tip b{color:#e6d8b8}
+  .pl-side .chips button{font-size:11px;padding:2px 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg3);color:var(--muted-c);cursor:pointer}
+  .pl-side .chips button:hover{border-color:var(--goldline);color:var(--gold2)}
+  .pl-side .tip{color:var(--muted-b);font-size:12px;line-height:1.5} .pl-side .tip b{color:var(--text-b)}
   .pl-side .conn{display:flex;justify-content:space-between;gap:6px;align-items:center;margin:4px 0}
-  .pl-hint{position:absolute;left:10px;top:8px;font-size:12px;color:#e6d8b8;background:#000a;padding:3px 8px;border-radius:6px;pointer-events:none}
+  .pl-hint{position:absolute;left:10px;top:8px;font-size:12px;color:var(--text-b);background:#000a;padding:3px 8px;border-radius:6px;pointer-events:none}
   .pl-zoom{position:absolute;right:8px;bottom:8px;display:flex;gap:4px}
-  .pl-zoom button{width:26px;height:26px;border-radius:6px;border:1px solid var(--line);background:#1d1914cc;color:#e6d8b8;cursor:pointer}
-  .pl-note{padding:6px 10px;border-top:1px solid var(--line);font-size:12px;color:#a99d84;background:#14110d}
-  .pl-note .err{color:#ff8a6a} .pl-note .warn{color:#f0cd87}
-  .pl-menu{position:relative} .pl-menu > div{display:none;position:absolute;z-index:20;top:100%;left:0;margin-top:4px;background:#1b1813;border:1px solid var(--line);border-radius:8px;padding:4px;min-width:200px;box-shadow:0 8px 30px #000c;max-height:min(420px,70vh);overflow-y:auto}
-  .pl-menu > div .note{padding:7px 9px;border-top:1px solid var(--line);margin-top:4px;color:#a99d84;font-size:12px;line-height:1.45;max-width:240px}
-  .pl-menu.open > div{display:block} .pl-menu > div button{display:block;width:100%;text-align:left;background:none;border:0;color:#e6d8b8;padding:6px 9px;border-radius:5px;cursor:pointer;font-size:13px}
-  .pl-menu > div button:hover{background:#2b241a} .pl-menu > div small{display:block;color:#a99d84;font-size:11px}`;
+  .pl-zoom button{width:26px;height:26px;border-radius:6px;border:1px solid var(--line);background:color-mix(in srgb,var(--bg3) 80%,transparent);color:var(--text-b);cursor:pointer}
+  .pl-note{padding:6px 10px;border-top:1px solid var(--line);font-size:12px;color:var(--muted-b);background:var(--deep-c)}
+  .pl-note .err{color:#ff8a6a} .pl-note .warn{color:var(--gold2)}
+  .pl-menu{position:relative} .pl-menu > div{display:none;position:absolute;z-index:20;top:100%;left:0;margin-top:4px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:200px;box-shadow:0 8px 30px #000c;max-height:min(420px,70vh);overflow-y:auto}
+  .pl-menu > div .note{padding:7px 9px;border-top:1px solid var(--line);margin-top:4px;color:var(--muted-b);font-size:12px;line-height:1.45;max-width:240px}
+  .pl-menu.open > div{display:block} .pl-menu > div button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--text-b);padding:6px 9px;border-radius:5px;cursor:pointer;font-size:13px}
+  .pl-menu > div button:hover{background:#2b241a} .pl-menu > div small{display:block;color:var(--muted-b);font-size:11px}`;
   document.head.appendChild(c);
 }
 
@@ -207,7 +207,7 @@ function plMount(){
   root.innerHTML = `<div class="pl">
     <div class="pl-bar">
       <div class="pl-menu" id="pl-addm"><button class="btn sm primary" id="pl-add">+ Room ▾</button><div>${PL_NAMES.map(n => `<button data-add="${esc(n)}">${esc(n)}<small>${PL_SIZES[n].join(' × ')} tiles</small></button>`).join('')}
-        <div class="note"><b style="color:#e6d8b8">Stairs</b> aren't a room: put rooms on another floor (the floor tabs) and stairs are added for you. Choose which rooms they join in the panel on the right.</div></div></div>
+        <div class="note"><b style="color:var(--text-b)">Stairs</b> aren't a room: put rooms on another floor (the floor tabs) and stairs are added for you. Choose which rooms they join in the panel on the right.</div></div></div>
       <div class="pl-menu" id="pl-prem"><button class="btn sm" id="pl-pre">Start from ▾</button><div>${PLAN_PRESETS.map((p, i) => `<button data-pre="${i}">${esc(p.name)}<small>${esc(p.note)}</small></button>`).join('')}</div></div>
       <span class="sep"></span><div class="pl-tabs" id="pl-tabs"></div><span class="sep"></span>
       <div class="pl-tabs"><button data-v="plan">Plan</button><button data-v="3d">3D</button></div>

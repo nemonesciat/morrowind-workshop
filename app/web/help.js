@@ -36,8 +36,9 @@ function renderGuide(){
 
   <h2>Finding your way</h2>
   <table class="t gtable">
-    <tr><td><b>Browse</b></td><td>Every record in your game: search anything (names, IDs, dialogue, models) and click to see it, with links between records.</td></tr>
-    <tr><td><b>World map</b></td><td>Places in 2D or 3D. Drag things in from the sidebar, click to select, drag to move. In 3D: right-drag to look,
+    <tr><td><b>Browse</b></td><td>Every record in your game: search anything (names, IDs, dialogue, models) and click to see it, with links between records.
+      <b>▦ Table</b> shows columns you choose and sort; <b>📌</b> pins a record in its own panel to compare it with others.</td></tr>
+    <tr><td><b>World map</b></td><td>Places in 2D or 3D. Drag things in from the Place panel, click to select, drag to move. In 3D: right-drag to look,
       ${HELP_KEY('W')}${HELP_KEY('A')}${HELP_KEY('S')}${HELP_KEY('D')} to fly, ${HELP_KEY('G')} move, ${HELP_KEY('R')} turn; <b>View ▾</b> has a grid and wireframe; <b>?</b> lists every control.
       Outdoors, <b>⛰ Ground</b> shapes and paints the land and scatters grass and plants.</td></tr>
     <tr><td><b>Create</b></td><td>New people, creatures, items, books and spells, or a whole interior built from wall and floor pieces, which <b>Auto-furnish</b> can fill.</td></tr>
@@ -49,6 +50,20 @@ function renderGuide(){
     <tr><td><b>Health check</b></td><td>Problems in your load order or your mod, like missing masters, models or textures.</td></tr>
     <tr><td><b>Load order</b></td><td>Switch plugins on or off and change their order (saved to OpenMW's settings, with a backup).</td></tr>
   </table>
+
+  <h2>Working faster</h2>
+  <ul class="glist">
+    <li><b>Panels:</b> every page's tools are panels. Drag a tab to move it, dock it on a side or tab it with others; drag the edges to resize; ⋮ to float or close it.
+      <b>▤ Panels</b> opens any panel and has ready-made layouts, and you can save your own.</li>
+    <li>${HELP_KEY('Ctrl+K')} finds any command, page, panel, place or record. ${HELP_KEY('Ctrl+/')} lets you change the keyboard shortcuts.</li>
+    <li><b>Right-click</b> anything on the World map, in 3D or in a list for what you can do with it. The bar under the map shows the place, the mouse or camera position, and what's selected (click a position to copy it).</li>
+    <li>${HELP_KEY('F1')} on something shows <b>where it's used</b>: the places it stands in, who carries it, the scripts and dialogue that name it.</li>
+    <li>Your mod's changes are marked on the map: green new, gold changed, a red ✕ where you took something out (right-click it to bring it back). <b>My changes</b> lists them all.</li>
+    <li>${HELP_KEY('H')} hides what's selected so you can get at what's behind, ${HELP_KEY('Shift+H')} hides everything else, ${HELP_KEY('Alt+H')} shows it all again.</li>
+    <li>Select a door and press ${HELP_KEY('Enter')} to go through it; ${HELP_KEY('Alt+←')} comes back. ${HELP_KEY('Ctrl+H')} replaces every one of an object with another.</li>
+    <li><b>👤 Play as</b> (by Play here) starts the game as one of your own characters, from their latest save, at the spot you pick. <b>🧪 Test setups</b> add items, spells, quest stages or variables on top.</li>
+    <li><b>Settings → Appearance</b> has themes and your own colours.</li>
+  </ul>
 
   <h2>Playing with the live link</h2>
   <p>While the game runs from the Workshop, the top shows <b>● Game linked</b>. Then:</p>
@@ -91,7 +106,7 @@ async function renderSettings(){
   catch (e){ w.innerHTML = `<h1>Settings</h1><div class="msg err">${esc(e.message)}</div>`; return; }
   const p = S.summary && S.summary.project;
   const when = t => new Date(t * 1000).toLocaleString();
-  w.innerHTML = `<h1>Settings</h1>
+  w.innerHTML = `<h1>Settings</h1>${typeof thSection === 'function' ? thSection() : ''}
   <section class="card setsec"><h3>OpenMW</h3>
     <div class="setrow"><span>Installed in</span><b>${st.openmw_install ? esc(st.openmw_install) : '<span style="color:var(--amber)">not found</span>'}</b></div>
     <div class="setrow"><span>Its settings (load order)</span><span class="msg">${esc(st.openmw_cfg || '')}</span></div>
@@ -126,6 +141,7 @@ async function renderSettings(){
     <div class="setrow"><span>The Workshop</span><span class="msg">${esc(st.app_folder)} · version ${esc(st.version)}</span></div>
     <div class="actions"><button class="btn sm" data-open="projects">Open the projects folder</button><button class="btn sm" data-open="app">Open the Workshop's folder</button></div></section>`;
 
+  if (typeof thBind === 'function') thBind(w);
   const save = body => post('/api/settings', body).then(() => toast('Saved.')).catch(e => toast(e.message, true));
   $('#st-pick').onclick = async () => { try { toast('Choose OpenMW\'s folder in the window that opens…'); const r = await post('/api/openmw/pick', {}); if (r.ok){ toast('Using OpenMW in ' + r.install + '. Reading your game again…'); setTimeout(poll, 300); } } catch (e){ toast(e.message, true); } };
   const auto = $('#st-auto'); if (auto) auto.onclick = async () => { await post('/api/settings', {openmw_reset: true}); toast('Looking for OpenMW by itself. Reading your game again…'); setTimeout(poll, 300); };

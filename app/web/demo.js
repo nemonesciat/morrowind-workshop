@@ -13,17 +13,17 @@ function demoSetup(){
     .demo-cursor{position:fixed;left:0;top:0;width:26px;height:26px;z-index:9999;pointer-events:none;
       transition:transform .9s cubic-bezier(.45,.05,.25,1);filter:drop-shadow(0 2px 4px #000c)}
     .demo-cursor.click::after{content:"";position:absolute;left:-14px;top:-14px;width:28px;height:28px;border-radius:50%;
-      border:3px solid #f0cd87;animation:demo-ring .5s ease-out forwards}
+      border:3px solid var(--gold2);animation:demo-ring .5s ease-out forwards}
     @keyframes demo-ring{from{transform:scale(.3);opacity:1}to{transform:scale(1.6);opacity:0}}
     .demo-cap{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);z-index:9998;pointer-events:none;
-      background:#1b1813ee;border:1px solid #d2a85a;border-radius:12px;padding:12px 22px;color:#f0e2bf;
+      background:color-mix(in srgb,var(--panel) 93%,transparent);border:1px solid var(--gold);border-radius:12px;padding:12px 22px;color:var(--text-c);
       font:600 21px Inter,sans-serif;box-shadow:0 10px 40px #000c;max-width:80vw;text-align:center;transition:opacity .4s}
     .demo-cap small{display:block;font-weight:400;font-size:15px;color:#c9bb9b;margin-top:3px}
     .demo-cap.shot{font-size:27px;padding:16px 30px;bottom:44px;max-width:70vw}
     .demo-cap.shot small{font-size:18px;margin-top:6px;line-height:1.4}
     .demo-title{position:fixed;inset:0;z-index:9997;display:flex;flex-direction:column;align-items:center;justify-content:center;
-      background:radial-gradient(#221d16,#0d0b08);color:#f0cd87;font-family:Cinzel,serif;transition:opacity .8s}
-    .demo-title h1{font-size:64px;margin:0;font-weight:600} .demo-title p{font:400 24px Inter,sans-serif;color:#cdbf9f;margin:14px 0 0}`;
+      background:radial-gradient(var(--panel2-b),#0d0b08);color:var(--gold2);font-family:Cinzel,serif;transition:opacity .8s}
+    .demo-title h1{font-size:64px;margin:0;font-weight:600} .demo-title p{font:400 24px Inter,sans-serif;color:var(--muted-c);margin:14px 0 0}`;
   document.head.appendChild(css);
   DEMO.cursor = document.createElement('div');
   DEMO.cursor.className = 'demo-cursor';

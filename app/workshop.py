@@ -143,6 +143,127 @@ def _spawn(args, install, launch=None):
     return extra
 
 
+def _clean_word(v, n=64):
+    return re.sub(r'["\r\n;]', '', str(v or '')).strip()[:n]
+
+
+def test_setups():
+    """Play test setups: what the player gets when the game starts from the Workshop (items, spells,
+    quest stages, global variables, other console commands), one of them switched on."""
+    s = load_settings()
+    ts = s.get('test_setups') or {}
+    lst = [x for x in (ts.get('list') or []) if isinstance(x, dict) and x.get('name')]
+    on = ts.get('on') if any(x['name'] == ts.get('on') for x in lst) else ''
+    names = {}
+    for x in lst:
+        for i in [it[0] for it in x.get('items', [])] + list(x.get('spells', [])):
+            ri = db.resolve_id(str(i))
+            if ri is not None and db.recs[ri][2]:
+                names[str(i).lower()] = db.recs[ri][2]
+    return {'list': lst, 'on': on, 'names': names, 'play_as': s.get('play_as') or ''}
+
+
+def _active_setup():
+    s = load_settings().get('test_setups') or {}
+    on = s.get('on')
+    for x in [x for x in (s.get('list') or []) if isinstance(x, dict)]:
+        if on and x.get('name') == on:
+            return x
+    return None
+
+
+def play_as(body):
+    """Who Play here starts as: a new character (''), or one of your saved characters (their save folder)."""
+    import saves
+    folder = str(body.get('folder') or '')
+    if folder and not saves.latest_save(folder):
+        raise editing.EditError('That character has no saves any more.')
+    s = load_settings()
+    s['play_as'] = folder
+    save_settings(s)
+    return {'play_as': folder}
+
+
+def save_test_setups(body):
+    out = []
+    for x in (body.get('list') or [])[:40]:
+        name = _clean_word(x.get('name'), 60)
+        if not name:
+            continue
+        items = [[_clean_word(i[0]), max(1, min(100000, int(float(i[1] or 1))))] for i in (x.get('items') or [])[:80] if i and _clean_word(i[0])]
+        for iid, _n in items:
+            if db.resolve_id(iid) is None:
+                raise editing.EditError('Test setup "%s": there is no item "%s".' % (name, iid))
+        spells = [_clean_word(sp) for sp in (x.get('spells') or [])[:80] if _clean_word(sp)]
+        for sp in spells:
+            if not db.by_key.get(('SPEL', sp.lower())):
+                raise editing.EditError('Test setup "%s": there is no spell "%s".' % (name, sp))
+        journal = [[_clean_word(j[0]), int(float(j[1] or 0))] for j in (x.get('journal') or [])[:80] if j and _clean_word(j[0])]
+        globs = [[_clean_word(g[0]), float(g[1] or 0)] for g in (x.get('globals') or [])[:80] if g and re.match(r'^[A-Za-z_][\w]*$', _clean_word(g[0]))]
+        out.append({'name': name, 'items': items, 'spells': spells, 'journal': journal, 'globals': globs,
+                    'god': bool(x.get('god')), 'level': max(0, min(100, int(float(x.get('level') or 0)))),
+                    'commands': str(x.get('commands') or '')[:4000]})
+    s = load_settings()
+    on = body.get('on') or ''
+    s['test_setups'] = {'list': out, 'on': on if any(x['name'] == on for x in out) else ''}
+    save_settings(s)
+    return test_setups()
+
+
+def give_setup(body):
+    """A test setup given to the game that's running now (through the live link): items, quest stages and
+    variables. Spells, level and console commands only come with a fresh start."""
+    if not link.connected():
+        raise editing.EditError('Start the game from the Workshop first (Play here), then this gives it to you there.')
+    setup = body.get('setup')
+    if not isinstance(setup, dict):
+        s = load_settings().get('test_setups') or {}
+        setup = next((x for x in (s.get('list') or []) if x.get('name') == body.get('name')), None)
+    if not setup:
+        raise editing.EditError('No such test setup.')
+    sent, skipped = 0, []
+    items = [i for i in setup.get('items', []) if db.resolve_id(str(i[0])) is not None]
+    if items:
+        link.refresh_watch(extra_items=[i[0] for i in items])
+    for iid, n in items:
+        link.command('give', str(iid), str(int(n)))
+        sent += 1
+    journal = setup.get('journal', [])
+    if len(journal) > 40:
+        skipped.append('%d quest stages (that many only come with a fresh start)' % len(journal))
+        journal = []
+    for quest, stage in journal:
+        link.command('journal', str(quest), str(int(stage)))
+        sent += 1
+    for name, value in setup.get('globals', []):
+        link.refresh_watch(extra_globals=[name])
+        link.command('global', str(name), str(value))
+        sent += 1
+    if setup.get('spells'):
+        skipped.append('spells')
+    if setup.get('level') or setup.get('god') or str(setup.get('commands') or '').strip():
+        skipped.append('level, god mode and console commands')
+    return {'sent': sent, 'skipped': skipped}
+
+
+def _setup_commands(setup, god_already=False):
+    cmds = []
+    if setup.get('god') and not god_already:
+        cmds.append('tgm')                       # (it switches god mode on and off: only once)
+    if setup.get('level'):
+        cmds.append('player->SetLevel %d' % int(setup['level']))
+    for iid, n in setup.get('items', []):
+        cmds.append('player->AddItem "%s" %d' % (iid, n))
+    for sp in setup.get('spells', []):
+        cmds.append('player->AddSpell "%s"' % sp)
+    for quest, stage in setup.get('journal', []):
+        cmds.append('Journal "%s" %d' % (quest, stage))
+    for name, value in setup.get('globals', []):
+        cmds.append('set %s to %s' % (name, ('%d' % value) if float(value).is_integer() else ('%g' % value)))
+    cmds += [ln.strip() for ln in str(setup.get('commands') or '').splitlines() if ln.strip()]
+    return cmds
+
+
 def play(body):
     """Launch OpenMW straight into a cell, with the project plugin loaded."""
     install = db.config.get('install')
@@ -174,13 +295,25 @@ def play(body):
         ld = mapdata.land(db, info['gx'], info['gy'])
         cz = max(ld['h'][32 * 65 + 32], 0) + 100 if ld.get('exists') else 1000
         cmds.append('player->Position %.0f %.0f %.0f 0' % (cx, cy, cz))
-    script = os.path.join(APP_DIR, 'play_commands.txt')
+    # the test setup that's switched on (unless this start asks for none)
+    setup = _active_setup() if body.get('setup', True) else None
+    if setup:
+        cmds += _setup_commands(setup, god_already=bool(body.get('god')))
+    script =os.path.join(APP_DIR, 'play_commands.txt')
     with open(script, 'w', encoding='cp1252', errors='replace') as f:
         f.write('\n'.join(cmds) + '\n')
     start = info['name'] if info['interior'] else (info['name'] or 'Seyda Neen')
-    args = [exe, '--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
+    # as one of your characters: their latest save, then the commands above move them here
+    import saves
+    who = (load_settings().get('play_as') or '') if body.get('as_saved', True) else ''
+    save = saves.latest_save(who) if who else None
+    if save:
+        args = [exe, '--load-savegame', save, '--script-run', script] + _game_content_args()
+    else:
+        args = [exe, '--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
     _spawn(args, install, body.get('launch'))
-    return {'ok': True, 'start': start, 'commands': cmds}
+    return {'ok': True, 'start': start, 'commands': cmds, 'setup': setup['name'] if setup else None,
+            'as': who if save else None}
 
 
 def start_openmw(mode, launch=None):
@@ -477,9 +610,29 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/search':
                 types = [t for t in q.get('types', '').split(',') if t]
                 self._json(db.search(q.get('q', ''), types, q.get('plugin'), int(q.get('offset', 0)),
-                                     min(int(q.get('limit', 200)), 1000)))
+                                     min(int(q.get('limit', 200)), 1000), sort=q.get('sort', '')))
             elif u.path == '/api/record':
                 self._json(db.record(int(q['i'])))
+            elif u.path == '/api/uses':
+                import uses
+                self._json(uses.report(db, q.get('id', '')))
+            elif u.path == '/api/testsetups':
+                self._json(test_setups())
+            elif u.path == '/api/saves':
+                import saves
+                self._json({'characters': saves.characters(db), 'play_as': load_settings().get('play_as') or '',
+                            'folder': saves.saves_dir()})
+            elif u.path == '/api/saves/picture':
+                import saves
+                pic = saves.picture(q.get('folder', ''))
+                if not pic:
+                    return self._json({'error': 'no picture'}, 404)
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', str(len(pic)))
+                self.send_header('Cache-Control', 'max-age=60')
+                self.end_headers()
+                self.wfile.write(pic)
             elif u.path == '/api/health':
                 self._json({'issues': db.issues, 'sources': db.asset_sources, 'config': db.config,
                             'plugins': [{k: v for k, v in p.items() if k != 'counts'} for p in db.plugins]})
@@ -1004,6 +1157,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(groups.move(db, body.get('moves') or []))
                 if u.path == '/api/group/delete':
                     return self._json(groups.delete(db, body.get('refs') or []))
+                if u.path == '/api/group/swap':
+                    return self._json(groups.swap(db, body.get('refs') or [], body.get('id')))
+                if u.path == '/api/group/restore':
+                    return self._json(groups.restore(db, body.get('refs') or []))
+                if u.path == '/api/testsetups':
+                    return self._json(save_test_setups(body))
+                if u.path == '/api/testsetups/give':
+                    return self._json(give_setup(body))
+                if u.path == '/api/saves/use':
+                    return self._json(play_as(body))
                 if u.path == '/api/group/place':
                     return self._json(groups.place(db, body.get('cell'), body.get('items') or [], body['x'], body['y'],
                                                    body.get('z'), float(body.get('yaw') or 0), body.get('label')))

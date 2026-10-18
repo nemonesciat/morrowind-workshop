@@ -10,16 +10,16 @@ function libCss(){
   const c = document.createElement('style'); c.id = 'lib-css';
   c.textContent = `
   .lib-card input[type=range], .modal input[type=range], .modal input[type=checkbox]{accent-color:#d9b26a}
-  .lib-drop{border:2px dashed #6b5730;border-radius:12px;padding:26px;text-align:center;background:#16130f;color:#cdbf9f;transition:.15s}
-  .lib-drop.over{border-color:#f0cd87;background:#221c12;color:#f0e2bf}
-  .lib-drop b{color:#f0cd87;font-size:16px} .lib-drop .msg{margin-top:6px}
+  .lib-drop{border:2px dashed #6b5730;border-radius:12px;padding:26px;text-align:center;background:var(--bg2);color:var(--muted-c);transition:.15s}
+  .lib-drop.over{border-color:var(--gold2);background:#221c12;color:var(--text-c)}
+  .lib-drop b{color:var(--gold2);font-size:16px} .lib-drop .msg{margin-top:6px}
   .lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:14px}
-  .lib-card{border:1px solid var(--line);border-radius:10px;background:#16130f;overflow:hidden;display:flex;flex-direction:column}
-  .lib-card .pv{height:150px;background:#0f0d0a;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#a99d84;font-size:12px}
+  .lib-card{border:1px solid var(--line);border-radius:10px;background:var(--bg2);overflow:hidden;display:flex;flex-direction:column}
+  .lib-card .pv{height:150px;background:var(--deep);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted-b);font-size:12px}
   .lib-card .pv img{max-width:100%;max-height:150px;image-rendering:auto}
   .lib-card .bd{padding:8px 10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
-  .lib-card .nm{font:600 14px Inter,sans-serif;color:#f0e2bf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .lib-card .sub{color:#a99d84} .lib-card .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .lib-card .nm{font:600 14px Inter,sans-serif;color:var(--text-c);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lib-card .sub{color:var(--muted-b)} .lib-card .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
   .lib-tabs{display:flex;gap:4px;margin-top:14px}`;
   document.head.appendChild(c);
 }
@@ -37,7 +37,7 @@ async function renderLibrary(){
       <div style="margin-top:10px;display:flex;gap:6px;justify-content:center"><button class="btn sm primary" id="lib-pick">Choose files…</button><button class="btn sm" id="lib-pickdir">Choose a folder…</button></div>
       <input type="file" id="lib-files" multiple style="display:none" accept=".nif,.obj,.mtl,.gltf,.glb,.bin,.dae,.fbx,.blend,.png,.jpg,.jpeg,.tga,.dds,.bmp,.wav,.mp3,.ogg,.flac,.wspack">
       <input type="file" id="lib-dir" webkitdirectory style="display:none"></div>
-    <div style="display:flex;gap:6px;align-items:center;margin-top:12px;flex-wrap:wrap"><b style="color:#f0cd87">Packs</b>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:12px;flex-wrap:wrap"><b style="color:var(--gold2)">Packs</b>
       <span class="msg">Share prefabs, brushes and your models as one file, or open one someone shared.</span>
       <button class="btn sm primary" id="lib-browse">🗂 Browse packs…</button><button class="btn sm" id="lib-mkpack">⤓ Make a pack…</button><button class="btn sm" id="lib-oppack">⤒ Open a pack…</button>
       <input type="file" id="lib-packfile" accept=".wspack,.zip" style="display:none"></div>

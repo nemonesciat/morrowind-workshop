@@ -5,7 +5,8 @@
 // link and the sidebar all keep working.
 const V3 = {on: false, ready: null, scene: null, objs: new Map(), models: {}, asked: new Set(), lands: {},
             mats: {}, origin: [0, 0, 0], yaw: 0, pitch: -0.4, pos: null, keys: {}, mode: 'translate',
-            grid: 0, angle: 15, pieces: true, tilt: false, queued: false, homeFor: null};
+            grid: 0, angle: 15, pieces: true, tilt: false, queued: false, homeFor: null,
+            rest: (() => { try { return localStorage.getItem('ws-rest') === '1'; } catch (e){ return false; } })()};
 
 // what the 3D view shows (the View menu), remembered between sessions
 V3.view = {grid: false, cells: true, wire: false, ground: true, water: true};
@@ -1189,8 +1190,11 @@ function v3Typing(e){ const t = e.target; return t && (t.tagName === 'INPUT' || 
 function v3Bind(el){
   let drag = null;
   el.addEventListener('contextmenu', e => e.preventDefault());
+  // (no browser autoscroll on a middle-click: it swallows the button coming up, and the view kept sliding)
+  el.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
   el.addEventListener('mousedown', e => {
     el.focus();
+    if (e.button === 1) e.preventDefault();
     if (e.button === 0 && (V3.tc.dragging || V3.tc.axis)) return;      // using the handles
     if (e.button === 0 && !e.altKey && v3LandOn() && V3.landOpen){
       // the ground brush
@@ -1201,6 +1205,11 @@ function v3Bind(el){
       return;
     }
     drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: V3.yaw, pitch: V3.pitch, pos: V3.pos.clone(), moved: false, alt: e.altKey};
+    // drawing a box to select: drag from an empty spot (or anywhere with Shift)
+    if (e.button === 0 && !e.altKey && !W.mode){
+      const h = e.shiftKey ? null : v3Pick(e, false);
+      if (e.shiftKey || !(h && h.obj)) drag.box = {add: e.shiftKey};
+    }
     if (e.button === 0 && e.altKey && W.sel){
       const o = V3.objs.get(W.sel.cell + '|' + W.sel.k);
       if (o){ drag.pivot = o.g.position.clone(); drag.dist = V3.pos.distanceTo(drag.pivot); }
@@ -1208,6 +1217,13 @@ function v3Bind(el){
   });
   window.addEventListener('mousemove', e => {
     if (!drag || !V3.on) return;
+    // the button was let go where we couldn't see it (outside the window, over a menu): stop right here
+    if (!(e.buttons & ({0: 1, 1: 4, 2: 2}[drag.b] || 0))){
+      const D = drag; drag = null;
+      if (D.stroke){ V3.strokeEv = null; v3StrokeEnd(); }
+      v3BoxHide();
+      return;
+    }
     if (drag.stroke){
       // a few dabs a second while the mouse moves (and while it rests, see v3Loop)
       V3.strokeEv = e;
@@ -1217,6 +1233,7 @@ function v3Bind(el){
     }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
+    if (drag.box){ if (drag.moved) v3BoxDraw(drag, e); return; }
     if (drag.b === 2 || (drag.b === 0 && drag.alt && !drag.pivot)){
       V3.yaw = drag.yaw + dx * 0.005; V3.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch - dy * 0.005));
     } else if (drag.b === 0 && drag.pivot){
@@ -1232,6 +1249,14 @@ function v3Bind(el){
   window.addEventListener('mouseup', e => {
     const D = drag; drag = null;
     if (D && D.stroke){ V3.strokeEv = null; v3StrokeEnd(); return; }
+    if (D && D.box && D.moved){ v3BoxEnd(D, e); return; }
+    v3BoxHide();
+    // a right-click without dragging: the menu for what's under the mouse
+    if (D && V3.on && D.b === 2 && !D.moved && e.target === el && typeof cfMenuAt === 'function'){
+      const h = W.mode ? null : v3Pick(e, false);
+      cfMenuAt(e, h && h.obj ? [h.obj.ck, h.obj.r] : null, h && h.world);
+      return;
+    }
     if (!D || !V3.on || D.moved || D.b !== 0 || e.target !== el) return;
     v3Click(e);
   });
@@ -1269,23 +1294,37 @@ function v3Bind(el){
   });
   window.addEventListener('keydown', e => {
     if (!V3.on || !$('#world').classList.contains('on') || v3Typing(e)) return;
-    const k = e.key.toLowerCase();
-    if ('wasdqe'.includes(k) && k.length === 1){ V3.keys[k] = true; e.preventDefault(); }
+    const k = e.key.toLowerCase(), mv = v3MoveKey(e);
+    if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){ V3.keys[mv] = true; e.preventDefault(); }
     if (e.key === 'Shift') V3.keys.shift = true;
-    if (k === 'g' || k === '1'){ V3.mode = 'translate'; v3ApplyMode(); v3Tools(); }
-    if (k === 'r' || k === '2'){ V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
-    if (k === 'f' && W.sel){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); }
-    if (e.key === 'End') v3DropToFloor();
+    if (e.key === 'Escape') V3.keys = {};
+    // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
     if (e.key === 'Escape' && V3.landOpen) v3LandToggle(false);
     if (V3.landOpen && W.ext && (e.key === '[' || e.key === ']')){
       V3.land.size = Math.max(128, Math.min(4096, V3.land.size + (e.key === ']' ? 128 : -128))); v3LandSave(); v3LandPanel();
     }
   });
+  // letting go of a key always stops it (heard first, before anything else can swallow it)
   window.addEventListener('keyup', e => {
-    const k = e.key.toLowerCase(); if (k.length === 1) V3.keys[k] = false;
+    const mv = v3MoveKey(e); if (mv) V3.keys[mv] = false;
+    const k = e.key.toLowerCase(); if (k.length === 1 && V3.keys[k]) V3.keys[k] = false;
     if (e.key === 'Shift') V3.keys.shift = false;
-  });
-  window.addEventListener('blur', () => { V3.keys = {}; });
+    if (e.key === 'Meta' || e.key === 'OS') V3.keys = {};   // (the Windows key: the Start menu eats the rest)
+  }, true);
+  const stop = () => { V3.keys = {}; };
+  window.addEventListener('blur', stop);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
+  // (the keyboard itself said a key is no longer down, e.g. Shift seen up on a mouse move)
+  window.addEventListener('mousemove', e => { if (V3.keys.shift && !e.shiftKey) V3.keys.shift = false; }, true);
+}
+
+// which way a key moves the camera: by where the key sits on the keyboard (so it works in any layout,
+// and switching layout while a key is down can't leave it stuck)
+function v3MoveKey(e){
+  const c = {KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', KeyQ: 'q', KeyE: 'e'}[e.code];
+  if (c) return c;
+  const k = (e.key || '').toLowerCase();
+  return k.length === 1 && 'wasdqe'.includes(k) ? k : null;
 }
 
 function v3Mouse(e){
@@ -1337,8 +1376,44 @@ function v3Click(e){
   const h = v3Pick(e, false);
   if (h && h.obj && e.shiftKey){ toggleMulti(h.obj.ck, h.obj.k); return; }
   if (h && h.obj){ selectRef(h.obj.ck, h.obj.k); return; }
-  if (h && h.locked) toast('Walls and buildings are locked. Untick "Lock walls & buildings" on the right to select them.');
+  if (h && h.locked) toast('Walls and buildings are locked. Untick "Lock walls & buildings" in the View panel to select them.');
   W.sel = null; renderWside(); v3Refresh();
+}
+
+// ----- selecting with a box: everything whose middle is inside it (Shift adds to what's selected)
+function v3BoxRect(D, e){
+  const b = $('#v3wrap').getBoundingClientRect();
+  return {x0: Math.min(D.x, e.clientX) - b.left, x1: Math.max(D.x, e.clientX) - b.left, y0: Math.min(D.y, e.clientY) - b.top, y1: Math.max(D.y, e.clientY) - b.top, w: b.width, h: b.height};
+}
+function v3BoxDraw(D, e){
+  let el = $('#v3box');
+  if (!el){ el = document.createElement('div'); el.id = 'v3box'; el.style.cssText = 'position:absolute;border:1px dashed var(--gold);background:#d9b26a1c;pointer-events:none;z-index:4'; $('#v3wrap').appendChild(el); }
+  const R = v3BoxRect(D, e);
+  Object.assign(el.style, {display: 'block', left: R.x0 + 'px', top: R.y0 + 'px', width: (R.x1 - R.x0) + 'px', height: (R.y1 - R.y0) + 'px'});
+}
+function v3BoxHide(){ const el = $('#v3box'); if (el) el.style.display = 'none'; }
+function v3BoxEnd(D, e){
+  v3BoxHide();
+  const R = v3BoxRect(D, e); if (R.x1 - R.x0 < 5 || R.y1 - R.y0 < 5) return;
+  const T = THREE, v = new T.Vector3(), box = new T.Box3(), fwd = v3Dir();
+  if (!D.box.add) W.multi.clear();
+  for (const o of V3.objs.values()){
+    if (!o.r || !o.g.visible) continue;
+    if (o.r.arch && W.lockArch) continue;
+    box.setFromObject(o.g); if (box.isEmpty()) continue;
+    box.getCenter(v);
+    if (v.clone().sub(V3.pos).dot(fwd) <= 0) continue;          // behind the camera
+    v.project(V3.camera);
+    const sx = (v.x + 1) / 2 * R.w, sy = (1 - v.y) / 2 * R.h;
+    if (sx >= R.x0 && sx <= R.x1 && sy >= R.y0 && sy <= R.y1) W.multi.set(mkey(o.ck, o.k), {cell: o.ck, k: o.k});
+  }
+  if (W.sel && D.box.add && !W.multi.has(mkey(W.sel.cell, W.sel.k)) && findRef(W.sel.cell, W.sel.k)) W.multi.set(mkey(W.sel.cell, W.sel.k), {cell: W.sel.cell, k: W.sel.k});
+  const n = W.multi.size;
+  if (n === 1){ const only = [...W.multi.values()][0]; W.multi.clear(); selectRef(only.cell, only.k); }
+  else if (n > 1){ const last = [...W.multi.values()].pop(); W.sel = {cell: last.cell, k: last.k}; W.tab = 'sel'; renderWside(); }
+  else if (!D.box.add){ W.sel = null; renderWside(); }
+  v3Refresh();
+  if (!n) toast('Nothing inside the box' + (W.lockArch ? ' (walls and buildings are locked: see View).' : '.'));
 }
 
 function v3PlaceHint(){
@@ -1468,7 +1543,22 @@ async function v3DragEnd(){
   const g = D.o.g;
   if (g.position.distanceTo(D.start) < 0.05 && Math.abs(g.rotation.z - D.startRot.z) < 1e-4 &&
       Math.abs(g.rotation.x - D.startRot.x) < 1e-4 && Math.abs(g.rotation.y - D.startRot.y) < 1e-4) return;
+  // "Land on surfaces": moved over a table, a shelf or the floor, it comes to rest on top of it
+  if (V3.rest && V3.mode === 'translate'){ const dz = v3RestDz(D.o, D.key, true); if (dz != null) g.position.z += dz; }
   await v3Commit(D.o, g);
+}
+
+// how far down (or up) an object must go to sit on what's below it; from its top (after a move,
+// so it lands on a table it was moved over) or from just above its bottom (End)
+function v3RestDz(o, sk, fromTop){
+  const T = THREE, box = new T.Box3().setFromObject(o.g), c = box.getCenter(new T.Vector3());
+  V3.ray.set(new T.Vector3(c.x, c.y, (fromTop ? box.max.z : box.min.z) + 2), new T.Vector3(0, 0, -1));
+  const skip = new Set([sk, ...[...W.multi.values()].map(m => m.cell + '|' + m.k)]);
+  const hits = V3.ray.intersectObjects([V3.root, V3.ground], true).filter(h => {
+    let x = h.object; while (x && !x.userData.ref && !x.userData.ground) x = x.parent;
+    return x && !skip.has(x.userData.ref);
+  });
+  return hits.length ? hits[0].point.z - box.min.z : null;
 }
 
 async function v3Commit(o, g){
@@ -1484,14 +1574,9 @@ async function v3Commit(o, g){
 async function v3DropToFloor(){
   const sk = W.sel && W.sel.cell + '|' + W.sel.k, o = sk && V3.objs.get(sk);
   if (!o) return toast('Select something first.', true);
-  const T = THREE, box = new T.Box3().setFromObject(o.g), c = box.getCenter(new T.Vector3());
-  V3.ray.set(new T.Vector3(c.x, c.y, box.min.z + 2), new T.Vector3(0, 0, -1));
-  const hits = V3.ray.intersectObjects([V3.root, V3.ground], true).filter(h => {
-    let x = h.object; while (x && !x.userData.ref && !x.userData.ground) x = x.parent;
-    return x && x.userData.ref !== sk;
-  });
-  if (!hits.length) return toast('There is nothing below it to set it down on.', true);
-  o.g.position.z += hits[0].point.z - box.min.z;
+  const dz = v3RestDz(o, sk, false);
+  if (dz == null) return toast('There is nothing below it to set it down on.', true);
+  o.g.position.z += dz;
   await v3Commit(o, o.g);
 }
 
@@ -1505,6 +1590,7 @@ function v3Tools(){
     <label title="Turn in steps">Angle <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label>
     <label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap pieces</label>
     <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt</label>
+    <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label>
     <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button>
     ${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Showing light as in game (lamps, candles, fog). Click for bright, even light for editing.' : 'Showing bright, even light for editing. Click to see it as in game.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
@@ -1537,6 +1623,7 @@ function v3Tools(){
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
   $('#v3tilt').onchange = e => { V3.tilt = e.target.checked; v3ApplyMode(); };
+  $('#v3rest').onchange = e => { V3.rest = e.target.checked; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} };
 }
 
 // ----- the View menu: grid, cell borders, wireframe, ground and water

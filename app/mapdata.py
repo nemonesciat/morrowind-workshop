@@ -36,11 +36,18 @@ def cellmap(db, cell_key):
     if not info:
         return {'exists': False, 'key': cell_key, 'refs': []}
     refs, _hdr = db.cell_refs(cell_key)
-    out = []
+    out, gone = [], []
     type_cache = {}
+    mine_plugin = db.project.plugin.lower() if getattr(db, 'project', None) else None
     for rk, ref in refs.items():
         rid, pos, scale, deleted = ref_info(ref['subs'])
         if deleted:
+            # taken out by your mod: still shown faintly on the map, to bring back if you like
+            if ref['pidx'] == db.proj_pidx:
+                ti = db.resolve_id(rid)
+                gone.append({'k': rk, 'id': rid, 'name': db.recs[ti][2] if ti is not None else '',
+                             'type': db.recs[ti][0] if ti is not None else '',
+                             'p': [round(v, 2) if n < 3 else round(v, 5) for n, v in enumerate(pos)]})
             continue
         low = rid.lower()
         if low not in type_cache:
@@ -65,9 +72,11 @@ def cellmap(db, cell_key):
                     'arch': is_architecture(tag, rid, bnd),
                     'p': [round(v, 2) if n < 3 else round(v, 5) for n, v in enumerate(pos)],
                     's': round(scale, 3), 'mine': ref['pidx'] == db.proj_pidx,
+                    'new': ref['pidx'] == db.proj_pidx and ref['origin'] == mine_plugin,
                     'src': db.plugins[ref['pidx']]['name']})
     info['exists'] = True
     info['refs'] = out
+    info['gone'] = gone
     if info['interior']:
         import pathgrid
         import places

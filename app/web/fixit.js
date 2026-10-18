@@ -8,6 +8,9 @@ function fixitCss(){
   const c = document.createElement('style'); c.id = 'fx-css';
   c.textContent = `
   #fx-panel{position:fixed;left:16px;bottom:16px;width:min(380px,calc(100vw - 32px));max-height:60vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 40px #000c;z-index:70}
+  .pbody #fx-panel{position:static;width:auto;max-height:none;background:none;border:0;border-radius:0;box-shadow:none;margin:-14px -16px 0}
+  .pbody #fx-panel #fx-x{display:none}
+  .pbody #fx-panel .fx-list{overflow:visible}
   #fx-panel .fx-h{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
   #fx-panel .fx-h b{flex:1}
   #fx-panel .fx-list{overflow:auto;padding:6px 10px 10px}
@@ -32,7 +35,13 @@ const FX_KIND = {gap: 'Gap', doorway: 'Doorway', ceiling: 'Ceiling', post: 'Post
 async function fixitOpen(cell){
   fixitCss();
   FX.cell = cell;
-  if (!FX.panel){
+  // in the World map it lives in its own panel (that you can move, dock or tab with others)
+  const inPanel = typeof PNL !== 'undefined' && PNL.spaces.world && $('#world').classList.contains('on');
+  if (inPanel){
+    PNL.show('world', 'fixit');
+    const body = PNL.body('world', 'fixit');
+    if (!FX.panel || !body.contains(FX.panel)){ body.innerHTML = ''; FX.panel = document.createElement('div'); FX.panel.id = 'fx-panel'; body.appendChild(FX.panel); }
+  } else if (!FX.panel){
     FX.panel = document.createElement('div'); FX.panel.id = 'fx-panel';
     document.body.appendChild(FX.panel);
   }
@@ -87,6 +96,7 @@ async function fixitAfter(){
 }
 
 function fixitClose(){
+  if (FX.panel && FX.panel.closest('.pbody')){ PNL.close('world', 'fixit'); return; }
   if (FX.panel){ FX.panel.remove(); FX.panel = null; }
   FX.issues = [];
   fixitMarks();
