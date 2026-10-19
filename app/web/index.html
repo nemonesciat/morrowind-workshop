@@ -1282,6 +1282,10 @@ const CELL = 8192;
 let W = {key:null, info:null, ext:false, cells:{}, lands:{}, cam:{x:0, y:0, z:0.05}, sel:null, mode:null, placeId:null,
          placeName:'', hidden:new Set(), god:false, drag:null, hover:null, loading:new Set(), dpr:1, filter:'',
          lockArch:true, cut:null, palette:null, paletteKey:null, hide:new Set(), onlyMine:false, marks:true};
+try { W.marks = localStorage.getItem('ws-marks') !== 'off'; } catch (e) {}
+function setMarks(on){ W.marks = on; try { localStorage.setItem('ws-marks', on ? 'on' : 'off'); } catch (e) {} }
+// marks only where they tell you something: not in a place your mod made, where everything is new
+function marksIn(ck){ const c = W.cells[ck]; return W.marks && !(c && c.own); }
 const cv = $('#map'), g = cv.getContext('2d');
 
 function sizeMap(){
@@ -1584,7 +1588,7 @@ function drawMap(){
       g.fillRect(b[0], b[1], w, d);
       g.strokeStyle = isSel ? '#f0cd87' : col + (r.arch ? '55' : 'dd');
       g.lineWidth = (isSel ? 2.5 : 1) / (z * s);
-      if (r.mine && !isSel && W.marks){ g.strokeStyle = r.new ? MARK_NEW : MARK_CHANGED; g.lineWidth = 1.6 / (z * s); g.setLineDash([4 / (z * s), 3 / (z * s)]); }
+      if (r.mine && !isSel && marksIn(ck)){ g.strokeStyle = r.new ? MARK_NEW : MARK_CHANGED; g.lineWidth = 1.6 / (z * s); g.setLineDash([4 / (z * s), 3 / (z * s)]); }
       g.strokeRect(b[0], b[1], w, d); g.setLineDash([]);
       if (r.type === 'NPC_' || r.type === 'CREA' || r.type === 'DOOR'){ g.beginPath(); g.moveTo(0, 0); g.lineTo(0, Math.max(b[4], 30)); g.strokeStyle = '#000a'; g.stroke(); }
       g.restore();
@@ -1603,13 +1607,13 @@ function drawMap(){
       g.fillStyle = col; g.beginPath(); g.arc(0, 0, a, 0, Math.PI * 2); g.fill();
       if (r.type === 'NPC_' || r.type === 'CREA'){ g.strokeStyle = '#0008'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -a - 3); g.stroke(); }
     }
-    if (r.mine && W.marks){ g.strokeStyle = r.new ? MARK_NEW : MARK_CHANGED; g.setLineDash([3, 2]); g.lineWidth = 1.2; g.beginPath(); g.arc(0, 0, 9, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); }
+    if (r.mine && marksIn(ck)){ g.strokeStyle = r.new ? MARK_NEW : MARK_CHANGED; g.setLineDash([3, 2]); g.lineWidth = 1.2; g.beginPath(); g.arc(0, 0, 9, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); }
     g.restore();
     if (isSel){ g.strokeStyle = '#f0cd87'; g.lineWidth = 2.5; g.beginPath(); g.arc(sx, sy, 13, 0, Math.PI * 2); g.stroke(); }
   }
   // what your mod took out: a faint red cross where it stood (right-click it to bring it back)
   if (W.marks && showRefs) for (const [ck, c] of Object.entries(W.cells)){
-    if (!c.exists || !c.gone || (!W.ext && ck !== W.key)) continue;
+    if (!c.exists || !c.gone || c.own || (!W.ext && ck !== W.key)) continue;
     for (const r of c.gone){
       const [sx, sy] = toScreen(r.p[0], r.p[1]); if (sx < -20 || sy < -20 || sx > W.w + 20 || sy > W.h + 20) continue;
       g.save(); g.strokeStyle = MARK_GONE; g.lineWidth = 1.6; g.beginPath(); g.moveTo(sx - 6, sy - 6); g.lineTo(sx + 6, sy + 6); g.moveTo(sx + 6, sy - 6); g.lineTo(sx - 6, sy + 6); g.stroke(); g.restore();

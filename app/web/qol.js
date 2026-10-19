@@ -82,13 +82,14 @@ function qolAfterRender(){
     d.innerHTML = `<h3>Your changes</h3>
       <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="q-marks" ${W.marks ? 'checked' : ''}> Mark them:
         <i class="qol-key" style="border-color:${MARK_NEW}"></i>new <i class="qol-key" style="border-color:${MARK_CHANGED}"></i>changed <b style="color:var(--red);margin-left:8px">✕</b> removed</label>
+      ${W.info.own ? '<div class="msg" style="color:var(--faint)">Your mod made this place, so everything here is new: no marks here.</div>' : ''}
       <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="q-only" ${W.onlyMine ? 'checked' : ''}> Show only what your mod changed</label>
       <button class="btn sm" id="q-changes" style="margin-top:6px">✎ List them (My changes)</button>
       <h3>Hidden for now</h3>
       <div class="msg">${W.hide.size ? `<b>${W.hide.size}</b> hidden. ` : 'Nothing hidden. '}<kbd class="cf">H</kbd> hides what's selected, <kbd class="cf">Shift+H</kbd> everything else, <kbd class="cf">Alt+H</kbd> shows it all again. Hiding only changes what you see here, not the game.</div>
       ${W.hide.size ? '<button class="btn sm" id="q-unhide" style="margin-top:6px">Show them all again</button>' : ''}`;
     pane.appendChild(d);
-    d.querySelector('#q-marks').onchange = e => { W.marks = e.target.checked; drawMap(); };
+    d.querySelector('#q-marks').onchange = e => { setMarks(e.target.checked); drawMap(); };
     d.querySelector('#q-only').onchange = e => { W.onlyMine = e.target.checked; drawMap(); renderWside(); };
     d.querySelector('#q-changes').onclick = () => PNL.show('world', 'changes');
     const u = d.querySelector('#q-unhide'); if (u) u.onclick = () => cfRun('unhide');
@@ -115,8 +116,8 @@ function qolAfterRender(){
 function qolMarks3D(){
   if (typeof THREE === 'undefined' || !V3.on || !V3.scene) return;
   const T = THREE, mine = [];
-  if (W.marks) for (const [key, o] of V3.objs) if (o.r && o.g && o.r.mine && o.g.visible !== false) mine.push([key, o]);
-  const gone = W.marks ? qolChanges().filter(x => x.kind === 'gone') : [];
+  if (W.marks) for (const [key, o] of V3.objs) if (o.r && o.g && o.r.mine && o.g.visible !== false && marksIn(o.ck)) mine.push([key, o]);
+  const gone = W.marks ? qolChanges().filter(x => x.kind === 'gone' && marksIn(x.ck)) : [];
   const sig = mine.map(m => m[0]).join(',') + '|' + gone.map(x => x.r.k).join(',') + '|' + V3.origin.join(',');
   if (sig !== QOL.marksSig){
     QOL.marksSig = sig;
@@ -329,7 +330,7 @@ CF_ACT.push(
   {id: 'isolate', label: 'Hide everything but what\'s selected', keys: ['Shift+H'], world: true, run: () => qolIsolate()},
   {id: 'unhide', label: 'Show everything hidden again', keys: ['Alt+H'], world: true, run: () => qolUnhide()},
   {id: 'onlymine', label: 'Show only my changes (on / off)', keys: [], world: true, run: () => { W.onlyMine = !W.onlyMine; drawMap(); renderWside(); toast(W.onlyMine ? 'Showing only what your mod changed.' : 'Showing everything.'); }},
-  {id: 'marks', label: 'Mark my changes on the map (on / off)', keys: [], world: true, run: () => { W.marks = !W.marks; drawMap(); renderWside(); }},
+  {id: 'marks', label: 'Mark my changes on the map (on / off)', keys: [], world: true, run: () => { setMarks(!W.marks); drawMap(); renderWside(); }},
   {id: 'changes', label: 'My changes (the list)', keys: [], world: true, run: () => PNL.show('world', 'changes')},
   {id: 'through', label: 'Go through the selected door', keys: ['Enter'], world: true, run: () => {
     const r = cfSelRef(); if (!r || !r.to || ['BUTTON', 'A'].includes((document.activeElement || {}).tagName)) return false;

@@ -27,8 +27,10 @@ def cell_info(db, cell_key):
         elif st in ('FRMR', 'MVRF'):
             break
     interior = bool(flags & 1) and not cell_key.startswith('#')
+    # own: the place itself was made by your mod (no other plugin has it)
+    own = db.proj_pidx is not None and all(db.recs[v][3] == db.proj_pidx for v in lst)
     return {'i': w, 'key': cell_key, 'id': r[1], 'name': name, 'interior': interior,
-            'gx': gx, 'gy': gy, 'region': region, 'has_water': bool(flags & 2)}
+            'gx': gx, 'gy': gy, 'region': region, 'has_water': bool(flags & 2), 'own': own}
 
 
 def cellmap(db, cell_key):
