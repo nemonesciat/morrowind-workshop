@@ -353,10 +353,11 @@ function v3LightsTick(t){
 
 // walking paths as glowing lines just above the floor (View tab: "Show them on the map")
 function v3Paths(){
-  const P = W.showPaths && !W.ext && W.info && W.info.paths;
-  const sig = P ? W.key + '|' + P.pts.length + '|' + P.edges.length + '|' + V3.origin.join(',') : '';
-  if (sig === V3.pathSig) return;
-  V3.pathSig = sig;
+  const P = !(typeof PE !== 'undefined' && PE) && W.showPaths && !W.ext && W.info && W.info.paths;   // (while editing: pathedit.js draws them)
+  // (redrawn whenever they're new data, not only when the count changes: moved points too)
+  const sig = P ? W.key + '|' + V3.origin.join(',') : '';
+  if (sig === V3.pathSig && P === V3.pathSrc) return;
+  V3.pathSig = sig; V3.pathSrc = P;
   if (V3.pathObj){ V3.scene.remove(V3.pathObj); V3.pathObj.geometry.dispose(); V3.pathObj = null; }
   if (!P) return;
   const o = V3.origin, pos = [];
@@ -1705,6 +1706,7 @@ function v3Loop(){
     if (V3.view.wire && V3.wireFor !== true + '|' + V3.objs.size && t - (V3.wireT || 0) > 1000){ V3.wireT = t; v3ApplyView(); }
     v3LightsTick(t);
     v3WeatherTick(dt, t);
+    if (typeof pe3DTick === 'function'){ pe3DTick(); v3Paths(); }
     if (t - (V3.lightPickT || 0) > 500){ V3.lightPickT = t; v3PointLightsPick(); }
     // holding the brush still keeps raising / lowering / smoothing
     if (V3.stroke && V3.strokeEv && V3.land.tool !== 'paint' && V3.land.tool !== 'scatter' && t - V3.stroke.last > 50){

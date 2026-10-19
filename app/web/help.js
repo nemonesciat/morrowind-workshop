@@ -61,6 +61,7 @@ function renderGuide(){
     <li>Your mod's changes are marked on the map: green new, gold changed, a red ✕ where you took something out (right-click it to bring it back). <b>My changes</b> lists them all.</li>
     <li>${HELP_KEY('H')} hides what's selected so you can get at what's behind, ${HELP_KEY('Shift+H')} hides everything else, ${HELP_KEY('Alt+H')} shows it all again.</li>
     <li>Select a door and press ${HELP_KEY('Enter')} to go through it; ${HELP_KEY('Alt+←')} comes back. ${HELP_KEY('Ctrl+H')} replaces every one of an object with another.</li>
+    <li><b>Walking paths</b> (the path grid people and creatures follow): the <b>🚶 Paths</b> panel → <b>✎ Edit by hand</b>, on the map or in 3D. Click to add a point, joined to the selected one (${HELP_KEY('Ctrl')}+click: not joined); drag a point to move it; ${HELP_KEY('Shift')}+click another point to join or unjoin them; ${HELP_KEY('Delete')} takes one out, ${HELP_KEY('Ctrl+Z')} undoes. ${HELP_KEY('Esc')} or ✓ Done saves it all as one Undo; Discard leaves the paths as they were. <b>Make them for me</b> works out a whole set for you, to touch up by hand.</li>
     <li><b>👤 Play as</b> (by Play here) starts the game as one of your own characters, from their latest save, at the spot you pick. <b>🧪 Test setups</b> add items, spells, quest stages or variables on top.</li>
     <li><b>Settings → Appearance</b> has themes and your own colours.</li>
   </ul>

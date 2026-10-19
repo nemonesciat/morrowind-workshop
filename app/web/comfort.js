@@ -102,6 +102,7 @@ function cfTyping(e){
 }
 window.addEventListener('keydown', e => {
   if (CF.capture){ CF.capture(e); return; }
+  if (typeof peKey === 'function' && peKey(e)) return;       // editing walking paths: Delete, Ctrl+Z, Esc are its own
   const name = cfKeyName(e); if (!name) return;
   const typing = cfTyping(e), world = cfWorldOn(), modal = document.querySelector('.modal-bg');
   for (const a of CF_ACT){
@@ -172,6 +173,7 @@ function cfSelectLike(r){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLo
 // hit: [cell, ref] under the mouse (or null); at: the world spot [x, y, z] under it (or null)
 function cfMenuAt(e, hit, at){
   if (!cfWorldOn() || !W.key) return;
+  if (W.mode === 'paths'){ peMenu(e); return; }
   const items = [], pt = {x: e.clientX, y: e.clientY};
   const sep = () => { if (items.length && items[items.length - 1] !== '-') items.push('-'); };
   const head = t => items.push({label: t, disabled: true, head: true});
@@ -235,6 +237,7 @@ function cfRun(id){ const a = CF_ACT.find(x => x.id === id); if (a) a.run(); }
 // the flat map, and the object lists in the panels
 cv.addEventListener('contextmenu', e => {
   e.preventDefault();
+  if (W.mode === 'paths'){ peMenu(e); return; }
   if (W.mode){ setMode(null); return; }
   const hit = hitTest(e.offsetX, e.offsetY);
   cfMenuAt(e, hit, toWorld(e.offsetX, e.offsetY));

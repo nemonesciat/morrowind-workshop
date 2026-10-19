@@ -1646,6 +1646,12 @@ function drawMap(){
 }
 cv.addEventListener('mousemove', e => { W.mouse = [e.offsetX, e.offsetY]; if (W.mode === 'group') drawMap(); });
 function drawPaths(){
+  if (typeof PE !== 'undefined' && PE){
+    // editing them: the ones being edited, and outdoors the neighbours' as they are
+    if (PE.ext) for (const [k, c] of Object.entries(W.cells)) if (c.paths && k !== PE.cell) drawPathSet(c.paths);
+    peDraw2D();
+    return;
+  }
   if (W.showPaths && W.ext){
     // outdoors: the paths of every cell on screen
     for (const c of Object.values(W.cells)) if (c.paths) drawPathSet(c.paths);
@@ -1706,6 +1712,7 @@ function setBanner(t, kind){
   if (x) x.onclick = e => { e.stopPropagation(); BANNER_HIDDEN.add(kind); b.style.display = 'none'; };
 }
 function setMode(m, data){
+  if (W.mode === 'paths' && m !== 'paths' && typeof peLeave === 'function') peLeave();
   W.mode = m; cv.classList.toggle('place', !!m);
   if (m !== 'region') REG.paint = null;
   if (V3.on) v3GhostSet(m === 'place' ? data.id : null, data && data.type);
@@ -1721,6 +1728,7 @@ function setMode(m, data){
   }
   else if (m === 'play') setBanner(LINK.connected ? 'Click where you want to teleport to in game. Esc to cancel.' : 'Click where you want to start playing. Esc to cancel.', 'play');
   else if (m === 'group') groupHint();
+  else if (m === 'paths') peBanner();
   else if (m === 'arrive') setBanner(`Click where the player should arrive through <b>${esc((W.arriving || {}).name || 'the door')}</b>${V3.on ? ' (on the floor or ground)' : ''}. Esc to cancel.`, 'arrive');
   else setBanner('');
   if (m !== 'place'){ W.placeId = null; renderPlacing(); renderLinkBits(); }
@@ -2101,6 +2109,30 @@ function thumbImg(id, type, size, cls){
 function tileHtml(it){
   return `<div class="tile ${W.placeId && W.placeId.toLowerCase() === it.id.toLowerCase() ? 'placing' : ''}" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-hid="${esc(it.id)}" data-hsize="${it.size ? it.size.join(' × ') : ''}">${thumbImg(it.id, it.type)}<span>${esc(it.name || it.id)}</span></div>`;
 }
+// the Paths panel: the walking paths (path grid) people and creatures follow here
+function pathsPanelHtml(i){
+  if (!(i.interior || i.key.startsWith('#'))) return '<div class="msg" style="padding:10px 0">Walking paths belong to an interior or an outdoor cell.</div>';
+  const editing = W.mode === 'paths' && typeof PE !== 'undefined' && PE;
+  const P = editing ? PE : i.paths, n = P ? P.pts.length : 0, links = P ? P.edges.length : 0;
+  const where = i.interior ? 'This place' : 'This cell';
+  return `<div class="msg" style="margin-top:4px">${editing ? `<b>Editing</b>: <span id="pe-count">${peCount()}</span>.`
+      : n ? `${where} has walking paths: ${n} points, ${links} links. People and creatures follow them to move around.` : 'No walking paths yet: people here stand still or wander badly.'}</div>
+    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="w-paths" ${W.showPaths || editing ? 'checked' : ''} ${editing ? 'disabled' : ''}> Show them on the map</label>
+    <div class="actions" style="margin-top:8px">${editing
+      ? '<button class="btn sm primary" id="w-editpaths">✓ Done (save)</button><button class="btn sm" id="w-discardpaths">Discard changes</button>'
+      : `<button class="btn sm primary" id="w-editpaths" title="Add, move, join and take out points yourself, on the map or in 3D">✎ Edit by hand</button>
+        <button class="btn sm" id="w-makepaths" title="${i.interior ? 'Work out paths from the rooms, doorways and furniture' : 'Work out paths over the walkable ground, around buildings, rocks and trees'}">${n ? '↻ Make them again' : '＋ Make them for me'}</button>`}</div>
+    <h3>Editing by hand</h3>
+    <ul class="glist" style="font-size:12.5px;margin-top:4px">
+      <li><b>Click</b> to add a point, joined to the selected one (<kbd class="cf">Ctrl</kbd>+click: not joined).</li>
+      <li><b>Drag</b> a point to move it. In 3D it follows the floor.</li>
+      <li><kbd class="cf">Shift</kbd>+click another point to join or unjoin the two.</li>
+      <li><kbd class="cf">Delete</kbd> takes the selected point out; <kbd class="cf">Ctrl+Z</kbd> undoes.</li>
+      <li><kbd class="cf">Esc</kbd> or Done saves it all as one Undo.</li>
+    </ul>
+    <div class="msg" style="font-size:11.5px">${i.interior ? '"Make them for me" works them out for places built from room pieces; make them again after moving furniture around, then touch up by hand.'
+      : 'Outdoors, each cell keeps its own paths: this is the cell in the middle of the view. Making them again replaces the paths it has now (the game\'s own ones too).'}</div>`;
+}
 function renderWside(){
   // (each part goes into its own panel: see worldpanels.js)
   if (!PNL.spaces.world) worldPanelsInit();
@@ -2109,7 +2141,7 @@ function renderWside(){
   let h = `<div class="dd"><input class="inp" id="w-goto" placeholder="Go to a place… (e.g. Balmora)" autocomplete="off"><div class="ddlist" id="w-goto-l"></div></div>`;
   if (!i){
     body('place').innerHTML = h;
-    for (const p of ['sel', 'objs', 'view']) body(p).innerHTML = '<div class="msg" style="padding:10px 0">Open a place first (Place, at the top).</div>';
+    for (const p of ['sel', 'objs', 'view', 'paths']) if (body(p)) body(p).innerHTML = '<div class="msg" style="padding:10px 0">Open a place first (Place, at the top).</div>';
     bindWside(); return;
   }
   const refs = (W.cells[W.key] || {refs: []}).refs;
@@ -2167,13 +2199,7 @@ function renderWside(){
   // --- View
   h += `<div class="wpane on" data-pane="view"><h3 style="margin-top:4px">Show</h3><div class="legend">${LAYERS.map((L, n) => `<label><input type="checkbox" data-layer="${n}" ${W.hidden.has(n) ? '' : 'checked'}><i style="background:${L[2]}"></i>${L[0]}</label>`).join('')}</div>
     <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="w-lock" ${W.lockArch ? 'checked' : ''}> Lock walls &amp; buildings (so you can't move them by accident)</label>
-    ${i.interior ? `<h3>Lighting &amp; settings</h3><div id="w-placeset"></div>` : regViewHtml(i)}
-    ${i.interior || i.key.startsWith('#') ? `<h3>Walking paths${i.interior ? '' : ' in this cell'}</h3>
-      <div class="msg">${i.paths ? `${i.interior ? 'This place' : 'This cell'} has walking paths (${i.paths.pts.length} points). People and creatures follow them to move around.` : 'No walking paths yet: people here stand still or wander badly.'}</div>
-      <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="w-paths" ${W.showPaths ? 'checked' : ''}> Show them on the map</label>
-      <div class="actions" style="margin-top:6px"><button class="btn sm" id="w-makepaths" title="${i.interior ? 'Work out paths from the rooms, doorways and furniture' : 'Work out paths over the walkable ground, around buildings, rocks and trees'}">${i.paths ? '↻ Make them again' : '＋ Make walking paths'}</button></div>
-      <div class="msg" style="font-size:11.5px">${i.interior ? 'Made automatically for places you build or auto-furnish. Make them again after moving furniture around.'
-        : 'For the cell in the middle of the view: dry ground, gentle slopes, around buildings, rocks and trees.' + (i.paths ? ' Making them again replaces the paths this cell has now (the game\'s own ones too).' : '')}</div>` : ''}`;
+    ${i.interior ? `<h3>Lighting &amp; settings</h3><div id="w-placeset"></div>` : regViewHtml(i)}`;
   if (i.interior && refs.length){
     const zs = refs.map(r => r.p[2]), lo = Math.floor(Math.min(...zs)), hi = Math.ceil(Math.max(...zs));
     if (hi - lo > 300) h += `<h3>Floors</h3><label class="msg">Hide everything above height: <b id="w-cutv">${W.cut == null ? 'show all' : Math.round(W.cut)}</b></label>
@@ -2187,6 +2213,7 @@ function renderWside(){
   body('sel').innerHTML = h.slice(cut[0], cut[1]);
   body('objs').innerHTML = h.slice(cut[1], cut[2]);
   body('view').innerHTML = h.slice(cut[2]);
+  if (body('paths')) body('paths').innerHTML = pathsPanelHtml(i);
   renderOList(refs);
   renderRecent(); renderPlacing(); renderPrefabs();
   bindWside();
@@ -2341,8 +2368,11 @@ function bindWside(){
   const wf = $('#w-filter'); if (wf) wf.oninput = () => { W.filter = wf.value; renderOList(W.cells[W.key].refs); };
   const lk = $('#w-lock'); if (lk) lk.onchange = () => { W.lockArch = lk.checked; };
   const pth = $('#w-paths'); if (pth) pth.onchange = () => { W.showPaths = pth.checked; drawMap(); };
+  const edp = $('#w-editpaths'); if (edp) edp.onclick = () => { if (W.mode === 'paths') setMode(null); else peStart(); };
+  const dsp = $('#w-discardpaths'); if (dsp) dsp.onclick = () => { if (PE) PE.discard = true; setMode(null); };
   const mkp = $('#w-makepaths'); if (mkp) mkp.onclick = async () => {
     if (!await needProject()) return;
+    if (W.mode === 'paths'){ PE.discard = true; setMode(null); }      // (made afresh: what was being edited goes)
     mkp.disabled = true;
     try {
       const m = await post('/api/paths', {cell: W.key});
@@ -3175,6 +3205,7 @@ poll();
 <script src="/web/worldpanels.js"></script>
 <script src="/web/comfort.js"></script>
 <script src="/web/qol.js"></script>
+<script src="/web/pathedit.js"></script>
 <script src="/web/setups.js"></script>
 <script src="/web/pagepanels.js"></script>
 <script src="/web/together.js"></script>

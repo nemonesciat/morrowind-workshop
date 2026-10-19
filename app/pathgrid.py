@@ -42,6 +42,47 @@ def read(db, cell_key):
     return {'pts': pts, 'edges': sorted(edges)}
 
 
+def save(db, cell_key, pts, edges):
+    """Walking paths edited by hand: points [[x, y, z]] (outdoors in world positions, like read() gives
+    them through the map) and links [[a, b]]. Saved into the mod as one change."""
+    editing._require_project(db)
+    info = mapdata.cell_info(db, cell_key)
+    if not info:
+        raise EditError('That place does not exist.')
+    pts = [[float(v) for v in p[:3]] for p in pts]
+    if len(pts) > 30000:
+        raise EditError('That is too many points for one place.')
+    links = {i: set() for i in range(len(pts))}
+    for e in edges:
+        a, b = int(e[0]), int(e[1])
+        if a != b and 0 <= a < len(pts) and 0 <= b < len(pts):
+            links[a].add(b)
+            links[b].add(a)
+    links = {i: sorted(v)[:255] for i, v in links.items()}     # (the game keeps up to 255 links a point)
+    outdoors = cell_key.startswith('#')
+    ox, oy = (info['gx'] * 8192, info['gy'] * 8192) if outdoors else (0, 0)
+    if outdoors:
+        for p in pts:
+            if not (ox - 64 <= p[0] <= ox + 8256 and oy - 64 <= p[1] <= oy + 8256):
+                raise EditError('A point lies outside this cell. Each outdoor cell keeps its own paths.')
+    pgrp = b''.join(struct.pack('<iiiBBH', int(round(p[0] - ox)), int(round(p[1] - oy)), int(round(p[2])), 0, len(links[i]), 0)
+                    for i, p in enumerate(pts))
+    pgrc = b''.join(struct.pack('<%dI' % len(links[i]), *links[i]) for i in range(len(pts)) if links[i])
+    name = info.get('name') or ('' if not outdoors else info.get('region') or '')
+    head = struct.pack('<iiHH', info['gx'] if outdoors else 0, info['gy'] if outdoors else 0, 1024 if outdoors else 256, len(pts))
+    subs = [('DATA', head), ('NAME', zs(name))]
+    if pts:
+        subs += [('PGRP', pgrp)] + ([('PGRC', pgrc)] if pgrc else [])
+    had = any(v not in db.dead and db.recs[v][3] != db.proj_pidx for v in db.by_key.get(('PGRD', cell_key), []))
+    if not pts and not had:
+        db.project.remove_record('PGRD', cell_key)        # nothing left, and nobody else had paths here
+    else:
+        db.project.set_record('PGRD', cell_key, 0, join_subs(subs), created=not had)
+    n = sum(len(v) for v in links.values()) // 2
+    editing.commit(db, 'Edited the walking paths in %s (%d points, %d links)' % (editing.cell_label(db, cell_key), len(pts), n))
+    return {'points': len(pts), 'links': n}
+
+
 def _blocked(boxes, x, y, pad=18):
     return any(b[0] - pad < x < b[2] + pad and b[1] - pad < y < b[3] + pad for b in boxes)
 

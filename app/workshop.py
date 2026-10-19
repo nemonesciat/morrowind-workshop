@@ -1186,6 +1186,11 @@ class Handler(BaseHTTPRequestHandler):
                     m = mapdata.cellmap(db, body['cell'])
                     m['made'] = r
                     return self._json(m)
+                if u.path == '/api/paths/save':
+                    r = pathgrid.save(db, body['cell'], body.get('pts') or [], body.get('edges') or [])
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['saved'] = r
+                    return self._json(m)
                 if u.path.startswith('/api/library/'):
                     import library
                     act = u.path.rsplit('/', 1)[1]

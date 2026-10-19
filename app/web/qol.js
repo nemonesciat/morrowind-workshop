@@ -330,6 +330,7 @@ CF_ACT.push(
   {id: 'isolate', label: 'Hide everything but what\'s selected', keys: ['Shift+H'], world: true, run: () => qolIsolate()},
   {id: 'unhide', label: 'Show everything hidden again', keys: ['Alt+H'], world: true, run: () => qolUnhide()},
   {id: 'onlymine', label: 'Show only my changes (on / off)', keys: [], world: true, run: () => { W.onlyMine = !W.onlyMine; drawMap(); renderWside(); toast(W.onlyMine ? 'Showing only what your mod changed.' : 'Showing everything.'); }},
+  {id: 'paths', label: 'Edit walking paths by hand (path grid)', keys: [], world: true, run: () => { if (W.mode === 'paths') setMode(null); else peStart(); }},
   {id: 'marks', label: 'Mark my changes on the map (on / off)', keys: [], world: true, run: () => { setMarks(!W.marks); drawMap(); renderWside(); }},
   {id: 'changes', label: 'My changes (the list)', keys: [], world: true, run: () => PNL.show('world', 'changes')},
   {id: 'through', label: 'Go through the selected door', keys: ['Enter'], world: true, run: () => {
