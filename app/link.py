@@ -575,11 +575,21 @@ class LiveLink:
         self.write_state()
 
     # ------------------------------------------------------------- log follower
+    ALT_LOG = None      # the log of a game started with the Workshop's own config folder (a very long load order)
+
     def _log(self):
-        if not self._log_path:
-            self._log_path = os.environ.get('WORKSHOP_GAME_LOG') or \
-                os.path.join(self.db.config.get('userdir') or '', 'openmw.log')
-        return self._log_path
+        path = os.environ.get('WORKSHOP_GAME_LOG') or os.path.join(self.db.config.get('userdir') or '', 'openmw.log')
+        alt = self.ALT_LOG
+        try:
+            if alt and os.path.exists(alt) and (not os.path.exists(path) or os.path.getmtime(alt) >= os.path.getmtime(path)):
+                path = alt
+        except OSError:
+            pass
+        if self._log_path and path != self._log_path:
+            self._tail_pos = 0                  # another log now: that game's, from its start
+            self.run_linked = False
+        self._log_path = path
+        return path
 
     def _tail_loop(self):
         while True:

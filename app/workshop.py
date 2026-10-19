@@ -138,9 +138,47 @@ def _spawn(args, install, launch=None):
     # your own options, written as on a command line ("quotes" keep spaces together)
     extra += [a.strip('"') for a in re.findall(r'"[^"]*"|\S+', str(opts.get('args') or ''))]
     exe, rest = args[0], args[1:]
-    subprocess.Popen([exe] + extra + rest, cwd=install, env=env,
+    cmd = [exe] + extra + rest
+    link.ALT_LOG = None
+    if len(subprocess.list2cmdline(cmd)) > LAUNCH_CMD_MAX:
+        cmd = _via_config(cmd)
+    subprocess.Popen(cmd, cwd=install, env=env,
                      creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
     return extra
+
+
+# Windows refuses a command line over 32,767 characters ("The filename or extension is too long").
+# A load order of a thousand-odd plugins, each given as --content, goes over that: then the load
+# order goes into an extra openmw.cfg of the Workshop's own instead, handed to OpenMW with --config.
+LAUNCH_CMD_MAX = int(os.environ.get('WORKSHOP_LAUNCH_CMD_MAX') or 30000)     # (lower it to try this route)
+_CFG_KEYS = ('--data', '--replace', '--content', '--groundcover', '--fallback-archive')
+
+
+def _via_config(cmd):
+    folder = os.path.join(APP_DIR, 'launch_config')
+    os.makedirs(folder, exist_ok=True)
+    lines, keep, i = [], [cmd[0]], 1
+    while i < len(cmd):
+        a = cmd[i]
+        if a in _CFG_KEYS and i + 1 < len(cmd):
+            v = cmd[i + 1]
+            if a == '--data':
+                v = '"%s"' % v.replace('&', '&&').replace('"', '&"')     # (openmw.cfg's own quoting)
+            lines.append('%s=%s' % (a[2:], v))
+            i += 2
+        else:
+            keep.append(a)
+            i += 1
+    with open(os.path.join(folder, 'openmw.cfg'), 'w', encoding='utf-8') as f:
+        f.write('# Written by Morrowind Workshop for starting the game: your load order was too long for\n'
+                '# a Windows command line. Rewritten each time; your own openmw.cfg is not changed.\n')
+        f.write('\n'.join(lines) + '\n')
+    # (the last config folder is where OpenMW keeps its settings and log for this run: start from yours)
+    mine = os.path.join((db.config or {}).get('userdir') or '', 'settings.cfg')
+    if os.path.isfile(mine):
+        shutil.copyfile(mine, os.path.join(folder, 'settings.cfg'))
+    link.ALT_LOG = os.path.join(folder, 'openmw.log')
+    return keep + ['--config', folder]
 
 
 def _clean_word(v, n=64):

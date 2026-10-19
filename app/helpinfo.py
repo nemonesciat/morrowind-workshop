@@ -21,10 +21,23 @@ def version():
         return 'development copy'
 
 
+def game_log(cfg):
+    """OpenMW's log: the usual one, or the one in the Workshop's launch_config folder when the game was
+    last started from there (a load order too long for a command line), whichever is newer."""
+    log = os.environ.get('WORKSHOP_GAME_LOG') or os.path.join(cfg.get('userdir') or '', 'openmw.log')
+    alt = os.path.join(APP_DIR, 'launch_config', 'openmw.log')
+    try:
+        if os.path.isfile(alt) and (not os.path.isfile(log) or os.path.getmtime(alt) >= os.path.getmtime(log)):
+            return alt
+    except OSError:
+        pass
+    return log
+
+
 def openmw_version(db):
     """From the newest openmw.log (the Workshop never starts the game just to ask)."""
     cfg = db.config or {}
-    log = os.environ.get('WORKSHOP_GAME_LOG') or os.path.join(cfg.get('userdir') or '', 'openmw.log')
+    log = game_log(cfg)
     try:
         with open(log, encoding='utf-8', errors='replace') as f:
             for line in f.readlines()[:40]:
@@ -158,8 +171,8 @@ def report(db, link, what=''):
     log = os.path.join(APP_DIR, 'workshop.log')
     lines += ['--- Workshop log (last 150 lines) ---', _tail(log, 150) if os.path.isfile(log) else
               '(no log file: started from a terminal)\n']
-    game_log = os.environ.get('WORKSHOP_GAME_LOG') or os.path.join(cfg.get('userdir') or '', 'openmw.log')
-    lines += ['--- OpenMW log (last 60 lines) ---', _tail(game_log, 60)]
+    glog = game_log(cfg)
+    lines += ['--- OpenMW log (last 60 lines) ---', _tail(glog, 60)]
     text = _anon('\n'.join(lines))
     d = os.path.join(APP_DIR, 'reports')
     os.makedirs(d, exist_ok=True)
