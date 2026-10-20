@@ -1,7 +1,7 @@
 // Fix-it tools: find the gaps in a place built from room pieces (open sides onto nothing, doorways that
 // lead nowhere, missing ceilings), fix them one by one or all at once, and swap a piece for another
 // that fits the same spot.
-const FX = {cell: null, issues: [], panel: null, marks: null};
+const FX = {cell: null, issues: [], panel: null, marks: null, all: false};
 
 function fixitCss(){
   if ($('#fx-css')) return;
@@ -46,9 +46,21 @@ async function fixitOpen(cell){
     document.body.appendChild(FX.panel);
   }
   FX.panel.innerHTML = '<div class="fx-h"><b>🔧 Finding gaps…</b></div><div class="fx-list"><span class="spin"></span></div>';
-  try { const r = await api('/api/fixit/scan?cell=' + encodeURIComponent(cell)); FX.issues = r.issues; FX.res = r; }
+  try { const r = await api('/api/fixit/scan?cell=' + encodeURIComponent(cell) + (FX.all ? '&all=1' : '')); FX.issues = r.issues; FX.res = r; }
   catch (e){ FX.panel.innerHTML = `<div class="fx-h"><b>🔧 Gaps</b><button class="xbtn" id="fx-x">✕</button></div><div class="fx-list msg err">${esc(e.message)}</div>`; $('#fx-x').onclick = fixitClose; return; }
   fixitRender();
+}
+
+// this place's see-through spots per floor piece against the game's own places of the style
+function fixitRate(r){
+  if (!r.tiles) return '';
+  const per10 = x => (10 * x).toFixed(1);
+  const holes = FX.issues.filter(i => i.kind === 'hole').length + (r.hidden || 0);
+  let s = `See-through spots: ${holes} in ${r.tiles} floor pieces (${per10(r.rate)} per 10).`;
+  if (r.typical) s += ` The game's own ${esc(r.style || '')} places have ${per10(r.typical.per_tile.hole || 0)} per 10 (from ${r.typical.places} places)${r.hidden ? ', so this place is no worse than them' : r.rate > (r.typical.per_tile.hole || 0) ? ', so this place is gappier than they are' : ''}.`;
+  else if (r.style) s += ` How gappy the game's own ${esc(r.style)} places are is being measured in the background; look again in a minute.`;
+  return `<div class="msg" style="margin-bottom:6px">${s}${r.hidden ? ` <b>${r.hidden}</b> left out of the list.` : ''}
+    ${(r.hidden || FX.all) ? ` <a href="#" id="fx-everything">${FX.all ? 'Show only what\'s worse than the game\'s own' : 'Show everything'}</a>` : ''}</div>`;
 }
 
 function fixitRender(){
@@ -56,14 +68,43 @@ function fixitRender(){
   FX.panel.innerHTML = `<div class="fx-h"><b>🔧 ${n ? `${n} gap${n === 1 ? '' : 's'} found` : 'No gaps found'}</b>
       ${fixable ? `<button class="btn sm primary" id="fx-all" title="Close every gap that has a fix, in one step (one Undo takes it back)">Fix all</button>` : ''}
       <button class="btn sm" id="fx-again" title="Look again">↻</button><button class="xbtn" id="fx-x" title="Close">✕</button></div>
-    <div class="fx-list">${r.note ? `<div class="msg">${esc(r.note)}</div>` : n > 1 ? '<div class="msg">Fixing one by one? Go from the top: posts and columns come first, and often close gaps further down the list. It looks again after each fix.</div>' : n ? '' : `<div class="msg">Checked ${r.tiles} floor pieces${r.style ? ' (' + esc(r.style) + ')' : ''}: every side is closed or carries on into another room, and looking round from inside, nothing shows through where pieces meet.</div>`}
+    <div class="fx-list">${r.note ? `<div class="msg">${esc(r.note)}</div>` : n > 1 ? '<div class="msg">Fixing one by one? Go from the top: posts and columns come first, and often close gaps further down the list. It looks again after each fix.</div>' : n ? '' : `<div class="msg">Checked ${r.tiles} floor pieces${r.style ? ' (' + esc(r.style) + ')' : ''}: every side is closed or carries on into another room${r.hidden ? '' : ', and looking round from inside, nothing shows through where pieces meet'}.</div>`}
+      ${fixitRate(r)}
       ${FX.issues.map(i => `<div class="fx-i"><div class="fx-t"><span class="fx-kind ${i.kind}">${FX_KIND[i.kind] || i.kind}</span><span>${esc(i.text)}${i.side ? ` <span class="msg">(${{N: 'north', E: 'east', S: 'south', W: 'west'}[i.side]} side)</span>` : ''}</span></div>
         <div class="msg" style="word-break:break-all">${esc(i.id)}</div>
         <div class="fx-acts"><button class="btn sm" data-fxshow="${i.n}" title="Select the piece and look at the spot">⌖ Show</button>
           ${i.fixes.map((f, k) => `<button class="btn sm ${k === 0 ? 'primary' : ''}" data-fxfix="${i.n}:${k}">${esc(f.label)}</button>`).join('')}
           ${i.fixes.length ? '' : '<span class="msg">No piece of this style closes it: use the Fix-it pieces in Place → Suggested.</span>'}
-          <button class="btn sm" data-fxvar="${i.n}" title="Other pieces of the style that fit this spot">↻ Other pieces</button></div></div>`).join('')}</div>`;
+          <button class="btn sm" data-fxvar="${i.n}" title="Other pieces of the style that fit this spot">↻ Other pieces</button></div></div>`).join('')}
+      ${r.posts ? `<div class="msg" style="margin-top:6px;font-size:11.5px">${r.posts.places
+        ? `In the game's own ${esc(r.style || '')} places, ${Math.round(100 * (r.posts.share || 0))}% of the corners have a post or column${(r.posts.share || 0) < 0.12 ? ', so gaps here are closed some other way first' : ''}.`
+        : `No place in your game is built in ${esc(r.style || 'this style')}; most styles have a post at only about 1 corner in 20, so gaps here are closed some other way first.`}</div>` : ''}
+      ${r.tiles ? `<div class="fx-i" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><div class="msg">Posts or columns standing where there's no corner, or several on one?</div>
+        <div class="fx-acts"><button class="btn sm" id="fx-spare" title="Takes out the posts and columns your mod put here that close nothing (it looks round the whole place to be sure nothing shows through without them). One Undo puts them back.">🧹 Take out spare columns</button>
+          ${r.door_frame ? `<button class="btn sm" id="fx-frames" title="For a place built before 2.2: stands the style's door frame (${esc(r.door_frame)}) in each doorway between rooms that's just a gap in the wall, then takes out the columns that were only covering the wall ends. One Undo takes it back.">🚪 Door frames in doorways</button>` : ''}</div></div>` : ''}</div>`;
+  const fr = $('#fx-frames');
+  if (fr) fr.onclick = async () => {
+    if (!await needProject()) return;
+    fr.disabled = true; fr.textContent = '🚪 Fitting door frames…';
+    try {
+      const m = await post('/api/fixit/doorframes', {cell: FX.cell});
+      toast(m.frames ? `Put door frames in ${m.frames} doorway${m.frames === 1 ? '' : 's'}${m.removed ? ` and took out ${m.removed} column${m.removed === 1 ? '' : 's'}` : ''}. One Undo takes it back.` : 'Every doorway here has its frame already.');
+      await fixitAfter();
+    } catch (e){ toast(e.message, true); fr.disabled = false; fr.textContent = '🚪 Door frames in doorways'; }
+  };
   $('#fx-x').onclick = fixitClose;
+  const ev = $('#fx-everything');
+  if (ev) ev.onclick = e => { e.preventDefault(); FX.all = !FX.all; fixitOpen(FX.cell); };
+  const sp = $('#fx-spare');
+  if (sp) sp.onclick = async () => {
+    if (!await needProject()) return;
+    sp.disabled = true; sp.textContent = '🧹 Looking round the place…';
+    try {
+      const m = await post('/api/fixit/spare', {cell: FX.cell});
+      toast(m.removed ? `Took out ${m.removed} spare column${m.removed === 1 ? '' : 's'}. Undo puts ${m.removed === 1 ? 'it' : 'them'} back.` : 'Every post and column here closes something, so they all stay.');
+      await fixitAfter();
+    } catch (e){ toast(e.message, true); sp.disabled = false; sp.textContent = '🧹 Take out spare columns'; }
+  };
   $('#fx-again').onclick = () => fixitOpen(FX.cell);
   const all = $('#fx-all');
   if (all) all.onclick = async () => {

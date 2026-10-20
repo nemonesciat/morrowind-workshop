@@ -2,7 +2,8 @@
 // Rooms are rectangles of floor tiles on a grid, on up to five floors. Drag a room to move it, drag its
 // corners or the tabs on its sides to resize it. Click the wall between two rooms to put a doorway in
 // it (or take it out again), click an outside wall to put the way out there. The stairs are worked out
-// by the Workshop from the style's own stair pieces and drawn on both floors they join.
+// by the Workshop from the style's own stair pieces and drawn on both floors they join; drag them (or
+// "Place by hand") to put them somewhere yourself, and they stay there. R turns them.
 // "3D" shows every floor stacked up like a doll's house; drag to turn it.
 const PL_FLOORS = [[2, 'Top floor'], [1, 'Upstairs'], [0, 'Ground floor'], [-1, 'Cellar'], [-2, 'Lower cellar']];
 const PL_NAMES = ['Bedroom', 'Kitchen', 'Hall', 'Storeroom', 'Study', 'Dining room', 'Library', 'Shop', 'Shrine', 'Guard room', 'Bath', 'Hallway'];
@@ -33,35 +34,53 @@ function plRedo(){ if (!PL.fut.length) return; PL.hist.push(JSON.stringify(CR.pl
 
 // ----- what is where
 const plRoom = id => plData().rooms.find(r => r.id === id);
-function plRoomAt(x, y, f, skip){ return plData().rooms.find(r => r.floor === f && r !== skip && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h); }
+// a room's tiles: its rectangle, less the ones taken away (cut), with the ones added on (add), both kept
+// from its corner so they move, resize and turn with it
+function plHas(r, x, y){
+  const dx = x - r.x, dy = y - r.y;
+  if (dx >= 0 && dx < r.w && dy >= 0 && dy < r.h) return !(r.cut || []).some(t => t[0] === dx && t[1] === dy);
+  return (r.add || []).some(t => t[0] === dx && t[1] === dy);
+}
+function plTiles(r){
+  const out = [];
+  for (let x = 0; x < r.w; x++) for (let y = 0; y < r.h; y++) if (!(r.cut || []).some(t => t[0] === x && t[1] === y)) out.push([r.x + x, r.y + y]);
+  for (const t of r.add || []) if (!(t[0] >= 0 && t[0] < r.w && t[1] >= 0 && t[1] < r.h) && !out.some(o => o[0] === r.x + t[0] && o[1] === r.y + t[1])) out.push([r.x + t[0], r.y + t[1]]);
+  return out;
+}
+const plShaped = r => !!((r.add && r.add.length) || (r.cut && r.cut.length));
+function plRoomAt(x, y, f, skip){ return plData().rooms.find(r => r.floor === f && r !== skip && plHas(r, x, y)); }
 const PL_STEP = {N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0]}, PL_OPP = {N: 'S', S: 'N', E: 'W', W: 'E'};
 function plShared(a, b){
   // edges between rooms a and b: [{x, y, side}] with the tile in a
   if (a.floor !== b.floor) return [];
   const out = [];
-  for (let x = a.x; x < a.x + a.w; x++) for (let y = a.y; y < a.y + a.h; y++)
-    for (const [s, [dx, dy]] of Object.entries(PL_STEP)){
-      const nx = x + dx, ny = y + dy;
-      if (nx >= b.x && nx < b.x + b.w && ny >= b.y && ny < b.y + b.h) out.push({x, y, side: s});
-    }
+  for (const [x, y] of plTiles(a))
+    for (const [s, [dx, dy]] of Object.entries(PL_STEP)) if (plHas(b, x + dx, y + dy)) out.push({x, y, side: s});
   return out;
 }
 function plOutside(r){
   const out = [];
-  for (let x = r.x; x < r.x + r.w; x++) for (let y = r.y; y < r.y + r.h; y++)
+  for (const [x, y] of plTiles(r))
     for (const [s, [dx, dy]] of Object.entries(PL_STEP)){
       const nx = x + dx, ny = y + dy;
-      if (nx >= r.x && nx < r.x + r.w && ny >= r.y && ny < r.y + r.h) continue;
+      if (plHas(r, nx, ny)) continue;
       if (!plRoomAt(nx, ny, r.floor)) out.push({x, y, side: s});
     }
   return out;
+}
+// tiles in one piece (4 sides touching)
+function plJoined(tiles){
+  if (tiles.length < 2) return true;
+  const key = t => t[0] + ',' + t[1], all = new Set(tiles.map(key)), seen = new Set([key(tiles[0])]), todo = [tiles[0]];
+  while (todo.length){ const [x, y] = todo.pop(); for (const [dx, dy] of Object.values(PL_STEP)){ const k = (x + dx) + ',' + (y + dy); if (all.has(k) && !seen.has(k)){ seen.add(k); todo.push([x + dx, y + dy]); } } }
+  return seen.size === all.size;
 }
 const plMid = list => list.slice().sort((p, q) => p.x - q.x || p.y - q.y)[Math.floor((list.length - 1) / 2)];
 const plSameEdge = (d, e) => (d.x === e.x && d.y === e.y && d.side === e.side) ||
   (d.x + PL_STEP[d.side][0] === e.x && d.y + PL_STEP[d.side][1] === e.y && PL_OPP[d.side] === e.side);
 function plOverlaps(){
   const seen = {}, bad = new Set();
-  for (const r of plData().rooms) for (let x = r.x; x < r.x + r.w; x++) for (let y = r.y; y < r.y + r.h; y++){
+  for (const r of plData().rooms) for (const [x, y] of plTiles(r)){
     const k = x + ',' + y + ',' + r.floor;
     if (seen[k]){ bad.add(seen[k]); bad.add(r.id); } else seen[k] = r.id;
   }
@@ -109,6 +128,9 @@ function plFix(){
     P.exit = outs.length ? {room: r.id, ...plMid(pick.length ? pick : outs)} : null;
   }
   P.stairs = (P.stairs || []).filter(s => { const a = plRoom(s.lo), b = plRoom(s.hi); return a && b && b.floor === a.floor + 1; });
+  // stairs put by hand, and "beside the rooms": only between two floors that both have rooms
+  const has = f => P.rooms.some(r => r.floor === f);
+  for (const k of ['stairPins', 'stairOut']){ P[k] = P[k] || {}; for (const f of Object.keys(P[k])) if (!has(+f) || !has(+f + 1)) delete P[k][f]; }
 }
 function plChanged(){ plFix(); plSave(); plRender(); plSide(); plAsk(); if (typeof bShells === 'function' && CR.bstyles){ clearTimeout(bShellT); bShellT = setTimeout(bShells, 600); } }
 
@@ -117,26 +139,62 @@ function bLayout(){
   const P = plData(), N = plNames();
   const first = P.rooms.find(r => r.floor === 0) || P.rooms[0];
   return {
-    rooms: P.rooms.map(r => ({name: N[r.id], x: r.x, y: r.y, w: r.w, h: r.h, floor: r.floor})),
+    rooms: P.rooms.map(r => Object.assign({name: N[r.id], x: r.x, y: r.y, w: r.w, h: r.h, floor: r.floor},
+      plShaped(r) ? {add: (r.add || []).map(t => [r.x + t[0], r.y + t[1]]), cut: (r.cut || []).map(t => [r.x + t[0], r.y + t[1]])} : {})),
     doors: P.doors.map(d => d.kind === 'open' ? {rooms: [N[d.a], N[d.b]], kind: 'open'} : {rooms: [N[d.a], N[d.b]], at: {x: d.x, y: d.y, side: d.side}}),
     exit: P.exit ? {room: N[P.exit.room], side: P.exit.side, x: P.exit.x, y: P.exit.y} : {room: N[first.id], side: 'S'},
-    stairs: (P.stairs || []).map(s => ({rooms: [N[s.lo], N[s.hi]]})),
+    stairs: plStairsOut(N),
     floors_as: P.join || 'auto',
   };
+}
+// for each floor's stairs up: which rooms they join, where they were put by hand, beside the rooms
+function plStairsOut(N){
+  const P = plData(), by = {};
+  const at = f => (by[f] = by[f] || {floor: f});
+  for (const s of P.stairs || []){ const a = plRoom(s.lo); if (a) at(a.floor).rooms = [N[s.lo], N[s.hi]]; }
+  for (const [f, p] of Object.entries(P.stairPins || {})) at(+f).at = {x: p.x, y: p.y, up: p.up};
+  for (const [f, v] of Object.entries(P.stairOut || {})) if (v) at(+f).outside = true;
+  return Object.values(by);
+}
+// the stairs to draw: the Workshop's answer, or (dragging, placing, or when it said no) where you put them
+const PL_TURN = {N: 'E', E: 'S', S: 'W', W: 'N'};
+function plPinTiles(p, len){ const d = PL_STEP[p.up]; return Array.from({length: len}, (_, k) => [p.x + d[0] * k, p.y + d[1] * k]); }
+function plStairsShown(){
+  // (while the Workshop is working out the new plan: the stairs as they were, so they can still be grabbed)
+  const ok = PL.res && !PL.res.error && !PL.res.busy;
+  if (ok) PL.good = PL.res;
+  const P = plData(), res = ok ? PL.res : PL.res && PL.res.busy ? PL.good : null, out = [];
+  PL.stLen = PL.stLen || {};
+  const live = PL.drag && PL.drag.kind === 'stair' ? PL.drag.floor : PL.placing ? PL.placing.floor : null;
+  for (const s of res ? res.stairs : []){
+    PL.stLen[s.floor] = s.tiles.length;
+    if (s.floor === live) continue;
+    out.push({floor: s.floor, tiles: s.tiles.map(t => [t[0], t[1]]), up: s.up, pinned: !!s.pinned, land: s.land || []});
+  }
+  const floors = new Set(P.rooms.map(r => r.floor));
+  for (const [fs, p] of Object.entries(P.stairPins || {})){
+    const f = +fs; if (out.some(s => s.floor === f) || f === live) continue;
+    if (floors.has(f) && floors.has(f + 1)) out.push({floor: f, tiles: plPinTiles(p, PL.stLen[f] || 2), up: p.up, pinned: true, ghost: true, bad: !!(PL.res && PL.res.error)});
+  }
+  if (live != null){
+    const p = PL.placing ? PL.placing : P.stairPins[live];
+    if (p && p.x != null) out.push({floor: live, tiles: plPinTiles(p, PL.stLen[live] || 2), up: p.up, pinned: true, ghost: true});
+  }
+  return out;
 }
 // stairs: where the Workshop would put them (it depends on the style's stair pieces)
 let plAskT = 0;
 function plAsk(){
   const st = $('#cr-bstyle'), L = bLayout();
   const floors = new Set(L.rooms.map(r => r.floor));
-  const key = JSON.stringify([st && st.value, L.rooms, L.stairs, L.floors_as]);
+  const key = JSON.stringify([st && st.value, L.rooms, L.stairs, L.floors_as, L.doors]);
   if (floors.size < 2){ PL.res = null; PL.resKey = key; plNote(); return; }
   if (!CR.bstyles || !st || !CR.bstyles.some(x => x.id === st.value)) return;
   if (PL.resKey === key) return;
   clearTimeout(plAskT);
   PL.res = {busy: true}; plNote();
   plAskT = setTimeout(async () => {
-    try { PL.res = await post('/api/build/plan', {style: st.value, rooms: L.rooms, stairs: L.stairs, floors_as: L.floors_as}); }
+    try { PL.res = await post('/api/build/plan', {style: st.value, rooms: L.rooms, stairs: L.stairs, floors_as: L.floors_as, doors: L.doors}); }
     catch (e){ PL.res = {error: e.message}; }
     PL.resKey = key;
     if (plExitClear()) plSave();
@@ -207,7 +265,7 @@ function plMount(){
   root.innerHTML = `<div class="pl">
     <div class="pl-bar">
       <div class="pl-menu" id="pl-addm"><button class="btn sm primary" id="pl-add">+ Room ▾</button><div>${PL_NAMES.map(n => `<button data-add="${esc(n)}">${esc(n)}<small>${PL_SIZES[n].join(' × ')} tiles</small></button>`).join('')}
-        <div class="note"><b style="color:var(--text-b)">Stairs</b> aren't a room: put rooms on another floor (the floor tabs) and stairs are added for you. Choose which rooms they join in the panel on the right.</div></div></div>
+        <div class="note"><b style="color:var(--text-b)">Stairs</b> aren't a room: put rooms on another floor (the floor tabs) and stairs are added for you. Drag them on the plan to put them where you want, or use the panel on the right.</div></div></div>
       <div class="pl-menu" id="pl-prem"><button class="btn sm" id="pl-pre">Start from ▾</button><div>${PLAN_PRESETS.map((p, i) => `<button data-pre="${i}">${esc(p.name)}<small>${esc(p.note)}</small></button>`).join('')}</div></div>
       <span class="sep"></span><div class="pl-tabs" id="pl-tabs"></div><span class="sep"></span>
       <div class="pl-tabs"><button data-v="plan">Plan</button><button data-v="3d">3D</button></div>
@@ -215,7 +273,7 @@ function plMount(){
       <button class="btn sm" id="pl-undo" title="Undo (Ctrl+Z)">↶</button><button class="btn sm" id="pl-redo" title="Redo (Ctrl+Y)">↷</button>
       <button class="btn sm" id="pl-fit" title="Fit the plan in view">⤢ Fit</button>
     </div>
-    <div class="pl-body"><div class="pl-stage" id="pl-stage" tabindex="0"><svg id="pl-svg"></svg><canvas id="pl-3d" style="display:none"></canvas>
+    <div class="pl-body"><div class="pl-stage" id="pl-stage" tabindex="0" data-ownkeys><svg id="pl-svg"></svg><canvas id="pl-3d" style="display:none"></canvas>
       <div class="pl-hint" id="pl-hint"></div>
       <div class="pl-zoom"><button id="pl-zin" title="Zoom in">+</button><button id="pl-zout" title="Zoom out">−</button></div></div>
       <div class="pl-side" id="pl-side"></div></div>
@@ -244,7 +302,8 @@ function plFit(){
   const st = $('#pl-stage'); if (!st) return;
   const W = st.clientWidth || 600, H = st.clientHeight || 430;
   const res = PL.res && !PL.res.error && !PL.res.busy ? PL.res : null;
-  const R = plData().rooms.concat(res ? res.stairs.flatMap(s => s.tiles.map(t => ({x: t[0], y: t[1], w: 1, h: 1}))) : []);
+  const R = plData().rooms.flatMap(r => plShaped(r) ? plTiles(r).map(t => ({x: t[0], y: t[1], w: 1, h: 1})) : [r])
+    .concat(res ? res.stairs.flatMap(s => s.tiles.map(t => ({x: t[0], y: t[1], w: 1, h: 1}))) : []);
   if (!R.length){ PL.z = 34; PL.ox = W / 2; PL.oy = H / 2; return; }
   const x0 = Math.min(...R.map(r => r.x)) - 1, x1 = Math.max(...R.map(r => r.x + r.w)) + 1;
   const y0 = Math.min(...R.map(r => r.y)) - 1.6, y1 = Math.max(...R.map(r => r.y + r.h)) + 1;
@@ -260,7 +319,15 @@ function plZoom(k, cx, cy){
 }
 
 // ----- drawing the plan
+// adding or taking away tiles only goes on while that room is the selected one, on its own floor: click
+// elsewhere, pick another room or floor, and the mode ends (its buttons went with the room's panel)
+function plPaintCheck(){
+  if (!PL.paint) return;
+  const r = plRoom(PL.paint.id);
+  if (!r || PL.sel !== PL.paint.id || r.floor !== PL.floor) PL.paint = null;
+}
 function plRender(){
+  plPaintCheck();
   const st = $('#pl-stage'); if (!st) return;
   const svg = $('#pl-svg'), cv = $('#pl-3d');
   document.querySelectorAll('#pl-root [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === PL.view));
@@ -286,15 +353,29 @@ function plRender(){
       `<text x="${plSX(r.x) + 4}" y="${plSY(r.y + r.h) + 12}" fill="#bfb19655" font-size="10">${esc(names[r.id])} (below)</text>`;
   const here = P.rooms.filter(r => r.floor === f);
   for (const r of here){
-    s += `<rect x="${plSX(r.x)}" y="${plSY(r.y + r.h)}" width="${r.w * z}" height="${r.h * z}" fill="${col(r)}" fill-opacity="${PL.sel === r.id ? .95 : .78}"/>`;
-    if (bad.has(r.id)) s += `<rect x="${plSX(r.x)}" y="${plSY(r.y + r.h)}" width="${r.w * z}" height="${r.h * z}" fill="url(#pl-bad)"/>`;
+    const op = PL.sel === r.id ? .95 : .78;
+    if (!plShaped(r)) s += `<rect x="${plSX(r.x)}" y="${plSY(r.y + r.h)}" width="${r.w * z}" height="${r.h * z}" fill="${col(r)}" fill-opacity="${op}"/>`;
+    else for (const [x, y] of plTiles(r)) s += `<rect x="${plSX(x) - .3}" y="${plSY(y + 1) - .3}" width="${z + .6}" height="${z + .6}" fill="${col(r)}" fill-opacity="${op}"/>`;
+    if (bad.has(r.id)) for (const [x, y] of plTiles(r)) s += `<rect x="${plSX(x)}" y="${plSY(y + 1)}" width="${z}" height="${z}" fill="url(#pl-bad)"/>`;
+  }
+  // tiles you could paint onto the selected room (touching it, not another room's)
+  const pr_ = PL.paint && plRoom(PL.paint.id);
+  if (pr_ && pr_.floor === f && PL.paint.mode === 'add'){
+    const seen = new Set();
+    for (const [x, y] of plTiles(pr_)) for (const [dx, dy] of Object.values(PL_STEP)){
+      const nx = x + dx, ny = y + dy, k = nx + ',' + ny;
+      if (seen.has(k) || plRoomAt(nx, ny, f)) continue; seen.add(k);
+      s += `<rect x="${plSX(nx) + 2}" y="${plSY(ny + 1) + 2}" width="${z - 4}" height="${z - 4}" fill="${col(pr_)}" fill-opacity=".18" stroke="#f0cd8766" stroke-dasharray="3 3"/>`;
+    }
   }
   // tile seams, then walls where a room ends (not between rooms joined into one space)
   let seams = '', walls = '', opens = '';
   const openJoin = (a, b) => P.doors.some(d => d.kind === 'open' && ((d.a === a.id && d.b === b.id) || (d.a === b.id && d.b === a.id)));
   for (const r of here){
-    for (let x = r.x + 1; x < r.x + r.w; x++) seams += `M${plSX(x)} ${plSY(r.y)}V${plSY(r.y + r.h)}`;
-    for (let y = r.y + 1; y < r.y + r.h; y++) seams += `M${plSX(r.x)} ${plSY(y)}H${plSX(r.x + r.w)}`;
+    for (const [x, y] of plTiles(r)){
+      if (plHas(r, x + 1, y)) seams += `M${plSX(x + 1)} ${plSY(y)}V${plSY(y + 1)}`;
+      if (plHas(r, x, y + 1)) seams += `M${plSX(x)} ${plSY(y + 1)}H${plSX(x + 1)}`;
+    }
     for (const e of plOutside(r).concat(...here.filter(o => o !== r).map(o => plShared(r, o).map(x => ({...x, o}))))){
       const [x1, y1, x2, y2] = plEdgeLine(e);
       const seg = `M${plSX(x1)} ${plSY(y1)}L${plSX(x2)} ${plSY(y2)}`;
@@ -303,20 +384,21 @@ function plRender(){
   }
   s += `<path d="${seams}" stroke="#ffffff1a"/><path d="${walls}" stroke="#ebe2cf" stroke-width="2.5" stroke-linecap="square"/>`;
   s += `<path d="${opens}" stroke="#ebe2cf88" stroke-width="1.5" stroke-dasharray="3 4"/>`;
-  // stairs, from the Workshop's own plan
-  const res = PL.res && !PL.res.error && !PL.res.busy ? PL.res : null;
-  for (const sx of res ? res.stairs : []){
+  // stairs: where the Workshop put them, or where you're putting them (drag them, R turns them)
+  for (const sx of plStairsShown()){
     if (sx.floor !== f && sx.floor + 1 !== f) continue;
-    const up = sx.floor === f;
+    const up = sx.floor === f, colr = sx.bad ? '#ff8a6a' : '#f0cd87', chosen = PL.selStair === sx.floor;
+    // a landing the stairs needed, joined to the room beside it
+    for (const t of sx.land || []) if (t[2] === f) s += `<rect x="${plSX(t[0])}" y="${plSY(t[1] + 1)}" width="${z}" height="${z}" fill="#f0cd8722" stroke="#f0cd8766" stroke-dasharray="3 3"/>`;
     for (const t of sx.tiles){
       const X = plSX(t[0]), Y = plSY(t[1] + 1), vert = sx.up === 'N' || sx.up === 'S';
-      s += `<rect x="${X}" y="${Y}" width="${z}" height="${z}" fill="#2a2620" stroke="#f0cd87" stroke-width="1"/>`;
-      for (let k = 1; k < 5; k++) s += vert ? `<path d="M${X + 3} ${Y + k * z / 5}H${X + z - 3}" stroke="#f0cd8799"/>` : `<path d="M${X + k * z / 5} ${Y + 3}V${Y + z - 3}" stroke="#f0cd8799"/>`;
+      s += `<rect x="${X}" y="${Y}" width="${z}" height="${z}" fill="#2a2620" fill-opacity="${sx.ghost ? .7 : 1}" stroke="${colr}" stroke-width="${chosen ? 2.5 : 1}" ${sx.ghost ? 'stroke-dasharray="4 3"' : ''}/>`;
+      for (let k = 1; k < 5; k++) s += vert ? `<path d="M${X + 3} ${Y + k * z / 5}H${X + z - 3}" stroke="${colr}99"/>` : `<path d="M${X + k * z / 5} ${Y + 3}V${Y + z - 3}" stroke="${colr}99"/>`;
     }
     const a = sx.tiles[0], b = sx.tiles[sx.tiles.length - 1], d = PL_STEP[sx.up];
     const ax = plSX(a[0] + .5 - d[0] * .3), ay = plSY(a[1] + .5 - d[1] * .3), bx = plSX(b[0] + .5 + d[0] * .3), by = plSY(b[1] + .5 + d[1] * .3);
-    s += `<path d="M${ax} ${ay}L${bx} ${by}" stroke="#f0cd87" stroke-width="2" marker-end="url(#pl-arrow)"/>`;
-    s += `<text x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 6}" fill="#f0cd87" font-size="10" text-anchor="middle">${up ? 'up' : 'from below'}</text>`;
+    s += `<path d="M${ax} ${ay}L${bx} ${by}" stroke="${colr}" stroke-width="2" marker-end="url(#pl-arrow)"/>`;
+    s += `<text x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 6}" fill="${colr}" font-size="10" text-anchor="middle">${sx.pinned ? '📌 ' : ''}${up ? 'up' : 'from below'}</text>`;
   }
   // doorways
   for (const d of P.doors){
@@ -332,15 +414,23 @@ function plRender(){
   if (hv && hv.kind === 'exit') s += plExitMark(hv.e, '#ff8a5c', .5);
   // names and sizes
   for (const r of here){
-    const cx = plSX(r.x + r.w / 2), cy = plSY(r.y + r.h / 2), small = r.w * z < 70;
+    const [lx, ly] = plLabelAt(r), cx = plSX(lx), cy = plSY(ly), small = r.w * z < 70;
     s += `<text x="${cx}" y="${cy + (small ? 4 : 0)}" fill="#fff8e8" font-size="${Math.min(13, Math.max(9, z / 3))}" font-weight="600" text-anchor="middle" style="paint-order:stroke" stroke="#0008" stroke-width="3">${esc(names[r.id].length > 16 ? names[r.id].slice(0, 15) + '…' : names[r.id])}</text>`;
-    if (!small) s += `<text x="${cx}" y="${cy + 14}" fill="#fff8e8aa" font-size="10" text-anchor="middle">${r.w} × ${r.h}</text>`;
+    if (!small) s += `<text x="${cx}" y="${cy + 14}" fill="#fff8e8aa" font-size="10" text-anchor="middle">${plSizeText(r)}</text>`;
   }
   // the selected room: an outline and handles to resize it
   const sr = PL.sel && plRoom(PL.sel);
   if (sr && sr.floor === f){
-    s += `<rect x="${plSX(sr.x) - 2}" y="${plSY(sr.y + sr.h) - 2}" width="${sr.w * z + 4}" height="${sr.h * z + 4}" fill="none" stroke="#f0cd87" stroke-width="2" stroke-dasharray="6 3"/>`;
-    for (const h of plHandles(sr)) s += h.tab
+    if (!plShaped(sr)) s += `<rect x="${plSX(sr.x) - 2}" y="${plSY(sr.y + sr.h) - 2}" width="${sr.w * z + 4}" height="${sr.h * z + 4}" fill="none" stroke="#f0cd87" stroke-width="2" stroke-dasharray="6 3"/>`;
+    else {
+      // round its own outline: every side of a tile that isn't another of its tiles
+      let d = '';
+      for (const [x, y] of plTiles(sr)) for (const [side, [dx, dy]] of Object.entries(PL_STEP)) if (!plHas(sr, x + dx, y + dy)){
+        const [x1, y1, x2, y2] = plEdgeLine({x, y, side}); d += `M${plSX(x1)} ${plSY(y1)}L${plSX(x2)} ${plSY(y2)}`;
+      }
+      s += `<path d="${d}" fill="none" stroke="#f0cd87" stroke-width="3" stroke-dasharray="6 3"/>`;
+    }
+    if (!PL.paint) for (const h of plHandles(sr)) s += h.tab
       ? `<rect x="${h.x - 9}" y="${h.y - 5}" width="18" height="10" rx="3" transform="rotate(${h.rot} ${h.x} ${h.y})" fill="#f0cd87" stroke="#000" stroke-width="1"/>`
       : `<rect x="${h.x - 5}" y="${h.y - 5}" width="10" height="10" fill="#f0cd87" stroke="#000" stroke-width="1"/>`;
   }
@@ -349,6 +439,18 @@ function plRender(){
   svg.innerHTML = `<defs><pattern id="pl-bad" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="8" fill="#ff3b2b88"/></pattern>
     <marker id="pl-arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#f0cd87"/></marker></defs>` + s;
   plHint();
+}
+// where a room's name goes: the middle, or for a shaped room the middle of its tile nearest the middle
+function plLabelAt(r){
+  if (!plShaped(r)) return [r.x + r.w / 2, r.y + r.h / 2];
+  const T = plTiles(r), mx = T.reduce((s, t) => s + t[0], 0) / T.length + .5, my = T.reduce((s, t) => s + t[1], 0) / T.length + .5;
+  const best = T.slice().sort((a, b) => Math.hypot(a[0] + .5 - mx, a[1] + .5 - my) - Math.hypot(b[0] + .5 - mx, b[1] + .5 - my))[0];
+  return [best[0] + .5, best[1] + .5];
+}
+function plSizeText(r){
+  if (!plShaped(r)) return `${r.w} × ${r.h}`;
+  const cut = (r.cut || []).length, added = plTiles(r).length - (r.w * r.h - cut);
+  return `${r.w} × ${r.h}${added ? ' + ' + added : ''}${cut ? ' − ' + cut : ''}`;
 }
 // an edge of a tile as a line: (x1, y1, x2, y2) in tiles
 function plEdgeLine(e){
@@ -384,6 +486,10 @@ function plHint(){
   const h = $('#pl-hint'); if (!h) return;
   const hv = PL.hover;
   h.textContent = PL.view === '3d' ? 'Drag to turn it, scroll to zoom. Edit rooms in Plan.' :
+    PL.placing ? 'Click where the bottom step of the stairs goes · R turns them · Esc stops' :
+    PL.paint ? (PL.paint.mode === 'add' ? 'Click or drag on the marked tiles to add them to the room · Esc when done' : 'Click or drag on the room\'s tiles to take them away · Esc when done') :
+    PL.drag && PL.drag.kind === 'stair' ? 'Let go to put the stairs here' :
+    hv && hv.kind === 'stair' ? (hv.s.pinned ? 'Drag to move the stairs · click, then R turns them · Delete lets the Workshop choose' : 'Drag the stairs to put them where you want them') :
     hv && hv.kind === 'door' ? (hv.remove ? 'Click: take this doorway out' : 'Click: a doorway here') :
     hv && hv.kind === 'exit' ? 'Click: the way out goes here' :
     hv && hv.kind === 'handle' ? 'Drag to resize' : hv && hv.kind === 'room' ? 'Drag to move · double-click to rename' :
@@ -401,7 +507,7 @@ function plNote(){
   if (PL.res && PL.res.busy) msgs.push('Working out where the stairs go…');
   else if (PL.res && PL.res.error) msgs.push(`<span class="err">${esc(PL.res.error)}</span>`);
   else if (PL.res && PL.res.notes && PL.res.notes.length) msgs.push((PL.res.linked ? '<span class="warn">' : '<span>') + esc(PL.res.notes.join(' ')) + '</span>');
-  const tiles = P.rooms.reduce((s, r) => s + r.w * r.h, 0), m = (st ? st.tile : 256) / 72;
+  const tiles = P.rooms.reduce((s, r) => s + plTiles(r).length, 0), m = (st ? st.tile : 256) / 72;
   n.innerHTML = (msgs.length ? msgs.join(' · ') + ' · ' : '') + `${P.rooms.length} room${P.rooms.length === 1 ? '' : 's'}, ${tiles} tiles (about ${Math.round(tiles * m * m)} m²)${floors.length > 1 ? ', ' + floors.length + ' floors' : ''}. One tile is about ${m.toFixed(1)} m.`;
 }
 // rooms you couldn't walk to from the way out (stairs join floors)
@@ -424,6 +530,7 @@ function plUnreachable(){
 
 // ----- the panel beside the plan: the selected room, or what you can do
 function plSide(){
+  plPaintCheck();
   const box = $('#pl-side'); if (!box) return;
   const P = plData(), r = PL.sel && plRoom(PL.sel), names = plNames();
   if (!r){
@@ -432,23 +539,48 @@ function plSide(){
     for (const f of floors) if (floors.includes(f + 1)){
       const cur = P.stairs.find(s => plRoom(s.lo) && plRoom(s.lo).floor === f);
       const lo = P.rooms.filter(x => x.floor === f), hi = P.rooms.filter(x => x.floor === f + 1);
-      pairs.push(`<div class="row" style="flex-wrap:wrap"><span style="min-width:100%">${PL.res && PL.res.linked ? (f < 0 ? 'Trapdoor down to the ' + esc(plFloorName(f).toLowerCase()) : 'Door up from the ' + esc(plFloorName(f).toLowerCase())) : 'Stairs from the ' + esc(plFloorName(f).toLowerCase()) + ' up'}</span>
-        <select class="inp" data-stair="${f}" style="font-size:12px"><option value="">${PL.res && PL.res.linked ? 'The biggest rooms' : 'Wherever they fit best'}</option>${lo.flatMap(a => hi.map(b => `<option value="${a.id}|${b.id}" ${cur && cur.lo === a.id && cur.hi === b.id ? 'selected' : ''}>${esc(names[a.id])} → ${esc(names[b.id])}</option>`)).join('')}</select></div>`);
+      const linked = PL.res && PL.res.linked, pin = (P.stairPins || {})[f], picked = PL.selStair === f;
+      const shown = !linked && plStairsShown().find(s => s.floor === f);
+      pairs.push(`<div style="${picked ? 'border:1px solid var(--goldline);border-radius:8px;padding:6px;margin:6px -6px;background:#f0cd870d' : ''}">
+        <div class="row" style="flex-wrap:wrap"><span style="min-width:100%">${linked ? (f < 0 ? 'Trapdoor down to the ' + esc(plFloorName(f).toLowerCase()) : 'Door up from the ' + esc(plFloorName(f).toLowerCase())) : 'Stairs from the ' + esc(plFloorName(f).toLowerCase()) + ' up'}</span>
+        ${pin && !linked ? '' : `<select class="inp" data-stair="${f}" style="font-size:12px"><option value="">${linked ? 'The biggest rooms' : 'Wherever they fit best'}</option>${lo.flatMap(a => hi.map(b => `<option value="${a.id}|${b.id}" ${cur && cur.lo === a.id && cur.hi === b.id ? 'selected' : ''}>${esc(names[a.id])} → ${esc(names[b.id])}</option>`)).join('')}</select>`}</div>
+        ${linked ? '' : pin ? `<div class="tip">📌 <b>Put here by hand.</b> Drag them on the plan; <b>R</b> turns them, arrows move them.</div>
+            <div class="row"><button class="btn sm" data-stfree="${f}" title="Let the Workshop choose where they go again (Delete)">Let the Workshop choose</button></div>`
+          : `<label class="tip" style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="checkbox" data-stout="${f}" ${(P.stairOut || {})[f] ? 'checked' : ''}> Rather beside the rooms, in a stairwell of their own</label>
+            <div class="row" style="flex-wrap:wrap">${shown ? `<button class="btn sm" data-stkeep="${f}" title="Keep them just where they are now, whatever you change">📌 Keep them here</button>` : ''}
+            <button class="btn sm" data-stplace="${f}" title="Click on the plan where the bottom step goes; R turns them first">✋ Place by hand</button></div>`}
+      </div>`);
     }
     box.innerHTML = `<h4>Planning the rooms</h4><div class="tip">
       <b>Drag</b> a room to move it, its <b>corners or side tabs</b> to resize it.<br>
       Click the <b>wall between two rooms</b> for a doorway; click it again to take it out.<br>
       Click an <b>outside wall</b> to put the way out there.<br>
       Use the <b>floor tabs</b> for a cellar or upstairs: the rooms below show faintly, and stairs are added for you.<br>
+      <b>Drag the stairs</b> to put them where you want them (they stay there); click them and press <b>R</b> to turn them.<br>
+      Rooms needn't be rectangles: select one and use <b>✏ Add tiles</b> or <b>⌫ Take away</b> to give it a nook, an anteroom or an L shape.<br>
       <b>Keys:</b> Delete, R turns a room, arrows move it, Ctrl+D copies it, Ctrl+Z undoes.</div>
       ${pairs.length ? plJoinChoice() : ''}
-      ${pairs.length ? '<h4 style="margin-top:14px">' + (PL.res && PL.res.linked ? 'Between floors' : 'Stairs') + '</h4>' + pairs.join('') : ''}`;
+      ${pairs.length ? '<h4 style="margin-top:14px">' + (PL.res && PL.res.linked ? 'Between floors' : 'Stairs') + '</h4>' + pairs.join('') + plLearnedHtml() : ''}`;
     box.querySelectorAll('[name=pl-join]').forEach(r => r.onchange = () => { plSnap(); P.join = r.value; PL.resKey = null; plChanged(); });
     box.querySelectorAll('[data-stair]').forEach(s => s.onchange = () => {
       plSnap(); const f = +s.dataset.stair;
       P.stairs = P.stairs.filter(x => !(plRoom(x.lo) && plRoom(x.lo).floor === f));
       if (s.value){ const [lo, hi] = s.value.split('|'); P.stairs.push({lo, hi}); }
       plChanged();
+    });
+    box.querySelectorAll('[data-stout]').forEach(c => c.onchange = () => { plSnap(); P.stairOut = P.stairOut || {}; if (c.checked) P.stairOut[c.dataset.stout] = true; else delete P.stairOut[c.dataset.stout]; plChanged(); });
+    box.querySelectorAll('[data-stfree]').forEach(b => b.onclick = () => { plSnap(); delete P.stairPins[b.dataset.stfree]; plChanged(); });
+    box.querySelectorAll('[data-stkeep]').forEach(b => b.onclick = () => {
+      const f = +b.dataset.stkeep, s = plStairsShown().find(x => x.floor === f); if (!s) return;
+      plSnap(); P.stairPins[f] = {x: s.tiles[0][0], y: s.tiles[0][1], up: s.up}; PL.selStair = f; plChanged();
+      toast('The stairs stay there now, whatever you change. Drag them to move them.');
+    });
+    box.querySelectorAll('[data-stplace]').forEach(b => b.onclick = () => {
+      const f = +b.dataset.stplace, s = plStairsShown().find(x => x.floor === f);
+      PL.placing = {floor: f, up: s ? s.up : 'N', x: null, y: null};
+      if (PL.floor !== f && PL.floor !== f + 1) PL.floor = f;
+      $('#pl-stage').focus(); plRender();
+      toast('Click where the bottom step goes. R turns them first, Esc stops.');
     });
     return;
   }
@@ -459,6 +591,8 @@ function plSide(){
     <div class="chips">${PL_NAMES.map(n => `<button data-nm="${esc(n)}">${esc(n)}</button>`).join('')}</div>
     <div class="tip" style="margin-bottom:6px">Auto-furnish goes by the name.</div>
     <div class="row"><span>Size</span><input class="inp" type="number" min="1" max="16" id="pl-w" value="${r.w}" style="width:58px"><span style="min-width:0">×</span><input class="inp" type="number" min="1" max="16" id="pl-h" value="${r.h}" style="width:58px"><span style="min-width:0">tiles</span></div>
+    <div class="row" style="flex-wrap:wrap"><span>Shape</span><button class="btn sm${PL.paint && PL.paint.mode === 'add' ? ' primary' : ''}" id="pl-padd" title="Click or drag on tiles next to the room to make them part of it">✏ Add tiles</button><button class="btn sm${PL.paint && PL.paint.mode === 'cut' ? ' primary' : ''}" id="pl-pcut" title="Click or drag on the room's tiles to take them away">⌫ Take away</button>${plShaped(r) ? '<button class="btn sm" id="pl-prect" title="Back to its plain rectangle">▭ Rectangle again</button>' : ''}</div>
+    ${PL.paint ? `<div class="tip">${PL.paint.mode === 'add' ? 'Click or drag on the tiles marked round the room to add them' : 'Click or drag on the room\'s tiles to take them away'}. <b>Esc</b> or the button again when you're done.</div>` : ''}
     <div class="row"><span>Floor</span><select class="inp" id="pl-floor" style="flex:1">${PL_FLOORS.map(([v, l]) => `<option value="${v}" ${v === r.floor ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${touching.length ? `<h4 style="margin-top:12px">Next door</h4>${touching.map(o => `<div class="conn"><span>${esc(names[o.id])}</span><select class="inp" data-link="${o.id}" style="max-width:130px;font-size:12px">
       <option value="door" ${link(o) === 'door' ? 'selected' : ''}>Doorway</option><option value="open" ${link(o) === 'open' ? 'selected' : ''}>Open, no wall</option><option value="wall" ${link(o) === 'wall' ? 'selected' : ''}>Wall</option></select></div>`).join('')}
@@ -479,6 +613,58 @@ function plSide(){
     plFix2(r, o, s.value); plChanged();
   });
   $('#pl-dup').onclick = () => plDuplicate(r); $('#pl-rot').onclick = () => plRotate(r); $('#pl-del').onclick = () => plDelete(r);
+  const paint = mode => { PL.paint = PL.paint && PL.paint.mode === mode ? null : {mode, id: r.id}; $('#pl-stage').focus(); plRender(); plSide(); };
+  $('#pl-padd').onclick = () => paint('add'); $('#pl-pcut').onclick = () => paint('cut');
+  const pr = $('#pl-prect'); if (pr) pr.onclick = () => { plSnap(); r.add = []; r.cut = []; PL.paint = null; plChanged(); };
+}
+// painting a tile onto (or off) the room being shaped; false when it can't be
+function plPaintAt(x, y){
+  const r = PL.paint && plRoom(PL.paint.id); if (!r || r.floor !== PL.floor) return false;
+  const dx = x - r.x, dy = y - r.y, inRect = dx >= 0 && dx < r.w && dy >= 0 && dy < r.h;
+  r.add = r.add || []; r.cut = r.cut || [];
+  if (PL.paint.mode === 'add'){
+    if (plHas(r, x, y) || plRoomAt(x, y, r.floor)) return false;
+    if (!Object.values(PL_STEP).some(([sx, sy]) => plHas(r, x + sx, y + sy))) return false;      // (it has to touch the room)
+    if (plTiles(r).length >= 200) return false;
+    if (inRect) r.cut = r.cut.filter(t => !(t[0] === dx && t[1] === dy)); else r.add.push([dx, dy]);
+    return true;
+  }
+  if (!plHas(r, x, y)) return false;
+  const left = plTiles(r).filter(t => !(t[0] === x && t[1] === y));
+  if (!left.length) return false;
+  if (!plJoined(left)){ if (!PL.paintWarned){ PL.paintWarned = true; toast('That would cut the room in two. Take away a tile at its edge instead.', true); } return false; }
+  if (inRect) r.cut.push([dx, dy]); else r.add = r.add.filter(t => !(t[0] === dx && t[1] === dy));
+  return true;
+}
+// what the game's own places do round their stairs, in this style (or in all of them, for a style the
+// game never builds with): the survey the builder goes by
+const PL_ROLE = {centre: 'open floor', side: 'a wall on one side', corner: 'a corner', hall: 'a hall', end: 'a dead end', closed: 'walled in'};
+function plLearnedHtml(){
+  const st = plStyle(); if (!st) return '';
+  const S = PL.survey && PL.survey[st.id];
+  if (S === undefined){
+    PL.survey = PL.survey || {}; PL.survey[st.id] = null;
+    api('/api/build/stairsurvey?style=' + encodeURIComponent(st.id)).then(async r => {
+      PL.survey[st.id] = r.n ? {own: true, r} : {own: false, r: await api('/api/build/stairsurvey')};
+      if (!PL.sel) plSide();
+    }).catch(() => {});
+    return '';
+  }
+  if (!S) return '';
+  const r = S.own ? (S.r.styles[st.id] || {}) : S.r.all, n = S.own ? r.n : S.r.n;
+  const share = (list, test) => { const tot = (list || []).reduce((a, x) => a + x[1], 0); return tot ? Math.round(100 * (list || []).filter(x => test(x[0])).reduce((a, x) => a + x[1], 0) / tot) : 0; };
+  // (the kinds of piece at the foot, most common first, and how often it's a small landing of its own)
+  const kinds = {}; let land = 0, all = 0;
+  for (const [k, c] of r.foot || []){ const m = /'(\w+)', '(\w+)'/.exec(k); if (!m) continue; kinds[m[1]] = (kinds[m[1]] || 0) + c; all += c; if (m[2] === 'landing') land += c; }
+  const top = Object.entries(kinds).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k]) => PL_ROLE[k] || k);
+  if (top.length && all) top[top.length - 1] += `, ${Math.round(100 * land / all)}% of them a small landing`;
+  return `<details class="tip" style="margin-top:8px"><summary style="cursor:pointer;color:var(--gold2)">What the game does</summary>
+    <div style="margin-top:4px">${S.own ? `From ${n} staircases in the game's own ${esc(st.name)} places:` : `No place in your game is built in ${esc(st.name)}, so the Workshop goes by all ${n} staircases in the game's places:`}
+    <ul style="margin:4px 0 0 16px;padding:0">
+      <li>at the foot, mostly ${esc(top.join(', or ') || 'a room')}; almost never a dead end</li>
+      <li>${share(r.sides_low, k => /'none', 'none'/.test(k))}% have no floor beside them: along an outside wall or in a stairwell of their own</li>
+      <li>${share(r.over, k => k === 'nothing')}% are open above, with nothing built over them</li>
+      <li>${share(r.posts, k => k === '0')}% have no post or column by them</li></ul></div></details>`;
 }
 // stairs inside one place, or a place per floor joined by doors (styles without stairs: only that)
 function plJoinChoice(){
@@ -526,10 +712,22 @@ function plAdd(name){
 function plDuplicate(r){
   plSnap();
   const [x, y] = plFree(r.w, r.h, r.floor, r);
-  const c = {...r, id: plNewId(), x, y};
+  const c = {...r, id: plNewId(), x, y, add: (r.add || []).map(t => t.slice()), cut: (r.cut || []).map(t => t.slice())};
   plData().rooms.push(c); PL.sel = c.id; plChanged(); plMaybeFit();
 }
-function plRotate(r){ plSnap(); [r.w, r.h] = [r.h, r.w]; plChanged(); }
+function plRotate(r){
+  plSnap();
+  // a quarter turn: a tile dx, dy from the corner goes to dy, (old width - 1 - dx)
+  const turn = t => [t[1], r.w - 1 - t[0]];
+  r.add = (r.add || []).map(turn); r.cut = (r.cut || []).map(turn);
+  [r.w, r.h] = [r.h, r.w]; plChanged();
+}
+// the room's corner moved (resizing from the west or south): its added and taken-away tiles stay put
+function plKeepShape(r, o){
+  const dx = o.x - r.x, dy = o.y - r.y;
+  r.add = (o.add || []).map(t => [t[0] + dx, t[1] + dy]).filter(t => !(t[0] >= 0 && t[0] < r.w && t[1] >= 0 && t[1] < r.h));
+  r.cut = (o.cut || []).map(t => [t[0] + dx, t[1] + dy]).filter(t => t[0] >= 0 && t[0] < r.w && t[1] >= 0 && t[1] < r.h);
+}
 function plDelete(r){
   if (plData().rooms.length < 2) return toast('A building needs at least one room.', true);
   plSnap(); const P = plData();
@@ -567,8 +765,12 @@ function plWhat(sx, sy){
   const cands = [];
   if (dv < tol) cands.push([dv, true]);
   if (dh < tol) cands.push([dh, false]);
+  // the stairs (on either floor they join): grab them to move them
+  const tx = Math.floor(px), ty = Math.floor(py);
+  const stair = plStairsShown().find(s => (s.floor === f || s.floor + 1 === f) && s.tiles.some(t => t[0] === tx && t[1] === ty));
   cands.sort((a, b) => a[0] - b[0]);
   for (const [, vertical] of cands){ const h = tryEdge(vertical); if (h) return plEdgeHit(h); }
+  if (stair) return {kind: 'stair', s: stair};      // (after the walls, so a doorway beside them can still be clicked)
   const r = plRoomAt(Math.floor(px), Math.floor(py), f);
   if (r) return {kind: 'room', r};
   return {kind: 'bg'};
@@ -590,6 +792,26 @@ function plBind(){
     st.focus(); const [sx, sy] = pos(e);
     if (PL.view === '3d'){ PL.drag = {kind: 'turn', sx, sy, yaw: PL.yaw, tilt: PL.tilt}; st.setPointerCapture(e.pointerId); return; }
     const w = plWhat(sx, sy), P = plData();
+    // shaping a room: paint tiles on (or off) by clicking or dragging
+    if (PL.paint){
+      plSnap(); PL.paintWarned = false;
+      const did = plPaintAt(Math.floor(plPX(sx)), Math.floor(plPY(sy)));
+      PL.drag = {kind: 'paint', did}; st.setPointerCapture(e.pointerId); plRender(); return;
+    }
+    // "Place by hand": the stairs follow the mouse; a click puts them down
+    if (PL.placing){
+      const p = PL.placing; plSnap();
+      P.stairPins[p.floor] = {x: p.x, y: p.y, up: p.up};
+      PL.selStair = p.floor; PL.placing = null; PL.sel = null; plChanged(); return;
+    }
+    if (w.kind === 'stair'){
+      // grab the stairs: moving them puts them there for good (until you hand them back)
+      const s = w.s, pin = P.stairPins[s.floor] || {x: s.tiles[0][0], y: s.tiles[0][1], up: s.up};
+      PL.selStair = s.floor; PL.sel = null; plSnap();
+      PL.drag = {kind: 'stair', floor: s.floor, sx, sy, orig: {...pin}, had: !!P.stairPins[s.floor], moved: false};
+      st.setPointerCapture(e.pointerId); plRender(); plSide(); return;
+    }
+    if (PL.selStair != null && w.kind !== 'stair'){ PL.selStair = null; }
     if (w.kind === 'door'){
       plSnap();
       if (w.remove){ P.doors = P.doors.filter(d => d !== P.doors.find(d => plSameEdge(d, w.e))); plFix2(w.a, w.b, 'wall'); }
@@ -608,8 +830,22 @@ function plBind(){
   };
   st.onpointermove = e => {
     const [sx, sy] = pos(e), d = PL.drag;
+    if (PL.placing && PL.view === 'plan'){
+      // the bottom step under the mouse
+      const x = Math.floor(plPX(sx)), y = Math.floor(plPY(sy));
+      if (x !== PL.placing.x || y !== PL.placing.y){ PL.placing.x = x; PL.placing.y = y; plRender(); }
+      st.style.cursor = 'copy'; return;
+    }
+    if (d && d.kind === 'paint'){ if (plPaintAt(Math.floor(plPX(sx)), Math.floor(plPY(sy)))){ d.did = true; plRender(); } return; }
+    if (!d && PL.paint && PL.view === 'plan'){ st.style.cursor = 'crosshair'; return; }
+    if (d && d.kind === 'stair'){
+      const dx = Math.round((sx - d.sx) / PL.z), dy = Math.round(-(sy - d.sy) / PL.z);
+      if (dx || dy) d.moved = true;
+      if (d.moved){ plData().stairPins[d.floor] = {x: d.orig.x + dx, y: d.orig.y + dy, up: d.orig.up}; plRender(); }
+      return;
+    }
     if (!d){ if (PL.view === 'plan'){ const w = plWhat(sx, sy); const k = JSON.stringify([w.kind, w.e, w.k, w.r && w.r.id, w.remove]);
-      if (k !== PL.hoverKey){ PL.hoverKey = k; PL.hover = w; st.style.cursor = w.kind === 'door' || w.kind === 'exit' ? 'pointer' : w.kind === 'room' ? 'move' :
+      if (k !== PL.hoverKey){ PL.hoverKey = k; PL.hover = w; st.style.cursor = w.kind === 'door' || w.kind === 'exit' ? 'pointer' : w.kind === 'room' || w.kind === 'stair' ? 'move' :
         w.kind === 'handle' ? ({n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize'})[w.k] : 'grab'; plRender(); } } return; }
     if (d.kind === 'turn'){ PL.yaw = d.yaw + (sx - d.sx) * 0.008; PL.tilt = Math.max(0.15, Math.min(1.2, d.tilt + (sy - d.sy) * 0.004)); plRender(); return; }
     if (d.kind === 'pan'){ PL.ox = d.ox + sx - d.sx; PL.oy = d.oy + sy - d.sy; d.moved = true; plRender(); return; }
@@ -621,6 +857,7 @@ function plBind(){
       if (k.includes('w')){ const w = Math.max(1, Math.min(16, o.w - dx)); r.x = o.x + o.w - w; r.w = w; }
       if (k.includes('n')) r.h = Math.max(1, Math.min(16, o.h + dy));
       if (k.includes('s')){ const h = Math.max(1, Math.min(16, o.h - dy)); r.y = o.y + o.h - h; r.h = h; }
+      if (plShaped(o)) plKeepShape(r, o);
     }
     if (dx || dy) d.moved = true;
     plRender(); plNote();             // (doors and the way out follow when it's dropped)
@@ -628,7 +865,12 @@ function plBind(){
   st.onpointerup = e => {
     const d = PL.drag; PL.drag = null;
     if (!d) return;
-    if (d.kind === 'pan' && !d.moved){ PL.sel = null; plSide(); plRender(); return; }
+    if (d.kind === 'paint'){ if (!d.did) PL.hist.pop(); else plChanged(); return; }
+    if (d.kind === 'stair'){
+      if (!d.moved){ PL.hist.pop(); plRender(); return; }      // (just picked: the panel shows what you can do)
+      plChanged(); return;
+    }
+    if (d.kind === 'pan' && !d.moved){ PL.sel = null; PL.selStair = null; plSide(); plRender(); return; }
     if ((d.kind === 'room' || d.kind === 'handle')){
       if (!d.moved){ PL.hist.pop(); return; }
       // dropped on top of another room: back where it was
@@ -644,6 +886,25 @@ function plBind(){
     if (ctrl && k.toLowerCase() === 'z'){ e.preventDefault(); e.shiftKey ? plRedo() : plUndo(); return; }
     if (ctrl && k.toLowerCase() === 'y'){ e.preventDefault(); plRedo(); return; }
     if (k === 'PageUp' || k === 'PageDown'){ e.preventDefault(); PL.floor = Math.max(-2, Math.min(2, PL.floor + (k === 'PageUp' ? 1 : -1))); PL.sel = null; plRender(); plSide(); return; }
+    if (PL.paint && k === 'Escape'){ PL.paint = null; plRender(); plSide(); return; }
+    // stairs being placed, or picked: R turns them, arrows move them, Delete hands them back to the Workshop
+    if (PL.placing){
+      if (k === 'r' || k === 'R'){ e.preventDefault(); PL.placing.up = PL_TURN[PL.placing.up]; plRender(); }
+      else if (k === 'Escape'){ PL.placing = null; plRender(); plSide(); }
+      return;
+    }
+    if (PL.selStair != null){
+      const f = PL.selStair, P = plData(), shown = plStairsShown().find(s => s.floor === f);
+      const pin = P.stairPins[f] || (shown && {x: shown.tiles[0][0], y: shown.tiles[0][1], up: shown.up});
+      if (pin && (k === 'r' || k === 'R')){ e.preventDefault(); plSnap(); P.stairPins[f] = {...pin, up: PL_TURN[pin.up]}; plChanged(); return; }
+      if (pin && k.startsWith('Arrow')){
+        e.preventDefault(); plSnap();
+        P.stairPins[f] = {...pin, x: pin.x + (k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0), y: pin.y + (k === 'ArrowUp' ? 1 : k === 'ArrowDown' ? -1 : 0)};
+        plChanged(); return;
+      }
+      if ((k === 'Delete' || k === 'Backspace') && P.stairPins[f]){ e.preventDefault(); plSnap(); delete P.stairPins[f]; plChanged(); return; }
+      if (k === 'Escape'){ PL.selStair = null; plRender(); plSide(); return; }
+    }
     if (!r) return;
     if (k === 'Delete' || k === 'Backspace'){ e.preventDefault(); plDelete(r); }
     else if (k === 'r' || k === 'R'){ e.preventDefault(); plRotate(r); }
@@ -680,7 +941,7 @@ function plRender3D(){
   const openJoin = (a, b) => P.doors.some(d => d.kind === 'open' && ((d.a === a.id && d.b === b.id) || (d.a === b.id && d.b === a.id)));
   for (const r of R){
     const z = fz(r.floor), dim = r.floor !== PL.floor;
-    for (let x = r.x; x < r.x + r.w; x++) for (let y = r.y; y < r.y + r.h; y++){
+    for (const [x, y] of plTiles(r)){
       if (stairTiles.has(x + ',' + y + ',' + r.floor)) continue;
       const p = [pr(x, y, z), pr(x + 1, y, z), pr(x + 1, y + 1, z), pr(x, y + 1, z)];
       quad(p, col(r), '#00000055', Math.max(...p.map(q => q[2])) + 1000, r.floor);
@@ -726,7 +987,7 @@ function plRender3D(){
   const names = plNames();
   g.font = '600 12px Inter, sans-serif'; g.textAlign = 'center';
   for (const r of R.filter(r => r.floor === PL.floor)){
-    const [sx, sy] = pr(r.x + r.w / 2, r.y + r.h / 2, fz(r.floor));
+    const [lx, ly] = plLabelAt(r), [sx, sy] = pr(lx, ly, fz(r.floor));
     g.fillStyle = '#000a'; g.fillText(names[r.id], sx + 1, sy + 1); g.fillStyle = '#fff8e8'; g.fillText(names[r.id], sx, sy);
   }
   g.font = '11px Inter, sans-serif'; g.textAlign = 'left'; g.fillStyle = '#a99d84';

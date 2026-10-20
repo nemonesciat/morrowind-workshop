@@ -39,7 +39,7 @@ function renderGuide(){
     <tr><td><b>Browse</b></td><td>Every record in your game: search anything (names, IDs, dialogue, models) and click to see it, with links between records.
       <b>▦ Table</b> shows columns you choose and sort; <b>📌</b> pins a record in its own panel to compare it with others.</td></tr>
     <tr><td><b>World map</b></td><td>Places in 2D or 3D. Drag things in from the Place panel, click to select, drag to move. In 3D: right-drag to look,
-      ${HELP_KEY('W')}${HELP_KEY('A')}${HELP_KEY('S')}${HELP_KEY('D')} to fly, ${HELP_KEY('G')} move, ${HELP_KEY('R')} turn; <b>View ▾</b> has a grid and wireframe; <b>?</b> lists every control.
+      ${HELP_KEY('W')}${HELP_KEY('A')}${HELP_KEY('S')}${HELP_KEY('D')} to fly, ${HELP_KEY('G')} move, ${HELP_KEY('R')} turn; <b>View ▾</b> has a grid, wireframe and, outdoors, the view distance; <b>?</b> lists every control.
       Outdoors, <b>⛰ Ground</b> shapes and paints the land and scatters grass and plants.</td></tr>
     <tr><td><b>Create</b></td><td>New people, creatures, items, books and spells, or a whole interior built from wall and floor pieces, which <b>Auto-furnish</b> can fill.</td></tr>
     <tr><td><b>Characters</b></td><td>People and creatures: looks, stats, what they sell, where they stand.</td></tr>
@@ -55,6 +55,7 @@ function renderGuide(){
   <ul class="glist">
     <li><b>Panels:</b> every page's tools are panels. Drag a tab to move it, dock it on a side or tab it with others; drag the edges to resize; ⋮ to float or close it.
       <b>▤ Panels</b> opens any panel and has ready-made layouts, and you can save your own.</li>
+    <li>The buttons over the map come in groups: drag a group's grip <b>⋮⋮</b> to put it where you like, and it stays there (near the right or bottom edge, it keeps to that edge). Right-click a grip to put the buttons back in a row, or to lock them and hide the grips.</li>
     <li>${HELP_KEY('Ctrl+K')} finds any command, page, panel, place or record. ${HELP_KEY('Ctrl+/')} lets you change the keyboard shortcuts.</li>
     <li><b>Right-click</b> anything on the World map, in 3D or in a list for what you can do with it. The bar under the map shows the place, the mouse or camera position, and what's selected (click a position to copy it).</li>
     <li>${HELP_KEY('F1')} on something shows <b>where it's used</b>: the places it stands in, who carries it, the scripts and dialogue that name it.</li>

@@ -1065,6 +1065,7 @@ $('#detail').addEventListener('input', e => {
 
 // ---------- views ----------
 function showView(v){
+  if (v !== 'createv' && typeof PL !== 'undefined' && PL && PL.paint) PL.paint = null;     // (the planner's tile mode ends with the page)
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === v));
   if (v === 'world'){ renderWside(); requestAnimationFrame(() => { sizeMap(); drawMap(); if (W.ext && W.key) recentre(); if (V3.on && V3.scene){ v3Resize(); v3Loop(); } }); }
@@ -1362,11 +1363,18 @@ function viewCells(margin){
 }
 async function loadAround(){
   // the 3D view goes by its camera, not the 2D zoom: full detail and objects in the cells around it
-  const in3d = V3.on;
+  const in3d = V3.on, d3 = in3d ? v3Dist() : 1;      // (the 3D view's View distance: cells each way)
   const step = in3d ? 1 : mapStep(), cx = Math.floor(W.cam.x / CELL), cy = Math.floor(W.cam.y / CELL);
-  const R = in3d ? 1 : step >= 4 ? 26 : 9;  // (the server takes at most ~400 detailed or ~3000 coarse cells at once)
-  const objR = in3d ? 1 : MAP_OBJECTS_R;
-  let [x0, y0, x1, y1] = in3d ? [cx - 1, cy - 1, cx + 1, cy + 1] : viewCells(1);
+  const R = in3d ? d3 : step >= 4 ? 26 : 9;  // (the server takes at most ~400 detailed or ~3000 coarse cells at once)
+  const objR = in3d ? d3 : MAP_OBJECTS_R;
+  let [x0, y0, x1, y1] = in3d ? [cx - d3, cy - d3, cx + d3, cy + d3] : viewCells(1);
+  // (in 3D, the objects of cells well behind the view distance are let go again, so a long flight
+  // doesn't pile up every town on the way)
+  if (in3d) for (const k of Object.keys(W.cells)){
+    const c = W.cells[k];
+    if (!k.startsWith('#') || k === W.key || (W.sel && W.sel.cell === k) || c.gx == null) continue;
+    if (Math.max(Math.abs(c.gx - cx), Math.abs(c.gy - cy)) > d3 + 2) delete W.cells[k];
+  }
   x0 = Math.max(x0, cx - R); x1 = Math.min(x1, cx + R); y0 = Math.max(y0, cy - R); y1 = Math.min(y1, cy + R);
   const jobs = [];
   // ground: rows of cells still missing (or only known more coarsely), nearest rows first
@@ -1978,7 +1986,7 @@ function linkHtml(){
     <div class="msg" style="margin-top:4px">OpenMW is running, but it wasn't started from the Workshop (perhaps from OpenMW's own Launcher), so the live link is off:
     the map can't follow you and changes don't show in game. Quit the game, then start it with <b>▶ OpenMW → Start the game</b> at the top, or <b>Play here</b>.</div></div>`;
   if (!LINK.session && !LINK.connected) return '';
-  if (!LINK.connected) return `<div class="linkbox wait"><span class="spin"></span>Waiting for the game… The link connects when you're in game.</div>`;
+  if (!LINK.connected) return `<div class="linkbox wait"><span class="spin"></span>Waiting for the game… The link connects once you're in game (not at the main menu); a big load order takes a minute or two to start.</div>`;
   const synced = LINK.received >= LINK.version;
   const state = LINK.paused
     ? (synced ? 'The game is paused while you work here. Your edits appear as soon as you switch back to it.'
@@ -3206,6 +3214,7 @@ poll();
 <script src="/web/comfort.js"></script>
 <script src="/web/qol.js"></script>
 <script src="/web/pathedit.js"></script>
+<script src="/web/toolbar.js"></script>
 <script src="/web/setups.js"></script>
 <script src="/web/pagepanels.js"></script>
 <script src="/web/together.js"></script>

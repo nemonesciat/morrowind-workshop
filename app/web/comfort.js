@@ -103,6 +103,8 @@ function cfTyping(e){
 window.addEventListener('keydown', e => {
   if (CF.capture){ CF.capture(e); return; }
   if (typeof peKey === 'function' && peKey(e)) return;       // editing walking paths: Delete, Ctrl+Z, Esc are its own
+  // (a tool with keys of its own, like the room planner: Ctrl+Z there undoes the plan, not your mod)
+  if (e.target && e.target.closest && e.target.closest('[data-ownkeys]')) return;
   const name = cfKeyName(e); if (!name) return;
   const typing = cfTyping(e), world = cfWorldOn(), modal = document.querySelector('.modal-bg');
   for (const a of CF_ACT){

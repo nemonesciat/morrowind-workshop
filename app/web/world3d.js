@@ -57,6 +57,7 @@ async function v3Enable(on){
   $('#map').style.display = on ? 'none' : 'block';
   document.querySelectorAll('#mapnav, .mapzoom').forEach(e => e.style.display = on ? 'none' : '');
   $('#v3tools').style.display = on ? 'flex' : 'none';
+  if (typeof tbApply === 'function') tbApply();          // (where you put the buttons, now they can be measured)
   document.querySelectorAll('[data-view3d]').forEach(b => b.classList.toggle('on', (b.dataset.view3d === '1') === on));
   try { localStorage.setItem('ws-3d', on ? '1' : '0'); } catch (e) {}
   if (!on){ v3GhostSet(null); if (W.mode === 'place') setMode('place', {id: W.placeId, name: W.placeName}); drawMap(); if (W.ext && W.key) recentre(); return; }
@@ -257,7 +258,12 @@ function v3ApplyWeather(){
   if (!V3.scene || !W.ext) return;
   const T = THREE, w = V3_WEATHER[V3.weather == null ? 0 : V3.weather];
   V3.scene.background = new T.Color(w.sky);
-  V3.scene.fog = new T.Fog(w.sky, w.fog[0], w.fog[1]);
+  // (the fog moves out with the View distance, so the far cells fade in rather than stop at an edge;
+  // on Near it is as it always was)
+  const k = v3Dist() === 1 ? 1 : (v3Dist() + 0.6) / 1.6;
+  V3.scene.fog = new T.Fog(w.sky, w.fog[0] * k, w.fog[1] * k);
+  const far = Math.max(40000, w.fog[1] * k * 1.1);
+  if (V3.camera.far !== far){ V3.camera.far = far; V3.camera.updateProjectionMatrix(); }
   V3.sun.intensity = w.sun; V3.hemi.intensity = w.hemi;
   V3.sun.color.set(w.tint || 0xfff0d8); V3.hemi.color.set(w.tint || 0xfff4e0);
   // falling things: one set of points that follows the camera
@@ -584,9 +590,26 @@ function v3GhostMove(e){
 }
 
 // ----- ground -----
+// how far the 3D view reaches outdoors: cells each way round the camera (1: the 3 x 3 around it ... 4:
+// 9 x 9), from the View menu, remembered
+const V3_DISTS = ['', 'Near', 'Medium', 'Far', 'Very far'];
+function v3Dist(){
+  if (V3.dist == null){ let d = 1; try { d = +localStorage.getItem('ws-3d-dist') || 1; } catch (e) {} V3.dist = Math.max(1, Math.min(4, d)); }
+  return V3.dist;
+}
+function v3SetDist(d){
+  V3.dist = Math.max(1, Math.min(4, d));
+  try { localStorage.setItem('ws-3d-dist', String(V3.dist)); } catch (e) {}
+  v3ApplyLighting();                                     // (the fog goes with it)
+  if (W.ext){ v3Terrain(); loadAround(); }
+}
 function v3Terrain(){
-  const [cx, cy] = v3CamCell();
-  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++){
+  const [cx, cy] = v3CamCell(), D = v3Dist();
+  // nearest first, so the ground under the camera comes in before the far hills
+  const spots = [];
+  for (let dx = -D; dx <= D; dx++) for (let dy = -D; dy <= D; dy++) spots.push([dx, dy]);
+  spots.sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]));
+  for (const [dx, dy] of spots){
     const gx = cx + dx, gy = cy + dy, k = gx + ',' + gy;
     if (V3.lands[k]) continue;
     V3.lands[k] = {loading: true};
@@ -603,7 +626,7 @@ function v3Terrain(){
   }
   for (const k of Object.keys(V3.lands)){
     const [x, y] = k.split(',').map(Number);
-    if ((Math.abs(x - cx) > 2 || Math.abs(y - cy) > 2) && !(V3.stroke && V3.stroke.cells.has(k))) v3LandDrop(k);
+    if ((Math.abs(x - cx) > D + 1 || Math.abs(y - cy) > D + 1) && !(V3.stroke && V3.stroke.cells.has(k))) v3LandDrop(k);
   }
   if (V3.grassFor !== cx + ',' + cy) v3GrassReload();      // the mod's grass around the camera
 }
@@ -1585,26 +1608,32 @@ async function v3DropToFloor(){
 function v3Tools(){
   const t = $('#v3tools'); if (!t) return;
   const opt = (vals, cur, fmt) => vals.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${fmt(v)}</option>`).join('');
-  t.innerHTML = `<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
-    <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
-    <label title="Move in steps">Grid <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
-    <label title="Turn in steps">Angle <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label>
-    <label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap pieces</label>
+  // (in groups you can drag about by their grip: see toolbar.js)
+  const grip = typeof tbGrip === 'function' ? tbGrip() : '';
+  t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
+    <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button></div>
+    <div class="v3grp" data-grp="steps">${grip}<label title="Move in steps">Grid <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
+    <label title="Turn in steps">Angle <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label></div>
+    <div class="v3grp" data-grp="snap">${grip}<label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap pieces</label>
     <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt</label>
     <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label>
-    <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button>
-    ${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
+    <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button></div>
+    <div class="v3grp" data-grp="look">${grip}${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Showing light as in game (lamps, candles, fog). Click for bright, even light for editing.' : 'Showing bright, even light for editing. Click to see it as in game.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, cell borders, wireframe, and what to show">👁 View ▾</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, cell borders, wireframe, what to show, and how far you can see">👁 View ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
         <label title="Lines at the move grid's spacing (128 when the grid is off), at the selected object's base or where you look"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128})</span></label>
         ${W.ext ? `<label title="Where one cell ends and the next begins"><input type="checkbox" data-v3v="cells" ${V3.view.cells ? 'checked' : ''}> Cell borders</label>` : ''}
         <label title="Show the triangles that make up models and the ground"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
         ${W.ext ? `<label><input type="checkbox" data-v3v="ground" ${V3.view.ground ? 'checked' : ''}> Ground</label>
-        <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>` : ''}
+        <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>
+        <label title="How far you can see outdoors: the cells loaded round the camera. Further is slower in towns."
+          style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
+          <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
       </div></span>
     <button class="btn sm" data-v3="home" title="Back to the start view">◎</button>
-    <button class="btn sm" data-v3="help" title="Controls">?</button>`;
+    <button class="btn sm" data-v3="help" title="Controls">?</button></div>`;
+  if (typeof tbApply === 'function') tbApply();
   t.querySelectorAll('[data-v3]').forEach(b => b.onclick = () => {
     const a = b.dataset.v3;
     if (a === 'translate' || a === 'rotate'){ V3.mode = a; v3ApplyMode(); v3Tools(); }
@@ -1620,6 +1649,8 @@ function v3Tools(){
     try { localStorage.setItem('ws-v3view', JSON.stringify(V3.view)); } catch (e) {}
     v3ApplyView();
   });
+  const vd = $('#v3dist');
+  if (vd){ vd.oninput = () => { $('#v3distv').textContent = V3_DISTS[+vd.value]; }; vd.onchange = () => v3SetDist(+vd.value); }
   $('#v3grid').onchange = e => { V3.grid = +e.target.value; v3ApplyMode(); v3Tools(); V3.gridFor = null; };
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
