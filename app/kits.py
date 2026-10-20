@@ -19,6 +19,20 @@ def _model(db, ri):
     return mesh_from_nif(raw) if raw else None
 
 
+def game_made(db, cell_key):
+    """A place the game (or another mod) made, not one the mod being made added: only those are
+    examples to learn from (else the Workshop's own buildings would teach it its own habits)."""
+    lst = [v for v in db.by_key.get(('CELL', cell_key), []) if v not in db.dead]
+    if not lst or getattr(db, 'proj_pidx', None) is None:
+        return True
+    return any(db.recs[v][3] != db.proj_pidx for v in lst)
+
+
+def game_uses(db, low):
+    """How many places use this object, not counting the ones the mod being made added."""
+    return sum(1 for ci in db.used_in.get(low, ()) if not (db.recs[ci][0] == 'CELL' and not game_made(db, db.recs[ci][7])))
+
+
 def measure(db, ri, tile):
     """Wall pattern of a piece: {'N': 'wall'|'door'|'open', ...}, plus floor/ceiling, or None."""
     key = (db.recs[ri][1].lower(), tile)
@@ -240,14 +254,15 @@ def rotate(pattern, quarter):
 STYLE_KITS = {}
 # words that name a kind of piece; a kit's name is everything before the first of them
 PIECE_WORDS = {'room', 'roomt', 'hall', 'hallt', 'hallway', 'wall', 'corner', 'center', 'centre', 'side', 'door',
-               'doorway', 'entry', 'jamb', 'doorjamb', 'end', '3way', '4way', 'post', 'rail', 'stairs', 'stairsl',
+               'doorway', 'entry', 'jamb', 'doorjamb', 'end', '3way', '4way', 'post', 'rail', 'stair', 'stairs', 'stairsl',
                'stairsr', 'ramp', 'floor', 'ceiling', 'pillar', 'column', 'arch'}
 
 
 def kit_prefix(rid):
     parts = rid.lower().split('_')
     for n, w in enumerate(parts):
-        if n >= 2 and (w in PIECE_WORDS or re.match(r'^(room|hall|corner|wall|door|center|side)', w)):
+        # (Tamriel Data's Hlaalu manor set names its room pieces LedgeWallSide, LedgeWallCorIn, NoFloor_Side...)
+        if n >= 2 and (w in PIECE_WORDS or re.match(r'^(room|hall|corner|wall|door|center|side|ledgewall|nofloor)', w)):
             return '_'.join(parts[:n])
     return None
 
@@ -280,7 +295,7 @@ def kits(db):
             continue
         tile = max(set(sizes), key=sizes.count)
         out[prefix] = {'prefix': prefix, 'tile': tile, 'ris': ris,
-                       'uses': sum(len(db.used_in.get(db.recs[ri][1].lower(), ())) for ri in ris)}
+                       'uses': sum(game_uses(db, db.recs[ri][1].lower()) for ri in ris)}
     STYLE_KITS.update({'_recs': db.recs, 'kits': out})
     return out
 
@@ -293,6 +308,17 @@ def kit_pieces(db, prefix):
         return k
     tile = k['tile']
     pieces, halves = [], []
+    # a set whose floor is a flat slab of its own under wall-and-ceiling pieces (Tamriel Data's Hlaalu
+    # manor: Floor_01 under LedgeWallSide_01): the slab, so the floorless pieces count, with it under them
+    slab = None
+    for ri in k['ris']:
+        b = mapdata.object_bounds(db, ri)
+        low = db.recs[ri][1].lower()
+        if b and 'floor' in low and 'nofloor' not in low and b[5] - b[2] <= 8 and abs(b[3] - b[0] - tile) < tile * 0.12 \
+                and abs(b[4] - b[1] - tile) < tile * 0.12 and abs(b[0] + b[3]) < tile * 0.12 and abs(b[1] + b[4]) < tile * 0.12:
+            u = game_uses(db, low)
+            if slab is None or u > slab['uses']:
+                slab = {'id': db.recs[ri][1], 'ri': ri, 'zmin': b[2], 'uses': u}
     for ri in k['ris']:
         b = mapdata.object_bounds(db, ri)
         if not b:
@@ -308,10 +334,16 @@ def kit_pieces(db, prefix):
         if abs((b[0] + b[3]) / 2) > tile * 0.12 or abs((b[1] + b[4]) / 2) > tile * 0.12:
             continue
         pat = measure(db, ri, tile)
-        if not pat or not pat['floor']:
+        if not pat:
+            continue
+        # (only one that stands on the slab: not the set's "NoFloor" pieces for a storey above, whose
+        # bottom is a floor's thickness up)
+        floorless = not pat['floor']
+        if floorless and not (slab and b[2] <= slab['zmin'] + 16 and (pat.get('ceiling') or any(pat[s] == 'wall' for s in SIDES))):
             continue
         pat = _curved(pat, low)
-        item = {'id': rid, 'ri': ri, 'pattern': pat, 'uses': len(db.used_in.get(low, ())), 'zmin': b[2], 'height': h}
+        item = {'id': rid, 'ri': ri, 'pattern': pat, 'uses': game_uses(db, low), 'zmin': b[2], 'height': h,
+                'floorless': floorless}
         # a half-length piece (a hall piece 128 long): open at both short ends, it fills only half a
         # tile, so it isn't one (two of them end to end are)
         short = 'x' if w < tile * 0.7 else 'y' if d < tile * 0.7 else None
@@ -321,7 +353,7 @@ def kit_pieces(db, prefix):
             continue
         pieces.append(item)
     # door frames that sit in a doorway between two tiles, and plain wall sections
-    jambs, walls = [], []
+    jambs, walls, door_walls = [], [], []
     heights = sorted(p['height'] for p in pieces) or [tile]
     full_h = heights[len(heights) // 2]
     pieces = [p for p in pieces if p['height'] >= full_h * 0.5]      # (not a ceiling slab on its own)
@@ -337,21 +369,41 @@ def kit_pieces(db, prefix):
             continue
         if 'jamb' not in low and long_ < tile * 0.8:
             continue
-        item = {'id': db.recs[ri][1], 'ri': ri, 'uses': len(db.used_in.get(low, ())), 'thin_x': w < d,
+        item = {'id': db.recs[ri][1], 'ri': ri, 'uses': game_uses(db, low), 'thin_x': w < d,
                 'thick': thin, 'zmin': b[2], 'width': long_}
         if 'jamb' in low or 'doorway' in low or ('door' in low and 'load' not in low and 'jamb' in low):
             item['load'] = 'load' in low
             jambs.append(item)
         elif 'wall' in low and 'door' not in low and thin >= 3 and 'addon' not in low:
             walls.append(item)          # (not the paper-thin panels laid over walls for decoration)
+        elif 'door' in low and 'load' not in low and 'trap' not in low and long_ >= tile * 0.9:
+            # a wall section with a doorway through it (Tamriel Data's Redguard "Wall_Door"): the
+            # same thing as a Hlaalu door frame, by another name, if there's a hole to walk through
+            fh = frame_hole(db, ri)
+            if fh and fh[2] >= 64 and fh[3] >= full_h * 0.6:
+                item['load'] = False
+                door_walls.append(item)
+    entry = any(p['pattern'][s] == 'door' for p in pieces for s in SIDES)
+    if not jambs and not entry:
+        jambs = door_walls              # (only for a style with no other way of making a doorway)
+    # (a floorless piece only where no piece with a floor has that shape: a set's "no floor" variants of
+    # its ordinary pieces are for storeys above, not the ground)
+    # (unless the game plainly prefers it: the Hlaalu manor's square ledge corner over its round one)
+    canon = lambda pat: min(''.join(rotate(pat, q)[s][0] for s in SIDES) for q in range(4))
+    floored = {}
+    for p in pieces:
+        if not p['floorless']:
+            floored[canon(p['pattern'])] = max(floored.get(canon(p['pattern']), 0), p['uses'])
+    pieces = [p for p in pieces if not p['floorless'] or p['uses'] > 1.5 * floored.get(canon(p['pattern']), -1)]
     k['pieces'] = sorted(pieces, key=lambda p: -p['uses'])
+    k['slab'] = slab if any(p['floorless'] for p in pieces) else None
     k['halves'] = sorted(halves, key=lambda p: -p['uses'])
     k['jambs'] = sorted(jambs, key=lambda p: -p['uses'])
     k['walls'] = sorted(walls, key=lambda p: -p['uses'])
     # how this style makes doorways: a full-width frame between two open tiles (Hlaalu), or
     # a doorway built into a floor piece's wall (most others)
     k['frame_doors'] = any(j['width'] >= tile * 0.9 for j in jambs)
-    k['entry_doors'] = any(p['pattern'][s] == 'door' for p in pieces for s in SIDES)
+    k['entry_doors'] = entry
     zs = sorted(p['zmin'] for p in pieces) or [0]
     k['zmin'] = zs[len(zs) // 2]
     k['height'] = full_h
@@ -389,7 +441,7 @@ def door_fits(db, prefix):
         low = p['id'].lower()
         for ci in list(db.used_in.get(low, ()))[:40]:
             r = db.recs[ci]
-            if r[0] != 'CELL':
+            if r[0] != 'CELL' or not game_made(db, r[7]):
                 continue
             refs, _h = db.cell_refs(r[7])
             items = []
@@ -476,7 +528,7 @@ def stairs(db, prefix):
     floor_ids = {p['id'].lower(): p for p in k['pieces']}
     is_stair = lambda rid: any(w in rid for w in ('stair', 'ramp'))
     out = []
-    for ri in k['ris']:
+    for ri in _stair_ris(db, k):
         sid = db.recs[ri][1].lower()
         if not is_stair(sid):
             continue
@@ -489,7 +541,7 @@ def stairs(db, prefix):
         posts = {}                                     # posts standing at its corners -> count
         for ci in list(db.used_in.get(sid, ()))[:40]:
             r = db.recs[ci]
-            if r[0] != 'CELL':
+            if r[0] != 'CELL' or not game_made(db, r[7]):
                 continue
             refs, _h = db.cell_refs(r[7])
             items = []
@@ -555,24 +607,26 @@ def stairs(db, prefix):
         post = max(posts, key=posts.get) if posts else None
         post_ri = db.resolve_id(post) if post and posts[post] >= max(3, seen * 0.2) else None
         out.append({'id': db.recs[ri][1], 'ri': ri, 'low': low, 'z_low': z_low, 'rise': rise, 'open': open_,
-                    'uses': len(db.used_in.get(sid, ())), 'height': b[5] - b[2],
+                    'uses': game_uses(db, sid), 'height': b[5] - b[2],
                     # what covers the joins where an open side meets the walls beside it
                     'post': db.recs[post_ri][1] if post_ri is not None else None,
-                    # what closes in the stairwell: (id, height over the stairs, quarter turns)
+                    # what closes in the stairwell: [(id, height over the stairs, quarter turns)]
                     'cap': _stair_cap(db, prefix, sid, T)})
     res = None
     if not out and MEASURED_STAIRS:
         # the game never puts these stairs beside the kit's own floor tiles where they could be learnt
         # from: measure them instead
         z0 = -k['zmin']
-        for ri in k['ris']:
+        for ri in _stair_ris(db, k):
             sid = db.recs[ri][1].lower()
             if is_stair(sid):
                 g = stair_shape(db, ri, T, k['height'])
                 if g:
-                    out.append(dict(g, id=db.recs[ri][1], ri=ri, z_low=z0 + g['bottom'], open=[], post=None,
+                    # (2 lower than flush: the game sets about one staircase in eight that way, and a stair
+                    # exactly level with the floor can leave a hairline crack where they meet)
+                    out.append(dict(g, id=db.recs[ri][1], ri=ri, z_low=z0 + g['bottom'] + 2, open=[], post=None,
                                     cap=_stair_cap(db, prefix, sid, T),
-                                    uses=len(db.used_in.get(sid, ()))))
+                                    uses=game_uses(db, sid)))
     if out:
         # the height between floors: what most stairs climb (or two short flights do), a little more
         # than a room is tall
@@ -594,15 +648,41 @@ def stairs(db, prefix):
 _VEC = {'N': (0, 1), 'E': (1, 0), 'S': (0, -1), 'W': (-1, 0)}
 
 
+def _stair_ris(db, k):
+    """The records that may be this kit's stairs: its own, and the stairs its family keeps under the
+    family's name with the kit's own word after "stair" (the Common sets: in_c_stair_plain_tall_01
+    for in_c_plain, in_c_stair_rich_tall_01 for in_c_rich), which file under "in_c" otherwise."""
+    out = list(k['ris'])
+    pre = (k.get('prefix') or '').lower()
+    parts = pre.split('_')
+    if len(parts) >= 3:
+        family, word = '_'.join(parts[:-1]), parts[-1]
+        # (the family's other kits' words: a stair named for one of them is theirs; one named for none
+        # is the family's, shared: in_impsmall_stairs_01 for in_impsmall_r)
+        others = {p.split('_')[-1] for p in kits(db) if p.startswith(family + '_') and p != pre}
+        seen = set(out)
+        for (tag, key), lst in db.by_key.items():
+            if tag != 'STAT' or not key.startswith(family + '_') or not ('stair' in key or 'ramp' in key):
+                continue
+            kparts = set(key.split('_'))
+            if not (word in kparts or not (kparts & others)):
+                continue
+            if lst and lst[-1] not in db.dead and lst[-1] not in seen and kit_prefix(key) != pre:
+                seen.add(lst[-1])
+                out.append(lst[-1])
+    return out
+
+
 def _stair_cap(db, prefix, sid, T):
-    """The piece the game stands in the same spot as these stairs, to close in the stairwell: a room
-    piece with no floor on top (Indoril), or a room piece the stairs stand inside (Redoran): (id, height
-    over the stairs' origin, quarter turns from the stairs') or None."""
+    """The pieces the game stands in the same spot as these stairs, to close in the stairwell: a room
+    piece with no floor on top and a wall beside it (Indoril), or a room piece the stairs stand inside
+    (Redoran): [(id, height over the stairs' origin, quarter turns from the stairs')], the common ones
+    (in a quarter of the places or more), most common first; [] when there are none."""
     from mapdata import ref_info
     caps, seen = {}, 0
     for ci in list(db.used_in.get(sid, ()))[:40]:
         r = db.recs[ci]
-        if r[0] != 'CELL':
+        if r[0] != 'CELL' or not game_made(db, r[7]):
             continue
         refs, _h = db.cell_refs(r[7])
         items = [(rid.lower(), pos) for rid, pos, _s, dead in (ref_info(x['subs']) for x in refs.values()) if not dead]
@@ -617,11 +697,17 @@ def _stair_cap(db, prefix, sid, T):
                     dq = int(round(((p2[5] - pos[5]) % (2 * math.pi)) / (math.pi / 2))) % 4
                     k = (rid2, int(round((p2[2] - pos[2]) / 16) * 16), dq)
                     caps[k] = caps.get(k, 0) + 1
-    if not caps:
-        return None
-    (cid, dz, dq), n = max(caps.items(), key=lambda kv: kv[1])
-    ri = db.resolve_id(cid)
-    return (db.recs[ri][1], dz, dq) if ri is not None and n >= max(2, seen * 0.25) else None
+    # (the game closes a stairwell several ways, a wall on this side or that, a floorless room piece
+    # with its ceiling: all the fairly common ones, the builder takes those whose walls fit; of two
+    # as common, the one that puts a ceiling over the stairwell first)
+    out = []
+    for (cid, dz, dq), n in caps.items():
+        ri = db.resolve_id(cid)
+        if ri is None or n < max(2, seen * 0.15):
+            continue
+        pat = measure(db, ri, T)
+        out.append((-n, not (pat and pat.get('ceiling')), db.recs[ri][1], dz, dq))
+    return [(cid, dz, dq) for _n, _c, cid, dz, dq in sorted(out)]
 
 
 def stair_shape(db, ri, T, room_h):
@@ -785,7 +871,7 @@ def edge_doors(db, prefix):
     counts = {}
     for ci in sorted(cells, key=lambda c: -cells[c])[:120]:
         r = db.recs[ci]
-        if r[0] != 'CELL':
+        if r[0] != 'CELL' or not game_made(db, r[7]):
             continue
         refs, _h = db.cell_refs(r[7])
         floors, others = [], []

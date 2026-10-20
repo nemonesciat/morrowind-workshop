@@ -264,9 +264,16 @@ class LiveLink:
         return (self.session is not None and self.last_seen >= self.session and self.game_running()
                 and self.run_linked is not False)
 
+    def starting(self):
+        """The game was started from the Workshop a moment ago and hasn't spoken yet: still loading (a big
+        load order takes a minute or two), or sitting at its main menu."""
+        return self.session is not None and time.time() - self.session < 240 and self.last_seen < self.session \
+            and self.game_running()
+
     def unlinked_game(self):
         """OpenMW is running, but without the live link (it wasn't started from the Workshop)."""
-        return self.run_linked is False and self.game_running() and not (time.time() - self.last_event < 6)
+        return self.run_linked is False and self.game_running() and not (time.time() - self.last_event < 6) \
+            and not self.starting()
 
     def paused(self):
         return self.connected() and time.time() - self.last_event >= 6

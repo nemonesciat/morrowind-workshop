@@ -142,6 +142,9 @@ def _spawn(args, install, launch=None):
     link.ALT_LOG = None
     if len(subprocess.list2cmdline(cmd)) > LAUNCH_CMD_MAX:
         cmd = _via_config(cmd)
+    # (in the Workshop's log, for when a start goes wrong: the whole line but the load order)
+    shown = [a for i, a in enumerate(cmd) if not (a == '--content' or (i and cmd[i - 1] == '--content'))]
+    print('Starting OpenMW:', subprocess.list2cmdline(shown), '(+ %d content files)' % sum(1 for a in cmd if a == '--content'))
     subprocess.Popen(cmd, cwd=install, env=env,
                      creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
     return extra
@@ -345,6 +348,15 @@ def play(body):
     import saves
     who = (load_settings().get('play_as') or '') if body.get('as_saved', True) else ''
     save = saves.latest_save(who) if who else None
+    if save and 'x' not in body and info['interior']:
+        # (no spot picked: with a save, the game stays wherever the character was saved unless the
+        # script moves them, so: just inside the place's door, as the Workshop's doors arrive)
+        import doors
+        pos, _d = doors.arrival(db, body['cell'])
+        cmds.insert(1 if cmds[:1] == ['tgm'] else 0, 'player->PositionCell %.0f %.0f %.0f %d "%s"' % (
+            pos[0], pos[1], pos[2], round(math.degrees(pos[5])) % 360, info['name']))
+        with open(script, 'w', encoding='cp1252', errors='replace') as f:
+            f.write('\n'.join(cmds) + '\n')
     if save:
         args = [exe, '--load-savegame', save, '--script-run', script] + _game_content_args()
     else:
@@ -825,8 +837,13 @@ class Handler(BaseHTTPRequestHandler):
                 import luascripts
                 self._json(luascripts.read(db, q.get('name', '')))
             elif u.path == '/api/fixit/scan':
+                # (?all=1: every see-through spot, not only what's worse than the game's own places)
                 import fixit
-                self._json(fixit.scan(db, q.get('cell', '')))
+                self._json(fixit.scan(db, q.get('cell', ''), everything=q.get('all') in ('1', 'true')))
+            elif u.path == '/api/build/gapsurvey':
+                # how gappy the game's own places are, style by style (?style=in_hlaalu for one)
+                import gapsurvey
+                self._json(gapsurvey.summary(db, [q['style']] if q.get('style') else None))
             elif u.path == '/api/fixit/variants':
                 import fixit
                 self._json(fixit.variants(db, q.get('cell', ''), q.get('ref', '')))
@@ -871,6 +888,53 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(items.template_info(db, int(q['i'])))
             elif u.path == '/api/build/styles':
                 self._json(builder.styles(db))
+            elif u.path == '/api/furnish/wallsurvey':
+                # how the game hangs banners, tapestries and hangers (what with what, and where)
+                import wallsurvey
+                import kits
+                ids = [x for x in (q.get('ids') or '').split(',') if x]
+                if not ids:
+                    ids = sorted({k for (t, k) in db.by_key if t in ('STAT', 'ACTI', 'LIGH') and wallsurvey.HANGY.search(k)
+                                  and kits.game_uses(db, k) >= 3})[:400]
+                self._json(wallsurvey.summary(db, ids))
+            elif u.path == '/api/furnish/shelfsurvey':
+                # how the game dresses bookshelves, shelves, tables, desks and counters: ?id=one model (with
+                # its dressings), or ?style=furn_de_r / t_de_furnm (a part of the ID) for a summary of each
+                import shelfsurvey
+                if q.get('id'):
+                    s = shelfsurvey.survey(db, q['id'])
+                    return self._json(dict(shelfsurvey.summary_of(db, q['id']),
+                                           dressings=[{'cell': d['cell'], 'purpose': d['purpose'],
+                                                       'objects': [{k: v for k, v in o.items() if k != 'fp'} for o in d['objects']]}
+                                                      for d in s['dressings'][:int(q.get('raw') or 20)]]))
+                self._json(shelfsurvey.summary(db, shelfsurvey.models(db, q.get('style'))[:int(q.get('limit') or 40)]))
+            elif u.path == '/api/furnish/containersurvey':
+                # what the game's containers hold, by family, room kind and theme: ?family=barrel&kind=kitchen&theme=house
+                import containersurvey
+                self._json(containersurvey.summary(db, q.get('family'), q.get('kind'), q.get('theme')))
+            elif u.path == '/api/furnish/roomsurvey':
+                # the room survey's numbers: themes (what a tavern, a shop, a temple, a guild, a manor
+                # contain), clutter groups, and the room kinds
+                import roomsurvey
+                s = roomsurvey.ready(db)
+                if not s:
+                    return self._json({'ready': False, 'note': 'The room survey is running in the background (a few minutes).'})
+                self._json({'ready': True, 'cells': s['cells'], 'themes': s['layout'].get('themes'), 'themes_text': roomsurvey.themes_report(db),
+                            'clusters': s.get('clusters'), 'kinds': s['kinds']})
+            elif u.path == '/api/populate/peoplesurvey':
+                # where the game's people stand, by role and furniture (for Populate)
+                import peoplesurvey
+                self._json(peoplesurvey.summary(db))
+            elif u.path == '/api/build/jointsurvey':
+                # where the game's own places stand posts and columns, corner by corner
+                import jointsurvey
+                self._json(jointsurvey.summary(db, [q['style']] if q.get('style') else None))
+            elif u.path == '/api/build/stairsurvey':
+                # what the game's own places do round their stairs (style by style, and over all)
+                import stairsurvey
+                if q.get('raw') and q.get('style'):
+                    return self._json(stairsurvey.survey(db, q['style'])[:int(q.get('raw') or 20)])
+                self._json(stairsurvey.summary(db, [q['style']] if q.get('style') else None))
             elif u.path == '/api/dlg/options':
                 self._json(dialogue.options(db))
             elif u.path == '/api/dlg/mine':
@@ -1283,7 +1347,8 @@ class Handler(BaseHTTPRequestHandler):
                     import outside
                     return self._json(outside.for_rooms(db, body.get('style'), float(body.get('w') or 768), float(body.get('d') or 768)))
                 if u.path == '/api/build/plan':
-                    return self._json(builder.plan(db, body.get('style'), body.get('rooms') or [], body.get('stairs'), body.get('floors_as') or 'auto'))
+                    return self._json(builder.plan(db, body.get('style'), body.get('rooms') or [], body.get('stairs'), body.get('floors_as') or 'auto',
+                                                   body.get('doors')))
                 if u.path == '/api/dlg/topic/new':
                     return self._json({'key': dialogue.create_topic(db, body.get('name'), int(body.get('kind') or 0))})
                 if u.path == '/api/dlg/line/save':
@@ -1367,6 +1432,33 @@ class Handler(BaseHTTPRequestHandler):
                     r = fixit.apply(db, body['cell'], body.get('ops') or [], body.get('label'))
                     m = mapdata.cellmap(db, body['cell'])
                     m['changed'] = r['changed']
+                    return self._json(m)
+                if u.path == '/api/fixit/doorframes':
+                    # bare doorways in a place built before the Workshop knew the style's door frame: the
+                    # frame in each, then the columns that were only covering the wall ends out again
+                    import fixit
+                    ops_ = fixit.frameless_doorways(db, body['cell'])
+                    n_, k_ = len(ops_), 0
+                    if ops_:
+                        fixit.apply(db, body['cell'], ops_, commit=False)
+                        db.sync_project()
+                        c_, _refs = editing._cell(db, body['cell'])
+                        k_ = builder._trim_columns(db, body['cell'], c_, None, slow=40)
+                        editing.commit(db, 'Put door frames in %d doorway%s in %s%s' % (
+                            n_, '' if n_ == 1 else 's', editing.cell_label(db, body['cell']),
+                            ' and took out %d column%s' % (k_, '' if k_ == 1 else 's') if k_ else ''))
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['frames'], m['removed'] = n_, k_
+                    return self._json(m)
+                if u.path == '/api/fixit/spare':
+                    # posts and columns your mod put in that close nothing: out, as one change
+                    editing._require_project(db)
+                    c_, _refs = editing._cell(db, body['cell'])
+                    n_ = builder._trim_columns(db, body['cell'], c_, None, slow=40)
+                    if n_:
+                        editing.commit(db, 'Took out %d spare column%s in %s' % (n_, '' if n_ == 1 else 's', editing.cell_label(db, body['cell'])))
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['removed'] = n_
                     return self._json(m)
                 if u.path == '/api/fixit/all':
                     import fixit

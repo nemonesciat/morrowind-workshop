@@ -199,7 +199,7 @@ def _ray(o, target, over):
     return (dx / L, dy / L, dz / L), L + over
 
 
-def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=()):
+def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=None):
     """Holes in the walls and ceilings of a place: [{kind ('wall' | 'ceiling'), tile, side, void (True
     when it shows nothing), x, y, z (the middle of the hole), u0, u1 (along the side, from its
     middle), z0, z1, rays: [(origin, dir, tmax)]}], and the Scene.
@@ -207,7 +207,8 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=()):
     neighbour(t, side) says what carries on past a side; above(t) whether a floor stands on top;
     extra: pieces about to be added anyway ([(id, pos)]), counted as there; walled(t, side) whether a
     wall, doorway or door frame stands on a side (slits into the next room are looked for only there:
-    across open floor, a narrow view past a post or a stair rail is no gap)."""
+    across open floor, a narrow view past a post or a stair rail is no gap). only: look out from
+    just these tiles (refs), the rest still there for following where a view goes."""
     sc = place_scene(db, m)
     for rid, pos in extra:
         ri = next((i for i in db.by_id.get(rid.lower(), ()) if db.recs[i][0] in ('STAT', 'ACTI')), None)
@@ -266,6 +267,8 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=()):
         return None
     far = {}             # (tile ref, side) -> [(tile, point, ray)]: rays across open floor that got out of the building
     for t in tiles:
+        if only is not None and t['ref'] not in only:
+            continue
         T, H = t['T'], t['H']
         h = T / 2.0
         eye = (t['x'], t['y'], t['floor'] + min(H * 0.45, 128))      # (about where a player's eyes are)
@@ -375,6 +378,8 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=()):
     # looking all round from the middle of each tile, as someone standing there would: what reaches
     # the void through gaps no side of that tile has (seen through a doorway, past the stairs...)
     for t in tiles:
+        if only is not None and t['ref'] not in only:
+            continue
         eye = (t['x'], t['y'], t['floor'] + min(t['H'] * 0.45, 128))
         for a in range(0, 360, 10):
             for e in (-30, -15, 0, 15, 30, 45, 60, 75):

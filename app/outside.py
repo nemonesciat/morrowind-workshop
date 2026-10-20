@@ -77,7 +77,7 @@ def shells(db, style, limit=16):
     found, seen_doors = [], set()
     for ci in sorted(cells)[:260]:
         r = db.recs[ci]
-        if r[0] != 'CELL':
+        if r[0] != 'CELL' or not kits.game_made(db, r[7]):
             continue
         name = r[1] or ''
         irefs, _h = db.cell_refs(r[7])

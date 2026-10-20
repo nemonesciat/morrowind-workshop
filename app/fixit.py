@@ -86,7 +86,8 @@ def learned(db, piece_id, own_cell=None):
     counts = {s: [0, 0] for s in kits.SIDES}       # side -> [nothing beyond, something beyond]
     open_top = [0, 0]                               # [nothing above, a floor above]
     cells = [db.recs[ci][7] for ci in list(db.used_in.get(low, ()))[:30]
-             if db.recs[ci][0] == 'CELL' and not db.recs[ci][7].startswith('#') and db.recs[ci][7] != own_cell]
+             if db.recs[ci][0] == 'CELL' and not db.recs[ci][7].startswith('#') and db.recs[ci][7] != own_cell
+             and kits.game_made(db, db.recs[ci][7])]
     for ck in cells:
         ts = _plain_tiles(db, ck)
         for pid, q, x, y, floor, T in ts:
@@ -211,7 +212,7 @@ def post_rules(db, prefix):
     kp = kits.kit_pieces(db, prefix)
     cells = set()
     for p in (kp or {}).get('pieces', [])[:8]:
-        cells |= {db.recs[ci][7] for ci in db.used_in.get(p['id'].lower(), ()) if db.recs[ci][0] == 'CELL'
+        cells |= {db.recs[ci][7] for ci in db.used_in.get(p['id'].lower(), ()) if db.recs[ci][0] == 'CELL' and kits.game_made(db, db.recs[ci][7])
                   and not db.recs[ci][7].startswith('#')}
     stats = {}
     for ck in sorted(cells)[:45]:
@@ -250,23 +251,42 @@ def post_rules(db, prefix):
 _post_piece = {}
 
 
+DECOR_POST = re.compile(r'glass|screen|lattice|broken|ruin|fancy|banner|flag|lamp|light')
+
+
+def _kit_statics(db, kp):
+    """The style's statics: the kit's own, and the others that share its name (a set's posts and ledges,
+    whose names don't say "room" or "wall": T_De_SetHla_I_LedgePost_01)."""
+    out = list(kp['ris'])
+    seen = set(out)
+    pre = (kp.get('prefix') or '').lower() + '_'
+    if len(pre) > 1:
+        for (tag, k), lst in db.by_key.items():
+            if tag == 'STAT' and k.startswith(pre) and lst and lst[-1] not in db.dead and lst[-1] not in seen:
+                seen.add(lst[-1])
+                out.append(lst[-1])
+    return out
+
+
 def post_piece(db, kp):
     """The style's own narrow post or column, a storey tall (for covering the join where a door frame
-    meets a wall): (id, bottom of its model) or None."""
+    meets a wall): (id, bottom of its model) or None. The one the game uses most, and never a
+    decorative one (a glass pillar) when a plain one exists."""
     pre = kp.get('prefix')
     if pre in _post_piece and _post_piece[pre][0] is db.recs:
         return _post_piece[pre][1]
     best = None
-    for ri in kp['ris']:
+    for ri in _kit_statics(db, kp):
         rid = db.recs[ri][1]
         if not re.search(r'post|pillar|column', rid.lower()):
             continue
         b = mapdata.object_bounds(db, ri)
         if not b or b[3] - b[0] > 110 or b[4] - b[1] > 110 or not kp['height'] * 0.8 <= b[5] - b[2] <= kp['height'] * 1.3:
             continue
-        uses = len(db.used_in.get(rid.lower(), ()))
-        if best is None or uses > best[2]:
-            best = (rid, b[2], uses)
+        uses = kits.game_uses(db, rid.lower())
+        score = (not DECOR_POST.search(rid.lower()), uses)
+        if best is None or score > best[2]:
+            best = (rid, b[2], score)
     res = (best[0], best[1]) if best else None
     _post_piece[pre] = (db.recs, res)
     return res
@@ -283,6 +303,45 @@ def _frames_want_posts(db, prefix):
     return n < 20 or sum(r['share'] * r['n'] for r in fr) / n >= 0.03
 
 
+def _frames_shown(db, prefix):
+    """Whether the game's own places in this style show where door frames meet walls (enough of them
+    to go by), rather than the Workshop just guessing that they want a post there."""
+    if not prefix:
+        return False
+    fr = [r for s, r in post_rules(db, prefix).items() if 1 in s[1] and 2 in s[1]]
+    return sum(r['n'] for r in fr) >= 20
+
+
+def grid_spot(db, ri, x, y, T, x0, y0, inside=()):
+    """Where the game stands a column or post meant to show at (x, y): its own point on the grid of the
+    floor pieces (every half tile from a tile's middle at x0, y0), in whichever of its four turns puts the
+    model there. That matters for a column drawn well off its own point (Indoril's stands at a tile's
+    corner when its point is in the tile's middle): centring its model on the spot puts it a little off
+    the line of the walls, where the game's own places never have it. (x, y, turn) or None when no turn
+    lands it within a hand's width of the spot, or its model is round its own point anyway. inside:
+    points inside the rooms (tile middles); of turns that land it equally near, the one that stands it
+    on the side of the corner toward them comes first. Returns every such turn, best first."""
+    import builder
+    b = mapdata.object_bounds(db, ri) if ri is not None else None
+    if not b or math.hypot((b[0] + b[3]) / 2, (b[1] + b[4]) / 2) < 24:
+        return []
+    step = T / 2.0
+    out = []
+    for q in range(4):
+        rot = q * math.pi / 2
+        cx, cy = builder._centred(db, ri, x, y, rot)
+        gx, gy = x0 + round((cx - x0) / step) * step, y0 + round((cy - y0) / step) * step
+        # (how far the model's middle then is from the spot, and from the rooms)
+        err = math.hypot(gx - cx, gy - cy)
+        if err >= 50:
+            continue
+        mx, my = x + (gx - cx), y + (gy - cy)
+        room = min((math.hypot(px - mx, py - my) for px, py in inside), default=0)
+        out.append((round(err / 8), room, gx, gy, rot))
+    out.sort()
+    return [o[2:] for o in out]
+
+
 def missing_posts(db, m, tiles, only_frames=False):
     """Corners that want a post or column and haven't one: [{x, y, z, id, floor, why}]. Two kinds:
     where a door frame meets a wall (the join shows, unless the style's post covers it: what you'd
@@ -296,7 +355,14 @@ def missing_posts(db, m, tiles, only_frames=False):
         # stand the middle of the model on the corner (some posts' models sit well off their origin)
         ri = next((i for i in db.by_id.get(rid.lower(), ()) if db.recs[i][0] == 'STAT'), None)
         x, y = builder._centred(db, ri, v['x'], v['y'], 0.0) if ri is not None else (v['x'], v['y'])
-        out.append({'x': x, 'y': y, 'z': z, 'id': rid, 'floor': v['floor'], 'why': why, 'vx': v['x'], 'vy': v['y']})
+        rot = 0.0
+        # (or on the grid, the way the game stands it, for one drawn off its own point)
+        g = grid_spot(db, ri, v['x'], v['y'], tiles[0]['T'], tiles[0]['x'], tiles[0]['y'],
+                      [(t['x'], t['y']) for t in tiles if abs(t['floor'] - v['floor']) < 32])
+        if g:
+            x, y, rot = g[0]
+        out.append({'x': x, 'y': y, 'z': z, 'id': rid, 'floor': v['floor'], 'why': why, 'vx': v['x'], 'vy': v['y'],
+                    'prefix': v['kit'].get('prefix'), 'rot': rot})
 
     objs = _narrow_tall(m, tiles[0]['H'], {t['ref'] for t in tiles})
     V = _vertices(tiles)
@@ -306,7 +372,9 @@ def missing_posts(db, m, tiles, only_frames=False):
             continue
         if _posts_near(v, objs):
             continue
-        if v.get('frames') and v['walls'] and _frames_want_posts(db, v['kit'].get('prefix')):
+        # (only for a style the game's own places show standing posts there: with nothing to go by,
+        # a real slit at the join is found and covered as a hole anyway)
+        if v.get('frames') and v['walls'] and _frames_shown(db, v['kit'].get('prefix')) and _frames_want_posts(db, v['kit'].get('prefix')):
             pp = post_piece(db, v['kit'])
             if pp:
                 at(pp[0], v, v['floor'] - pp[1], 'frame')
@@ -324,14 +392,205 @@ def missing_posts(db, m, tiles, only_frames=False):
 def closing_pieces(db, cell_key):
     """For "Build from pieces": the pieces to add (no swaps) that the gap finder would: posts where
     door frames meet walls, at corners where the game always stands one, and over see-through holes
-    ([(id, pos)])."""
+    ([(id, pos)]). Holes only while the place has more of them per floor piece than the game's own
+    places of the style (gapsurvey.py): the game's own interiors have slits at many joins, and
+    posts and walls over every one of them is more than the game ever does."""
     res = scan(db, cell_key)
     res['issues'] = [i for i in res['issues'] if i['kind'] in ('post', 'hole') and i['fixes']
                      and all(o.get('op') == 'place' for o in i['fixes'][0]['ops'])]
     if res['issues']:
         first = min(_rank(i) for i in res['issues'])       # (posts first; the builder looks again after)
-        res['issues'] = [i for i in res['issues'] if _rank(i) == first]
+        now = [i for i in res['issues'] if _rank(i) == first]
+        # (when only a post or two is left to do, say round a stairwell, gaps well away from them go in
+        # the same round, rather than a round each)
+        if len(now) < 3:
+            now += [i for i in res['issues'] if _rank(i) != first and all(
+                math.hypot(i['x'] - j['x'], i['y'] - j['y']) > 384 or abs(i['z'] - j['z']) > 200 for j in now)]
+        res['issues'] = now
     return [(o['id'], tuple(float(v) for v in o['p'][:6]), float(o.get('s', 1.0))) for o in _fix_ops(res)]
+
+
+COLUMN_WORDS = re.compile(r'post|pillar|column')
+_USES_POSTS = {}
+
+
+def uses_posts(db, prefix):
+    """Whether the game's own places in this style stand posts or columns at a fair share of their
+    corners (Imperial Gold Coast, the Common styles), rather than seldom (most others). A style no
+    place uses goes by all of them together: seldom."""
+    if prefix in _USES_POSTS and _USES_POSTS[prefix][0] is db.recs:
+        return _USES_POSTS[prefix][1]
+    import jointsurvey
+    try:
+        stats, places = jointsurvey.survey(db, prefix) if prefix else ({}, 0)
+    except Exception:
+        stats, places = {}, 0
+    n = sum(v['n'] for v in stats.values())
+    w = sum(v['with'] for v in stats.values())
+    res = bool(places >= 3 and n >= 50 and w / float(n) >= 0.12)
+    _USES_POSTS[prefix] = (db.recs, res)
+    return res
+
+
+def spare_columns(db, cell_key, keys=None, trace=False):
+    """Posts and columns that close nothing: taken away, no see-through hole opens round where they
+    stand, and it isn't a corner where the game itself always stands one in this style. keys: only
+    these refs (the ones "Build from pieces" just put in); else every loose post or column of the place.
+    Returns the refs to take out, worked out one after another (two side by side may each look needed
+    while the other stands, so each is tried with the ones already gone left out)."""
+    import seethrough
+    m = mapdata.cellmap(db, cell_key)
+    if not m.get('exists') or not m.get('interior'):
+        return []
+    tiles, _pre = _tiles(db, m)
+    if not tiles:
+        return []
+    tile_refs = {t['ref'] for t in tiles}
+    floors = [bx for r in m['refs'] if r['k'] not in tile_refs and (r.get('arch') or r['type'] in ('STAT', 'ACTI'))
+              for bx in [_world_box(r)] if bx and (bx[3] - bx[0]) * (bx[4] - bx[1]) >= 128 * 96]
+    T, H = tiles[0]['T'], tiles[0]['H']
+    cands = []
+    for r in m['refs']:
+        if r['k'] in tile_refs or r['type'] != 'STAT' or not COLUMN_WORDS.search(r['id'].lower()):
+            continue
+        if keys is not None and r['k'] not in keys:
+            continue
+        bx = _world_box(r)
+        if bx and bx[3] - bx[0] <= 136 and bx[4] - bx[1] <= 136:
+            cands.append((r, bx))
+    # (crowded ones first: where three stand on one corner, the extra ones are likeliest)
+    crowd = lambda c: -sum(1 for o, ob in cands if o is not c[0] and abs((ob[0] + ob[3]) / 2 - (c[1][0] + c[1][3]) / 2) < 48
+                           and abs((ob[1] + ob[4]) / 2 - (c[1][1] + c[1][4]) / 2) < 48 and abs(ob[2] - c[1][2]) < 64)
+    cands.sort(key=crowd)
+    gone = set()
+    for r, bx in cands:
+        cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
+        near = [t for t in tiles if abs(t['x'] - cx) <= T and abs(t['y'] - cy) <= T and t['floor'] - 16 <= bx[2] + 16 and bx[2] < t['floor'] + H]
+        if not near:
+            continue
+        m2 = dict(m, refs=[x for x in m['refs'] if x['k'] not in gone and x['k'] != r['k']])
+        try:
+            hs = _see_holes(db, m2, tiles, floors, near)
+        except Exception as e:
+            print('spare columns:', e)
+            return sorted(gone)
+        R = 72
+        if trace is not False:
+            trace.append('%s at %.0f,%.0f z %.0f..%.0f near %d tiles: holes %s' % (r['id'], cx, cy, bx[2], bx[5], len(near),
+                         [(h['kind'], round(h['x']), round(h['y']), round(h['z'])) for h in hs]))
+        if any(h['kind'] == 'wall' and math.hypot(h['x'] - cx, h['y'] - cy) < R and h['z'] - 8 <= bx[5] and h['z'] + 8 >= bx[2] for h in hs):
+            continue                                   # (it covers a slit: it stays)
+        # a corner the game always stands a post on (in this style), left without one; (a post where a
+        # door frame meets a wall only counts when the game's own places show the style does that: with
+        # nothing to go by, it stays only if it covers a hole, like any other)
+        if any(math.hypot(p['vx'] - cx, p['vy'] - cy) < 40 and abs(p['floor'] - bx[2]) < H and
+               (p['why'] == 'game' or _frames_shown(db, p.get('prefix'))) for p in missing_posts(db, m2, tiles)):
+            continue
+        gone.add(r['k'])
+    return sorted(gone)
+
+
+def door_frame(kp):
+    """The style's full-width door frame (Hlaalu's door jamb, Redguard's door wall), or None."""
+    return next((j for j in kp.get('jambs', []) if not j.get('load') and j['width'] >= kp['tile'] * 0.9), None)
+
+
+def frameless_doorways(db, cell_key):
+    """Doorways between rooms built as a bare gap in the wall, in a style that has a full-width door
+    frame (a place built before the Workshop knew the frame): a one-tile opening where the wall
+    carries on at both ends. The frames to stand there: [{'op': 'place', ...}]."""
+    import builder
+    m = mapdata.cellmap(db, cell_key)
+    tiles, _pre = _tiles(db, m)
+    if not tiles:
+        return []
+    T = tiles[0]['T']
+    at = {}
+    for t in tiles:
+        at.setdefault((round(t['x'] / T), round(t['y'] / T), round(t['floor'] / 64)), t)
+    pat = lambda t: t.get('spot') or t['pat']
+    framed = [((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, bx[2]) for r in m['refs']
+              if re.search(r'jamb|frame|doorway|door', r['id'].lower()) for bx in [_world_box(r)] if bx]
+    ops, seen = [], set()
+    for (gx, gy, gf), t in at.items():
+        fr = door_frame(t['kit'])
+        if not fr:
+            continue
+        for s in ('E', 'N'):
+            dx, dy = STEP[s]
+            o = at.get((gx + dx, gy + dy, gf))
+            if not o or pat(t)[s] != 'open' or pat(o)[OPPOSITE[s]] != 'open':
+                continue
+            # the wall goes on past both ends of the opening (beside it on one side or the other)
+            ends = ('N', 'S') if s in 'EW' else ('E', 'W')
+            walled = 0
+            for e in ends:
+                ex, ey = STEP[e]
+                a, b = at.get((gx + ex, gy + ey, gf)), at.get((gx + dx + ex, gy + dy + ey, gf))
+                if (a and pat(a)[s] == 'wall') or (b and pat(b)[OPPOSITE[s]] == 'wall'):
+                    walled += 1
+            if walled < 2:
+                continue
+            mx, my = t['x'] + dx * T / 2, t['y'] + dy * T / 2
+            if any(math.hypot(f[0] - mx, f[1] - my) < 48 and abs(f[2] - t['floor']) < 160 for f in framed):
+                continue                                   # (a frame or a door stands there already)
+            if (round(mx), round(my), gf) in seen:
+                continue
+            seen.add((round(mx), round(my), gf))
+            rot = 0 if (s in 'EW') == fr['thin_x'] else math.pi / 2
+            px, py = builder._centred(db, fr['ri'], mx, my, rot)
+            ops.append({'op': 'place', 'id': fr['id'], 'p': [round(px, 2), round(py, 2), round(t['floor'] - fr['zmin'], 2), 0, 0, rot]})
+    return ops
+
+
+def wall_holes(db, cell_key):
+    """The see-through holes in a place's walls as it is now, seen from everywhere: [(x, y, z)]."""
+    m = mapdata.cellmap(db, cell_key)
+    tiles, _pre = _tiles(db, m)
+    if not tiles:
+        return []
+    tile_refs = {t['ref'] for t in tiles}
+    floors = [bx for r in m['refs'] if r['k'] not in tile_refs and (r.get('arch') or r['type'] in ('STAT', 'ACTI'))
+              for bx in [_world_box(r)] if bx and (bx[3] - bx[0]) * (bx[4] - bx[1]) >= 128 * 96]
+    return [(h['x'], h['y'], h['z']) for h in _see_holes(db, m, tiles, floors, tiles) if h['kind'] == 'wall']
+
+
+def column_box(r):
+    """Where a placed post or column stands: its box, from the cell map's entry."""
+    return _world_box(r)
+
+
+def _see_holes(db, m, tiles, floors, spots):
+    """The see-through holes seen from these tiles only (the rest of the place as it is)."""
+    import seethrough
+    frames = [bx for r in m['refs'] if re.search(r'jamb|frame|doorway|arch|_dj(_|\d|$)', r['id'].lower())
+              for bx in [_world_box(r)] if bx]
+
+    def walled(t, s):
+        if (t.get('spot') or t['pat'])[s] != 'open':
+            return True
+        o = _neighbour(tiles, t, s)
+        if isinstance(o, dict) and (o.get('spot') or o['pat'])[OPPOSITE[s]] != 'open':
+            return True
+        x0, y0, x1, y1 = _edge(t, s)
+        for bx in frames:
+            if s in 'NS' and bx[1] - 40 <= y0 <= bx[4] + 40 and min(bx[3], x1) - max(bx[0], x0) >= 32:
+                return True
+            if s in 'EW' and bx[0] - 40 <= x0 <= bx[3] + 40 and min(bx[4], y1) - max(bx[1], y0) >= 32:
+                return True
+        return False
+    # (the whole building, for following where a view goes; looking out only from the spots asked about)
+    seen, uniq = set(), []
+    for t in tiles:
+        if t['ref'] in seen:
+            continue
+        seen.update(t.get('mates', []))
+        uniq.append(t)
+    want = {t['ref'] for t in spots}
+    only = {t['ref'] for t in uniq if t['ref'] in want or any(x in want for x in t.get('mates', []))}
+    hs, _sc = seethrough.holes(db, m, uniq, lambda t, s: _neighbour(tiles, t, s, floors), lambda t: _above(tiles, t), (),
+                               walled, floors, only=only)
+    return hs
 
 
 def _world_box(r):
@@ -451,17 +710,19 @@ def _narrow_pieces(db, kp, limit=6):
     if pre in _narrow and _narrow[pre][0] is db.recs:
         return _narrow[pre][1]
     out = []
-    for ri in kp['ris']:
+    for ri in _kit_statics(db, kp):
         rid = db.recs[ri][1]
         if db.recs[ri][0] != 'STAT' or not re.search(r'post|pillar|column|support|beam', rid.lower()):
             continue
         b = mapdata.object_bounds(db, ri)
         if not b or b[3] - b[0] > 136 or b[4] - b[1] > 136 or not kp['height'] * 0.5 <= b[5] - b[2] <= kp['height'] * 1.5:
             continue
-        out.append((len(db.used_in.get(rid.lower(), ())), rid, ri, b))
-    out.sort(key=lambda x: -x[0])
+        out.append((kits.game_uses(db, rid.lower()), rid, ri, b))
+    # (the plain ones, most used first; a decorative one, a glass pillar say, only in a style with no other)
+    plain = [x for x in out if not DECOR_POST.search(x[1].lower())]
+    out = sorted(plain or out, key=lambda x: -x[0])
     res = [(rid, ri, b) for _n, rid, ri, b in out[:limit]]
-    if len(res) < 2:
+    if not res:
         # a style without posts of its own: the columns the game stands by its doorways in this style,
         # then the ones it uses most in the same places, from a set of the same people (Nordic with
         # Nordic, Indoril with Indoril...)
@@ -500,15 +761,52 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
     if hole['u1'] > h - 56:
         spots.append(h)
     spots.append((hole['u0'] + hole['u1']) / 2)      # the hole itself
-    cands = []
+    cands, slid, pairs, centred = [], [], [], []
+    wall_ids = {w['id'].lower() for w in t['kit']['walls']}
+
+    def stands(rid, x, y, within=24):
+        """Is this piece already standing (nearly) there? A second one on top of it covers nothing more."""
+        return any(r['id'].lower() == rid.lower() and math.hypot(r['p'][0] - x, r['p'][1] - y) < within and
+                   abs(r['p'][2] - t['floor']) < t['H'] * 0.6 for r in near)
     for u in spots:
         x, y = ex + ax * u, ey + ay * u
         for rid, ri, b in _narrow_pieces(db, t['kit']):
-            # every turn: some are half columns made to stand against a wall, seen from the front only
+            # first on the grid, the way the game stands it (a column drawn off its own point lines up
+            # with the walls there and not when centred on the spot; see grid_spot)
+            gs = [g for g in grid_spot(db, ri, x, y, t['T'], t['x'], t['y'], [(t['x'], t['y'])])[:2] if not stands(rid, g[0], g[1])]
+            for gx, gy, grot in gs:
+                cands.append({'label': 'Add %s' % rid,
+                              'ops': [{'op': 'place', 'id': rid, 'p': [round(gx, 2), round(gy, 2), t['floor'] - b[2], 0, 0, grot]}]})
+            # where one on the grid leaves a slit (the top of a stairwell, say): what you'd do by hand, so
+            # it still lines up with the walls and reads as one solid piece rather than one off the line:
+            # slid along the wall's own line over the slit, or a second one beside it on that line (or on
+            # the grid), a little overlap and all
+            z_ = t['floor'] - b[2]
+            for gx, gy, grot in gs:
+                for d in (16, -16, 32, -32, 48, -48):
+                    sx, sy = gx + ax * d, gy + ay * d
+                    if stands(rid, sx, sy):
+                        continue
+                    slid.append({'label': 'Add %s' % rid,
+                                 'ops': [{'op': 'place', 'id': rid, 'p': [round(sx, 2), round(sy, 2), z_, 0, 0, grot]}]})
+                    if abs(d) >= 32:
+                        pairs.append({'label': 'Add two %s, lined up' % rid,
+                                      'ops': [{'op': 'place', 'id': rid, 'p': [round(gx, 2), round(gy, 2), z_, 0, 0, grot]},
+                                              {'op': 'place', 'id': rid, 'p': [round(sx, 2), round(sy, 2), z_, 0, 0, grot]}]})
+            for i_, (gx, gy, grot) in enumerate(gs):
+                for hx, hy, hrot in gs[i_ + 1:]:
+                    pairs.append({'label': 'Add two %s, lined up' % rid,
+                                  'ops': [{'op': 'place', 'id': rid, 'p': [round(gx, 2), round(gy, 2), z_, 0, 0, grot]},
+                                          {'op': 'place', 'id': rid, 'p': [round(hx, 2), round(hy, 2), z_, 0, 0, hrot]}]})
+            # failing those, centred on the spot, every turn: some are half columns made to stand against a
+            # wall, seen from the front only
             for rot in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2):
                 cx, cy = builder._centred(db, ri, x, y, rot)
-                cands.append({'label': 'Add %s' % rid,
-                              'ops': [{'op': 'place', 'id': rid, 'p': [round(cx, 2), round(cy, 2), t['floor'] - b[2], 0, 0, rot]}]})
+                if stands(rid, cx, cy):
+                    continue
+                centred.append({'label': 'Add %s' % rid,
+                                'ops': [{'op': 'place', 'id': rid, 'p': [round(cx, 2), round(cy, 2), t['floor'] - b[2], 0, 0, rot]}]})
+    cands += slid + pairs + centred
     # is anything of the building just past this side (a hall piece that isn't a whole tile, stairs, a
     # door)? Then nothing goes there: a wall "outside" would stand across the way through
     nx_, ny_ = STEP[hole['side']]
@@ -582,6 +880,10 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
         if abs(shift) < 8:
             continue
         cx, cy = r['p'][0] + (shift if along_x else 0), r['p'][1] + (0 if along_x else shift)
+        # (not a copy of a loose wall slid along its own line: it would lie mostly on top of the first,
+        # and a third on that. The slit at a loose wall's end is for a post, below)
+        if r['id'].lower() in wall_ids or stands(r['id'], cx, cy, 6):
+            continue
         cands.append({'label': 'Add another %s over it' % r['id'],
                       'ops': [{'op': 'place', 'id': r['id'], 'p': [round(cx, 2), round(cy, 2), r['p'][2], r['p'][3], r['p'][4], r['p'][5]]}]})
     # a loose wall that doesn't reach the ceiling (an arched or carved top): the style's wall that does
@@ -652,8 +954,30 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
                 cands.insert(0, {'label': 'Swap for %s (meets the piece next to it)' % v[0]['id'],
                                  'ops': [{'op': 'swap', 'ref': t['ref'], 'id': v[0]['id'], 'rz': rz}],
                                  'swap': (t['ref'], v[0]['id'], [t['x'], t['y'], t['z'], 0, 0, rz])})
+    # a style whose own places seldom stand a post at a corner (most of them: see jointsurvey.py) gets
+    # its slits closed some other way first, and a post only when nothing else will do. Not at the end
+    # of a loose wall, though: a wall piece narrower than the tile (Indoril's 226 in 256) leaves a slit
+    # at each end that the game's own places fill with the style's column
+    def wall_end():
+        for r in near:
+            if r['id'].lower() not in wall_ids:
+                continue
+            bx = _world_box(r)
+            if not bx or bx[2] > t['floor'] + t['H'] * 0.6 or bx[5] < t['floor'] + 20:
+                continue
+            ends = [(bx[0], (bx[1] + bx[4]) / 2), (bx[3], (bx[1] + bx[4]) / 2)] if bx[3] - bx[0] >= bx[4] - bx[1] \
+                else [((bx[0] + bx[3]) / 2, bx[1]), ((bx[0] + bx[3]) / 2, bx[4])]
+            if any(math.hypot(px - hole['x'], py - hole['y']) < 48 for px, py in ends):
+                return True
+        return False
+    if not uses_posts(db, t['kit'].get('prefix')) and not wall_end():
+        is_post = lambda c: c['label'].startswith('Add ') and COLUMN_WORDS.search(c['label'].lower())
+        cands = [c for c in cands if not is_post(c)] + [c for c in cands if is_post(c)]
     good, best = [], None
-    for c in cands:
+    for n_, c in enumerate(cands):
+        # (with one good fix in hand, a few more to choose from, not every column and turn there is)
+        if good and n_ >= 40 or n_ >= 220:
+            break
         f = seethrough.closes(db, sc, hole, [] if c.get('swap') else c['ops'], c.pop('swap', None))
         if os.environ.get('SEETHROUGH_DEBUG'):
             print('  try', c['label'], [[round(v) for v in o['p'][:3]] for o in c['ops'] if 'p' in o], round(f, 2))
@@ -816,9 +1140,44 @@ def _hole_issues(db, m, tiles, floors, issues, cell_key):
     return out
 
 
-def scan(db, cell_key):
+def scan(db, cell_key, everything=False):
     """The gaps of a place: {'issues': [{kind, text, x, y, z, ref, side(s), fixes: [{label, ops}]}],
-    'tiles': how many floor pieces were looked at, 'style'}."""
+    'tiles': how many floor pieces were looked at, 'style', 'typical': how gappy the game's own places
+    of this style are (gapsurvey.py), 'rate': this place's see-through holes per floor piece, 'hidden':
+    how many see-through holes were left out because the place has no more of them than the game's own
+    places of the style (everything=True: none left out)}."""
+    res = _scan(db, cell_key)
+    res['hidden'] = 0
+    res['typical'] = None
+    tiles = res.get('tiles') or 0
+    holes = [i for i in res['issues'] if i['kind'] == 'hole']
+    res['rate'] = round(len(holes) / float(tiles), 3) if tiles else 0.0
+    if not tiles or not res.get('prefix'):
+        return res
+    try:
+        import gapsurvey
+        res['typical'] = gapsurvey.typical(db, res['prefix'])
+    except Exception as e:
+        print('gap survey:', e)
+    if res['typical'] and not everything and holes and res['rate'] <= res['typical']['per_tile'].get('hole', 0):
+        # (no worse than the game's own: the see-through spots stay out of the way, the rest shows)
+        res['issues'] = [i for i in res['issues'] if i['kind'] != 'hole']
+        for n, i in enumerate(res['issues']):
+            i['n'] = n
+        res['hidden'] = len(holes)
+    return res
+
+
+def excess(res):
+    """Whether a scanned place has more see-through holes per floor piece than the game's own places of
+    its style (True when there's nothing to go by)."""
+    t = res.get('typical')
+    if not t or not res.get('tiles'):
+        return True
+    return res['rate'] > t['per_tile'].get('hole', 0)
+
+
+def _scan(db, cell_key):
     m = mapdata.cellmap(db, cell_key)
     if not m.get('exists') or not m.get('interior'):
         raise EditError('The gap finder works in interiors built from room pieces.')
@@ -906,7 +1265,7 @@ def scan(db, cell_key):
         issues.append({'kind': 'post', 'ref': None, 'id': p['id'], 'x': p['vx'], 'y': p['vy'], 'z': p['floor'] + 110,
                        'text': ('Where a door frame meets the wall: a post covers the join' if p['why'] == 'frame' else
                                 'A gap where walls meet: the style stands a post here'),
-                       'fixes': [{'label': 'Add %s' % p['id'], 'ops': [{'op': 'place', 'id': p['id'], 'p': [p['x'], p['y'], p['z'], 0, 0, 0]}]}]})
+                       'fixes': [{'label': 'Add %s' % p['id'], 'ops': [{'op': 'place', 'id': p['id'], 'p': [p['x'], p['y'], p['z'], 0, 0, p.get('rot', 0.0)]}]}]})
     # half-length pieces where a whole one should be
     issues += _short_issues(db, m)
     # what the player can actually see through: slits and corners where pieces don't meet
@@ -915,7 +1274,18 @@ def scan(db, cell_key):
     issues.sort(key=lambda i: _rank(i) if i['fixes'] else 3)
     for n, i in enumerate(issues):
         i['n'] = n
-    return {'issues': issues, 'tiles': len(tiles), 'style': kits.friendly(prefix) if prefix else None}
+    fr = door_frame(tiles[0]['kit']) if tiles else None
+    # how often the game's own places in this style stand a post at a corner (what the fixes go by)
+    share = None
+    try:
+        import jointsurvey
+        stats, places = jointsurvey.survey(db, prefix) if prefix else ({}, 0)
+        n = sum(v['n'] for v in stats.values())
+        share = {'places': places, 'share': round(sum(v['with'] for v in stats.values()) / float(n), 2) if n else None}
+    except Exception:
+        pass
+    return {'issues': issues, 'tiles': len(tiles), 'style': kits.friendly(prefix) if prefix else None, 'prefix': prefix,
+            'door_frame': fr['id'] if fr and not tiles[0]['kit'].get('entry_doors') else None, 'posts': share}
 
 
 def variants(db, cell_key, refkey):
@@ -941,7 +1311,7 @@ def variants(db, cell_key, refkey):
             if not ob or not b:
                 continue
             if all(abs((ob[k + 3] - ob[k]) - (b[k + 3] - b[k])) < max(24, (b[k + 3] - b[k]) * 0.2) for k in range(3)):
-                out.append({'id': rid, 'rz': r['p'][5], 'uses': len(db.used_in.get(rid.lower(), ()))})
+                out.append({'id': rid, 'rz': r['p'][5], 'uses': kits.game_uses(db, rid.lower())})
         out.sort(key=lambda v: -v['uses'])
         return {'variants': out[:24]}
     kp = t['kit']
@@ -1031,7 +1401,7 @@ def fix_all(db, cell_key):
     show a smaller gap beside it, closed by the next round (all of it one undo)."""
     editing._require_project(db)
     changed, placed = [], []
-    res = scan(db, cell_key)
+    res = scan(db, cell_key)           # (see-through holes only while the place has more than the game's own)
     for _round in range(6):
         # the smallest fixes first, looking again after each kind: a post often closes what a wall
         # would otherwise be put in for, and a wall first can leave the corner a post should cover
@@ -1119,7 +1489,7 @@ def patch_pieces(db, cell_key, limit=24):
     for w in kp['walls'] + kp['jambs']:
         add(w['ri'])
     patch = [ri for ri in kp['ris'] if re.search(r'pillar|column|post|endcap|_end|_cap|arch|trim|rail', db.recs[ri][1].lower())]
-    patch.sort(key=lambda ri: -len(db.used_in.get(db.recs[ri][1].lower(), ())))
+    patch.sort(key=lambda ri: -kits.game_uses(db, db.recs[ri][1].lower()))
     for ri in patch:
         add(ri)
     for p in kp['pieces']:
