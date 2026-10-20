@@ -31,8 +31,8 @@ repository is the source code it is built from.
   - In `app/web`: `panels.js` is the panel system (docks, floating windows, tabs, layouts), used by
     `worldpanels.js` (World map) and `pagepanels.js` (the other pages); `comfort.js` has the status
     bar, right-click menus, Ctrl+K palette and shortcuts; `qol.js` the modder comforts (changes on
-    the map, hiding, doors, search and replace); `setups.js` Play as and test setups; `theme.js` the
-    themes.
+    the map, hiding, doors, search and replace); `setups.js` Play as and test setups; `pathedit.js`
+    editing walking paths (path grids) by hand; `theme.js` the themes.
   - `link_scripts/` are the OpenMW Lua scripts for the live link with the running game.
 - **`packaging/`**: everything that turns `app/` into the Windows installer.
   - `build.py` makes `packaging/out/Morrowind Workshop Setup.exe`.
