@@ -205,6 +205,12 @@ function cfMenuAt(e, hit, at){
       if (r.to) items.push({label: '→ Go where it leads', act: () => selAction('gotodest')}, {label: '📍 Pick where you arrive…', act: () => selAction('arrive')});
       else items.push({label: 'Make it lead somewhere…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-relink'); if (s) s.focus(); }, 50); }});
     }
+    if (r.type === 'STAT' || r.type === 'ACTI'){
+      sep();
+      if (r.type === 'STAT') items.push({label: '🚪 Make it a hidden door (looks the same)', act: () => selAction('secretdoor')});
+      if (r.type === 'STAT') items.push({label: '⚙ Make it an activator (for a script)', act: () => selAction('secretacti')});
+      else items.push({label: '🚪 Make it a hidden door (looks the same)', act: () => selAction('secretdoor')});
+    }
     if (r.type === 'NPC_' || r.type === 'CREA'){ sep(); items.push({label: '💬 Dialogue', act: () => selAction('talk')}, {label: r.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character', act: () => selAction('char')}); }
     sep();
     if (r.arch) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});

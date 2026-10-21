@@ -26,6 +26,12 @@ def survey(db, rid, limit=25):
     low = rid.lower()
     if low in _cache and _cache[low][0] is db.recs:
         return _cache[low][1]
+    import modelcache
+    kept = modelcache.get(db, 'wallhang', low)
+    if kept is not None:
+        kept = {'n': kept['n'], 'with': Counter(kept['with']), 'offsets': {k: [tuple(o) for o in v] for k, v in kept['offsets'].items()}, 'alone': kept['alone']}
+        _cache[low] = (db.recs, kept)
+        return kept
     out = {'n': 0, 'with': Counter(), 'offsets': {}, 'alone': 0}
     cells = [db.recs[ci][7] for ci in db.used_in.get(low, ()) if db.recs[ci][0] == 'CELL' and kits.game_made(db, db.recs[ci][7])]
     for ck in sorted(set(cells))[:limit]:
@@ -56,6 +62,7 @@ def survey(db, rid, limit=25):
             if not comp:
                 out['alone'] += 1
     _cache[low] = (db.recs, out)
+    modelcache.put(db, 'wallhang', low, {'n': out['n'], 'with': dict(out['with']), 'offsets': out['offsets'], 'alone': out['alone']})
     return out
 
 

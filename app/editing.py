@@ -545,6 +545,60 @@ def swap_ref(db, cell_key, refkey, new_id):
     return refkey
 
 
+def secret_ref(db, cell_key, refkey, kind='door'):
+    """Turn a placed piece of scenery (a wall, a bookcase) into a hidden door or an activator that looks
+    just the same: a new DOOR or ACTI record in your mod with the piece's own model, and the placed
+    piece swapped for it, keeping its spot and turn. A door can then be made to lead somewhere (or just
+    swing open on its hinge); an activator is for a script. One record per model is reused."""
+    _require_project(db)
+    c, refs = _cell(db, cell_key)
+    ref = refs.get(refkey)
+    if not ref:
+        raise EditError('That object is no longer in this cell.')
+    old = ref_info(ref['subs'])[0]
+    ri = db.resolve_id(old)
+    if ri is None:
+        raise EditError('No object called "%s".' % old)
+    r = db.recs[ri]
+    tag = 'ACTI' if kind == 'activator' else 'DOOR'
+    if r[0] == tag:
+        raise EditError('It already is %s.' % ('an activator' if tag == 'ACTI' else 'a door'))
+    if r[0] not in ('STAT', 'ACTI', 'DOOR', 'CONT'):
+        raise EditError('Only scenery (a wall, a bookcase, a rock) can be made into one.')
+    _t, _f, data = db.files[r[3]].record_at(r[4])
+    model = next((zstr(d) for t, d in iter_subrecords(data) if t == 'MODL'), None)
+    if not model:
+        raise EditError('"%s" has no model.' % r[1])
+    name = next((zstr(d) for t, d in iter_subrecords(data) if t == 'FNAM'), None) or (r[2] or '').strip() or 'Wall'
+    # (one made before, for the same model and kind, is used again)
+    suffix = '_hidden' if tag == 'DOOR' else '_acti'
+    base = re.sub(r'_(hidden|acti)(_\d+)?$', '', r[1])          # (a door made this way, turned into an activator)
+    stem = base[:31 - len(suffix)] + suffix
+    new_id = db.recs[db.by_key[(tag, stem.lower())][-1]][1] if db.by_key.get((tag, stem.lower())) else None
+    if new_id is None:
+        from library import DOOR_SOUNDS
+        new_id, n = stem, 2
+        while db.resolve_id(new_id) is not None:
+            new_id = '%s_%d' % (stem[:31 - 2 - len(str(n))], n)
+            n += 1
+        subs = [('NAME', zs(new_id)), ('MODL', zs(model)), ('FNAM', zs(name[:31]))]
+        if tag == 'DOOR':
+            snd = 'wood' if re.search(r'wood|plank|thatch', model, re.I) else 'stone'
+            for sub, sid in zip(('SNAM', 'ANAM'), DOOR_SOUNDS[snd]):
+                if db.resolve_id(sid) is not None:
+                    subs.append((sub, zs(sid)))
+        db.project.set_record(tag, new_id.lower(), 0, join_subs(subs), created=True)
+        db.sync_project()
+    ni = db.resolve_id(new_id)
+    subs = [(t, zs(db.recs[ni][1]) if t == 'NAME' else d) for t, d in ref['subs']]
+    if tag != 'DOOR':
+        subs = [(t, d) for t, d in subs if t not in ('DODT', 'DNAM')]
+    _store(c, refkey, ref['origin'], ref['idx'], subs)
+    commit(db, 'Made "%s" into %s "%s" in %s' % (old, 'the activator' if tag == 'ACTI' else 'the hidden door',
+                                                 new_id, cell_label(db, cell_key)))
+    return {'id': new_id, 'type': tag, 'ref': refkey}
+
+
 def restore_ref(db, cell_key, refkey):
     _require_project(db)
     c = db.project.cells.get(cell_key)

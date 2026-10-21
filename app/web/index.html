@@ -214,7 +214,7 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .xbtn{background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px;line-height:1;padding:2px 4px;border-radius:4px;margin-left:8px;vertical-align:middle}
 .xbtn:hover{color:var(--text);background:#ffffff14}
 .modal-bg{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:40}
-.modal{background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:22px 24px;width:min(480px,92vw)}
+.modal{background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:22px 24px;width:min(480px,92vw);max-height:92vh;overflow:auto}
 .modal h2{font-family:Cinzel,serif;color:var(--gold2);margin:0 0 6px;font-weight:600}
 .modal label{display:block;font-size:12.5px;color:var(--muted);margin:12px 0 4px}
 .modal .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
@@ -552,6 +552,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 .ccard{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px;cursor:pointer;text-align:left;color:var(--text)}
 .ccard:hover,.ccard.on{border-color:var(--gold)}
 .ccard .ic{font-size:22px}
+.ccard .kick{display:block;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-top:6px}
 .ccard b{display:block;font-family:Cinzel,serif;color:var(--gold2);font-size:16px;margin:4px 0}
 .cform{background:var(--panel);border:1px solid var(--line2);border-radius:11px;padding:18px 20px;max-width:760px}
 .cform h2{font-family:Cinzel,serif;color:var(--gold2);margin:0 0 4px;font-weight:600}
@@ -563,6 +564,31 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 .radios input{display:none}
 .radios label:has(input:checked){border-color:var(--gold);color:var(--gold2);background:#2a2214}
 .itemrow{display:flex;gap:6px;align-items:center;margin-bottom:4px}
+/* the Create page: cards in groups, the rest of a form folded away, and a line saying what the button does */
+.cgroups{margin-bottom:20px}
+.cgroups .cgrid{margin-bottom:4px}
+.cgh{font-family:Cinzel,serif;color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin:16px 0 8px;font-weight:600;display:flex;gap:12px;align-items:baseline}
+.cgh:first-child{margin-top:0}
+.cgh .msg{font-family:inherit;text-transform:none;letter-spacing:0;font-size:12px;font-weight:400}
+.cgh .msg a{color:var(--gold2);cursor:pointer}
+.cmore{grid-column:1/-1;margin-top:4px}
+.cmore>summary{cursor:pointer;color:var(--faint);font-size:12.5px;list-style:none;padding:4px 0}
+.cmore>summary::-webkit-details-marker{display:none}
+.cmore>summary::before{content:'▸ '}
+.cmore[open]>summary::before{content:'▾ '}
+.cmore>.frow{margin-top:2px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px}
+.cwhat{font-size:12.5px;color:var(--faint);margin-top:12px;line-height:1.5;border-top:1px solid var(--line);padding-top:8px}
+.cwhat b{color:var(--muted);font-weight:500}
+.cpicks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.cpicks button{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:3px 9px 3px 3px;cursor:pointer;color:var(--text);font-size:12.5px;display:flex;align-items:center;gap:6px}
+.cpicks button:hover,.cpicks button.on{border-color:var(--gold)}
+.cpicks button .thumb{width:30px;height:30px;border-radius:5px;object-fit:contain;background:var(--deep)}
+.cpicks .msg{font-size:11.5px}
+.cform .mv.sm{height:170px;grid-column:2}
+.ccopy{margin:10px 0 14px;border:1px solid var(--line2);border-radius:9px;padding:12px 14px;background:var(--panel2)}
+.ccopy .frow{grid-template-columns:150px 1fr}
+.withbtn{display:flex;gap:6px;align-items:center}
+.withbtn .inp{flex:1;min-width:0}
 @media (max-width: 1000px){
 
   #browse{grid-template-columns:1fr}
@@ -584,7 +610,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
     <button data-view="chars">Characters</button>
     <button data-view="dialog">Dialogue</button>
     <button data-view="scripts">Scripts</button>
-    <button data-view="rules" title="Factions, classes, races, birthsigns, global variables and game settings">Rules</button>
+    <button data-view="rules" title="Factions, classes, races, birthsigns, skills, regions, sounds, magic effects, global variables and game settings">Rules</button>
     <button data-view="mymod">My mod</button>
     <button data-view="health">Health check<span id="hbadge"></span></button>
     <button data-view="plugins">Load order</button>
@@ -685,15 +711,70 @@ function toast(msg, err){
   t.title = 'Click to dismiss'; t.onclick = () => t.remove();
   document.body.appendChild(t); setTimeout(() => t.remove(), err ? 6000 : 3200);
 }
+// A box asking for a line of text, in place of window.prompt(): Edge in app mode (the Workshop's own
+// window) never shows prompt(), it just answers null, so "Save plan…" and every "name this" did nothing
+// there. Resolves with the text, or null when cancelled.
+function askText(message, def){
+  return new Promise(resolve => {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal" style="width:min(460px,92vw)"><div class="msg" style="white-space:pre-wrap;margin-bottom:8px"></div>
+      <input class="inp" id="ask-text" style="width:100%" autocomplete="off">
+      <div class="foot"><button class="btn" id="ask-no">Cancel</button><button class="btn primary" id="ask-ok">OK</button></div></div>`;
+    bg.querySelector('.msg').textContent = message;
+    const inp = bg.querySelector('#ask-text'); inp.value = def == null ? '' : String(def);
+    const done = v => { bg.remove(); resolve(v); };
+    bg.querySelector('#ask-no').onclick = () => done(null);
+    bg.querySelector('#ask-ok').onclick = () => done(inp.value);
+    inp.onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); done(inp.value); } else if (e.key === 'Escape'){ e.preventDefault(); done(null); } };
+    bg.onclick = e => { if (e.target === bg) done(null); };
+    document.body.appendChild(bg); inp.focus(); inp.select();
+  });
+}
 
 let S = {q:'', types:[], plugin:'', rows:[], total:0, offset:0, loadingMore:false, sel:null, summary:null,
          hist:[], histPos:-1, typeLabels:{}};
 
 // ---------- loading ----------
+// the surveys learning from the game's places in the background (one at a time: background.py): a line
+// under the Place panel's buttons while one runs, so a slow first build or a plainer first furnish is explained
+function surveyNote(sv){
+  const box = $('#w-surveys'); if (!box) return;
+  if (!sv || !sv.running){ box.style.display = 'none'; return; }
+  const left = (sv.queued || []).length;
+  const m = Math.floor((sv.since || 0) / 60);
+  box.style.display = 'block';
+  box.textContent = `Learning from the game's places: ${sv.running}${m ? ' (' + m + ' min so far)' : ''}${left ? ', ' + left + ' more to come' : ''}. This runs beside the Workshop, once; Auto-furnish waits for what it needs and says so.`;
+}
+setInterval(async () => { if (S.summary && S.summary.state === 'ready' && $('#w-surveys')) { try { surveyNote(await api('/api/surveys')); } catch (e) {} } }, 8000);
+// the first Auto-furnish after an install (or a change of load order) has to wait for the learning: the
+// server answers {waiting: [survey names]} and this waits, showing the progress in `el`, until none of
+// them is running or queued any more (the learning is kept, so this happens once)
+async function waitForLearning(names, el){
+  const total = names.length, t0 = Date.now();
+  for (;;){
+    let sv = null;
+    try { sv = await api('/api/surveys'); } catch (e){}
+    const busy = sv ? names.filter(n => n === sv.running || (sv.queued || []).includes(n)).length : total;
+    if (!busy) return;
+    const done = total - busy, m = Math.floor((Date.now() - t0) / 60000);
+    if (el) el.innerHTML = `<div class="msg"><b>Learning from the game's places first</b> (once, kept for good): ${done} of ${total} done${m ? ', ' + m + ' min so far' : ''}.<br>Now: ${esc(sv && sv.running || '…')}</div>
+      <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden;margin:6px 0"><div style="height:100%;width:${Math.round(100 * done / total)}%;background:var(--gold);transition:width .5s"></div></div>
+      <div class="hint">The rest of the Workshop works meanwhile; the furnishing starts by itself when this is done.</div>`;
+    await new Promise(r => setTimeout(r, 3000));
+  }
+}
+async function furnishWhenLearnt(body, el){
+  for (;;){
+    const r = await post('/api/furnish', body);
+    if (!r.waiting) return r;
+    await waitForLearning(r.waiting, el);
+  }
+}
 async function poll(){
   let s;
   try { s = await api('/api/status'); } catch(e){ setTimeout(poll, 800); return; }
   S.summary = s;
+  surveyNote(s.surveys);
   if ((s.state === 'ready' && !s.records) || s.state === 'error'){ if (await setupScreen(s)) return; }
   if (s.state === 'ready'){
     $('#loading').style.display = 'none';
@@ -1104,6 +1185,12 @@ function renderHealth(){
   </div>
   <div class="filters">${['all','error','warning','info'].map(f => `<button class="btn ${hFilter===f?'on':''}" data-hf="${f}">${f==='all'?'Everything':sevName[f]}</button>`).join('')}</div>`;
   if (!shown.length) h += `<div class="card"><span class="sev-ok">✓</span> Nothing in this category. Your setup looks clean.</div>`;
+  // the mod itself, record by record (what the Construction Set calls "verify")
+  if (S.summary && S.summary.project){
+    h += `<h3 style="margin-top:28px;color:var(--muted);font-weight:500">Check my mod: ${esc(S.summary.project.name)}</h3>
+      <p class="lead" style="font-size:12.5px">Each record of your mod checked the way the game's own editor checks them: missing names, models or icons, spells with no effects, weather that doesn't add up, locks nobody can pick… Click a finding to open it. Nothing is changed.</p>
+      <div id="verifywrap">${H.verify ? verifyHtml(H.verify) : '<button class="btn primary" id="verify-go">🔍 Check my mod</button>'}</div>`;
+  }
   for (const i of shown){
     h += `<details class="issue ${i.severity}"><summary><span class="k sev-${i.severity}">${esc(i.kind)}</span><span class="pl">${esc(i.plugin)}</span><span class="d">${esc(i.detail)}</span></summary>`;
     if (i.items.length){
@@ -1117,7 +1204,25 @@ function renderHealth(){
     `</table><p class="lead" style="margin-top:10px;font-size:12.5px">Settings read from: ${H.config.config_files.map(esc).join(' and ')}</p>`;
   $('#healthwrap').innerHTML = h;
 }
+function verifyHtml(v){
+  const n = v.counts, sevName = {error: 'Needs fixing', warning: 'Worth a look', info: 'Good to know'};
+  let h = `<div class="actions" style="margin-bottom:8px"><button class="btn sm" id="verify-go">↻ Check again</button>
+    <span class="msg">${v.findings.length ? `${n.error} to fix, ${n.warning} worth a look, ${n.info} good to know` : ''}</span></div>`;
+  if (!v.findings.length) return h + `<div class="card"><span class="sev-ok">✓</span> Every record in your mod passes. (Missing files, broken links and scripts are checked under My mod → Get ready to share.)</div>`;
+  h += `<table class="t">` + v.findings.map(f => `<tr class="vrow"><td class="ty sev-${f.sev}" style="white-space:nowrap">${sevName[f.sev]}</td>
+    <td>${f.i != null ? `<span class="lnk" data-vgo="${f.i}">${esc(f.text)}</span>` : f.cell ? `<span class="lnk" data-vcell="${esc(f.cell)}">${esc(f.text)}</span>` : esc(f.text)}</td></tr>`).join('') + `</table>`;
+  return h;
+}
+async function runVerify(){
+  const box = $('#verifywrap'); if (!box) return;
+  box.innerHTML = '<div class="msg"><span class="spin"></span>Checking every record…</div>';
+  try { H.verify = await api('/api/verify'); box.innerHTML = verifyHtml(H.verify); }
+  catch (e){ box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
 $('#healthwrap').addEventListener('click', e => {
+  if (e.target.closest('#verify-go')){ runVerify(); return; }
+  const vg = e.target.closest('[data-vgo]'); if (vg){ showView('browse'); openRecord(+vg.dataset.vgo, true); return; }
+  const vc = e.target.closest('[data-vcell]'); if (vc){ showView('world'); worldOpen(vc.dataset.vcell); return; }
   const f = e.target.closest('[data-hf]'); if (f) { hFilter = f.dataset.hf; renderHealth(); return; }
   const s = e.target.closest('[data-search]'); if (s) { $('#q').value = s.dataset.search; S.q = s.dataset.search; S.types = []; S.plugin = ''; buildSide(); showView('browse'); runSearch(); }
 });
@@ -1931,7 +2036,7 @@ async function groupDo(a){
     });
     await groupAction('/api/group/move', {moves}, `Turned ${sel.length} objects`);
   } else if (a === 'prefab'){
-    const name = ($('#g-prefabname') || {}).value || prompt('Name for this prefab (e.g. Market stall):');
+    const name = ($('#g-prefabname') || {}).value || await askText('Name for this prefab (e.g. Market stall):', '');
     if (!name || !name.trim()) return;
     try {
       await post('/api/prefabs/save', {name: name.trim(), refs: selRefsBody(), source: W.info ? (W.info.name || W.info.id) : ''});
@@ -2161,7 +2266,7 @@ function renderWside(){
   PNL.badge('world', 'objs', fmtN(refs.length)); PNL.badge('world', 'sel', sel || W.multi.size > 1 ? '●' : '');
   // --- Place
   h += `<div class="wpane on" data-pane="place"><div id="w-placing"></div>
-    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button>' : ''}
+    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
     <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${paletteHtml()}</div></div>`;
@@ -2189,6 +2294,7 @@ function renderWside(){
       <div class="two"><div><label>Turn (degrees)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div></div>
       <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.arch ? '<button class="btn sm" data-sa="variants" title="Other pieces of this building style that fit the same spot">↻ Other pieces</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
       <div class="dd" style="margin-top:10px"><input class="inp" id="w-swap" placeholder="Swap for… (search for a replacement)" autocomplete="off"><div class="ddlist" id="w-swap-l"></div></div>
+      <div id="w-props" style="margin-top:8px"></div>
       ${sel.type === 'DOOR' ? `<h3>Leads to</h3>
         ${sel.to ? `<div style="font-size:13.5px">→ <span class="lnk" data-sa="gotodest">${esc(sel.to.cell || sel.to.label || 'outdoors (' + sel.to.key.slice(1) + ')')}</span></div>
           <div class="msg">You arrive at ${Math.round(sel.to.x)}, ${Math.round(sel.to.y)}, facing ${Math.round(((sel.to.rz * 180 / Math.PI) % 360 + 360) % 360)}°.</div>`
@@ -2226,6 +2332,7 @@ function renderWside(){
   renderRecent(); renderPlacing(); renderPrefabs();
   bindWside();
   if (i.interior) renderPlaceSettings(i); else regViewBind(i);
+  if (typeof refPropsRender === 'function') refPropsRender();
   disposeViews('sel');
   for (const p of ['place', 'sel', 'objs', 'view']) if (PNL.isShown('world', p)) v3ThumbScan(body(p));
   for (const [id, v, s] of keepTyped){ const e = $('#' + id); if (e){ e.value = v; e.focus(); try { e.setSelectionRange(s, s); } catch (x){} } }
@@ -2360,6 +2467,7 @@ function bindWside(){
   }, true);
   const fb = $('#w-furnish'); if (fb) fb.onclick = () => furnishDialog(W.key);
   const fxb = $('#w-fixit'); if (fxb) fxb.onclick = () => fixitOpen(W.key);
+  if ($('#w-taste')) renderTaste(W.key);
   if (selRef && selRef.type === 'DOOR'){
     const both = $('#w-relink-both'); if (both) both.onchange = () => { W.relinkBoth = both.checked; };
     ddSearch('w-relink', 'CELL', async r => {
@@ -2421,6 +2529,72 @@ async function arriveAt(x, y, z, rz){
 // auto-furnish: pick a purpose per room, then everything goes in as one change you can undo
 const PURPOSE_LABEL = {bedroom: 'Bedroom', living: 'Living room', kitchen: 'Kitchen', storage: 'Storeroom', study: 'Study / library',
                        shop: 'Shop', shrine: 'Shrine', hall: 'Hallway', tavern: 'Tavern / club', none: '(leave empty)'};
+// The taste set: the game's places the user marks as examples of good design ("Use as an example" on
+// the Place panel). Every survey Auto-furnish learns from counts such a place several times over, and
+// "Furnish like…" takes one of them as the model for a place's rooms.
+let TASTE = null;
+async function renderTaste(key){
+  const box = $('#w-taste'); if (!box) return;
+  let t;
+  try { t = await api('/api/taste?key=' + encodeURIComponent(key)); } catch (e){ return; }
+  if (!$('#w-taste') || W.key !== key) return;
+  TASTE = t.places;
+  const me = t.this || {};
+  if (!me.game_made){
+    box.innerHTML = TASTE.length ? `<div class="msg" style="font-size:11.5px;margin-bottom:8px">Your examples of good design: ${TASTE.length} of the game's places (mark one from its own Place panel). Auto-furnish weighs them ×${t.weight} and can furnish like any of them.</div>` : '';
+    return;
+  }
+  box.innerHTML = `<button class="btn sm" id="w-taste-b" style="width:100%;margin-bottom:4px" title="${me.marked ? 'This place is one of your examples of good design. Click to drop it from the list.' : 'Mark this place as an example of good design: Auto-furnish weighs it ' + t.weight + ' times a plain place when it learns how rooms are furnished, and can furnish like it.'}">${me.marked ? '⭐ An example of good design (click to drop)' : '☆ Use as an example'}</button>
+    <div class="msg" style="font-size:11.5px;margin-bottom:8px">${me.marked ? `One of your ${TASTE.length} examples: the surveys Auto-furnish learns from count it ×${t.weight}, and "Furnish like…" can take it as the model.` : 'Like what you see here? Mark it, and Auto-furnish leans towards places like it.'}</div>`;
+  $('#w-taste-b').onclick = async () => {
+    try {
+      const r = await post('/api/taste', {key, on: !me.marked});
+      TASTE = r.places;
+      toast(me.marked ? 'Dropped it from your examples.' : `Marked as an example (${r.count} now). The surveys learn it again in the background over the next few minutes; until then the old ones stand.`);
+      renderTaste(key);
+    } catch (e){ toast(e.message, true); }
+  };
+}
+// "Furnish as": how well off the household is. The game's own homes were surveyed for what a poor
+// house and a rich one look like (furniture sets, how full, hangings, what the things are worth)
+const FURNISH_AS = [['', 'Comfortable (the usual)'], ['poor', 'Poor'], ['modest', 'Modest'], ['rich', 'Rich'], ['exquisite', 'Exquisite'],
+                    ['trade', 'By trade or faction…'], ['worthless', 'Leave loot worthless']];
+let FA_TRADES = null;
+function furnishAsHtml(p){
+  return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${sel(p + '-as', FURNISH_AS, '')}
+    <input class="inp" id="${p}-trade" list="${p}-tradelist" placeholder="smith, apothecary, mage, Temple, Fighters Guild…" style="display:none;max-width:260px" autocomplete="off"><datalist id="${p}-tradelist"></datalist>
+    <span id="${p}-maxwrap" style="display:none;align-items:center;gap:5px" class="msg">nothing over <input class="inp" id="${p}-max" type="number" min="0" max="100000" value="15" style="width:72px"> gold</span></div>
+    <div class="hint" id="${p}-ashint">The furniture sets, how full the rooms are, the hangings, what lies on the shelves and what the chests hold all follow the choice.</div>`;
+}
+function bindFurnishAs(p){
+  const s = $('#' + p + '-as'), t = $('#' + p + '-trade'), m = $('#' + p + '-maxwrap'), h = $('#' + p + '-ashint');
+  if (!s) return;
+  const HINTS = {'': 'The furniture sets, how full the rooms are, the hangings, what lies on the shelves and what the chests hold all follow the choice.',
+    poor: 'The poor furniture sets, sparser rooms, bare walls, nothing much worth taking, chests of cheap food and clothes.',
+    modest: 'Plain furniture, a few things on the walls, the odd thing worth a little.',
+    rich: 'The rich furniture sets, fuller rooms and walls, finer things on the shelves, good clothes in the closets.',
+    exquisite: 'The rich sets, the fullest rooms and walls, the game\'s dearest things on show.',
+    trade: 'Furnished the way the game furnishes homes of such people, with the set piece their homes have: a smith\'s forge, an apothecary\'s bench, a priest\'s shrine, a guard\'s weapon rack.',
+    worthless: 'For a place where free loot would spoil things: nothing worth more than this anywhere, containers included (they hold only cheap things or nothing).'};
+  const upd = async () => {
+    t.style.display = s.value === 'trade' ? '' : 'none';
+    m.style.display = s.value === 'worthless' ? 'inline-flex' : 'none';
+    if (h) h.textContent = HINTS[s.value] || HINTS[''];
+    if (s.value === 'trade'){
+      t.focus();
+      if (!FA_TRADES){ try { FA_TRADES = (await api('/api/furnish/trades')).trades; } catch (e){ FA_TRADES = []; } }
+      const dl = $('#' + p + '-tradelist');
+      if (dl && !dl.children.length) dl.innerHTML = FA_TRADES.map(x => `<option value="${esc(x.name)}">${esc(x.kind)}${x.n ? ', ' + x.n + ' homes seen: ' + x.band : ''}</option>`).join('');
+    }
+  };
+  s.onchange = upd;
+}
+function furnishAsValue(p){
+  const s = $('#' + p + '-as'); if (!s || !s.value) return null;
+  if (s.value === 'trade'){ const t = ($('#' + p + '-trade') || {}).value || ''; return t.trim() ? {band: 'trade', trade: t.trim()} : null; }
+  if (s.value === 'worthless') return {band: 'worthless', max_value: +(($('#' + p + '-max') || {}).value || 0)};
+  return s.value;
+}
 async function furnishDialog(cellKey){
   if (!await needProject()) return;
   let info;
@@ -2432,19 +2606,30 @@ async function furnishDialog(cellKey){
     <div class="msg">Furniture and clutter from similar places in your load order: beds and shelves against the walls, a table with chairs, things on the tables. It all goes in as <b>one change</b>, so one Undo takes it back.</div>
     ${info.rooms.map(r => `<label>${esc(r.name)} <span class="msg">${r.w} × ${r.h} tiles</span></label>
       <select class="inp" data-fr="${r.id}">${opts.map(o => `<option value="${o}" ${o === r.purpose ? 'selected' : ''}>${PURPOSE_LABEL[o] || o}</option>`).join('')}</select>`).join('')}
+    <label style="margin-top:12px">Furnish as</label>${furnishAsHtml('fu')}
+    <label style="margin-top:12px">Furnish like</label>
+    <select class="inp" id="fu-like"><option value="">The game's rooms in general (your examples weigh ×5)</option>${(info.examples || []).map(p => `<option value="${esc(p.key)}">${esc(p.name)}${p.style ? ' · ' + esc(p.style) : ''}</option>`).join('')}</select>
+    <div class="hint">${(info.examples || []).length ? 'One of your examples of good design as the model: what each kind of its rooms holds, how full they are and which scenes they are composed of; the game\'s rooms fill in what it lacks.' : 'Mark one of the game\'s places as an example (its Place panel: ☆ Use as an example) to furnish like it.'}</div>
+    ${info.furnished ? `<label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:12px"><input type="checkbox" id="fu-replace" checked> Take out the ${info.furnished} things Auto-furnish put here before (otherwise they stay and the rooms get doubled up)</label>` : ''}
     <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:12px"><input type="checkbox" id="fu-walls" checked> Hang things on the walls too (tapestries, banners, paintings, sconces)</label>
     <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="fu-wallsonly"> Only decorate the walls (add no furniture: for rooms that are already furnished)</label>
+    <div id="fu-wait"></div>
     <div class="foot"><button class="btn" id="fu-no">Cancel</button><button class="btn primary" id="fu-go">Furnish</button></div></div>`;
   document.body.appendChild(bg);
+  bindFurnishAs('fu');
   $('#fu-no').onclick = () => bg.remove();
   $('#fu-wallsonly').onchange = () => { if ($('#fu-wallsonly').checked) $('#fu-walls').checked = true; $('#fu-go').textContent = $('#fu-wallsonly').checked ? 'Decorate the walls' : 'Furnish'; };
   $('#fu-go').onclick = async () => {
     const go = $('#fu-go'); go.disabled = true; go.innerHTML = '<span class="spin"></span>Furnishing…';
     const plan = [...bg.querySelectorAll('[data-fr]')].map(s => ({id: +s.dataset.fr, purpose: s.value}));
     try {
-      const r = await post('/api/furnish', {cell: cellKey, plan, walls: $('#fu-walls').checked, walls_only: $('#fu-wallsonly').checked});
+      const rp = $('#fu-replace');
+      const likeSel = $('#fu-like'), like = likeSel && likeSel.value ? likeSel.value : null;
+      const likeName = like ? (likeSel.options[likeSel.selectedIndex].textContent.split(' · ')[0]) : '';
+      const r = await furnishWhenLearnt({cell: cellKey, plan, walls: $('#fu-walls').checked, walls_only: $('#fu-wallsonly').checked, replace: !!(rp && rp.checked),
+                                         level: furnishAsValue('fu'), like}, $('#fu-wait'));
       bg.remove();
-      toast(`Placed ${r.placed} things in ${r.rooms.filter(x => x.placed).length} rooms.` +
+      toast(`Placed ${r.placed} things in ${r.rooms.filter(x => x.placed).length} rooms` + (r.level ? `, furnished ${r.level}` : '') + (like ? `, like ${likeName}` : '') + '.' +
             (r.borrowed ? ` Few places use these walls, so some furniture comes from ${r.borrowed}.` : '') + ' Undo takes it all back.');
       await refreshAfterEdits();
     } catch (e){ toast(e.message, true); go.disabled = false; go.textContent = 'Furnish'; }
@@ -2558,6 +2743,15 @@ async function selAction(a){
     return;
   }
   const ck = W.sel.cell;
+  if (a === 'secretdoor' || a === 'secretacti'){
+    // the same model as a DOOR or ACTI record, swapped in where it stands
+    const door = a === 'secretdoor';
+    const m = await refAction('/api/ref/secret', {cell: ck, ref: sel.k, kind: door ? 'door' : 'activator'}, ck, sel.k,
+      door ? 'Now a door that looks like ' + (sel.name || sel.id) + '. Below: make it lead somewhere, or leave it to swing open.'
+           : 'Now an activator that looks like ' + (sel.name || sel.id) + '. Open its record to give it a script and a name.');
+    if (m && m.made && door){ PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-relink'); if (s) s.focus(); }, 80); }
+    return;
+  }
   if (a === 'apply'){
     const num = id => parseFloat($('#' + id).value);
     const p = sel.p.slice(); p[0] = num('s-x'); p[1] = num('s-y'); p[2] = num('s-z'); p[5] = num('s-r') * Math.PI / 180;
@@ -2684,116 +2878,193 @@ async function renderCreate(){
   }
   if (!CR.opts) { wrap.innerHTML = '<h1>Create</h1><p class="lead"><span class="spin"></span>Gathering races, classes, factions and room styles…</p>'; CR.opts = await api('/api/create/options'); }
   if (!CR.opts.magic) CR.opts.magic = await api('/api/items/options');
-  const cards = [['interior', '🚪', 'New interior + door', 'A new room or house, copied from a room you pick, with a working door from outside.'],
-                 ['build', '🧱', 'Build from pieces', 'Lay out your own rooms. Walls, doorways, ceilings and a door are built from a style\'s pieces.'],
-                 ['npc', '🧍', 'New NPC', 'A townsperson, quest character, merchant or guard with fitting looks and clothes.'],
-                 ['item', '🗡', 'New item', 'A weapon, armor, clothing, potion, tool or other item, started from one you pick. Enchant it if you like.'],
-                 ['spell', '✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone or the player.'],
-                 ['book', '📜', 'Note, letter or book', 'Something readable with your own text.'],
-                 ['lists', '🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.'],
-                 ['container', '🧰', 'Container with contents', 'A chest, crate, barrel or sack, filled and optionally locked.'],
-                 ['itemed', '✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.']];
-  let h = `<h1>Create</h1><p class="lead">Quick starts for the things you make most. Everything goes into your mod as one change you can undo, and you can fine-tune it afterwards in Browse.</p>
-    <div class="cgrid">${cards.map(c => `<button class="ccard ${CR.kind === c[0] ? 'on' : ''}" data-ck="${c[0]}"><span class="ic">${c[1]}</span><b>${c[2]}</b><span class="msg">${c[3]}</span></button>`).join('')}</div>`;
+  if (CR.kind === 'interior') CR.kind = 'build';       // (the old "New interior + door" lives inside Build from pieces now)
+  const card = k => { const c = CR_CARDS[k]; return `<button class="ccard ${CR.kind === k ? 'on' : ''}" data-ck="${k}"><span class="ic">${c[0]}</span>${c[3] ? `<span class="kick">${c[3]}</span>` : ''}<b>${c[1]}</b><span class="msg">${c[2]}</span></button>`; };
+  let h = `<h1>Create</h1><p class="lead">Quick starts for the things you make most. Each goes into your mod as one change that one Undo takes back, and you can fine-tune it afterwards in Browse.</p>
+    <div class="cgroups">${CR_GROUPS.map(([name, kinds, aside]) => `<div class="cgh">${name}${aside ? `<span class="msg">${aside}</span>` : ''}</div><div class="cgrid">${kinds.map(card).join('')}</div>`).join('')}</div>`;
   if (CR.kind) h += `<div class="cform" id="cform">${formHtml(CR.kind)}</div>`;
   wrap.innerHTML = h;
+  wrap.querySelectorAll('[data-gview]').forEach(a => a.onclick = () => showView(a.dataset.gview));
   bindForm();
+}
+// (icon, title, what you get, and the kind of thing it is: the cards sit in one grid, new things first in the
+// order you'd make them (a place, who lives there, what they own), then the one card that changes things)
+const CR_CARDS = {
+  build: ['🧱', 'Build from pieces', 'Lay out rooms on a grid: walls, doorways, ceilings, stairs and a way out are built from a style\'s pieces, and furnished. Or copy a place the game made, with a door from outside.', 'A place'],
+  npc: ['🧍', 'New NPC', 'A townsperson, quest character, merchant or guard, dressed the way the game\'s own people of their race and class are.', 'A person'],
+  container: ['🧰', 'Container with contents', 'A chest, crate, barrel or sack, filled with what you choose, locked and owned if you like.', 'In a place'],
+  item: ['🗡', 'New item', 'A weapon, armor, clothing, potion, tool or other item, started from one you pick. Enchant it if you like.', 'A thing'],
+  book: ['📜', 'Note, letter or book', 'Something to read in game, in your own words, placed somewhere or given to someone.', 'A thing'],
+  spell: ['✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone, or to the player.', 'Magic'],
+  lists: ['🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.', 'A list'],
+  itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
+};
+const CR_GROUPS = [['Make something new', ['build', 'npc', 'container', 'item', 'book', 'spell', 'lists'],
+                    'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
+                   ['Change something that exists', ['itemed']]];
+// the rest of a form, folded away under a line
+function moreHtml(label, inner){ return `<details class="cmore"><summary>${esc(label)}</summary><div class="frow">${inner}</div></details>`; }
+function chk(id, label, on, title){ return `<label class="msg" style="display:flex;gap:6px;align-items:center" ${title ? `title="${esc(title)}"` : ''}><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`; }
+function placeText(){
+  const s = $('#cr-place'); if (!s || s.value === 'none') return '';
+  return s.value === 'player' ? 'where your character stands in game' : 'in the middle of the World map view (' + esc(W.info ? (W.info.name || W.info.region || W.info.id) : W.key) + ')';
+}
+// the line under the button: what pressing it does, from what the form says right now
+function crWhat(){
+  const box = $('#cr-what'); if (!box || !CR.kind) return;
+  const val = id => (($('#' + id) || {}).value || '').trim();
+  const radio = n => (document.querySelector(`[name=${n}]:checked`) || {}).value;
+  const optText = id => { const s = $('#' + id); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
+  const q = s => s ? `"${esc(s)}"` : '';
+  const where = placeText();
+  let t = '';
+  if (CR.kind === 'build' && CR.bmode === 'copy'){
+    const keep = {furnished: 'with everything in it', lights: 'with its walls and lights only', empty: 'with bare walls'}[radio('cr-contents')] || '';
+    t = `<b>Copy it</b> makes a new place ${q(val('cr-name')) || 'with the name you give it'}, copied from ${esc(optText('cr-tpl').replace(/ \(\d+ objects\)$/, '') || 'the place you pick')} ${keep}, ` +
+        (where ? `its front door linked to a new ${esc(optText('cr-door').replace(/ \(.*$/, '') || 'door')} ${where}.` : 'its front door not linked anywhere yet (link one later from the World map).') +
+        ' People and creatures are never copied. One Undo takes it back.';
+  } else if (CR.kind === 'build'){
+    const st = optText('cr-bstyle').replace(' ⇅', ''), rooms = (CR.plan && CR.plan.rooms || []).length;
+    const furn = $('#cr-bfurnish') && $('#cr-bfurnish').checked, fa = $('#cr-b-as') ? optText('cr-b-as') : '';
+    t = `<b>Build it</b> makes a new place ${q(val('cr-name')) || 'with the name you give it'} from ${esc(st || 'the style')}'s pieces: ${rooms} room${rooms === 1 ? '' : 's'} with floors, walls, ceilings, doorways${(CR.plan && CR.plan.rooms || []).some(r => r.floor) ? ', stairs' : ''} and a way out` +
+        ($('#cr-blamps') && $('#cr-blamps').checked ? ', lanterns hung' : '') + (furn ? `, furnished${fa && fa !== 'Comfortable (the usual)' ? ' ' + esc(fa.toLowerCase()) : ''}` : ', unfurnished') +
+        (where ? `, with a ${CR.bout === 'building' && $('#cr-boutb') && $('#cr-boutb').style.display !== 'none' ? 'whole building' : 'door'} outside ${where}` : '') + '. One Undo takes it all back.';
+  } else if (CR.kind === 'npc'){
+    const role = radio('cr-role') || 'townsperson', name = val('cr-name');
+    t = `<b>Create NPC</b> makes ${q(name) || 'a person'}: a ${radio('cr-sex') || 'male'} ${esc(optText('cr-race'))} ${esc(optText('cr-class'))}, level ${val('cr-level') || 5}, ` +
+        {townsperson: 'wandering about and talking like others of their kind', quest: 'staying put, essential, ready for your dialogue', merchant: `staying put and selling ${esc((val('cr-services') || 'general goods').toLowerCase())}`, guard: 'in their race\'s guard kit, reacting to crimes'}[role] +
+        (optText('cr-faction') && val('cr-faction') ? `, of the ${esc(optText('cr-faction'))}` : '') + (where ? `, placed ${where}` : ', not placed yet (place them from the World map or Characters)') + '. One Undo takes them back.';
+  } else if (CR.kind === 'item'){
+    const tpl = CR.itTplInfo, ench = $('#it-ench') && $('#it-ench').checked && tpl && tpl.can_enchant, give = val('it-give');
+    t = tpl ? `<b>Create item</b> makes ${q(val('cr-name')) || 'an item with the name you give it'} looking like ${esc(tpl.name || tpl.id)}, with the stats above${ench ? ' and its own enchantment' : ''}` +
+        (give ? `, given to ${esc(give)}` : where ? `, placed ${where}` : ', not placed yet (place it from the World map, or in game with Shift+J)') + '. One Undo takes it back.'
+      : '<b>Create item</b> needs an item to start from: pick one above.';
+  } else if (CR.kind === 'spell'){
+    const n = (CR.spEffects || []).length, kind = (optText('sp-type') || 'spell').toLowerCase(), give = val('sp-give');
+    t = `<b>Create spell</b> makes the ${esc(kind)} ${q(val('cr-name')) || 'with the name you give it'}: ${n} effect${n === 1 ? '' : 's'}${CR.spCost ? `, ${val('sp-cost') || CR.spCost} magicka` : ''}` +
+        (give ? `, known by ${esc(give)} (a spell merchant sells what they know)` : '') + ($('#sp-start') && $('#sp-start').checked ? ', known by the player from the start' : '') +
+        (!give && !($('#sp-start') && $('#sp-start').checked) ? '. Nobody knows it yet: give it to someone here, or later under Characters' : '') + '. One Undo takes it back.';
+  } else if (CR.kind === 'book'){
+    const words = val('cr-text').split(/\s+/).filter(Boolean).length, give = val('bk-give');
+    t = `<b>Create</b> makes the ${esc((radio('cr-bk') || 'note').toLowerCase())} ${q(val('cr-name')) || 'with the title you give it'}, ${words ? words + ' words' : 'no text yet'}` +
+        (give ? `, given to ${esc(give)}` : where ? `, placed ${where}` : ', not placed yet (place it from the World map, or in game with Shift+J)') + '. One Undo takes it back.';
+  } else if (CR.kind === 'container'){
+    const lock = +val('cr-lock') || 0, owner = val('cr-owner'), n = CR.items.length;
+    t = `<b>Create container</b> makes a ${esc((radio('cr-ck') || 'chest').toLowerCase())} called ${q(val('cr-name') || ((CR.opts.container_examples || {})[radio('cr-ck')] || {}).name || radio('cr-ck'))} holding ${n ? n + ' kind' + (n === 1 ? '' : 's') + ' of things' : 'nothing (add things above, or leave it empty)'}` +
+        (where ? `, placed ${where}${lock ? `, locked at ${lock}` : ''}${owner ? `, owned by ${esc(owner)}` : ''}` : `, not placed yet${lock || owner ? ' (the lock and owner apply when it is placed from here)' : ''}`) + '. One Undo takes it back.';
+  }
+  box.innerHTML = t;
 }
 function sel(id, options, value){ return `<select class="inp" id="${id}">${options.map(o => { const [v, t] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(t)}</option>`; }).join('')}</select>`; }
 function formHtml(kind){
   const o = CR.opts;
-  if (kind === 'interior') return `<h2>New interior + door</h2><p class="msg">Pick a room to start from. It's copied into a new place with your name, and its front door is linked to a new door outside.</p>
-    <div class="frow"><label>Style</label>${sel('cr-style', o.styles.map(s => [s[0], s[0] + ' (' + s[1] + ' rooms)']), CR.style || (o.styles.find(s => s[0] === 'Hlaalu') || o.styles[0])[0])}
-      <label>Start from</label><div style="display:flex;gap:6px"><select class="inp" id="cr-tpl"><option>Loading…</option></select><button class="btn sm" id="cr-peek" title="Look at this room on the World map">👁</button></div>
-      <label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
-      <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
-      <label>Keep</label><div class="radios"><label><input type="radio" name="cr-contents" value="furnished" checked>Everything (furniture, clutter, lights)</label><label><input type="radio" name="cr-contents" value="lights">Walls and lights only</label><label><input type="radio" name="cr-contents" value="empty">Bare walls</label></div>
-      <label>Outside door</label><div style="display:flex;gap:6px"><input class="inp" id="cr-doorfind" placeholder="Filter… (e.g. hlaalu, wood, stone)" style="max-width:190px" autocomplete="off"><select class="inp" id="cr-door"><option>Loading…</option></select><button class="btn sm" id="cr-doorpeek" title="See this door in 3D">👁</button></div>
-      <div class="hint">Doors most often used for this style of room. The original room's own door is marked.</div>
-      <div class="mv" id="cr-doorview" style="grid-column:2;height:170px;display:none"></div>
-      <label>Front door goes</label><div>${placeOptions(true)}</div>
-      <div class="hint">Turn it afterwards on the map if it faces the wrong way. People and creatures from the original room are never copied.</div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Create interior</button><span class="msg" id="cr-msg"></span></div>`;
-  if (kind === 'build') return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds the floors, walls, ceilings, doorways and a way out from the style's own pieces, so it looks like the base game. Furnish it afterwards on the World map, or ask the assistant.</p>
+  const idRow = from => `<label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the ${from}"><div class="hint">The game's own handle for it, for scripts and the console. Letters, digits and underscores.</div>`;
+  const what = `<div class="cwhat" id="cr-what"></div>`;
+  if (kind === 'build'){
+    const copy = CR.bmode === 'copy';
+    return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds the floors, walls, ceilings, doorways, stairs and a way out from the style's own pieces, so it looks like the base game, and furnishes the rooms the way similar places in the game are furnished. <b>Plans ▾</b> has ready-made layouts, your saved plans, <b>Plan from a place in the game</b> (a house the game made, read as a plan of its rooms, doorways and stairs, to study and build from) and <b>Copy a place from the game</b>: a room or house the game made, copied whole, with a working door from outside.</p>
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
-      <label>Style</label><div><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div></div>
+      <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
+      <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div></div>
     </div>
-    <div id="pl-root" style="margin:10px 0 14px"></div>
+    <div id="pl-root" style="margin:10px 0 14px;${copy ? 'display:none' : ''}"></div>
+    <div class="ccopy" id="cr-copy" style="${copy ? '' : 'display:none'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b style="color:var(--gold2);font-family:Cinzel,serif">🏠 Copy a place from the game</b><button class="btn sm" id="cr-copyoff">← Lay out rooms instead</button></div>
+      <div class="msg" style="margin-top:4px">A room or house the game made, copied whole into a new place with your name. Its front door is linked to a new door outside, at the spot you choose below. People and creatures are never copied.</div>
+      <div class="frow"><label>Style</label>${sel('cr-style', o.styles.map(s => [s[0], s[0] + ' (' + s[1] + ' places)']), CR.style || (o.styles.find(s => s[0] === 'Hlaalu') || o.styles[0])[0])}
+        <label>Start from</label><div class="withbtn"><select class="inp" id="cr-tpl"><option>Loading…</option></select><button class="btn sm" id="cr-peek" title="Look at this place on the World map">👁</button></div>
+        <div class="hint">Small and medium places with a door, smallest first. 👁 shows it on the World map (come back here with Create).</div>
+        <label>Keep</label><div class="radios"><label><input type="radio" name="cr-contents" value="furnished" ${CR.contents !== 'lights' && CR.contents !== 'empty' ? 'checked' : ''}>Everything (furniture, clutter, lights)</label><label><input type="radio" name="cr-contents" value="lights" ${CR.contents === 'lights' ? 'checked' : ''}>Walls and lights only</label><label><input type="radio" name="cr-contents" value="empty" ${CR.contents === 'empty' ? 'checked' : ''}>Bare walls</label></div>
+        <label>Door outside</label><div class="withbtn"><input class="inp" id="cr-doorfind" placeholder="Filter… (e.g. hlaalu, wood, stone)" style="max-width:190px;flex:none" autocomplete="off"><select class="inp" id="cr-door"><option>Loading…</option></select><button class="btn sm" id="cr-doorpeek" title="See this door in 3D">👁</button></div>
+        <div class="hint">The doors the game puts on places of this style, most used first. The original's own door is marked. Where it goes is chosen below, under Front door goes.</div>
+        <div class="mv" id="cr-doorview" style="grid-column:2;height:170px;display:none"></div></div></div>
     <div class="frow">
-      <label>Lighting</label><div style="display:flex;gap:10px;align-items:center">${sel('cr-blight', [['dim', 'Dim'], ['normal', 'Normal'], ['bright', 'Bright'], ['dark', 'Dark']], 'normal')}
-        <label class="msg" style="display:flex;gap:5px;align-items:center;white-space:nowrap"><input type="checkbox" id="cr-blamps" checked> Hang lanterns</label></div>
-      <label>Furnish</label><div><label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="cr-bfurnish" checked> Furnish the rooms too, going by their names (Bedroom, Kitchen, Storeroom, Study, Shop…)</label>
-        <div class="hint">You can change or redo it afterwards with "Auto-furnish rooms" on the World map.</div></div>
-      <label>Outside door</label><div>${placeOptions(false, 'No outside door for now (you can link one later)')}</div>
-      <div class="hint">Optional. If you pick a spot, a matching door is put there and linked both ways.</div>
+      <label class="bplan">Finish</label><div class="bplan" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">${sel('cr-blight', [['dim', 'Dim light'], ['normal', 'Normal light'], ['bright', 'Bright light'], ['dark', 'Dark']], 'normal')}
+        <label class="msg" style="display:flex;gap:5px;align-items:center;white-space:nowrap"><input type="checkbox" id="cr-blamps" checked> Hang lanterns</label>
+        <label class="msg" style="display:flex;gap:5px;align-items:center;white-space:nowrap" title="Going by the rooms' names: Bedroom, Kitchen, Storeroom, Study, Shop… You can redo it any time with Auto-furnish on the World map."><input type="checkbox" id="cr-bfurnish" checked> Furnish the rooms</label></div>
+      <label class="bplan">Furnish as</label><div class="bplan">${furnishAsHtml('cr-b')}</div>
+      <label id="cr-placelabel">${copy ? 'Front door goes' : 'Outside door'}</label><div>${placeOptions(false, 'No outside door for now (you can link one later)')}
+        <div class="hint" id="cr-placehint">${copy ? 'Turn the door afterwards on the map if it faces the wrong way.' : 'Optional: a matching door is put at the spot and linked both ways.'}</div></div>
       <label class="bout">Outside</label><div class="bout"><div class="radios"><label><input type="radio" name="cr-bout" value="door" ${CR.bout !== 'building' ? 'checked' : ''}>Just the door (on a wall that is already there)</label><label><input type="radio" name="cr-bout" value="building" ${CR.bout === 'building' ? 'checked' : ''}>A whole new building in this style, with the door on it</label></div>
         <div id="cr-boutb" style="display:${CR.bout === 'building' ? 'flex' : 'none'};gap:6px;margin-top:6px;flex-wrap:wrap"><select class="inp" id="cr-bshell" style="max-width:280px"><option>Loading…</option></select>
           <select class="inp" id="cr-bface" style="max-width:190px" title="Which way the front door looks">${[['3.14159', 'front door faces south'], ['0', 'front door faces north'], ['1.5708', 'front door faces east'], ['4.71239', 'front door faces west']].map(([v, l]) => `<option value="${v}" ${v === (CR.bface || '3.14159') ? 'selected' : ''}>${l}</option>`).join('')}</select>
           <button class="btn sm" id="cr-bshellpeek" title="See this building in 3D">👁</button></div>
         <div class="mv" id="cr-bshellview" style="height:200px;display:none;margin-top:6px"></div></div>
       <div class="hint bout" id="cr-bshellhint">The building stands on the spot, sunk into the ground like the ones in the game. Move things out of its way afterwards on the World map.</div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Build it</button><span class="msg" id="cr-msg"></span></div>`;
-  if (kind === 'npc') { const role = CR.role || 'townsperson'; return `<h2>New NPC</h2>
+    <div class="actions"><button class="btn primary" id="cr-go">${copy ? 'Copy it' : 'Build it'}</button><span class="msg" id="cr-msg"></span></div>${what}`;
+  }
+  if (kind === 'npc') { const role = CR.role || 'townsperson';
+    // the commonest race among the game's own people is the default (Dark Elf, in Morrowind)
+    const counts = o.race_counts || {}, byCount = o.races.slice().sort((a, b) => (counts[b.id.toLowerCase()] || 0) - (counts[a.id.toLowerCase()] || 0));
+    const race = CR.race || (byCount[0] || {}).id || 'Dark Elf';
+    return `<h2>New NPC</h2><p class="msg">A new person with a head and hair of their race, dressed the way the game's own people of their race and class are. Fine-tune them afterwards under Characters: stats, what they sell, their spells, where they walk.</p>
     <div class="frow"><label>Role</label><div class="radios">${Object.entries(ROLE_INFO).map(([k, v]) => `<label><input type="radio" name="cr-role" value="${k}" ${k === role ? 'checked' : ''}>${v[0]}</label>`).join('')}</div>
       <div class="hint" id="cr-rolehint">${esc(ROLE_INFO[role][1])}</div>
-      <label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Dravos Helvi" maxlength="31">
-      <label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the name">
-      <label>Race</label>${sel('cr-race', o.races.map(r => [r.id, r.name]), 'Dark Elf')}
-      <label>Sex</label><div class="radios"><label><input type="radio" name="cr-sex" value="male" checked>Male</label><label><input type="radio" name="cr-sex" value="female">Female</label></div>
+      <label>Name</label><div class="withbtn"><input class="inp" id="cr-name" placeholder="e.g. Dravos Helvi" maxlength="31"><button class="btn sm" id="cr-dice" title="A name in the manner of the game's own people of this race and sex: one of their first names with one of their family names, in a pairing no one has yet">🎲 Suggest</button></div>
+      <label>Race</label>${sel('cr-race', o.races.map(r => [r.id, r.name]), race)}
+      <label>Sex</label><div class="radios"><label><input type="radio" name="cr-sex" value="male" ${CR.sex !== 'female' ? 'checked' : ''}>Male</label><label><input type="radio" name="cr-sex" value="female" ${CR.sex === 'female' ? 'checked' : ''}>Female</label></div>
       <label>Class</label>${sel('cr-class', o.classes.map(c => [c.id, c.name]), ROLE_INFO[role][2])}
-      <label>Level</label><input class="inp" id="cr-level" type="number" min="1" max="100" value="${role === 'guard' ? 15 : 5}" style="max-width:100px">
-      <label>Faction</label>${sel('cr-faction', [['', '(none)']].concat(o.factions.map(f => [f.id, f.name])), '')}
-      <label>Rank</label><select class="inp" id="cr-rank" disabled><option value="0">-</option></select>
+      <div class="hint">The class sets their skills and what they talk about, and the clothes are borrowed from a person of the same race and class in the game.</div>
       ${role === 'merchant' ? `<label>Sells</label>${sel('cr-services', o.services, 'General goods')}` : ''}
-      <label>Essential</label><label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="cr-ess" ${role === 'quest' ? 'checked' : ''}> Essential, like main-quest characters (the game warns the player if they die)</label>
-      <label>Place it</label><div>${placeOptions(false)}</div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Create NPC</button><span class="msg" id="cr-msg"></span></div>`; }
-  if (kind === 'item') return `<h2>New item</h2><p class="msg">Pick an existing item to start from. Its looks (model and icon) are kept, and you change the name, the numbers and the magic.</p>
+      <label>Place it</label><div>${placeOptions(false)}</div>
+      ${moreHtml('More: ID, level, faction and rank, gold, essential', `${idRow('name')}
+        <label>Level</label><input class="inp" id="cr-level" type="number" min="1" max="100" value="${role === 'guard' ? 15 : 5}" style="max-width:100px">
+        <label>Faction</label>${sel('cr-faction', [['', '(none)']].concat(o.factions.map(f => [f.id, f.name])), '')}
+        <label>Rank</label><select class="inp" id="cr-rank" disabled><option value="0">-</option></select>
+        <label>Gold carried</label><input class="inp" id="cr-gold" type="number" min="0" placeholder="${{townsperson: 25, quest: 50, merchant: 800, guard: 20}[role]} (the usual for a ${esc(ROLE_INFO[role][0].toLowerCase())})" style="max-width:260px">
+        <label>Essential</label>${chk('cr-ess', 'Essential, like main-quest characters (the game warns the player if they die)', role === 'quest')}`)}</div>
+    <div class="actions"><button class="btn primary" id="cr-go">Create NPC</button><span class="msg" id="cr-msg"></span></div>${what}`; }
+  if (kind === 'item') return `<h2>New item</h2><p class="msg">Pick an item to start from: its looks (model and icon) are kept, and you change the name, the numbers and the magic. The ones the game itself uses most are offered first.</p>
     <div class="frow"><label>Kind</label><div class="radios" id="it-kinds"></div>
       <label>Start from</label><div><div class="dd"><input class="inp" id="it-tpl" placeholder="Search… (e.g. iron longsword, glass armor, restore health)" autocomplete="off"><div class="ddlist" id="it-tpl-l"></div></div>
-        <div class="msg" id="it-tplname" style="margin-top:4px"></div></div>
+        <div class="cpicks" id="it-picks"></div><div class="msg" id="it-tplname" style="margin-top:4px"></div></div>
       <label>Name</label><input class="inp" id="cr-name" maxlength="31" placeholder="e.g. Emberblade">
-      <label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the name">
       <label>Stats</label><div id="it-stats" class="statgrid2"><span class="msg">Pick an item to start from first.</span></div>
+      <div class="mv sm" id="it-view" style="display:none"></div>
       <label id="it-efflabel" style="display:none">Effects</label><div id="it-effwrap" style="display:none"><div id="it-effects"></div></div>
       <label id="it-enchlabel" style="display:none">Enchantment</label><div id="it-enchwrap" style="display:none">
         <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="it-ench"> Enchant it</label>
         <div id="it-enchbody" style="display:none;margin-top:6px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${sel('it-enchtype', o.magic.ench_types.map((t, n) => [String(n), t]), '1')}
           <span class="msg">Charge</span><input class="inp" id="it-charge" type="number" min="0" style="max-width:100px" placeholder="auto"></div>
           <div id="it-encheffects" style="margin-top:6px"></div><div class="msg" id="it-enchcost"></div></div></div>
-      <label>Keep its script</label><label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="it-script"> Keep the template's script, if it has one (unique items often do)</label>
       <label>Give it to</label><div><div class="dd"><input class="inp" id="it-give" placeholder="Optional: a character or container (e.g. a merchant, a chest)" autocomplete="off"><div class="ddlist" id="it-give-l"></div></div></div>
-      <label>Or place it</label><div>${placeOptions(false)}</div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Create item</button><span class="msg" id="cr-msg"></span></div>`;
-  if (kind === 'spell') return `<h2>New spell</h2>
-    <div class="frow"><label>Name</label><input class="inp" id="cr-name" maxlength="31" placeholder="e.g. Ember Bolt">
-      <label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the name">
+      <label>Or place it</label><div>${placeOptions(false)}</div>
+      ${moreHtml('More: ID, the template\'s script', `${idRow('name')}
+        <label>Script</label>${chk('it-script', 'Keep the template\'s script, if it has one (unique items often do)')}`)}</div>
+    <div class="actions"><button class="btn primary" id="cr-go">Create item</button><span class="msg" id="cr-msg"></span></div>${what}`;
+  if (kind === 'spell') return `<h2>New spell</h2><p class="msg">Effects with a strength, a duration and a range; the magicka cost is worked out the way the game works it out. Give it to a character who should know it (spell merchants sell what they know), or to the player from the start.</p>
+    <div class="frow"><label>Name</label><div class="withbtn"><input class="inp" id="cr-name" maxlength="31" placeholder="e.g. Ember Bolt"><button class="btn sm" id="cr-dice" title="A name made from the first effect and its range">🎲 Suggest</button></div>
       <label>Kind</label>${sel('sp-type', o.magic.spell_types.map((t, n) => [String(n), t]), '0')}
       <div class="hint">Spells are cast with magicka. Abilities are always on. Powers are used once a day. Diseases, blight and curses are caught or inflicted.</div>
       <label>Effects</label><div><div id="sp-effects"></div></div>
-      <label>Magicka cost</label><div style="display:flex;gap:8px;align-items:center"><input class="inp" id="sp-cost" type="number" min="1" style="max-width:110px" placeholder="auto"><span class="msg" id="sp-autocost"></span></div>
-      <label>Options</label><div><label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="sp-start"> The player knows it from the start</label>
-        <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="sp-always"> Always succeeds when cast</label></div>
-      <label>Give it to</label><div><div class="dd"><input class="inp" id="sp-give" placeholder="Optional: a character who knows it (a trainer or a spell merchant sells it)" autocomplete="off"><div class="ddlist" id="sp-give-l"></div></div></div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Create spell</button><span class="msg" id="cr-msg"></span></div>`;
-  if (kind === 'book') return `<h2>Note, letter or book</h2>
-    <div class="frow"><label>Looks like</label><div class="radios">${o.book_kinds.map((k, n) => `<label><input type="radio" name="cr-bk" value="${k}" ${n === 0 ? 'checked' : ''}>${k}</label>`).join('')}</div>
+      <label>Give it to</label><div><div class="dd"><input class="inp" id="sp-give" placeholder="Optional: a character who knows it (a trainer or a spell merchant sells it)" autocomplete="off"><div class="ddlist" id="sp-give-l"></div></div></div>
+      ${moreHtml('More: ID, magicka cost, the player knows it, always succeeds', `${idRow('name')}
+        <label>Magicka cost</label><div style="display:flex;gap:8px;align-items:center"><input class="inp" id="sp-cost" type="number" min="1" style="max-width:110px" placeholder="auto"><span class="msg" id="sp-autocost"></span></div>
+        <label>Options</label><div>${chk('sp-start', 'The player knows it from the start')}${chk('sp-always', 'Always succeeds when cast')}</div>`)}</div>
+    <div class="actions"><button class="btn primary" id="cr-go">Create spell</button><span class="msg" id="cr-msg"></span></div>${what}`;
+  if (kind === 'book') return `<h2>Note, letter or book</h2><p class="msg">Something to read in game, in your own words. It's made from one of the game's own notes or books, so it has the right look, weight and value; place it somewhere, or give it to someone to carry.</p>
+    <div class="frow"><label>Looks like</label><div class="radios">${o.book_kinds.map((k, n) => `<label><input type="radio" name="cr-bk" value="${k}" ${k === (CR.bk || o.book_kinds[0]) ? 'checked' : ''}>${k}</label>`).join('')}</div>
+      <div class="mv sm" id="cr-bookview"></div>
       <label>Title</label><input class="inp" id="cr-name" maxlength="31" placeholder="e.g. A Strange Letter">
-      <label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the title">
-      <label>Text</label><textarea class="inp" id="cr-text" placeholder="Write the text. Leave an empty line between paragraphs."></textarea>
-      <label>Value (gold)</label><input class="inp" id="cr-value" type="number" min="0" placeholder="default" style="max-width:120px">
-      <label>Place it</label><div>${placeOptions(false)}</div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Create</button><span class="msg" id="cr-msg"></span></div>`;
-  if (kind === 'container') return `<h2>Container with contents</h2>
-    <div class="frow"><label>Kind</label><div class="radios">${o.container_kinds.map((k, n) => `<label><input type="radio" name="cr-ck" value="${k}" ${n === 0 ? 'checked' : ''}>${k}</label>`).join('')}</div>
-      <label>Name</label><input class="inp" id="cr-name" maxlength="31" placeholder="e.g. Smuggler's Chest">
-      <label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the name">
-      <label>Contents</label><div><div id="cr-items"></div><div class="dd"><input class="inp" id="cr-additem" placeholder="Add an item… (e.g. gold, moon sugar, iron dagger)" autocomplete="off"><div class="ddlist" id="cr-additem-l"></div></div></div>
-      <label>Lock level</label><input class="inp" id="cr-lock" type="number" min="0" max="100" value="0" style="max-width:100px">
-      <div class="hint">0 = unlocked, 100 = very hard. Only applies when placed here.</div>
-      <label>Owner (optional)</label><input class="inp" id="cr-owner" placeholder="NPC ID: taking from it counts as stealing">
-      <label>Place it</label><div>${placeOptions(false)}</div></div>
-    <div class="actions"><button class="btn primary" id="cr-go">Create container</button><span class="msg" id="cr-msg"></span></div>`;
+      <label>Text</label><div><textarea class="inp" id="cr-text" rows="8" style="width:100%" placeholder="Write the text. Leave an empty line between paragraphs."></textarea><div class="hint" id="cr-textcount" style="margin-top:2px">Shown in the game's own book lettering. An empty line starts a new paragraph.</div></div>
+      <label>Give it to</label><div><div class="dd"><input class="inp" id="bk-give" placeholder="Optional: a character or container (e.g. a courier, a desk)" autocomplete="off"><div class="ddlist" id="bk-give-l"></div></div></div>
+      <label>Or place it</label><div>${placeOptions(false)}</div>
+      ${moreHtml('More: ID, value', `${idRow('title')}
+        <label>Value (gold)</label><input class="inp" id="cr-value" type="number" min="0" placeholder="the usual for this kind" style="max-width:200px">`)}</div>
+    <div class="actions"><button class="btn primary" id="cr-go">Create</button><span class="msg" id="cr-msg"></span></div>${what}`;
+  if (kind === 'container'){ const ck = CR.ck || o.container_kinds[0], ex = (o.container_examples || {})[ck];
+    return `<h2>Container with contents</h2><p class="msg">A container of your own, made from the game's usual one of that kind, holding what you choose: single things, a pile of gold, or a random loot list that rolls afresh for each player. Lock it and give it an owner if it stands in someone's home.</p>
+    <div class="frow"><label>Kind</label><div class="radios">${o.container_kinds.map(k => `<label><input type="radio" name="cr-ck" value="${k}" ${k === ck ? 'checked' : ''}>${k}</label>`).join('')}</div>
+      <div class="mv sm" id="cr-contview"></div>
+      <label>Name</label><input class="inp" id="cr-name" maxlength="31" placeholder="${esc(ex ? ex.name : ck)} (or a name of your own, e.g. Smuggler's Chest)">
+      <label>Contents</label><div><div id="cr-items"></div><div class="dd"><input class="inp" id="cr-additem" placeholder="Add… (e.g. gold, moon sugar, iron dagger, random_loot)" autocomplete="off"><div class="ddlist" id="cr-additem-l"></div></div>
+        <div class="cpicks"><button type="button" id="cr-addgold">💰 50 gold</button><button type="button" id="cr-addloot">🎲 A random loot list…</button></div></div>
+      <label>Place it</label><div>${placeOptions(false)}</div>
+      ${moreHtml('More: ID, lock, owner', `${idRow('name')}
+        <label>Lock level</label><input class="inp" id="cr-lock" type="number" min="0" max="100" value="0" style="max-width:100px">
+        <div class="hint">0 = unlocked, 100 = very hard. Applies when it is placed from here.</div>
+        <label>Owner</label><div><div class="dd"><input class="inp" id="cr-owner" placeholder="Optional: a character (taking from it then counts as stealing)" autocomplete="off"><div class="ddlist" id="cr-owner-l"></div></div></div>`)}</div>
+    <div class="actions"><button class="btn primary" id="cr-go">Create container</button><span class="msg" id="cr-msg"></span></div>${what}`; }
   return '';
 }
 function renderItems(){
@@ -2810,55 +3081,106 @@ function bindForm(){
     name.oninput = () => { if (CR.idEdited) return; clearTimeout(t); t = setTimeout(async () => { idf.value = name.value.trim() ? (await api('/api/create/suggest_id?name=' + encodeURIComponent(name.value))).id : ''; }, 250); };
     idf.oninput = () => { CR.idEdited = !!idf.value; };
   }
-  if (CR.kind === 'interior'){
-    const st = $('#cr-style'), tp = $('#cr-tpl'), dr = $('#cr-door');
-    const loadDoors = async () => {
-      const list = await api('/api/create/doors?' + new URLSearchParams({template: tp.value, style: st.value}));
-      let firstPlain = list.findIndex(d => !d.original);
-      if (firstPlain < 0) firstPlain = 0;
-      const groups = [];
-      list.forEach((d, n) => { let g = groups.find(x => x.name === d.group); if (!g) groups.push(g = {name: d.group, items: []}); g.items.push([d, n]); });
-      dr.innerHTML = groups.map(g => `<optgroup label="${esc(g.name || 'Doors')} (${g.items.length})">` + g.items.map(([d, n]) =>
-        `<option value="${esc(d.id)}" ${n === firstPlain ? 'selected' : ''}>${esc(d.name)} (${esc(d.id)})${d.original ? ' (the original room\'s door)' : ''}</option>`).join('') + '</optgroup>').join('');
-      const f = $('#cr-doorfind'); if (f.value) f.oninput({target: f});
-      if ($('#cr-doorview').style.display !== 'none') showModel($('#cr-doorview'), {id: dr.value}, 'door');
-    };
-    const load = async () => {
-      CR.style = st.value;
-      const list = await api('/api/create/interiors?style=' + encodeURIComponent(st.value));
-      tp.innerHTML = list.map(t => `<option value="${esc(t.key)}">${esc(t.name)} (${t.objects} objects)</option>`).join('');
-      loadDoors();
-    };
-    st.onchange = load; tp.onchange = loadDoors; load();
-    $('#cr-doorpeek').onclick = () => { const v = $('#cr-doorview'); v.style.display = 'block'; showModel(v, {id: dr.value}, 'door'); };
-    dr.onchange = () => { if ($('#cr-doorview').style.display !== 'none') showModel($('#cr-doorview'), {id: dr.value}, 'door'); };
-    $('#cr-doorfind').oninput = e => {
-      const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
-      let first = null;
-      dr.querySelectorAll('option').forEach(o => { const ok = words.every(w => o.textContent.toLowerCase().includes(w)); o.hidden = !ok; if (ok && !first) first = o; });
-      dr.querySelectorAll('optgroup').forEach(g => g.hidden = ![...g.children].some(o => !o.hidden));
-      if (first && dr.selectedOptions[0] && dr.selectedOptions[0].hidden){ dr.value = first.value; dr.onchange(); }
-    };
-    $('#cr-peek').onclick = () => { if (tp.value){ showView('world'); worldOpen(tp.value); } };
-  }
   if (CR.kind === 'build') bindBuild();
   if (CR.kind === 'item') bindItem();
   if (CR.kind === 'spell') bindSpell();
   if (CR.kind === 'npc'){
     document.querySelectorAll('[name=cr-role]').forEach(r => r.onchange = () => { CR.role = r.value; const keep = name.value; renderCreate(); $('#cr-name').value = keep; $('#cr-name').oninput(); });
+    document.querySelectorAll('[name=cr-sex]').forEach(r => r.onchange = () => { CR.sex = r.value; });
+    $('#cr-race').onchange = () => { CR.race = $('#cr-race').value; };
     const fa = $('#cr-faction'), rk = $('#cr-rank');
     fa.onchange = () => {
       const f = CR.opts.factions.find(x => x.id === fa.value);
       rk.disabled = !f; rk.innerHTML = f ? f.ranks.map((r, n) => `<option value="${n}">${n}: ${esc(r)}</option>`).join('') : '<option value="0">-</option>';
     };
+    // 🎲: a name in the manner of the game's own people of this race and sex
+    $('#cr-dice').onclick = async () => {
+      const b = $('#cr-dice'); b.disabled = true;
+      try {
+        const r = await api('/api/create/name?' + new URLSearchParams({race: $('#cr-race').value, sex: (document.querySelector('[name=cr-sex]:checked') || {}).value || 'male'}));
+        if (!r.name) return toast('The game has no people of this race and sex to borrow a name from.', true);
+        name.value = r.name; CR.idEdited = false; name.oninput(); crWhat();
+      } catch (e){ toast(e.message, true); } finally { b.disabled = false; }
+    };
+  }
+  if (CR.kind === 'book'){
+    const view = () => { const k = (document.querySelector('[name=cr-bk]:checked') || {}).value, ex = (CR.opts.book_examples || {})[k]; CR.bk = k; const v = $('#cr-bookview'); if (ex) showModel(v, {id: ex}, 'create'); else v.style.display = 'none'; };
+    document.querySelectorAll('[name=cr-bk]').forEach(r => r.onchange = view); view();
+    ddSearch('bk-give', 'NPC_,CREA,CONT', r => { $('#bk-give').value = r.id; crWhat(); });
+    $('#cr-text').oninput = () => { const n = $('#cr-text').value.split(/\s+/).filter(Boolean).length; $('#cr-textcount').textContent = (n ? `About ${n} word${n === 1 ? '' : 's'}. ` : '') + 'Shown in the game\'s own book lettering. An empty line starts a new paragraph.'; };
   }
   if (CR.kind === 'container'){
     renderItems();
-    ddSearch('cr-additem', 'MISC,WEAP,ARMO,CLOT,BOOK,ALCH,INGR,APPA,LOCK,PROB,REPA,LIGH,LEVI', r => { CR.items.push({id: r.id, name: r.name, count: r.id.toLowerCase().startsWith('gold') ? 50 : 1}); $('#cr-additem').value = ''; renderItems(); });
-    $('#cr-items').onclick = e => { const b = e.target.closest('[data-rm]'); if (b){ CR.items.splice(+b.dataset.rm, 1); renderItems(); } };
+    const view = () => { const k = (document.querySelector('[name=cr-ck]:checked') || {}).value, ex = (CR.opts.container_examples || {})[k]; CR.ck = k; const v = $('#cr-contview'); if (ex){ showModel(v, {id: ex.id}, 'create'); $('#cr-name').placeholder = `${ex.name} (or a name of your own, e.g. Smuggler's Chest)`; } else v.style.display = 'none'; };
+    document.querySelectorAll('[name=cr-ck]').forEach(r => r.onchange = view); view();
+    const add = r => { const i = CR.items.find(x => x.id.toLowerCase() === r.id.toLowerCase()); if (i) i.count += 1; else CR.items.push({id: r.id, name: r.name, count: r.id.toLowerCase().startsWith('gold') ? 50 : 1}); renderItems(); crWhat(); };
+    ddSearch('cr-additem', 'MISC,WEAP,ARMO,CLOT,BOOK,ALCH,INGR,APPA,LOCK,PROB,REPA,LIGH,LEVI', r => { add(r); $('#cr-additem').value = ''; });
+    $('#cr-addgold').onclick = () => { const g = CR.items.find(x => x.id.toLowerCase() === 'gold_001'); if (g) g.count += 50; else CR.items.push({id: 'Gold_001', name: 'Gold', count: 50}); renderItems(); crWhat(); };
+    $('#cr-addloot').onclick = () => { const f = $('#cr-additem'); f.value = 'random_'; f.focus(); f.oninput(); };
+    ddSearch('cr-owner', 'NPC_', r => { $('#cr-owner').value = r.id; crWhat(); });
+    $('#cr-items').onclick = e => { const b = e.target.closest('[data-rm]'); if (b){ CR.items.splice(+b.dataset.rm, 1); renderItems(); crWhat(); } };
     $('#cr-items').oninput = e => { const i = e.target.dataset.cnt; if (i != null) CR.items[+i].count = Math.max(1, +e.target.value || 1); };
   }
   $('#cr-go').onclick = createGo;
+  // the "what pressing the button does" line follows the form
+  const form = $('#cform');
+  form.addEventListener('input', crWhat); form.addEventListener('change', crWhat);
+  crWhat();
+}
+// ----- Build from pieces: "Copy a place from the game" (the old New interior + door, inside Build)
+function bindCopyPlace(){
+  const st = $('#cr-style'), tp = $('#cr-tpl'), dr = $('#cr-door'); if (!st || tp.dataset.bound) return;
+  tp.dataset.bound = '1';
+  const loadDoors = async () => {
+    const list = await api('/api/create/doors?' + new URLSearchParams({template: tp.value, style: st.value}));
+    if (!dr.isConnected) return;
+    let firstPlain = list.findIndex(d => !d.original);
+    if (firstPlain < 0) firstPlain = 0;
+    const groups = [];
+    list.forEach((d, n) => { let g = groups.find(x => x.name === d.group); if (!g) groups.push(g = {name: d.group, items: []}); g.items.push([d, n]); });
+    dr.innerHTML = groups.map(g => `<optgroup label="${esc(g.name || 'Doors')} (${g.items.length})">` + g.items.map(([d, n]) =>
+      `<option value="${esc(d.id)}" ${n === firstPlain ? 'selected' : ''}>${esc(d.name)} (${esc(d.id)})${d.original ? ' (the original\'s own door)' : ''}</option>`).join('') + '</optgroup>').join('');
+    const f = $('#cr-doorfind'); if (f.value) f.oninput({target: f});
+    if ($('#cr-doorview').style.display !== 'none') showModel($('#cr-doorview'), {id: dr.value}, 'door');
+    crWhat();
+  };
+  const load = async () => {
+    CR.style = st.value;
+    const list = await api('/api/create/interiors?style=' + encodeURIComponent(st.value));
+    if (!tp.isConnected) return;
+    tp.innerHTML = list.map(t => `<option value="${esc(t.key)}" ${t.key === CR.tpl ? 'selected' : ''}>${esc(t.name)} (${t.objects} objects)</option>`).join('');
+    if (!list.some(t => t.key === CR.tpl)) tp.selectedIndex = Math.floor(list.length / 2);      // (a middling one: not the tiniest closet)
+    CR.tpl = tp.value;
+    loadDoors();
+  };
+  st.onchange = load; tp.onchange = () => { CR.tpl = tp.value; loadDoors(); }; load();
+  $('#cr-doorpeek').onclick = () => { const v = $('#cr-doorview'); v.style.display = 'block'; showModel(v, {id: dr.value}, 'door'); };
+  dr.onchange = () => { if ($('#cr-doorview').style.display !== 'none') showModel($('#cr-doorview'), {id: dr.value}, 'door'); };
+  $('#cr-doorfind').oninput = e => {
+    const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+    let first = null;
+    dr.querySelectorAll('option').forEach(o => { const ok = words.every(w => o.textContent.toLowerCase().includes(w)); o.hidden = !ok; if (ok && !first) first = o; });
+    dr.querySelectorAll('optgroup').forEach(g => g.hidden = ![...g.children].some(o => !o.hidden));
+    if (first && dr.selectedOptions[0] && dr.selectedOptions[0].hidden){ dr.value = first.value; dr.onchange(); }
+  };
+  $('#cr-peek').onclick = () => { if (tp.value){ showView('world'); worldOpen(tp.value); } };
+  document.querySelectorAll('[name=cr-contents]').forEach(r => r.onchange = () => { CR.contents = r.value; });
+  $('#cr-copyoff').onclick = () => crBuildMode('plan');
+}
+// plan (lay out rooms in the planner) or copy (a place the game made): the form shows one or the other
+function crBuildMode(mode){
+  CR.bmode = mode;
+  const copy = mode === 'copy';
+  $('#pl-root').style.display = copy ? 'none' : '';
+  $('#cr-copy').style.display = copy ? '' : 'none';
+  document.querySelectorAll('.bplan').forEach(e => e.style.display = copy ? 'none' : '');
+  $('#cr-placelabel').textContent = copy ? 'Front door goes' : 'Outside door';
+  $('#cr-placehint').textContent = copy ? 'Turn the door afterwards on the map if it faces the wrong way.' : 'Optional: a matching door is put at the spot and linked both ways.';
+  $('#cr-go').textContent = copy ? 'Copy it' : 'Build it';
+  if (copy && !$('#cr-tpl').dataset.bound) bindCopyPlace();
+  const pl = $('#cr-place'); if (pl) pl.dispatchEvent(new Event('change'));     // (the Outside row: a building can go outside only when building)
+  if (!copy && typeof plFit === 'function'){ plFit(); plRender(); }
+  crWhat();
 }
 // ----- magic effects editor (potions, enchantments, spells)
 function effectsEditor(boxId, list, onChange){
@@ -2903,7 +3225,12 @@ async function bindItem(){
   ddSearch('it-give', 'NPC_,CREA,CONT', r => { $('#it-give').value = r.id; });
   const loadTpl = async () => {
     const t = CR.itTplInfo = await api('/api/items/template?i=' + CR.itTpl);
+    if (!$('#it-tplname')) return;
     $('#it-tplname').textContent = `Starting from ${t.name || t.id} (${t.id})`;
+    $('#it-tpl').value = t.name || t.id;
+    document.querySelectorAll('#it-picks button').forEach(b => b.classList.toggle('on', +b.dataset.i === CR.itTpl));
+    const v = $('#it-view'); v.style.display = ''; showModel(v, {i: CR.itTpl}, 'create');
+    if (!$('#cr-name').value) $('#cr-name').placeholder = `A name of your own (it starts as ${t.name || t.id})`;
     $('#it-stats').innerHTML = t.stats.map(s => `<label><span>${esc(s.label)}</span>${s.opts
       ? `<select class="inp" data-st="${esc(s.label)}">${s.opts.map((o, i) => `<option value="${i}" ${i === s.value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
       : `<input class="inp" data-st="${esc(s.label)}" value="${typeof s.value === 'number' && !Number.isInteger(s.value) ? s.value.toFixed(2) : s.value}">`}</label>`).join('') || '<span class="msg">Nothing to adjust.</span>';
@@ -2917,17 +3244,38 @@ async function bindItem(){
     const showCost = async () => { try { const r = await post('/api/spells/cost', {effects: CR.itEnch, constant: $('#it-enchtype').value === '3'}); $('#it-enchcost').textContent = `Uses about ${r.cost} enchant points of the item's capacity.`; } catch (e){} };
     effectsEditor('it-encheffects', CR.itEnch, showCost); showCost();
     $('#it-enchtype').onchange = showCost;
-    if (!$('#cr-name').value && t.name){ /* leave empty for the user's own name */ }
+    crWhat();
   };
   $('#it-ench').onchange = () => { $('#it-enchbody').style.display = $('#it-ench').checked ? '' : 'none'; };
+  // the items of this kind the game itself uses most: the usual things to start from
+  CR.itPopular = CR.itPopular || {};
+  const picks = $('#it-picks');
+  if (!CR.itPopular[CR.itKind]){ try { CR.itPopular[CR.itKind] = await api('/api/create/popular?types=' + types() + '&limit=8'); } catch (e){ CR.itPopular[CR.itKind] = []; } }
+  if (picks && picks.isConnected){
+    const list = CR.itPopular[CR.itKind];
+    picks.innerHTML = list.length ? `<span class="msg" style="align-self:center">The usual:</span>` + list.map(p => `<button type="button" data-i="${p.i}" class="${p.i === CR.itTpl ? 'on' : ''}" title="${esc(p.id)}: used in ${p.uses} places, inventories and lists">${thumbImg(p.id, p.type, 48, 'sm')}${esc(p.name)}</button>`).join('') : '';
+    picks.querySelectorAll('button').forEach(b => b.onclick = async () => { CR.itTpl = +b.dataset.i; await loadTpl(); });
+    v3ThumbScan(picks);
+  }
   if (CR.itTpl) loadTpl();
 }
 function bindSpell(){
   const M = CR.opts.magic;
   CR.spEffects = CR.spEffects || [{effect: (M.effects.find(x => x.name === 'Fire Damage') || M.effects[0]).index, skill: -1, attribute: -1, range: 2, min: 10, max: 20, duration: 1, area: 0}];
-  const showCost = async () => { try { const r = await post('/api/spells/cost', {effects: CR.spEffects}); $('#sp-autocost').textContent = `Worked out: ${r.cost} magicka (leave empty to use this)`; } catch (e){} };
+  const showCost = async () => { try { const r = await post('/api/spells/cost', {effects: CR.spEffects}); CR.spCost = r.cost; $('#sp-autocost').textContent = `Worked out: ${r.cost} magicka (leave empty to use this)`; crWhat(); } catch (e){} };
   effectsEditor('sp-effects', CR.spEffects, showCost); showCost();
-  ddSearch('sp-give', 'NPC_,CREA', r => { $('#sp-give').value = r.id; });
+  ddSearch('sp-give', 'NPC_,CREA', r => { $('#sp-give').value = r.id; crWhat(); });
+  // 🎲: a name from the first effect and its range, the way the game names its plain spells (Fire Bite, Frost Bolt)
+  $('#cr-dice').onclick = () => {
+    const e = CR.spEffects[0]; if (!e) return;
+    const info = M.effects.find(x => x.index === e.effect) || {};
+    let base = (info.name || 'Spell').replace(/^(Damage|Drain|Fortify|Restore|Resist|Weakness to|Absorb)\s+/, '').replace(/\s+Damage$/, '');
+    if (info.skill && e.skill >= 0) base = M.skills[e.skill]; else if (info.attribute && e.attribute >= 0) base = M.attributes[e.attribute];
+    const words = {0: ['Aura', 'Ward', 'Grace', 'Shield', 'Blessing'], 1: ['Touch', 'Bite', 'Grasp', 'Kiss'], 2: ['Bolt', 'Storm', 'Shard', 'Lance', 'Whisper']}[e.range] || ['Spell'];
+    const kind = +($('#sp-type') || {}).value || 0;
+    const name = kind === 2 || kind === 3 ? base + ' Fever' : kind === 4 ? 'Curse of ' + base : base + ' ' + words[Math.floor(Math.random() * words.length)];
+    $('#cr-name').value = name.slice(0, 31); CR.idEdited = false; $('#cr-name').oninput(); crWhat();
+  };
 }
 
 // ----- Build from pieces: the rooms are laid out in the planner (planner.js)
@@ -2937,18 +3285,31 @@ async function bindBuild(){
   const st = $('#cr-bstyle'), hint = $('#cr-bstylehint');
   if (!CR.bstyles) CR.bstyles = await api('/api/build/styles');
   if (!st.isConnected) return;
-  st.innerHTML = CR.bstyles.map(s => `<option value="${esc(s.id)}" ${s.id === (CR.bstyle || 'in_hlaalu') ? 'selected' : ''}>${esc(s.name)}${s.floors ? ' ⇅' : ''}</option>`).join('');
+  if (typeof plNote === 'function') plNote();          // (the planner's note waited on the styles for its stairs)
+  // (the stars: how far the Workshop trusts itself in the style, from how many of the game's places teach it,
+  // how many in-game rounds it has had and what the lab says: styletrust.py)
+  const stars = s => s.trust ? '★'.repeat(s.trust.stars) + '☆'.repeat(5 - s.trust.stars) + ' ' : '';
+  st.innerHTML = CR.bstyles.map(s => `<option value="${esc(s.id)}" ${s.id === (CR.bstyle || 'in_hlaalu') ? 'selected' : ''}>${stars(s)}${esc(s.name)}${s.floors ? ' ⇅' : ''}</option>`).join('');
   const showHint = () => {
     const s = CR.bstyles.find(x => x.id === st.value); CR.bstyle = st.value; if (!s) return;
-    hint.textContent = `${s.pieces} floor pieces · tiles of ${s.tile} units (about ${(s.tile / 72).toFixed(1)} m)${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : ' · one floor only (no stair pieces)'}. Doorways are built the way the game builds them in this style.${s.uses ? '' : ' No place in your game is built in this style yet, so the Workshop can\'t learn how its doorways go together: expect rough edges.'}`;
-    plStyleChanged(); bShells();
+    hint.textContent = `${s.trust ? stars(s) + s.trust.why + ' ' : ''}${s.pieces} floor pieces · tiles of ${s.tile} units (about ${(s.tile / 72).toFixed(1)} m)${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : ' · one floor only (no stair pieces)'}. Doorways are built the way the game builds them in this style.${s.uses ? '' : ' No place in your game is built in this style yet, so the Workshop can\'t learn how its doorways go together: expect rough edges.'}`;
+    plStyleChanged(); bShells(); crWhat();
   };
   st.onchange = showHint; showHint();
+  // Plans ▾ also offers the old "New interior + door": copy a place the game made (the button goes in from here,
+  // so the planner's own menu code stays as it is)
+  const prem = document.querySelector('#pl-prem > div');
+  if (prem && !prem.querySelector('#cr-copyplace')){
+    prem.insertAdjacentHTML('afterbegin', `<button id="cr-copyplace" title="A room or house the game made, copied whole into a new place of yours, with a working door from outside">🏠 Copy a place from the game…<small>Not built from pieces: one of the game's own places, copied whole</small></button>`);
+    prem.querySelector('#cr-copyplace').onclick = () => crBuildMode('copy');
+  }
+  $('#pl-root').addEventListener('click', () => setTimeout(crWhat, 60));       // (the room count in the line under the button)
+  $('#pl-root').addEventListener('keyup', () => setTimeout(crWhat, 60));
   // what goes outside: just a door, or a whole building in the style
   const pl = $('#cr-place');
   const showOut = () => {
     const v = pl ? pl.value : 'none', spot = v !== 'none' && placeValue();
-    const outdoors = spot && String(spot.cell).startsWith('#');
+    const outdoors = CR.bmode !== 'copy' && spot && String(spot.cell).startsWith('#');
     document.querySelectorAll('.bout').forEach(e => e.style.display = outdoors ? '' : 'none');
     $('#cr-boutb').style.display = outdoors && CR.bout === 'building' ? 'flex' : 'none';
     if (!(outdoors && CR.bout === 'building')) $('#cr-bshellview').style.display = 'none';
@@ -2958,7 +3319,9 @@ async function bindBuild(){
   $('#cr-bface').onchange = () => { CR.bface = $('#cr-bface').value; };
   $('#cr-bshellpeek').onclick = () => { CR.bshell = $('#cr-bshell').value; bPeekShell(); };
   $('#cr-bshell').onchange = () => { CR.bshell = $('#cr-bshell').value; if ($('#cr-bshellview').style.display !== 'none') bPeekShell(); };
+  bindFurnishAs('cr-b');
   showOut();
+  if (CR.bmode === 'copy') crBuildMode('copy');      // (back on the page while copying a place: the form shows that side)
 }
 // outside buildings that go with the chosen style (learnt from the game's towns)
 async function bShells(){
@@ -2999,10 +3362,9 @@ async function createGo(){
   go.disabled = true; msg.className = 'msg'; msg.innerHTML = '<span class="spin"></span>Creating…';
   try {
     let r, label;
-    if (CR.kind === 'interior'){
-      const entrance = placeValue();
-      if (!entrance) throw new Error('Choose where the front door goes.');
-      r = await post('/api/create/interior', {template: val('cr-tpl'), name: val('cr-name'), contents: radio('cr-contents'), entrance, door: val('cr-door')});
+    if (CR.kind === 'build' && CR.bmode === 'copy'){
+      if (!val('cr-tpl')) throw new Error('Pick a place to copy.');
+      r = await post('/api/create/interior', {template: val('cr-tpl'), name: val('cr-name'), contents: radio('cr-contents') || 'furnished', entrance: placeValue(), door: val('cr-door')});
       label = val('cr-name');
     } else if (CR.kind === 'build'){
       const L = bLayout(), entrance = placeValue();
@@ -3010,13 +3372,15 @@ async function createGo(){
         entrance.building = val('cr-bshell'); entrance.facing = +val('cr-bface');
       }
       r = await post('/api/build/interior', {name: val('cr-name'), style: val('cr-bstyle'), rooms: L.rooms, doors: L.doors, exit: L.exit,
-        stairs: L.stairs, floors_as: L.floors_as, entrance, lighting: val('cr-blight'), lights: $('#cr-blamps').checked});
+        stairs: L.stairs, floors_as: L.floors_as, entrance, lighting: val('cr-blight'), lights: $('#cr-blamps').checked,
+        plan: CR.plan});           // (the planner's own plan, kept with the place so you can start from it again)
       label = val('cr-name');
       if ($('#cr-bfurnish').checked){
         msg.innerHTML = '<span class="spin"></span>Furnishing…';
+        const level = furnishAsValue('cr-b');
         // (every floor, when the floors are places of their own)
         for (const c of (r.cells && r.cells.length ? r.cells : [{key: r.key, name: label}])){
-          try { await post('/api/furnish', {cell: c.key}); }
+          try { await furnishWhenLearnt({cell: c.key, level}, msg); msg.innerHTML = '<span class="spin"></span>Furnishing…'; }
           catch (e){ toast('Built it, but could not furnish ' + c.name + ': ' + e.message, true); }
         }
       }
@@ -3037,10 +3401,10 @@ async function createGo(){
     } else if (CR.kind === 'npc'){
       r = await post('/api/create/npc', {role: radio('cr-role'), name: val('cr-name'), id: val('cr-id'), race: val('cr-race'), sex: radio('cr-sex'),
         class: val('cr-class'), level: +val('cr-level'), faction: val('cr-faction'), rank: +val('cr-rank') || 0, services: val('cr-services'),
-        essential: $('#cr-ess').checked, place: placeValue()});
+        essential: $('#cr-ess').checked, gold: val('cr-gold') || '', place: placeValue()});
       label = val('cr-name');
     } else if (CR.kind === 'book'){
-      r = await post('/api/create/book', {kind: radio('cr-bk'), title: val('cr-name'), id: val('cr-id'), text: val('cr-text'), value: val('cr-value'), place: placeValue()});
+      r = await post('/api/create/book', {kind: radio('cr-bk'), title: val('cr-name'), id: val('cr-id'), text: val('cr-text'), value: val('cr-value'), give_to: val('bk-give'), place: val('bk-give') ? null : placeValue()});
       label = val('cr-name');
     } else {
       r = await post('/api/create/container', {kind: radio('cr-ck'), name: val('cr-name'), id: val('cr-id'), items: CR.items, lock: +val('cr-lock') || 0, owner: val('cr-owner'), place: placeValue()});
@@ -3054,9 +3418,12 @@ async function createGo(){
     } else if (CR.kind === 'item' && !r.placed){
       toast(`Created ${label}` + (r.given ? `, given to ${r.given}` : '') + '. Place it from the World map, or in game with Shift+J.');
       openRecord(r.i, true); showView('browse');
-    } else if (CR.kind === 'interior' || CR.kind === 'build'){
-      toast('Built "' + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : 'Furnish it here, then try it with Play here.'));
+    } else if (CR.kind === 'build'){
+      toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : 'Furnish it here, then try it with Play here.'));
       showView('world'); await worldOpen(r.key);
+    } else if (CR.kind === 'book' && r.given){
+      toast('Created ' + label + ', given to ' + r.given + '.');
+      openRecord(r.i, true); showView('browse');
     } else if (CR.kind === 'npc' && !r.placed){
       toast('Created ' + label + '. Fine-tune them here, then place them from the World map.');
       cOpen(r.id);
@@ -3211,6 +3578,7 @@ poll();
 <script src="/web/library.js"></script>
 <script src="/web/fixit.js"></script>
 <script src="/web/worldpanels.js"></script>
+<script src="/web/refprops.js"></script>
 <script src="/web/comfort.js"></script>
 <script src="/web/qol.js"></script>
 <script src="/web/pathedit.js"></script>

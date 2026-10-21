@@ -41,13 +41,13 @@ function renderGuide(){
     <tr><td><b>World map</b></td><td>Places in 2D or 3D. Drag things in from the Place panel, click to select, drag to move. In 3D: right-drag to look,
       ${HELP_KEY('W')}${HELP_KEY('A')}${HELP_KEY('S')}${HELP_KEY('D')} to fly, ${HELP_KEY('G')} move, ${HELP_KEY('R')} turn; <b>View ▾</b> has a grid, wireframe and, outdoors, the view distance; <b>?</b> lists every control.
       Outdoors, <b>⛰ Ground</b> shapes and paints the land and scatters grass and plants.</td></tr>
-    <tr><td><b>Create</b></td><td>New people, creatures, items, books and spells, or a whole interior built from wall and floor pieces, which <b>Auto-furnish</b> can fill.</td></tr>
+    <tr><td><b>Create</b></td><td>Quick starts: a whole house built from a style's wall and floor pieces and furnished (or a place the game made, copied with a door from outside), new people, items, spells, books, random loot lists and containers. Each is one change you can undo.</td></tr>
     <tr><td><b>Characters</b></td><td>People and creatures: looks, stats, what they sell, where they stand.</td></tr>
     <tr><td><b>Dialogue</b></td><td>Greetings, topics and quests with their journal stages. Lines can depend on quest stages, items and more.</td></tr>
     <tr><td><b>Scripts</b></td><td>Morrowind scripts and OpenMW Lua scripts, checked as you type.</td></tr>
-    <tr><td><b>Rules</b></td><td>Factions, classes, races, birthsigns, regions and weather, global variables and game settings.</td></tr>
+    <tr><td><b>Rules</b></td><td>Factions, classes, races, birthsigns, skills, regions and weather, sounds (and the sounds creatures make), magic effects, global variables and game settings.</td></tr>
     <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip.</td></tr>
-    <tr><td><b>Health check</b></td><td>Problems in your load order or your mod, like missing masters, models or textures.</td></tr>
+    <tr><td><b>Health check</b></td><td>Problems in your load order, like missing masters, models or textures, and <b>Check my mod</b>: every record of your mod checked the way the game's editor checks them.</td></tr>
     <tr><td><b>Load order</b></td><td>Switch plugins on or off and change their order (saved to OpenMW's settings, with a backup).</td></tr>
   </table>
 
@@ -61,6 +61,7 @@ function renderGuide(){
     <li>${HELP_KEY('F1')} on something shows <b>where it's used</b>: the places it stands in, who carries it, the scripts and dialogue that name it.</li>
     <li>Your mod's changes are marked on the map: green new, gold changed, a red ✕ where you took something out (right-click it to bring it back). <b>My changes</b> lists them all.</li>
     <li>${HELP_KEY('H')} hides what's selected so you can get at what's behind, ${HELP_KEY('Shift+H')} hides everything else, ${HELP_KEY('Alt+H')} shows it all again.</li>
+    <li><b>Hidden doors:</b> right-click a wall (or any piece of scenery) → <b>Make it a hidden door</b>. It keeps its looks and its spot but is now a door: make it lead somewhere, or leave it to swing open on its edge. <b>Make it an activator</b> does the same for a piece a script should react to.</li>
     <li>Select a door and press ${HELP_KEY('Enter')} to go through it; ${HELP_KEY('Alt+←')} comes back. ${HELP_KEY('Ctrl+H')} replaces every one of an object with another.</li>
     <li><b>Walking paths</b> (the path grid people and creatures follow): the <b>🚶 Paths</b> panel → <b>✎ Edit by hand</b>, on the map or in 3D. Click to add a point, joined to the selected one (${HELP_KEY('Ctrl')}+click: not joined); drag a point to move it; ${HELP_KEY('Shift')}+click another point to join or unjoin them; ${HELP_KEY('Delete')} takes one out, ${HELP_KEY('Ctrl+Z')} undoes. ${HELP_KEY('Esc')} or ✓ Done saves it all as one Undo; Discard leaves the paths as they were. <b>Make them for me</b> works out a whole set for you, to touch up by hand.</li>
     <li><b>👤 Play as</b> (by Play here) starts the game as one of your own characters, from their latest save, at the spot you pick. <b>🧪 Test setups</b> add items, spells, quest stages or variables on top.</li>

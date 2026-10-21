@@ -70,7 +70,7 @@ function luRender(){
   $('#lu-revert').onclick = () => { LU.data = JSON.parse(LU.orig); luRender(); };
   $('#lu-save').onclick = luSave;
   $('#lu-ren').onclick = async () => {
-    const nn = prompt('New name for the script:', d.name); if (!nn || nn === d.name) return;
+    const nn = await askText('New name for the script:', d.name); if (!nn || nn === d.name) return;
     try { const r = await post('/api/lua/save', {name: LU.name, data: Object.assign({}, d, {rename: nn})}); LU.data = r; LU.name = r.name; delete r.problems; LU.orig = JSON.stringify(r); afterChange(); luRender(); luMine(); }
     catch (e){ toast(e.message, true); }
   };

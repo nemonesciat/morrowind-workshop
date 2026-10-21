@@ -486,6 +486,8 @@ def open_project_file(path):
     s['project'] = os.path.relpath(path, APP_DIR)
     save_settings(s)
     db.project = Project(path)
+    import background
+    background.project_path[0] = path
     db.state = 'loading'
     db.load_async()
 
@@ -641,7 +643,16 @@ class Handler(BaseHTTPRequestHandler):
                 s = db.summary()
                 s['projects'] = list_projects()
                 s['outdated'] = code_stamp() > STARTED_CODE + 1
+                import background
+                background.project_path[0] = db.project.path if db.project else None
+                if db.state == 'ready' and db.recs:
+                    import learning
+                    learning.prewarm(db)                 # (the learning starts now, not at the first furnish)
+                s['surveys'] = background.status()      # (what is being learnt from the game's places right now)
                 self._json(s)
+            elif u.path == '/api/surveys':
+                import background
+                self._json(background.status())
             elif u.path == '/api/launch':
                 self._json(launch_settings())
             elif u.path == '/api/openmw':
@@ -717,6 +728,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(regions.read(db, q.get('id', '')))
             elif u.path == '/api/lev':
                 self._json(levlists.read(db, q.get('id', '')))
+            elif u.path == '/api/ref/props':
+                # who owns a placed object, its lock, key, trap, uses left, soul
+                import refprops
+                self._json(refprops.read(db, q.get('cell', ''), q.get('ref', '')))
+            elif u.path == '/api/sounds':
+                import sounds_ed
+                self._json({'sounds': sounds_ed.all_sounds(db), 'creatures': sounds_ed.creatures_with_sounds(db),
+                            'moments': sounds_ed.MOMENTS})
+            elif u.path == '/api/sounds/one':
+                import sounds_ed
+                self._json(sounds_ed.read(db, q.get('id', '')))
+            elif u.path == '/api/sounds/files':
+                import sounds_ed
+                self._json(sounds_ed.files(db, q.get('q', '')))
+            elif u.path == '/api/sounds/creature':
+                import sounds_ed
+                self._json(sounds_ed.creature_sounds(db, q.get('id', '')))
+            elif u.path == '/api/verify':
+                # the CS's "verify": record-by-record checks of the mod, in plain words
+                import verify
+                editing._require_project(db)
+                self._json(verify.summary(db))
             elif u.path == '/api/place/settings':
                 self._json({'settings': places.read(db, q.get('key', '')), 'presets': places.presets()})
             elif u.path == '/api/release/check':
@@ -782,6 +815,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(create.outside_doors(db, q.get('template'), q.get('style')))
             elif u.path == '/api/create/suggest_id':
                 self._json({'id': create.suggest_id(db, create._prefix(db) if db.project else 'mod', q.get('name', ''))})
+            elif u.path == '/api/create/name':
+                # a name in the manner of the game's own people of that race and sex (the 🎲 button)
+                self._json({'name': create.suggest_name(db, q.get('race', ''), q.get('sex') == 'female')})
+            elif u.path == '/api/create/popular':
+                # the items of these types the game uses most: the usual bases for a new item
+                self._json(create.popular(db, [t for t in q.get('types', '').split(',') if t], min(int(q.get('limit', 8)), 40)))
             elif u.path == '/api/link':
                 self._json(link.status())
             elif u.path == '/api/loadorder':
@@ -818,9 +857,42 @@ class Handler(BaseHTTPRequestHandler):
                 out['used'] = dialogue.quests_using(db, q['key'])
                 self._json(out)
             elif u.path == '/api/furnish/rooms':
+                import taste
                 info = furnish.rooms(db, q['key'])
                 self._json({'rooms': [{k: v for k, v in r.items() if not k.startswith('_')} for r in info['rooms']],
-                            'purposes': list(furnish.RECIPES)})
+                            'purposes': list(furnish.RECIPES), 'furnished': len(furnish.placed_before(db, q['key'])),
+                            'examples': [p for p in taste.listing(db) if p.get('exists') and p.get('game_made')]})
+            elif u.path == '/api/taste':
+                # the taste set: the game's places marked as exemplary (taste.py); ?key= says whether that
+                # place is one, and whether it could be (only the game's own places can teach Auto-furnish)
+                import taste
+                import kits
+                out = {'places': taste.listing(db), 'weight': taste.WEIGHT}
+                if q.get('key'):
+                    k = q['key'].lower()
+                    out['this'] = {'key': k, 'marked': taste.is_marked(k), 'game_made': kits.game_made(db, k)}
+                self._json(out)
+            elif u.path == '/api/furnish/placesurvey':
+                # where the game stands each kind of furniture (placesurvey.py)
+                import placesurvey
+                s = placesurvey.ready(db)
+                if not s:
+                    return self._json({'ready': False, 'note': 'The placement survey is running in the background (a few minutes).'})
+                self._json({'ready': True, 'cells': s['cells'], 'report': placesurvey.report(db), 'fams': s['fams']})
+            elif u.path == '/api/furnish/catalogue':
+                # the catalogue rules, per style, with their rates (catalogue.py)
+                import catalogue
+                s = catalogue.ready(db)
+                if not s:
+                    return self._json({'ready': False, 'note': 'The catalogue survey is running in the background (a few minutes).'})
+                self._json({'ready': True, 'cells': s['cells'], 'report': catalogue.report(db), 'styles': s['styles']})
+            elif u.path == '/api/furnish/scenes':
+                # the game's scenes per room kind, and how often a piece of each kind stands alone (arrangesurvey.py)
+                import arrangesurvey
+                s = arrangesurvey.ready(db)
+                if not s or 'alone' not in s:
+                    return self._json({'ready': False, 'note': 'The arrangement survey is running in the background (a few minutes).'})
+                self._json({'ready': True, 'cells': s['cells'], 'report': arrangesurvey.scenes_report(db)})
             elif u.path == '/api/prefabs':
                 self._json(groups.prefabs())
             elif u.path == '/api/items/options':
@@ -887,7 +959,27 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/items/template':
                 self._json(items.template_info(db, int(q['i'])))
             elif u.path == '/api/build/styles':
-                self._json(builder.styles(db))
+                import styletrust
+                self._json([dict(s, trust=styletrust.rate(s['id'], s.get('uses'))) for s in builder.styles(db)])
+            elif u.path == '/api/build/plans':
+                # saved floor plans, and the places in your mod built from pieces (to start from one)
+                import plans
+                self._json({'plans': plans.list_plans(), 'built': plans.built_places(db)})
+            elif u.path == '/api/build/plans/get':
+                import plans
+                self._json(plans.load_plan(q.get('name', '')))
+            elif u.path == '/api/build/plans/cell':
+                import plans
+                self._json(plans.plan_of_cell(db, q.get('key', '')))
+            elif u.path == '/api/build/plan_from_cell':
+                # one of the game's own places read back as a plan for the room planner (nothing is changed)
+                import planfrom
+                self._json(planfrom.plan_from_cell(db, q.get('cell', '')))
+            elif u.path == '/api/build/plan_from_cell/places':
+                # the game's interiors the Workshop can build a plan from (scored in a background pass the
+                # first time: ?all=1 lists every kit-built interior unscored), for "Plan from a place in the game"
+                import planfrom
+                self._json(planfrom.places(db) if q.get('all') else planfrom.gated(db))
             elif u.path == '/api/furnish/wallsurvey':
                 # how the game hangs banners, tapestries and hangers (what with what, and where)
                 import wallsurvey
@@ -912,6 +1004,26 @@ class Handler(BaseHTTPRequestHandler):
                 # what the game's containers hold, by family, room kind and theme: ?family=barrel&kind=kitchen&theme=house
                 import containersurvey
                 self._json(containersurvey.summary(db, q.get('family'), q.get('kind'), q.get('theme')))
+            elif u.path == '/api/furnish/arrangesurvey':
+                # the game's set pieces: how it groups furniture in a room (arrangesurvey.py)
+                import arrangesurvey
+                s = arrangesurvey.ready(db)
+                if not s:
+                    return self._json({'busy': True, 'text': 'Surveying the game\'s rooms (a few minutes the first time)…'})
+                self._json({'report': arrangesurvey.report(db), 'groups': s['groups'], 'cells': s['cells']})
+            elif u.path == '/api/furnish/wealthsurvey':
+                # how well off the game's homes are, by band (wealthsurvey.py): sets, density, hangings, values
+                import wealthsurvey
+                B = wealthsurvey.bands(db)
+                if B is None:
+                    return self._json({'ready': False, 'note': 'The wealth survey is running in the background (several minutes).'})
+                self._json({'ready': True, 'bands': B, 'rules': {b: wealthsurvey.rule(db, b) for b in wealthsurvey.BANDS},
+                            'report': wealthsurvey.report(db)})
+            elif u.path == '/api/furnish/trades':
+                # the classes and factions for "Furnish as: by trade or faction" (the band each lives in)
+                import wealthsurvey
+                self._json({'ready': wealthsurvey.trades(db) is not None, 'trades': wealthsurvey.trade_options(db),
+                            'read_as': wealthsurvey.trade(db, q.get('text')) if q.get('text') else None})
             elif u.path == '/api/furnish/roomsurvey':
                 # the room survey's numbers: themes (what a tavern, a shop, a temple, a guild, a manor
                 # contain), clutter groups, and the room kinds
@@ -929,6 +1041,21 @@ class Handler(BaseHTTPRequestHandler):
                 # where the game's own places stand posts and columns, corner by corner
                 import jointsurvey
                 self._json(jointsurvey.summary(db, [q['style']] if q.get('style') else None))
+            elif u.path == '/api/build/closuresurvey':
+                # how the game closes the spaces round its stairs, style by style (closuresurvey.py)
+                import closuresurvey
+                if q.get('style'):
+                    s = closuresurvey.survey(db, q['style'])
+                    return self._json({'report': closuresurvey.report(db, [q['style']]),
+                                       'columns': {sid: {'%d,%d,%d' % k: v for k, v in closuresurvey.column(db, q['style'], sid).items()}
+                                                   for sid in (s or {}).get('stairs', {})}})
+                self._json({'report': closuresurvey.report(db)})
+            elif u.path == '/api/build/layoutsurvey':
+                # how the game lays out and builds its interiors: room sizes, doorways, windows, columns,
+                # whole-house layouts, per style family (or per kit with by=style); layoutsurvey.py
+                import layoutsurvey
+                by = 'style' if q.get('by') == 'style' else 'family'
+                self._json({'report': layoutsurvey.report(db, by=by), 'summary': layoutsurvey.summary(db, by=by)})
             elif u.path == '/api/build/stairsurvey':
                 # what the game's own places do round their stairs (style by style, and over all)
                 import stairsurvey
@@ -1231,6 +1358,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(regions.assign(db, body.get('id') or '', body.get('cells') or []))
                 if u.path == '/api/lev/save':
                     return self._json(levlists.save(db, body.get('id'), body.get('data') or {}, bool(body.get('create'))))
+                if u.path == '/api/ref/props':
+                    import refprops
+                    r = refprops.save(db, body['cell'], body['ref'], body.get('data') or {})
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['props'] = r
+                    return self._json(m)
+                if u.path == '/api/sounds/save':
+                    import sounds_ed
+                    return self._json(sounds_ed.save(db, body.get('id'), body.get('data') or {}, bool(body.get('create'))))
+                if u.path == '/api/sounds/creature/save':
+                    import sounds_ed
+                    return self._json(sounds_ed.save_creature_sounds(db, body.get('id') or '', body.get('rows') or []))
                 if u.path == '/api/place/settings':
                     places.save(db, body['key'], body.get('settings') or {})
                     return self._json(mapdata.cellmap(db, body['key']))
@@ -1279,6 +1418,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(groups.save_prefab(db, body.get('name'), items_, body.get('source', '')))
                 if u.path == '/api/prefabs/delete':
                     return self._json(groups.delete_prefab(body.get('name', '')))
+                if u.path == '/api/build/plans/save':
+                    import plans
+                    return self._json(plans.save_plan(body.get('name'), body.get('plan'), body.get('style'), body.get('options')))
+                if u.path == '/api/build/plans/delete':
+                    import plans
+                    return self._json(plans.delete_plan(body.get('name', '')))
                 if u.path == '/api/items/create':
                     return self._json(items.create_item(db, body))
                 if u.path == '/api/spells/create':
@@ -1336,19 +1481,49 @@ class Handler(BaseHTTPRequestHandler):
                     added, skipped = scatter.import_brushes(db, body.get('data') or {})
                     return self._json({'added': added, 'skipped': skipped})
                 if u.path == '/api/furnish':
+                    import learning
+                    import background
+                    waiting = learning.pending(db)
+                    if waiting:
+                        # (not learnt yet: the page shows the progress and asks again when it is)
+                        return self._json({'waiting': waiting, 'surveys': background.status()})
                     return self._json(furnish.furnish(db, body['cell'], body.get('plan'), walls=body.get('walls', True) is not False,
-                                                      walls_only=bool(body.get('walls_only'))))
+                                                      walls_only=bool(body.get('walls_only')), replace=bool(body.get('replace')),
+                                                      level=body.get('level'), like=body.get('like') or None))
+                if u.path == '/api/taste':
+                    # mark one of the game's places as an example (or unmark it): the surveys that
+                    # Auto-furnish goes by weigh it several times over, and run again in the background
+                    import taste
+                    import kits
+                    key = (body.get('key') or '').lower()
+                    if not key or not mapdata.cell_info(db, key):
+                        return self._json({'error': 'No such place.'}, 400)
+                    if body.get('on', True) and not kits.game_made(db, key):
+                        return self._json({'error': 'Only the game\'s own places (or another mod\'s) can be examples: your mod\'s builds must not teach Auto-furnish its own habits.'}, 400)
+                    lst = taste.mark(key, bool(body.get('on', True)))
+                    return self._json({'ok': True, 'places': taste.listing(db), 'count': len(lst), 'weight': taste.WEIGHT})
                 if u.path == '/api/build/interior':
                     return self._json(builder.build_house(
                         db, body.get('name'), body.get('style'), body.get('rooms') or [], body.get('doors'),
                         body.get('exit'), body.get('entrance'), body.get('lighting') or 'normal',
-                        body.get('lights', True), body.get('door'), body.get('stairs'), body.get('floors_as') or 'auto'))
+                        body.get('lights', True), body.get('door'), body.get('stairs'), body.get('floors_as') or 'auto',
+                        planner=body.get('plan')))
                 if u.path == '/api/build/outside':
                     import outside
                     return self._json(outside.for_rooms(db, body.get('style'), float(body.get('w') or 768), float(body.get('d') or 768)))
                 if u.path == '/api/build/plan':
                     return self._json(builder.plan(db, body.get('style'), body.get('rooms') or [], body.get('stairs'), body.get('floors_as') or 'auto',
                                                    body.get('doors')))
+                if u.path == '/api/build/stairspots':
+                    # where the stairs could stand (the planner shades them while you move the stairs)
+                    return self._json(builder.stair_spots(db, body.get('style'), body.get('rooms') or [], body.get('stairs'), body.get('doors')))
+                if u.path == '/api/build/stairseed':
+                    # a plan to grow from: the style's stairwell with a room at its foot and one at its head
+                    return self._json(builder.stair_seed(db, body.get('style')))
+                if u.path == '/api/build/fit':
+                    # Fit together: the plan shuffled a little so the stairs sit better (nothing is built for keeps)
+                    return self._json(builder.fit_together(db, body.get('style'), body.get('rooms') or [], body.get('stairs'),
+                                                           body.get('doors'), body.get('floors_as') or 'auto'))
                 if u.path == '/api/dlg/topic/new':
                     return self._json({'key': dialogue.create_topic(db, body.get('name'), int(body.get('kind') or 0))})
                 if u.path == '/api/dlg/line/save':
@@ -1469,6 +1644,9 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/ref/swap':
                     editing.swap_ref(db, body['cell'], body['ref'], body['id'])
                     return self._json(mapdata.cellmap(db, body['cell']))
+                if u.path == '/api/ref/secret':
+                    made = editing.secret_ref(db, body['cell'], body['ref'], body.get('kind') or 'door')
+                    return self._json(dict(mapdata.cellmap(db, body['cell']), made=made))
                 if u.path == '/api/ref/restore':
                     editing.restore_ref(db, body['cell'], body['ref'])
                     return self._json(mapdata.cellmap(db, body['cell']))

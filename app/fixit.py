@@ -682,6 +682,26 @@ def _variant(kp, want, ceiling=None, exclude=None):
     return (best[1], best[2]) if best else None
 
 
+def _stair_beyond(near, t, side, tile_refs=()):
+    """A staircase just past this side of the tile (its run, or the landing it climbs to or from): a wall
+    there would stand across the stairs. Looked for from the floor the tile is on up to a storey over the
+    stair's top, since the top step of a flight ends level with the floor it comes out on."""
+    dx, dy = STEP[side]
+    x0, y0, x1, y1 = _edge(t, side)
+    ex, ey = (x0 + x1) / 2, (y0 + y1) / 2
+    probes = [(ex + dx * k + ax * u, ey + dy * k + ay * u) for k in (24, 64, 128) for u in (-t['T'] * 0.3, 0.0, t['T'] * 0.3)
+              for ax, ay in [(-dy, dx)]]
+    for r in near:
+        if r['k'] in tile_refs or 'stair' not in r['id'].lower():
+            continue
+        bx = _world_box(r)
+        if not bx or bx[2] > t['floor'] + 64 or bx[5] + t['H'] < t['floor'] + 30:
+            continue
+        if any(bx[0] - 8 <= px <= bx[3] + 8 and bx[1] - 8 <= py <= bx[4] + 8 for px, py in probes):
+            return True
+    return False
+
+
 def _wall_fix(db, t, sides):
     """Loose wall pieces of the style along these sides of a tile."""
     import builder
@@ -761,19 +781,46 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
     if hole['u1'] > h - 56:
         spots.append(h)
     spots.append((hole['u0'] + hole['u1']) / 2)      # the hole itself
-    cands, slid, pairs, centred = [], [], [], []
+    cands, slid, pairs, centred, between = [], [], [], [], []
     wall_ids = {w['id'].lower() for w in t['kit']['walls']}
+    uc = (hole['u0'] + hole['u1']) / 2
+
+    def on_floor(r):
+        """Does this piece stand on the tile's floor? (By its box: some columns have their origin at the
+        top or the middle, not the foot.)"""
+        bx = _world_box(r)
+        return bool(bx) and abs(bx[2] - t['floor']) < t['H'] * 0.6
 
     def stands(rid, x, y, within=24):
         """Is this piece already standing (nearly) there? A second one on top of it covers nothing more."""
-        return any(r['id'].lower() == rid.lower() and math.hypot(r['p'][0] - x, r['p'][1] - y) < within and
-                   abs(r['p'][2] - t['floor']) < t['H'] * 0.6 for r in near)
+        return any(r['id'].lower() == rid.lower() and math.hypot(r['p'][0] - x, r['p'][1] - y) < within and on_floor(r)
+                   for r in near)
+
+    def crowd(x, y, within=None):
+        """How many posts or columns stand at this spot already (within a third of a tile, on this floor):
+        two is as many as one corner takes; a third in a row is what you'd take out again by hand."""
+        return sum(1 for r in near if r['k'] not in tile_refs and r['type'] == 'STAT' and COLUMN_WORDS.search(r['id'].lower())
+                   and math.hypot(r['p'][0] - x, r['p'][1] - y) < (within or t['T'] / 3) and on_floor(r))
+
+    def crowded(c):
+        """A fix that would stand a column where two already stand within a quarter tile of it."""
+        return any(o.get('op') == 'place' and COLUMN_WORDS.search(o['id'].lower()) and crowd(o['p'][0], o['p'][1], t['T'] / 4) >= 2
+                   for o in c['ops'])
     for u in spots:
         x, y = ex + ax * u, ey + ay * u
+        here = crowd(x, y)
+        if here >= 2:
+            continue                                    # (no third column at one corner)
         for rid, ri, b in _narrow_pieces(db, t['kit']):
+            # (how wide the column is: a second one closer than that would stand inside the first, as
+            # happened with a stone pillar at a corner and another over the slit 36 units along)
+            wide = max(b[3] - b[0], b[4] - b[1])
+            near_w = max(24, wide * 0.75)
             # first on the grid, the way the game stands it (a column drawn off its own point lines up
             # with the walls there and not when centred on the spot; see grid_spot)
-            gs = [g for g in grid_spot(db, ri, x, y, t['T'], t['x'], t['y'], [(t['x'], t['y'])])[:2] if not stands(rid, g[0], g[1])]
+            # (nor a column of any kind that close: a stair's own wooden post beside a stone pillar)
+            gs = [g for g in grid_spot(db, ri, x, y, t['T'], t['x'], t['y'], [(t['x'], t['y'])])[:2]
+                  if not stands(rid, g[0], g[1], near_w) and not crowd(g[0], g[1], near_w)]
             for gx, gy, grot in gs:
                 cands.append({'label': 'Add %s' % rid,
                               'ops': [{'op': 'place', 'id': rid, 'p': [round(gx, 2), round(gy, 2), t['floor'] - b[2], 0, 0, grot]}]})
@@ -781,39 +828,55 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
             # it still lines up with the walls and reads as one solid piece rather than one off the line:
             # slid along the wall's own line over the slit, or a second one beside it on that line (or on
             # the grid), a little overlap and all
+            # (a pair only where none stands yet: with one there already, a second beside it is the pair)
             z_ = t['floor'] - b[2]
             for gx, gy, grot in gs:
                 for d in (16, -16, 32, -32, 48, -48):
                     sx, sy = gx + ax * d, gy + ay * d
-                    if stands(rid, sx, sy):
+                    if stands(rid, sx, sy, near_w) or crowd(sx, sy, near_w):
                         continue
                     slid.append({'label': 'Add %s' % rid,
                                  'ops': [{'op': 'place', 'id': rid, 'p': [round(sx, 2), round(sy, 2), z_, 0, 0, grot]}]})
-                    if abs(d) >= 32:
+                    if abs(d) >= max(32, wide - 2) and not here:
                         pairs.append({'label': 'Add two %s, lined up' % rid,
                                       'ops': [{'op': 'place', 'id': rid, 'p': [round(gx, 2), round(gy, 2), z_, 0, 0, grot]},
                                               {'op': 'place', 'id': rid, 'p': [round(sx, 2), round(sy, 2), z_, 0, 0, grot]}]})
-            for i_, (gx, gy, grot) in enumerate(gs):
+            for i_, (gx, gy, grot) in enumerate(gs if not here else []):
                 for hx, hy, hrot in gs[i_ + 1:]:
+                    if math.hypot(hx - gx, hy - gy) < wide - 2:
+                        continue                        # (the two would stand inside each other)
                     pairs.append({'label': 'Add two %s, lined up' % rid,
                                   'ops': [{'op': 'place', 'id': rid, 'p': [round(gx, 2), round(gy, 2), z_, 0, 0, grot]},
                                           {'op': 'place', 'id': rid, 'p': [round(hx, 2), round(hy, 2), z_, 0, 0, hrot]}]})
+            # a slit just along from the corner (the 8 units a Common room corner's model stops short):
+            # one column between the corner and the slit covers both, where two would stand in each
+            # other (a stone pillar at the corner and another over the slit, 36 units along)
+            if abs(u) >= h - 1 and 0 < abs(uc - u) < 56 and not gs:
+                um = (u + uc) / 2
+                for rot in (0.0, math.pi / 2):
+                    cx, cy = builder._centred(db, ri, ex + ax * um, ey + ay * um, rot)
+                    if stands(rid, cx, cy, near_w) or crowd(cx, cy, near_w):
+                        continue
+                    between.append({'label': 'Add %s (over the corner and the slit)' % rid,
+                                    'ops': [{'op': 'place', 'id': rid, 'p': [round(cx, 2), round(cy, 2), t['floor'] - b[2], 0, 0, rot]}]})
             # failing those, centred on the spot, every turn: some are half columns made to stand against a
             # wall, seen from the front only
             for rot in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2):
                 cx, cy = builder._centred(db, ri, x, y, rot)
-                if stands(rid, cx, cy):
+                if stands(rid, cx, cy, near_w) or crowd(cx, cy, near_w):
                     continue
                 centred.append({'label': 'Add %s' % rid,
                                 'ops': [{'op': 'place', 'id': rid, 'p': [round(cx, 2), round(cy, 2), t['floor'] - b[2], 0, 0, rot]}]})
-    cands += slid + pairs + centred
+    cands = [c for c in between + cands + slid + pairs + centred if not crowded(c)]
     # is anything of the building just past this side (a hall piece that isn't a whole tile, stairs, a
     # door)? Then nothing goes there: a wall "outside" would stand across the way through
     nx_, ny_ = STEP[hole['side']]
     probes = [(ex + ax * u + nx_ * k, ey + ay * u + ny_ * k, t['floor'] + 60)
               for u in (hole['u0'], (hole['u0'] + hole['u1']) / 2, hole['u1'], 0.0) for k in (24, 64)]
-    occupied = False
-    for r in near:
+    # (a staircase there counts from its foot to a storey over its top: the top step of a flight ends
+    # level with the floor it comes out on, and a wall across it would block the stairs)
+    occupied = _stair_beyond(near, t, hole['side'], tile_refs)
+    for r in near if not occupied else []:
         if r['k'] in tile_refs or r['k'] == t['ref'] or r['k'] in t.get('mates', ()) or \
                 not (r.get('arch') or r['type'] == 'DOOR' or 'stair' in r['id'].lower()):
             continue
@@ -881,8 +944,11 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
             continue
         cx, cy = r['p'][0] + (shift if along_x else 0), r['p'][1] + (0 if along_x else shift)
         # (not a copy of a loose wall slid along its own line: it would lie mostly on top of the first,
-        # and a third on that. The slit at a loose wall's end is for a post, below)
+        # and a third on that. The slit at a loose wall's end is for a post, below. Nor a third column
+        # at a corner that has two)
         if r['id'].lower() in wall_ids or stands(r['id'], cx, cy, 6):
+            continue
+        if COLUMN_WORDS.search(r['id'].lower()) and (crowd(cx, cy) >= 2 or crowd(cx, cy, t['T'] / 4) >= 2):
             continue
         cands.append({'label': 'Add another %s over it' % r['id'],
                       'ops': [{'op': 'place', 'id': r['id'], 'p': [round(cx, 2), round(cy, 2), r['p'][2], r['p'][3], r['p'][4], r['p'][5]]}]})
@@ -1216,6 +1282,8 @@ def _scan(db, cell_key):
                 continue
             if _closed_by_use(db, t, s, cell_key):
                 continue                  # (the game itself leaves nothing beyond this side of the piece)
+            if _stair_beyond(m['refs'], t, s, tile_refs):
+                continue                  # (stairs go through here: never a wall across them)
             (gaps if pat[s] == 'open' else dead_doors).append(s)
         # (a spot of stacked pieces swapped for one piece: the others go)
         dels = [{'op': 'delete', 'ref': r} for r in t.get('mates', [])]

@@ -75,6 +75,14 @@ ENUMS = {
     ('DIAL', 'Dialogue Type'): ['Topic', 'Voice', 'Greeting', 'Persuasion', 'Journal'],
     ('INFO', 'Dialogue Type'): ['Topic', 'Voice', 'Greeting', 'Persuasion', 'Journal'],
     ('BOOK', 'Teaches Skill'): SKILLS,
+    ('BODY', 'Body Part'): ['Head', 'Hair', 'Neck', 'Chest', 'Groin', 'Hand', 'Wrist', 'Forearm', 'Upper arm', 'Foot',
+                            'Ankle', 'Knee', 'Upper leg', 'Clavicle', 'Tail'],
+    ('BODY', 'Part Type'): ['Skin', 'Clothing', 'Armor'],
+    ('BODY', 'Vampire'): ['No', 'Yes (vampire version)'],
+    ('SNDG', 'Sound Type'): ['Left footstep', 'Right footstep', 'Swimming (left)', 'Swimming (right)', 'Moan', 'Roar',
+                             'Scream', 'Landing'],
+    ('SKIL', 'Specialization'): ['Combat', 'Magic', 'Stealth'],
+    ('MGEF', 'School'): ['Alteration', 'Conjuration', 'Destruction', 'Illusion', 'Mysticism', 'Restoration'],
 }
 
 STRUCTS = {
@@ -123,6 +131,8 @@ STRUCTS = {
     ('SKIL', 'SKDT'): ('<ii4f', ['Governing Attribute', 'Specialization', 'Use Value 1', 'Use Value 2',
                                  'Use Value 3', 'Use Value 4']),
     ('MGEF', 'INDX'): ('<i', ['Effect Index']),
+    ('MGEF', 'MEDT'): ('<ifiiiifff', ['School', 'Base Cost', 'Flags', 'Light Red', 'Light Blue', 'Light Green', 'Speed',
+                                      'Size', 'Size Cap']),
     ('BODY', 'BYDT'): ('<BBBB', ['Body Part', 'Vampire', 'Flags', 'Part Type']),
     ('SCPT', 'SCHD'): ('<32s5i', [None, 'Shorts', 'Longs', 'Floats', 'Compiled Size', 'Locals Size']),
     ('LTEX', 'INTV'): ('<i', ['Index']),
@@ -142,6 +152,8 @@ LABELS = {
     'SNAM': 'Sound', 'DNAM': 'Destination Cell', 'INAM': 'Line ID', 'PNAM': 'Previous Line', 'NNAM': 'Next Line',
     'ONAM': 'Speaker Actor', 'SCVR': 'Condition', 'XSCL': 'Scale', 'CNDT': 'Condition', 'NPCO': 'Carries',
     'TNAM': 'Sound', 'PTEX': 'Image', 'INDX': 'Index',
+    'CSND': 'Casting Sound', 'BSND': 'Bolt Sound', 'HSND': 'Hit Sound', 'ASND': 'Area Sound',
+    'CVFX': 'Casting Visual', 'BVFX': 'Bolt Visual', 'HVFX': 'Hit Visual', 'AVFX': 'Area Visual',
 }
 INFO_LABELS = {'RNAM': 'Speaker Race', 'CNAM': 'Speaker Class', 'ANAM': 'Speaker Cell', 'FNAM': 'Speaker Faction',
                'DNAM': 'Player Faction', 'SNAM': 'Voice File', 'NAME': 'Response', 'BNAM': 'Result Script',

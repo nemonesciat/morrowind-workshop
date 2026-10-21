@@ -89,17 +89,35 @@ def _pool(table, fam, kind, theme):
     return pool
 
 
-def pick(db, fam, purpose, theme, rng, palette=()):
+def pick(db, fam, purpose, theme, rng, palette=(), band_pool=None, max_value=None):
     """The container to stand in a room of this purpose, in a place of this theme: one the game stands in
     rooms like it, chosen at random by how often (the ones used in places of this style three times
-    as readily). None when the survey hasn't run or knows nothing of this family."""
+    as readily). None when the survey hasn't run or knows nothing of this family.
+    band_pool: {container id: sightings} in places as well off as this one is to be (wealthsurvey.py):
+    those come up three times as readily too. max_value: nothing holding more than this, about (a
+    leveled list by its mean draw); an empty one when nothing cheap enough stands in such rooms."""
     table = survey(db)
     if not table:
         return None
     kind = KIND_OF.get(purpose, purpose)
     pool = _pool(table, fam, kind, theme)
     pal = {p.lower() for p in palette or ()}
-    weights = [(rid, n * (3 if rid.lower() in pal else 1)) for rid, n in pool.items() if plain(db, rid) and db.resolve_id(rid) is not None]
+    bp = {k.lower() for k in (band_pool or {})}
+    weights = [(rid, n * (3 if rid.lower() in pal else 1) * (3 if rid.lower() in bp else 1))
+               for rid, n in pool.items() if plain(db, rid) and db.resolve_id(rid) is not None]
+    if max_value is not None:
+        import wealthsurvey
+        cheap = [(rid, w) for rid, w in weights if (wealthsurvey.container_value(db, rid) or 0) <= max_value]
+        if not cheap:
+            # (none cheap enough in rooms like this: any of the family's that is, from anywhere, else an empty one)
+            every = Counter()
+            for k, lst in table.items():
+                if k[0] == fam:
+                    for rid, n in lst:
+                        every[rid] += n
+            cheap = [(rid, n) for rid, n in every.items() if plain(db, rid) and db.resolve_id(rid) is not None
+                     and (wealthsurvey.container_value(db, rid) or 0) <= max_value]
+        weights = cheap
     if not weights:
         return None
     total = sum(w for _r, w in weights)

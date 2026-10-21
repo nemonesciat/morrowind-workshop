@@ -8,7 +8,7 @@ import random
 import variantsurvey
 
 MAX_SHARE = 0.6            # (never on every piece: the game's own rooms aren't that regular)
-SKIP = ('arch', 'jamb', 'door', 'railing', 'rail_', 'stair', 'floortiles')   # (doorways and railings are built elsewhere)
+SKIP = ('arch', 'jamb', 'door', 'railing', 'rail_', 'stair', 'floortiles', 'ceil', 'story', 'wall')   # (doorways, railings, ceilings and walls are built elsewhere)
 
 
 def for_piece(db, style, piece_id, q, x, y, floor_z, rng, chance=1.0):

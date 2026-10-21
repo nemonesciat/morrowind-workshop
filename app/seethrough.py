@@ -6,6 +6,7 @@ be a way through, into the next room) marks a hole. Pieces of the style that mig
 tried the same way, and the ones that do are offered."""
 import math
 import os
+import re
 
 import mapdata
 import nif
@@ -155,8 +156,9 @@ class Scene:
 
     def blocked(self, o, d, tmax, skip=None):
         """Does the ray from o along unit d hit anything before tmax? (skip: (first, last) triangles
-        to leave out, of a piece about to be swapped)"""
-        return self._hits(o, d, tmax, set(range(*skip)) if skip else set(), False) is not None
+        to leave out, of a piece about to be swapped; or a set of triangles)"""
+        seen = set(skip) if isinstance(skip, (set, frozenset)) else set(range(*skip)) if skip else set()
+        return self._hits(o, d, tmax, seen, False) is not None
 
     def nearest(self, o, d, tmax):
         """The nearest hit of a ray: (distance, triangle) or None (for pictures and checks)."""
@@ -199,6 +201,32 @@ def _ray(o, target, over):
     return (dx / L, dy / L, dz / L), L + over
 
 
+def _free_column(r, tiles, walled):
+    """A post or column standing out in a room: on some tile's floor, and no walled side (a wall, a
+    doorway, a door frame) of any tile round it within a third of a tile of its body."""
+    b, sc_ = r.get('b'), r.get('s') or 1.0
+    if not b:
+        return False
+    th = r['p'][5]
+    bx, by = (b[0] + b[3]) / 2.0 * sc_, (b[1] + b[4]) / 2.0 * sc_
+    cx = r['p'][0] + bx * math.cos(th) + by * math.sin(th)
+    cy = r['p'][1] - bx * math.sin(th) + by * math.cos(th)
+    cz = r['p'][2] + b[2] * sc_ + 10
+    near = [t for t in tiles if abs(t['x'] - cx) <= t['T'] * 0.85 and abs(t['y'] - cy) <= t['T'] * 0.85
+            and t['floor'] - 32 <= cz <= t['floor'] + t['H']]
+    if not any(abs(t['x'] - cx) <= t['T'] / 2 + 1 and abs(t['y'] - cy) <= t['T'] / 2 + 1 for t in near):
+        return False
+    for t in near:
+        h = t['T'] / 2.0
+        for s, (nx, ny) in (('N', (0, 1)), ('S', (0, -1)), ('E', (1, 0)), ('W', (-1, 0))):
+            ax, ay = abs(ny), abs(nx)
+            to_line = abs((cx - t['x']) * nx + (cy - t['y']) * ny - h)
+            along = abs((cx - t['x']) * ax + (cy - t['y']) * ay)
+            if to_line < t['T'] * 0.35 and along <= h + 8 and (walled is None or walled(t, s)):
+                return False
+    return True
+
+
 def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=None):
     """Holes in the walls and ceilings of a place: [{kind ('wall' | 'ceiling'), tile, side, void (True
     when it shows nothing), x, y, z (the middle of the hole), u0, u1 (along the side, from its
@@ -214,6 +242,17 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=
         ri = next((i for i in db.by_id.get(rid.lower(), ()) if db.recs[i][0] in ('STAT', 'ACTI')), None)
         if ri is not None:
             sc.add_model(model_tris(db, db.recs[ri][5]), pos, 1.0)
+    # posts and columns standing free in a room: across open floor the view past one is no slit (a
+    # column on the line between two tiles of one room would leave narrow "escaping" runs beside it),
+    # so the rays across open sides are cast as if they weren't there
+    # (only columns standing free: a post at a wall, a doorway or a join stays what it is to the scan)
+    tile_refs = {t['ref'] for t in tiles}
+    col_tris = set()
+    for r in m['refs']:
+        if r['k'] in sc.of_ref and r['k'] not in tile_refs and r['type'] == 'STAT' and re.search(r'post|pillar|column', r['id'].lower()) \
+                and _free_column(r, tiles, walled):
+            col_tris.update(range(*sc.of_ref[r['k']]))
+    col_tris = frozenset(col_tris)
     out = []
     done_edges = set()
     # where the building is: for following a ray that gets through to where it leaves it
@@ -299,7 +338,7 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=
                     for u in us:
                         tgt = (ex + ax * u, ey + ay * u, z)
                         d, tmax = _ray(e_, tgt, 64)
-                        esc = not sc.blocked(e_, d, tmax)
+                        esc = not sc.blocked(e_, d, tmax, col_tris if far_only and col_tris else None)
                         if far_only:
                             # (it shows the void somewhere further on: the hole is where it leaves the building)
                             if esc and not sc.blocked(e_, d, 4000):
@@ -307,8 +346,10 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=
                                 if got:
                                     far.setdefault((got[0]['ref'], got[1]), []).append((got[0], got[2], (e_, d, 4000)))
                             # (but a seam at the very end of the side, where the room's wall meets the stairs or
-                            # a hall beside it, counts: see below)
-                            esc = esc and abs(u) > h - 40
+                            # a hall beside it, counts: see below. Only one that shows the void: a ray past a
+                            # pillar standing at the corner that goes on to a wall of the next tile is a view
+                            # into the room, not a slit)
+                            esc = esc and abs(u) > h - 40 and not sc.blocked(e_, d, 4000)
                         row.append((u, esc, (e_, d, tmax)))
                     rows.append((z, row))
             # what counts: anything getting through to nothing; into the next room, only slits (a run of

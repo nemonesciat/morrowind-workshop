@@ -111,9 +111,8 @@ def ready(db, prefix, limit=PLACES):
         return None
     t = _threads.get(prefix)
     if t is None or not t.is_alive():
-        t = threading.Thread(target=lambda: survey(db, prefix, limit), daemon=True)
-        _threads[prefix] = t
-        t.start()
+        import background
+        _threads[prefix] = background.start('how gappy the game\'s own %s places are' % prefix, lambda: survey(db, prefix, limit), task=('gapsurvey', 'survey', [prefix, limit]))
     return None
 
 

@@ -27,8 +27,10 @@ async function renderItemEd(){
 function ieWelcome(){
   $('#itemed').innerHTML = `<div class="wrap" style="max-width:760px"><h1>✎ Edit an item, spell or enchantment</h1>
     <p class="lead">Change anything about an item that already exists: its stats, name, looks and script, a potion's effects, a spell's effects and cost, or an enchantment, including the ones the game's own artifacts have.</p>
-    <div class="dd"><input class="inp" id="ie-find" placeholder="Find one… (e.g. Trebonius' Staff, Fireball, Ring of Keley)" autocomplete="off"><div class="ddlist" id="ie-find-l"></div></div></div>`;
+    <div class="dd"><input class="inp" id="ie-find" placeholder="Find one… (e.g. Trebonius' Staff, Fireball, Ring of Keley)" autocomplete="off"><div class="ddlist" id="ie-find-l"></div></div>
+    <div class="cwhat"><b>Save</b> puts your changed version of it in your mod: the game's own files are never touched, every copy of the item in the game changes with it, and one Undo takes it back. To make a new item instead, use <a href="#" id="ie-tonew">New item</a>.</div></div>`;
   ddSearch('ie-find', IE_TYPES, r => ieShow(r.id));
+  $('#ie-tonew').onclick = e => { e.preventDefault(); CR.kind = 'item'; showView('createv'); };
 }
 
 function ieDirty(){

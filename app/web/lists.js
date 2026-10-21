@@ -28,13 +28,17 @@ function lvNewForm(){
   LV.newOpen = true;
   const prefix = (S.summary && S.summary.project ? S.summary.project.name : 'mod').replace(/[^A-Za-z0-9]/g, '').slice(0, 8).toLowerCase() || 'mod';
   $('#lmain').innerHTML = `<div class="wrap" style="max-width:760px"><h1>New leveled list</h1>
+    <p class="msg">A list the game rolls on: what a chest holds, what a bandit carries, or which creature comes out of a spawn point, matched to the player's level and different each time. Lists have no name, only an ID. Start empty, or copy one of the game's own lists (random_gold, random_weapon, ex_bandit…) and change it.</p>
     <div class="frow"><label>Kind</label><div class="radios"><label><input type="radio" name="lv-kind" value="items" checked>Random loot (items, gold, other loot lists)</label>
       <label><input type="radio" name="lv-kind" value="creatures">Random creatures (for spawn points and summons)</label></div>
-      <label>ID</label><div><input class="inp" id="lv-id" value="${esc(prefix)}_lev_" maxlength="31" style="max-width:320px"><div class="hint">e.g. ${esc(prefix)}_lev_bandit_loot</div></div>
-      <label>Start from</label><div class="dd"><input class="inp" id="lv-from" placeholder="Empty, or copy an existing list… (search)" autocomplete="off"><div class="ddlist" id="lv-from-l"></div></div></div>
-    <div class="actions"><button class="btn primary" id="lv-go">Create list</button><span class="msg" id="lv-msg"></span></div></div>`;
+      <label>ID</label><div><input class="inp" id="lv-id" value="${esc(prefix)}_lev_" maxlength="31" style="max-width:320px"><div class="hint">Say what it is for: ${esc(prefix)}_lev_bandit_loot, ${esc(prefix)}_lev_cave_beasts.</div></div>
+      <label>Start from</label><div class="dd"><input class="inp" id="lv-from" placeholder="Empty, or copy an existing list… (search, e.g. random gold, bandit)" autocomplete="off"><div class="ddlist" id="lv-from-l"></div></div></div>
+    <div class="actions"><button class="btn primary" id="lv-go">Create list</button><span class="msg" id="lv-msg"></span></div>
+    <div class="cwhat" id="lv-what"><b>Create list</b> makes an empty list in your mod and opens it, so you can add entries and set the odds. One Undo takes it back.</div></div>`;
   let from = null;
-  ddSearch('lv-from', 'LEVI,LEVC', r => { from = r.id; document.querySelector(`[name=lv-kind][value=${r.type === 'LEVC' ? 'creatures' : 'items'}]`).checked = true; });
+  const what = () => { $('#lv-what').innerHTML = `<b>Create list</b> makes ${from && $('#lv-from').value.trim() ? 'a copy of ' + esc(from) : 'an empty list'} in your mod as <b>${esc($('#lv-id').value.trim() || '…')}</b> and opens it, so you can ${from ? 'change its entries' : 'add entries'} and set the odds. One Undo takes it back.`; };
+  $('#lv-id').oninput = what; $('#lv-from').oninput = () => { if (!$('#lv-from').value.trim()) from = null; what(); };
+  ddSearch('lv-from', 'LEVI,LEVC', r => { from = r.id; document.querySelector(`[name=lv-kind][value=${r.type === 'LEVC' ? 'creatures' : 'items'}]`).checked = true; if ($('#lv-id').value.trim() === prefix + '_lev_') $('#lv-id').value = (prefix + '_' + r.id.replace(/^(random_|ex_|in_|l_)/i, '')).slice(0, 31); what(); });
   $('#lv-go').onclick = async () => {
     if (!await needProject()) return;
     const id = $('#lv-id').value.trim(), kind = document.querySelector('[name=lv-kind]:checked').value;
@@ -114,7 +118,7 @@ function lvRender(){
   $('#lv-revert').onclick = () => { LV.data = JSON.parse(LV.orig); lvRender(); };
   $('#lv-copy').onclick = async () => {
     if (!await needProject()) return;
-    const id = prompt('ID for the copy:', (d.id + '_copy').slice(0, 31)); if (!id) return;
+    const id = await askText('ID for the copy:', (d.id + '_copy').slice(0, 31)); if (!id) return;
     try { await post('/api/lev/save', {id, data: d, create: true}); toast('Made a copy: ' + id); afterChange(); LV.orig = JSON.stringify(LV.data); lvOpen(id); } catch (e){ toast(e.message, true); }
   };
   $('#lmain').querySelectorAll('[data-lvplace]').forEach(b => b.onclick = () => { showView('world'); worldOpen(b.dataset.lvplace); });

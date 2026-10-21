@@ -12,21 +12,25 @@ const TH_THEMES = {
   hlaalu: {label: 'Hlaalu', about: 'Olive and amber, like their halls in Balmora', v: {
     bg: '#11130d', panel: '#191c13', panel2: '#212519', line: '#313724', line2: '#444c31', text: '#e6e8d6', muted: '#9ea38a', faint: '#80876c',
     gold: '#d6b44a', gold2: '#f1d77e', hover: '#23271b', sel: '#333a1f', deep: '#0d0f0a', bg2: '#15180f', bg3: '#1b1f14', line0: '#1f2318', goldline: '#8a7a34'}},
-  dagoth: {label: 'Dagoth', about: 'Black and crimson, from under Red Mountain', v: {
-    bg: '#140a0c', panel: '#1c0f12', panel2: '#251418', line: '#3a1f25', line2: '#522b33', text: '#f0dfe1', muted: '#ab8e93', faint: '#917579',
-    gold: '#d0454f', gold2: '#f07d84', hover: '#2a161a', sel: '#3f1a21', deep: '#0f0709', bg2: '#170c0e', bg3: '#1e1013', line0: '#241216', goldline: '#8a2f37',
-    red: '#ff8f6b'}},
+  dagoth: {label: 'Dagoth', about: 'Black, with the glow of Red Mountain', v: {
+    // (near-black, not cherry: the only colour is the ember red of the accents, lines and selection)
+    bg: '#070405', panel: '#0e0809', panel2: '#150b0d', line: '#3a0f14', line2: '#6a1820', text: '#f2e6e4', muted: '#a88f8f', faint: '#7d6364',
+    gold: '#ff3a2e', gold2: '#ff8a6e', hover: '#1b0a0d', sel: '#4a0b11', deep: '#030102', bg2: '#0a0506', bg3: '#100809', line0: '#200a0e', goldline: '#a3161e',
+    red: '#ff5a3c', amber: '#ff9a3c'}},
   dwemer: {label: 'Dwemer', about: 'Bronze and verdigris', v: {
     bg: '#0e1211', panel: '#151b19', panel2: '#1c2421', line: '#2b3833', line2: '#3c4d46', text: '#e1ebe5', muted: '#93a49b', faint: '#788a80',
     gold: '#c8964a', gold2: '#e8bd78', hover: '#1f2925', sel: '#2e3426', deep: '#0b0e0d', bg2: '#121816', bg3: '#18201d', line0: '#1b2420', goldline: '#7d6033'}},
-  imperial: {label: 'Imperial', about: 'Light, like a page of the Pocket Guide', light: true, v: {
-    bg: '#efe6d2', panel: '#f8f2e4', panel2: '#ebe1ca', line: '#d8c9a9', line2: '#c2ae88', text: '#2a2318', muted: '#66573d', faint: '#6f6147',
-    gold: '#93631a', gold2: '#7a4c08', hover: '#e8dcc0', sel: '#e6d1a0', deep: '#fffaf0', bg2: '#ebe0c8', bg3: '#f1e8d4', line0: '#e3d7bd', goldline: '#b08a4c',
-    red: '#b3432b', amber: '#9c6a0c', blue: '#2e5d97', green: '#4b7833'}},
-  indoril: {label: 'Indoril', about: 'Light and cool: pale Mournhold stone and deep blue', light: true, v: {
-    bg: '#e3e8ee', panel: '#f1f4f8', panel2: '#e4e9f0', line: '#c9d2dd', line2: '#a9b6c5', text: '#1b2430', muted: '#4b596a', faint: '#5a6879',
-    gold: '#2d5d8c', gold2: '#1d4670', hover: '#dbe2ea', sel: '#cbdaea', deep: '#fbfcfe', bg2: '#dce3ea', bg3: '#e8edf2', line0: '#d5dce5', goldline: '#7f9dbd',
-    red: '#ae3a2e', amber: '#8f6610', blue: '#2d5d8c', green: '#3c7647'}},
+  imperial: {label: 'Imperial', about: 'Ivory marble, Septim red and old gold', light: true, v: {
+    // (marble rather than parchment: cooler ivory panels with firm warm lines, the Legion's red for what
+    // matters and a deep gold for the rest)
+    bg: '#e4dccb', panel: '#f3eee3', panel2: '#e9e1d0', line: '#c9b994', line2: '#a9956a', text: '#221a12', muted: '#5c4d36', faint: '#6c5d45',
+    gold: '#8e1d1d', gold2: '#5f1010', hover: '#e4d9c0', sel: '#e2c9a2', deep: '#faf7f0', bg2: '#dfd5c0', bg3: '#ece5d5', line0: '#d7cbb0', goldline: '#b8902f',
+    red: '#9f2d1d', amber: '#9c6a0c', blue: '#2e5d97', green: '#4b7833'}},
+  indoril: {label: 'Indoril', about: 'Light: Mournhold stone and pearl, with deep slate blue', light: true, v: {
+    // (grey stone, not white: a shade darker than a page, pearl for the panels, the blue kept to the accents)
+    bg: '#cfccc4', panel: '#e6e4de', panel2: '#d9d6cf', line: '#afaba1', line2: '#8f8a7f', text: '#1f2327', muted: '#4a5058', faint: '#5d636b',
+    gold: '#34506e', gold2: '#213a55', hover: '#d2cfc8', sel: '#c3c9d1', deep: '#f2f1ed', bg2: '#c8c5bd', bg3: '#d6d3cc', line0: '#bfbbb2', goldline: '#6f84a0',
+    red: '#9e3a2e', amber: '#8f6610', blue: '#34506e', green: '#3c6e47'}},
   contrast: {label: 'High contrast', about: 'Black, white and bright yellow: easiest to read', v: {
     bg: '#000000', panel: '#0a0a0a', panel2: '#161616', line: '#5c5c5c', line2: '#8c8c8c', text: '#ffffff', muted: '#e2e2e2', faint: '#bdbdbd',
     gold: '#ffd23f', gold2: '#ffe680', hover: '#232323', sel: '#3d3400', deep: '#000000', bg2: '#0a0a0a', bg3: '#111111', line0: '#333333', goldline: '#b39400'}},

@@ -42,6 +42,10 @@ def _spell_rows(db, ids):
 
 
 def read(db, kind, rid):
+    if kind == 'skill':
+        return read_skill(db, rid)
+    if kind == 'effect':
+        return read_effect(db, rid)
     tag = TAGS.get(kind)
     if not tag:
         raise EditError('Unknown kind.')
@@ -156,6 +160,10 @@ def _n(v, lo, hi, default=0):
 
 def save(db, kind, rid, o, create=False):
     _require_project(db)
+    if kind == 'skill':
+        return save_skill(db, rid, o)
+    if kind == 'effect':
+        return save_effect(db, rid, o)
     tag = TAGS.get(kind)
     if not tag:
         raise EditError('Unknown kind.')
@@ -276,8 +284,178 @@ def _merge(old, rid, new, order, drop=()):
     return out
 
 
+# ------------------------------------------------------------------ skills
+# SKIL: INDX the skill's number, SKDT governing attribute, specialization, 4 use values, DESC.
+# The 27 are fixed: none can be added, as in the CS.
+USE_LABELS = {
+    0: ['Successful block', '', '', ''], 1: ['Repair', '', '', ''],
+    8: ['Second of running', 'Second of swimming', '', ''], 9: ['Recharge an item', 'Use an enchanted item', 'Make an enchantment', 'Cast when striking'],
+    16: ['Make a potion', 'Eat an ingredient', '', ''], 17: ['Hit while unarmoured', '', '', ''],
+    18: ['Pick a lock', 'Disarm a trap', '', ''], 19: ['Pickpocket', 'Sneak past someone', '', ''],
+    20: ['Jump', 'Fall without harm', '', ''], 24: ['Successful bargain', 'Bribe', '', ''], 25: ['Persuade', 'Fail to persuade', '', ''],
+}
+
+
+def _skill_index(rid):
+    try:
+        n = int(str(rid).strip())
+    except (TypeError, ValueError):
+        n = SKILLS.index(rid) if rid in SKILLS else -1
+    if not 0 <= n < len(SKILLS):
+        raise EditError('There is no skill "%s".' % rid)
+    return n
+
+
+def read_skill(db, rid):
+    n = _skill_index(rid)
+    ri = _find(db, 'SKIL', str(n))
+    if ri is None:
+        raise EditError('Your game files have no record for the skill %s.' % SKILLS[n])
+    r = db.recs[ri]
+    subs, _f = _subs(db, ri)
+    o = {'kind': 'skill', 'id': str(n), 'i': ri, 'name': SKILLS[n], 'attribute': 0, 'spec': 0, 'uses': [0.0] * 4, 'desc': '',
+         'use_labels': USE_LABELS.get(n, ['', '', '', '']), 'src': db.plugins[r[3]]['name'],
+         'mine': bool(db.project and ('SKIL|' + r[7]) in db.project.records), 'created': False}
+    for t, d in subs:
+        if t == 'SKDT' and len(d) >= 24:
+            v = struct.unpack_from('<ii4f', d)
+            o['attribute'], o['spec'] = v[0], v[1]
+            o['uses'] = [round(x, 3) for x in v[2:6]]
+        elif t == 'DESC':
+            o['desc'] = bytes(d).decode(ENC, 'replace').rstrip('\0')
+    # the attack skills' use values are all "a hit"; label what the game keeps blank
+    if not any(o['use_labels']):
+        o['use_labels'] = ['Successful use', '', '', ''] if n in (9, 10, 11, 12, 13, 14, 15) else ['Successful hit', '', '', '']
+        if 10 <= n <= 15:
+            o['use_labels'] = ['Cast a spell', '', '', '']
+        if n in (2, 3, 21):
+            o['use_labels'] = ['Hit while wearing it', '', '', '']
+    return o
+
+
+def save_skill(db, rid, o):
+    n = _skill_index(rid)
+    ri = _find(db, 'SKIL', str(n))
+    if ri is None:
+        raise EditError('Your game files have no record for the skill %s.' % SKILLS[n])
+    old, flags = _subs(db, ri)
+    uses = [max(0.0, float(x if x not in (None, '') else 0)) for x in (list(o.get('uses') or []) + [0] * 4)[:4]]
+    new = {'INDX': [struct.pack('<i', n)],
+           'SKDT': [struct.pack('<ii4f', _n(o.get('attribute'), 0, 7), _n(o.get('spec'), 0, 2), *uses)],
+           'DESC': [(o.get('desc') or '').encode(ENC, 'replace')] if (o.get('desc') or '').strip() else []}
+    out = []
+    for t in ('INDX', 'SKDT', 'DESC'):
+        out += [(t, d) for d in new[t]]
+    out += [(t, d) for t, d in old if t not in ('INDX', 'SKDT', 'DESC')]
+    db.project.set_record('SKIL', db.recs[ri][7], flags & ~0x20, join_subs(out))
+    db.sync_project()
+    commit(db, 'Edited skill "%s"' % SKILLS[n])
+    return read_skill(db, str(n))
+
+
+# ------------------------------------------------------------------ magic effects
+# MGEF: INDX the effect's number, MEDT school, base cost, flags, light colour, speed, size, size cap;
+# ITEX icon, PTEX particle texture; CSND/BSND/HSND/ASND sounds and CVFX/BVFX/HVFX/AVFX objects
+# for casting, the bolt, the hit and the area; DESC. The effects themselves are built into the
+# engine, so none can be added (as in the CS).
+SCHOOLS = ['Alteration', 'Conjuration', 'Destruction', 'Illusion', 'Mysticism', 'Restoration']
+MGEF_FLAGS = {'spellmaking': 0x200, 'enchanting': 0x400, 'negative_light': 0x800}
+MGEF_PARTS = [('casting', 'CSND', 'CVFX'), ('bolt', 'BSND', 'BVFX'), ('hit', 'HSND', 'HVFX'), ('area', 'ASND', 'AVFX')]
+VFX_TAGS = ('STAT', 'WEAP', 'ACTI', 'MISC', 'LIGH')
+
+
+def read_effect(db, rid):
+    key = str(rid).strip()
+    ri = _find(db, 'MGEF', key)
+    if ri is None:
+        raise EditError('There is no magic effect "%s".' % rid)
+    r = db.recs[ri]
+    subs, _f = _subs(db, ri)
+    o = {'kind': 'effect', 'id': r[1], 'i': ri, 'name': r[2] or db.effect_names.get(int(key), 'Effect ' + key),
+         'school': 0, 'cost': 1.0, 'flags': 0, 'color': [255, 255, 255], 'speed': 1.0, 'size': 1.0, 'size_cap': 50.0,
+         'icon': '', 'particle': '', 'desc': '', 'src': db.plugins[r[3]]['name'],
+         'mine': bool(db.project and ('MGEF|' + r[7]) in db.project.records), 'created': False}
+    for part, snd, vfx in MGEF_PARTS:
+        o[part + '_sound'] = ''
+        o[part + '_object'] = ''
+    for t, d in subs:
+        if t == 'MEDT' and len(d) >= 36:
+            v = struct.unpack_from('<ifiiiifff', d)
+            o['school'], o['cost'], o['flags'] = v[0], round(v[1], 3), v[2]
+            o['color'] = [max(0, min(255, v[3])), max(0, min(255, v[5])), max(0, min(255, v[4]))]   # stored red, blue, green
+            o['speed'], o['size'], o['size_cap'] = round(v[6], 3), round(v[7], 3), round(v[8], 3)
+        elif t == 'ITEX':
+            o['icon'] = zstr(d)
+        elif t == 'PTEX':
+            o['particle'] = zstr(d)
+        elif t == 'DESC':
+            o['desc'] = bytes(d).decode(ENC, 'replace').rstrip('\0')
+        else:
+            for part, snd, vfx in MGEF_PARTS:
+                if t == snd:
+                    o[part + '_sound'] = zstr(d)
+                elif t == vfx:
+                    o[part + '_object'] = zstr(d)
+    for k, bit in MGEF_FLAGS.items():
+        o[k] = bool(o['flags'] & bit)
+    return o
+
+
+def save_effect(db, rid, o):
+    key = str(rid).strip()
+    ri = _find(db, 'MGEF', key)
+    if ri is None:
+        raise EditError('There is no magic effect "%s".' % rid)
+    old, flags = _subs(db, ri)
+    cur = read_effect(db, key)
+    fl = cur['flags']
+    for k, bit in MGEF_FLAGS.items():
+        fl = (fl | bit) if o.get(k, cur[k]) else (fl & ~bit)
+    col = [max(0, min(255, int(v or 0))) for v in (list(o.get('color') or cur['color']) + [0, 0, 0])[:3]]
+    try:
+        cost = max(0.0, float(o.get('cost', cur['cost']) or 0))
+        speed = max(0.0, float(o.get('speed', cur['speed']) or 0))
+        size = max(0.0, float(o.get('size', cur['size']) or 0))
+        cap = max(0.0, float(o.get('size_cap', cur['size_cap']) or 0))
+    except (TypeError, ValueError):
+        raise EditError('Base cost, speed and size must be numbers.')
+    medt = struct.pack('<ifiiiifff', _n(o.get('school', cur['school']), 0, 5), cost, fl, col[0], col[2], col[1], speed, size, cap)
+    old_medt = next((d for t, d in old if t == 'MEDT'), b'')
+    new = {'INDX': [struct.pack('<i', int(key))], 'MEDT': [medt + old_medt[36:]]}
+    for field, tag in (('icon', 'ITEX'), ('particle', 'PTEX')):
+        v = (o.get(field, cur[field]) or '').strip()
+        new[tag] = [zs(v)] if v else []
+    for part, snd, vfx in MGEF_PARTS:
+        s = (o.get(part + '_sound', cur[part + '_sound']) or '').strip()
+        if s:
+            si = db.resolve_id(s)
+            if si is None or db.recs[si][0] != 'SOUN':
+                raise EditError('"%s" is not a sound.' % s)
+            s = db.recs[si][1]
+        v = (o.get(part + '_object', cur[part + '_object']) or '').strip()
+        if v:
+            vi = db.resolve_id(v)
+            # (the game's own VFX_ objects are filed as weapons, oddly; anything with a model will do)
+            if vi is None or db.recs[vi][0] not in VFX_TAGS:
+                raise EditError('"%s" is not an object with a model (the game\'s visual effects are the VFX_ objects).' % v)
+            v = db.recs[vi][1]
+        new[snd] = [zs(s)] if s else []
+        new[vfx] = [zs(v)] if v else []
+    desc = (o.get('desc', cur['desc']) or '').strip()
+    new['DESC'] = [desc.encode(ENC, 'replace')] if desc else []
+    order = ['INDX', 'MEDT', 'ITEX', 'PTEX', 'BSND', 'CSND', 'HSND', 'ASND', 'CVFX', 'BVFX', 'HVFX', 'AVFX', 'DESC']
+    out = []
+    for t in order:
+        out += [(t, d) for d in new.get(t, [])]
+    out += [(t, d) for t, d in old if t not in order]
+    db.project.set_record('MGEF', db.recs[ri][7], flags & ~0x20, join_subs(out))
+    db.sync_project()
+    commit(db, 'Edited magic effect "%s"' % cur['name'])
+    return read_effect(db, key)
+
+
 # ------------------------------------------------------------------ global variables and game settings
-GLOB_TYPES = {'s': 'Whole number (short)', 'l': 'Whole number (long)', 'f': 'Decimal number (float)'}
+GLOB_TYPES ={'s': 'Whole number (short)', 'l': 'Whole number (long)', 'f': 'Decimal number (float)'}
 
 
 def read_global(db, gid):
@@ -427,5 +605,15 @@ def options(db):
                     r = db.recs[live[-1]]
                     out.append({'id': r[1], 'name': r[2] or r[1]})
         return sorted(out, key=lambda x: x['name'].lower())
-    return {'skills': SKILLS, 'attributes': ATTRIBUTES, 'specs': SPECS,
-            'factions': lst('FACT'), 'classes': lst('CLAS'), 'races': lst('RACE'), 'birthsigns': lst('BSGN')}
+    effects = []
+    for k, v in db.by_key.items():
+        if k[0] == 'MGEF' and k[1].lstrip('-').isdigit():
+            live = [x for x in v if x not in db.dead]
+            if live:
+                r = db.recs[live[-1]]
+                effects.append({'id': r[1], 'name': r[2] or db.effect_names.get(int(k[1]), 'Effect ' + k[1]),
+                                'mine': bool(db.project and ('MGEF|' + r[7]) in db.project.records)})
+    effects.sort(key=lambda x: x['name'].lower())
+    return {'skills': SKILLS, 'attributes': ATTRIBUTES, 'specs': SPECS, 'schools': SCHOOLS,
+            'factions': lst('FACT'), 'classes': lst('CLAS'), 'races': lst('RACE'), 'birthsigns': lst('BSGN'),
+            'effects': effects}

@@ -360,11 +360,127 @@ def options(db):
     styles = {}
     for t in interior_templates(db):
         styles[t['style']] = styles.get(t['style'], 0) + 1
+    # an example record of each book look and each container kind, so the form can show it in 3D
+    book_examples = {}
+    for kind, model in BOOK_KINDS.items():
+        for i in _winners(db, 'BOOK'):
+            if db.recs[i][5].lower() == model:
+                book_examples[kind] = db.recs[i][1]
+                break
+    container_examples = {}
+    for kind in CONTAINER_KINDS:
+        base = _container_base(db, kind)
+        if base is not None:
+            container_examples[kind] = {'id': db.recs[base][1], 'name': db.recs[base][2] or kind}
     return {'races': races, 'classes': classes, 'factions': factions,
             'styles': sorted(styles.items(), key=lambda s: -s[1]),
             'services': list(SERVICES), 'roles': list(ROLES),
             'book_kinds': list(BOOK_KINDS), 'container_kinds': list(CONTAINER_KINDS),
+            'book_examples': book_examples, 'container_examples': container_examples,
+            'race_counts': _race_counts(db),
             'prefix': _prefix(db) if db.project else 'mod'}
+
+
+def _race_counts(db):
+    """How many of the game's people are of each race (the commonest makes the best default)."""
+    counts = {}
+    for i in _winners(db, 'NPC_'):
+        for t, d in iter_subrecords(_data(db, i)):
+            if t == 'RNAM':
+                r = zstr(d).lower()
+                counts[r] = counts.get(r, 0) + 1
+                break
+    return counts
+
+
+_KINDS_OF_PEOPLE = {'slave', 'guard', 'prisoner', 'dreamer', 'sleeper', 'priest', 'priestess', 'trader', 'merchant', 'publican',
+                    'pilgrim', 'warrior', 'mage', 'assassin', 'archer', 'noble', 'smith', 'farmer', 'miner', 'worker', 'servant',
+                    'adventurer', 'bandit', 'outlaw', 'thief', 'witch', 'cultist', 'insane', 'ghost', 'spirit', 'hermit', 'beggar',
+                    'sailor', 'scout', 'soldier', 'legionnaire', 'ordinator', 'armiger', 'monk', 'healer', 'child', 'villager',
+                    'captain', 'commoner', 'citizen', 'hunter', 'fisherman', 'shipmaster', 'caravaner', 'guide', 'apprentice',
+                    'scavenger', 'smuggler', 'raider', 'berserker', 'reaver', 'marauder', 'wanderer', 'drunk', 'madman',
+                    'argonian', 'khajiit', 'nord', 'imperial', 'breton', 'redguard', 'orc', 'dunmer', 'altmer', 'bosmer', 'elf'}
+
+
+def suggest_name(db, race, female, seed=None):
+    """A name in the manner of the game's own people of that race and sex: a first name one of them
+    has, and a family name another has (where the race uses them), in a pairing no one has yet."""
+    race = (race or '').lower()
+    global _names_cache
+    if _names_cache is None or _names_cache[0] is not db.recs:
+        _names_cache = (db.recs, {})
+    people = _names_cache[1].get((race, female))
+    if people is None:
+        people = _names_cache[1][(race, female)] = _people_named(db, race, female)
+    return _pick_name(people, random.Random(seed))
+
+
+_names_cache = None
+
+
+def _people_named(db, race, female):
+    """The real names of the game's people of a race and sex (not the kinds: "Guard", "Dead Adventurer")."""
+    people = []
+    for i in _winners(db, 'NPC_'):
+        info = _npc_info(db, i)
+        if info['race'] != race or info['female'] != female:
+            continue
+        name = (db.recs[i][2] or '').strip()
+        if not name or any(ch.isdigit() for ch in name):
+            continue
+        # (a mod's stand-ins and test people are no pattern to follow: "Im-Kur placeholder", "test npc")
+        if any(w in name.lower() for w in ('placeholder', 'test', 'dummy', 'todo', 'unused', 'dead ', 'corpse')) or \
+                not all(p[:1].isupper() and not p.endswith("'") for p in name.split()):
+            continue
+        # ("Insane Argonian", "Argonian Slave", "Khajiit Trader": a kind of person, not a name)
+        words = {w.strip(".,'").lower() for w in name.split()}
+        if words & _KINDS_OF_PEOPLE or race in words or (db.recs[i][2] or '').lower() == race:
+            continue
+        people.append(name)
+    # a name several people share is a kind, not a name ("Guard", "Dead Adventurer", "Ordinator"): real names are one each
+    shared = {n.lower() for n in people if sum(1 for m in people if m.lower() == n.lower()) > 1}
+    return [n for n in people if n.lower() not in shared and "'s" not in n.lower()]
+
+
+def _pick_name(people, rng):
+    if not people:
+        return ''
+    taken = {n.lower() for n in people}
+    # a race whose people mostly go by one name (Argonians, Khajiit) gets whole one-word names, not halves of
+    # two-word ones ("Big Head" is no first name); a race with family names gets a first and a family name
+    two = [n for n in people if len(n.split()) == 2]
+    family_names = len(two) >= len(people) / 2
+    if not family_names:
+        ones = [n for n in people if len(n.split()) == 1] or people
+        return rng.choice(ones)
+    firsts = [n.split()[0] for n in two]
+    lasts = [n.split()[1] for n in two]
+    name = ''
+    for _try in range(40):
+        name = rng.choice(firsts) + ' ' + rng.choice(lasts)
+        if name.lower() not in taken:
+            break
+    return name
+
+
+def popular(db, types, limit=8):
+    """The items of these record types the game uses most (placed in the most places, carried by the
+    most people and lists): the usual things to start a new item from."""
+    types = set(types or ())
+    scored = []
+    for (tag, key), lst in db.by_key.items():
+        if tag not in types or not lst or lst[-1] in db.dead:
+            continue
+        i = lst[-1]
+        r = db.recs[i]
+        if not r[2]:
+            continue
+        n = len(db.used_in.get(key, ()))
+        if n:
+            scored.append((-n, r[2].lower(), i))
+    scored.sort()
+    return [{'i': i, 'id': db.recs[i][1], 'name': db.recs[i][2], 'type': db.recs[i][0], 'uses': -n}
+            for n, _nm, i in scored[:limit]]
 
 
 def _npc_info(db, i):
@@ -541,8 +657,13 @@ def create_book(db, o):
             ('BKDT', struct.pack('<fiiii', weight, value, scroll, -1, 0)), ('ITEX', icon),
             ('TEXT', book_html(o.get('text')).encode(ENC, 'replace'))]
     db.project.set_record('BOOK', new_id.lower(), 0, join_subs(subs), created=True)
-    placed = _maybe_place(db, new_id, o.get('place'), 'Created %s "%s"' % (kind.lower(), title))
-    return {'id': new_id, 'i': db.overlay.get(('BOOK', new_id.lower())), 'placed': placed}
+    gave = ''
+    if (o.get('give_to') or '').strip():
+        import items
+        gave = items._give(db, o['give_to'], new_id, 'item')       # (into a character's or container's inventory)
+    placed = _maybe_place(db, new_id, None if gave else o.get('place'),
+                          'Created %s "%s"%s' % (kind.lower(), title, (' and gave it to ' + gave) if gave else ''))
+    return {'id': new_id, 'i': db.overlay.get(('BOOK', new_id.lower())), 'placed': placed, 'given': gave}
 
 
 # ===================================================================== containers

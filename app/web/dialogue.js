@@ -322,7 +322,7 @@ async function aiDraft(req, btn, use){
   const st = await aiStatus();
   if (!st || !st.configured){ toast('Connect the assistant first (✦ Assistant, top right).', true); AI.open = true; $('#aipanel').classList.add('open'); renderAI(); return; }
   if (req.kind !== 'journal' && req.kind !== 'title'){
-    const brief = prompt('What should the line say or do? (optional, e.g. "asks the player to find her ring in the cave")', req.brief || '');
+    const brief = await askText('What should the line say or do? (optional, e.g. "asks the player to find her ring in the cave")', req.brief || '');
     if (brief === null) return;
     req.brief = brief;
   }

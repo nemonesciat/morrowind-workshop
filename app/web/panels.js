@@ -528,8 +528,8 @@ PNL.windowsMenu = function(space, anchor){
   for (const [name, L] of Object.entries(sp.opts.presets)) items.push({label: 'Layout: ' + name, act: () => PNL.useLayout(space, L)});
   const mine = PNL.layouts(space);
   for (const [name, L] of Object.entries(mine)) items.push({label: 'My layout: ' + name, act: () => PNL.useLayout(space, L)});
-  items.push('-', {label: 'Save this layout…', act: () => { const n = prompt('A name for this layout:', 'My layout'); if (n){ PNL.saveLayout(space, n.trim().slice(0, 40)); toast('Saved the layout "' + n + '".'); } }});
-  if (Object.keys(mine).length) items.push({label: 'Forget one of my layouts…', act: () => { const n = prompt('Which one? (' + Object.keys(mine).join(', ') + ')'); if (n && mine[n]){ PNL.deleteLayout(space, n); toast('Forgot "' + n + '".'); } }});
+  items.push('-', {label: 'Save this layout…', act: async () => { const n = await askText('A name for this layout:', 'My layout'); if (n && n.trim()){ PNL.saveLayout(space, n.trim().slice(0, 40)); toast('Saved the layout "' + n.trim() + '".'); } }});
+  if (Object.keys(mine).length) items.push({label: 'Forget one of my layouts…', act: async () => { const n = await askText('Which one? (' + Object.keys(mine).join(', ') + ')', ''); if (n && mine[n.trim()]){ PNL.deleteLayout(space, n.trim()); toast('Forgot "' + n.trim() + '".'); } }});
   items.push({label: 'Back to the starting layout', act: () => PNL.useLayout(space, sp.opts.presets[sp.opts.start])});
   return pnlMenu(anchor, items);
 };

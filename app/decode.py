@@ -20,6 +20,8 @@ FLAG_NAMES = {
     ('LEVI', 'DATA'): [(1, 'Level up to PC'), (2, 'Calculate for each item')],
     ('LEVC', 'DATA'): [(1, 'Level up to PC')],
     ('SPEL', 'SPDT'): [(1, 'Auto-calculated cost'), (2, 'PC start spell'), (4, 'Always succeeds')],
+    ('BODY', 'BYDT'): [(1, 'For women'), (2, 'Not playable')],
+    ('MGEF', 'MEDT'): [(0x200, 'Allow spellmaking'), (0x400, 'Allow enchanting'), (0x800, 'Negative light')],
 }
 ENTRY_LABEL = {'LEVI': ('INAM', 'Item'), 'LEVC': ('CNAM', 'Creature')}
 
@@ -103,6 +105,10 @@ def decode_record(db, i):
         labels.update(INFO_LABELS)
     if tag == 'DOOR':
         labels.update({'SNAM': 'Open Sound', 'ANAM': 'Close Sound'})
+    if tag == 'SNDG':
+        labels.update({'CNAM': 'Creature', 'SNAM': 'Sound'})
+    if tag == 'BODY':
+        labels.update({'FNAM': 'Race'})
     if tag in ('ARMO', 'CLOT'):
         labels_after_indx = ARMOR_PART_LABELS
     else:

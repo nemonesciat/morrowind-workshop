@@ -18,11 +18,22 @@ function v3Script(){
   return V3.ready;
 }
 
+// Textures load a few at a time. A freshly furnished room asks for several hundred at once, and the
+// browser dropped some of that burst (the thing then stood pure white); the queue keeps every request
+// alive, and the same file asked for twice is fetched once.
+const TEX_Q = {active: 0, max: 8, waiting: [], pending: {}};
+function v3TexNext(){
+  while (TEX_Q.active < TEX_Q.max && TEX_Q.waiting.length){ const job = TEX_Q.waiting.shift(); TEX_Q.active++; job(); }
+}
 function v3Tex(path, cb, fail){
   const T = THREE, url = '/api/file?path=' + encodeURIComponent(path);
   if (texCache[url]){ cb(texCache[url]); return; }
+  if (TEX_Q.pending[url]){ TEX_Q.pending[url].push([cb, fail]); return; }
+  TEX_Q.pending[url] = [[cb, fail]];
+  const settle = (ok, tex) => { const list = TEX_Q.pending[url] || []; delete TEX_Q.pending[url]; TEX_Q.active--; v3TexNext();
+                                for (const [c, f] of list){ if (ok) c(tex); else if (f) f(); } };
   const loader = path.endsWith('.dds') ? new T.DDSLoader() : path.endsWith('.tga') ? new T.TGALoader() : new T.TextureLoader();
-  loader.load(url, tex => {
+  const attempt = (again) => loader.load(url, tex => {
     if (!path.endsWith('.dds')) tex.flipY = false;
     else {
       // Morrowind's DDS files often stop their mip chain early; WebGL then draws them black
@@ -30,8 +41,13 @@ function v3Tex(path, cb, fail){
       if (!tex.mipmaps || tex.mipmaps.length < full){ tex.minFilter = T.LinearFilter; tex.generateMipmaps = false; if (tex.mipmaps) tex.mipmaps = tex.mipmaps.slice(0, 1); }
     }
     tex.wrapS = tex.wrapT = T.RepeatWrapping;
-    texCache[url] = tex; cb(tex);
-  }, undefined, () => { if (fail) fail(); });
+    texCache[url] = tex; settle(true, tex);
+  }, undefined, () => {
+    // (a request lost all the same: once more, a moment later)
+    if (again) setTimeout(() => attempt(false), 1500); else settle(false);
+  });
+  TEX_Q.waiting.push(() => attempt(true));
+  v3TexNext();
 }
 
 function v3Material(tex, alpha, double){
@@ -39,11 +55,13 @@ function v3Material(tex, alpha, double){
   if (!V3.mats[k]){
     // one-sided like in the Construction Set and the game: you can look into a room through its walls
     // and ceiling. Models marked to draw both sides (and see-through ones) keep both.
-    const m = new THREE.MeshLambertMaterial({color: tex ? 0xffffff : 0xcfc6b5, side: alpha || double ? THREE.DoubleSide : THREE.FrontSide, alphaTest: alpha ? 0.5 : 0,
+    // (plain stone colour until its texture is here: a thing waiting for its texture, or whose texture
+    // never came, used to glow pure white in a freshly furnished room)
+    const m = new THREE.MeshLambertMaterial({color: 0xcfc6b5, side: alpha || double ? THREE.DoubleSide : THREE.FrontSide, alphaTest: alpha ? 0.5 : 0,
                                              wireframe: !!V3.view.wire});
     if (tex){
       m.userData.loading = true;
-      v3Tex(tex, t => { m.map = t; m.needsUpdate = true; m.userData.loading = false; }, () => { m.userData.loading = false; });
+      v3Tex(tex, t => { m.map = t; m.color.setHex(0xffffff); m.needsUpdate = true; m.userData.loading = false; }, () => { m.userData.loading = false; });
     }
     V3.mats[k] = m;
   }
@@ -82,7 +100,8 @@ function v3Init(){
   r.domElement.tabIndex = 0;
   V3.renderer = r;
   V3.scene = new T.Scene();
-  V3.camera = new T.PerspectiveCamera(60, 1, 4, 40000);
+  try { V3.fov = +localStorage.getItem('ws-fov') || V3.fov; } catch (e) {}
+  V3.camera = new T.PerspectiveCamera(V3.fov || 60, 1, 4, 40000);
   V3.camera.up.set(0, 0, 1);
   V3.root = new T.Group(); V3.scene.add(V3.root);
   V3.ground = new T.Group(); V3.scene.add(V3.ground);
@@ -380,7 +399,8 @@ function v3Paths(){
 function v3Place(g, r){
   const p = r.p, o = V3.origin;
   g.position.set(p[0] - o[0], p[1] - o[1], p[2] - o[2]);
-  g.rotation.set(-p[3], -p[4], -p[5], 'ZYX');       // the game turns things clockwise
+  // the game turns things clockwise, about Z first, then Y, then X (OpenMW's makeOsgQuat): Three's 'XYZ'
+  g.rotation.set(-p[3], -p[4], -p[5], 'XYZ');
   g.scale.setScalar(r.s || 1);
   g.updateMatrixWorld(true);
 }
@@ -569,7 +589,7 @@ function v3GhostGroup(items){
         part.add(new T.Mesh(mesh.geometry, mat));
       }
       part.position.set(it.dx, it.dy, it.dz || 0);
-      part.rotation.set(-(it.rx || 0), -(it.ry || 0), -(it.rz || 0), 'ZYX');
+      part.rotation.set(-(it.rx || 0), -(it.ry || 0), -(it.rz || 0), 'XYZ');
       part.scale.setScalar(it.s || 1);
       ghost.g.add(part);
     }
@@ -1498,7 +1518,7 @@ function v3DragStart(){
   if (V3.tc.object === V3.pivot && W.multi.size > 1){
     // a whole group: remember where every member started, relative to the handles
     const members = [...W.multi.values()].map(m => V3.objs.get(m.cell + '|' + m.k)).filter(Boolean);
-    V3.drag = {group: true, members: members.map(o => ({o, pos: o.g.position.clone(), rz: o.g.rotation.z})),
+    V3.drag = {group: true, members: members.map(o => ({o, pos: o.g.position.clone(), q: o.g.quaternion.clone()})),
                start: V3.pivot.position.clone(), startRot: V3.pivot.rotation.z};
     return;
   }
@@ -1525,7 +1545,8 @@ function v3Snap(){
     for (const m of D.members){
       const ox = m.pos.x - D.start.x, oy = m.pos.y - D.start.y;
       m.o.g.position.set(D.start.x + d.x + ox * c - oy * s, D.start.y + d.y + ox * s + oy * c, m.pos.z + d.z);
-      m.o.g.rotation.set(m.o.g.rotation.x, m.o.g.rotation.y, m.rz + a, 'ZYX');
+      // (turned about the world's up axis on top of its own turn; a tilted thing keeps its tilt)
+      m.o.g.quaternion.copy(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a).multiply(m.q));
       m.o.g.updateMatrixWorld(true);
     }
     for (const bh of V3.multiBoxes || []) bh.update();
@@ -1556,7 +1577,7 @@ async function v3DragEnd(){
     if (V3.pivot.position.distanceTo(D.start) < 0.05 && Math.abs(V3.pivot.rotation.z - D.startRot) < 1e-4) return;
     if (!await needProject()){ v3Refresh(); return; }
     const moves = D.members.map(m => {
-      const r = m.o.r, p = r.p.slice(), e = new THREE.Euler().setFromQuaternion(m.o.g.quaternion, 'ZYX');
+      const r = m.o.r, p = r.p.slice(), e = new THREE.Euler().setFromQuaternion(m.o.g.quaternion, 'XYZ');
       p[0] = m.o.g.position.x + V3.origin[0]; p[1] = m.o.g.position.y + V3.origin[1]; p[2] = m.o.g.position.z + V3.origin[2];
       p[3] = -e.x; p[4] = -e.y; p[5] = ((-e.z) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
       return {cell: m.o.ck, ref: r.k, p};
@@ -1587,7 +1608,7 @@ function v3RestDz(o, sk, fromTop){
 
 async function v3Commit(o, g){
   if (!await needProject()){ v3Refresh(); return; }
-  const r = o.r, p = r.p.slice(), e = new THREE.Euler().setFromQuaternion(g.quaternion, 'ZYX');
+  const r = o.r, p = r.p.slice(), e = new THREE.Euler().setFromQuaternion(g.quaternion, 'XYZ');
   p[0] = g.position.x + V3.origin[0]; p[1] = g.position.y + V3.origin[1]; p[2] = g.position.z + V3.origin[2];
   p[3] = -e.x; p[4] = -e.y; p[5] = ((-e.z) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
   r.p = p;
@@ -1625,6 +1646,8 @@ function v3Tools(){
         <label title="Lines at the move grid's spacing (128 when the grid is off), at the selected object's base or where you look"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128})</span></label>
         ${W.ext ? `<label title="Where one cell ends and the next begins"><input type="checkbox" data-v3v="cells" ${V3.view.cells ? 'checked' : ''}> Cell borders</label>` : ''}
         <label title="Show the triangles that make up models and the ground"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
+        <label title="How wide the view is: narrow like a camera lens, or wide to take a whole room in (the game's own is about 75)" style="display:block;margin-top:6px">Field of view <b id="v3fovv">${V3.fov || 60}°</b>
+          <input type="range" id="v3fov" min="40" max="110" step="5" value="${V3.fov || 60}" style="width:100%"></label>
         ${W.ext ? `<label><input type="checkbox" data-v3v="ground" ${V3.view.ground ? 'checked' : ''}> Ground</label>
         <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>
         <label title="How far you can see outdoors: the cells loaded round the camera. Further is slower in towns."
@@ -1651,6 +1674,8 @@ function v3Tools(){
   });
   const vd = $('#v3dist');
   if (vd){ vd.oninput = () => { $('#v3distv').textContent = V3_DISTS[+vd.value]; }; vd.onchange = () => v3SetDist(+vd.value); }
+  const vf = $('#v3fov');
+  if (vf) vf.oninput = () => { V3.fov = +vf.value; $('#v3fovv').textContent = V3.fov + '°'; if (V3.camera){ V3.camera.fov = V3.fov; V3.camera.updateProjectionMatrix(); } try { localStorage.setItem('ws-fov', String(V3.fov)); } catch (e) {} };
   $('#v3grid').onchange = e => { V3.grid = +e.target.value; v3ApplyMode(); v3Tools(); V3.gridFor = null; };
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };

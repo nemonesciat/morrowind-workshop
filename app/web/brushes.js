@@ -75,7 +75,7 @@ async function brAddTo(id, name){
   let target;
   if (!list.length) target = null;
   else {
-    const pick = prompt('Add "' + (name || id) + '" to which brush?\n\n' + list.map((b, n) => `${n + 1}. ${b.name}`).join('\n') + `\n${list.length + 1}. A new brush\n\nType a number:`, '1');
+    const pick = await askText('Add "' + (name || id) + '" to which brush?\n\n' + list.map((b, n) => `${n + 1}. ${b.name}`).join('\n') + `\n${list.length + 1}. A new brush\n\nType a number:`, '1');
     if (pick === null) return;
     const k = parseInt(pick, 10) - 1;
     if (!(k >= 0 && k <= list.length)) return toast('That isn\'t one of the numbers.', true);

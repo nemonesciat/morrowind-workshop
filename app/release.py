@@ -569,6 +569,21 @@ def checks(db):
                     'title': ('%d Lua problem%s' % (len(lp), '' if len(lp) == 1 else 's')) if lp else '%d Lua script%s look fine' % (len(p.lua), '' if len(p.lua) == 1 else 's'),
                     'detail': 'Open them on the Scripts page (Lua scripts) to see the details.' if lp else
                               'They are packed with the mod, with %s listing them for the game.' % p.lua_omwscripts(), 'items': lp})
+    try:
+        import verify
+        vf = [f for f in verify.findings(db) if f['sev'] != 'info']
+    except Exception as e:                  # a check must never stop the release page
+        print('verify:', e)
+        vf = []
+    if vf:
+        ne = sum(1 for f in vf if f['sev'] == 'error')
+        out.append({'id': 'records', 'sev': 'error' if ne else 'warning',
+                    'title': '%d record%s the game would complain about' % (len(vf), '' if len(vf) == 1 else 's'),
+                    'detail': 'Missing names, models or icons, spells with no effects, a class with a skill twice, weather that doesn\'t add up to 100%… '
+                              'The Health check page has the full list with a link to each.',
+                    'items': [{'label': f['text']} for f in vf[:40]]})
+    else:
+        out.append({'id': 'records', 'sev': 'ok', 'title': 'Every record passes the game\'s own checks', 'detail': '', 'items': []})
     qg = _quest_gaps(db)
     if qg:
         out.append({'id': 'quests', 'sev': 'warning', 'title': 'Quest stages and topics nobody can reach',

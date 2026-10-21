@@ -384,7 +384,7 @@ async function cSave(){
 }
 async function cCopy(){
   if (!await needProject()) return;
-  const id = prompt('ID for the copy (players never see it):', (C.id + '_copy').slice(0, 31));
+  const id = await askText('ID for the copy (players never see it):', (C.id + '_copy').slice(0, 31));
   if (!id) return;
   try {
     await post('/api/duplicate', {i: C.data.i, id});

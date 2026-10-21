@@ -258,7 +258,7 @@ async function qolReopen(){
 // ---------------------------------------------------------------- scaling a group
 async function qolScale(){
   const sel = selectionRefs(); if (!sel.length) return false;
-  const a = prompt(`Make ${sel.length === 1 ? 'it' : 'these ' + sel.length} bigger or smaller by how much? (e.g. 1.5 for half as big again, 0.5 for half the size)`, '1.25');
+  const a = await askText(`Make ${sel.length === 1 ? 'it' : 'these ' + sel.length} bigger or smaller by how much? (e.g. 1.5 for half as big again, 0.5 for half the size)`, '1.25');
   const f = parseFloat(a); if (!a || !isFinite(f) || f <= 0) return;
   if (!await needProject()) return;
   const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
