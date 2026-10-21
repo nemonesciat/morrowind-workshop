@@ -753,7 +753,9 @@ def used_by(db, sid):
     return out
 
 
-def save(db, sid, text, create=False):
+def save(db, sid, text, create=False, save=True):
+    """Keep a script in the mod. save=False leaves the commit to the caller (a script made as part of a
+    bigger change: mechanism.py), and the result is then just the script's ID."""
     _require_project(db)
     sid = (sid or '').strip()
     if not sid:
@@ -787,6 +789,9 @@ def save(db, sid, text, create=False):
         flags = db.recs[ri][6] & ~0x20
     was_created = bool(db.project.records.get('SCPT|' + key, {}).get('created'))
     db.project.set_record('SCPT', key, flags, join_subs(subs), created=create or was_created)
+    if not save:
+        db.sync_project()
+        return sid
     commit(db, ('Created script "%s"' if create else 'Edited script "%s"') % sid)
     return read(db, sid)
 

@@ -201,8 +201,62 @@ def survey(db, rid, limit=120):
     import modelcache
     kept = modelcache.get(db, 'shelfdress', low)         # (on disk from an earlier furnish: the cells aren't walked again)
     if kept is not None:
+        if len(kept['dressings']) < 3:
+            s2 = twin_survey(db, rid, limit)              # (a thin result kept from before the twins were looked up)
+            if s2 is not None and len(s2['dressings']) > len(kept['dressings']):
+                kept = s2
         _cache[low] = (db.recs, kept)
         return kept
+    # (a model the game stands nowhere under this id, with the very same mesh as one it dresses: the
+    # game's activator bookshelf beside its furniture twin, a hidden door made from a bookcase: the
+    # twin's dressings, in the same frame. The user: "Why doesn't this bookshelf have an auto decorate
+    # option? other ones do")
+    import furnish
+    twin = furnish.taught_twin(db, rid)
+    if twin:
+        s2 = survey(db, twin, limit)
+        _cache[low] = (db.recs, s2)
+        return s2
+    out = _survey_own(db, rid, limit)
+    if len(out['dressings']) < 3:
+        # (a variant record the game stands once or twice, furn_com_r_bookshelf_01_telvos: the same mesh's
+        # twin with the game's dressings, else the id's stem, furn_com_r_bookshelf_01)
+        s2 = twin_survey(db, rid, limit)
+        if s2 is not None and len(s2['dressings']) > len(out['dressings']):
+            _cache[low] = (db.recs, s2)
+            return s2
+    _cache[low] = (db.recs, out)
+    modelcache.put(db, 'shelfdress', low, out)
+    return out
+
+
+def twin_survey(db, rid, limit=120):
+    """The dressings of a model's twin (the same mesh, most used by the game first) or of its id's stem
+    (the name less its last suffix: a Telvos or a Huleen variant of a bookshelf), the first with three
+    dressings or more; None when there is none."""
+    import furnish
+    low = rid.lower()
+    tried = {low}
+    cands = list(furnish.mesh_siblings(db, rid))
+    stem = low
+    while '_' in stem:
+        stem = stem.rsplit('_', 1)[0]
+        if db.resolve_id(stem) is not None:
+            cands.append(stem)
+    for c in cands:
+        if c.lower() in tried:
+            continue
+        tried.add(c.lower())
+        s2 = survey(db, c, limit)
+        if len(s2['dressings']) >= 3:
+            return s2
+    return None
+
+
+def _survey_own(db, rid, limit=120):
+    """This very id's dressings, walked from the game's places (survey() wraps it with the cache and the twins)."""
+    low = rid.lower()
+    import modelcache
     out = {'n': 0, 'levels': [], 'dressings': [], 'empty': 0}
     fri = db.resolve_id(rid)
     fb = mapdata.object_bounds(db, fri) if fri is not None else None
@@ -1073,6 +1127,37 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
                             _relevel(db, bounds, o)
                     else:
                         _place_on(db, bounds, fb, s['levels'], objs, iid, pose, rng)
+    if fb and tall:
+        # a tall shelf is never thinner than the game's median dressing of the model, whatever the
+        # household's level (the user: "is this the furnishing level?"; the level lowers what the things
+        # are worth, not how many there are): topped up with things borrowed from the model's other
+        # dressings at their own spots, under the caps, where they fit
+        sizes = sorted(len(d['objects']) for d in s['dressings'])
+        gmed = sizes[len(sizes) // 2] if sizes else 0
+        donors = [d for d in s['dressings'] if d is not chosen and d['objects']]
+        tries = 0
+        while len(objs) < gmed and tries < 60 and donors:
+            tries += 1
+            o = dict(rng.choice(rng.choice(donors)['objects']))
+            if not plain(db, o['id'], min_uses) or 'fp' not in o:
+                continue
+            v_ = value_of(db, o['id'])[1]
+            if (hard is not None and v_ > hard) or (cap is not None and interesting(db, o['id']) and v_ > cap):
+                if o['kind'] != 'BOOK':
+                    continue
+                b0, _t = _bounds_of(db, bounds, o['id'])
+                fresh = [bk for bk in bpool if bk.lower() not in titles and b0
+                         and (lambda bb: bb and _same_size(bb, b0) and _axes(bb) == _axes(b0))(_bounds_of(db, bounds, bk)[0])]
+                if not fresh:
+                    continue
+                o['id'] = rng.choice(fresh)
+                _relevel(db, bounds, o)
+            if o['kind'] == 'BOOK' and o['id'].lower() in titles:
+                continue
+            if _fits_on(fb, s['levels'], _fp_of(o), o['level'], objs):
+                objs.append(o)
+                if o['kind'] == 'BOOK':
+                    titles.add(o['id'].lower())
     if fb:
         shelf_sense(db, bounds, fb, s['levels'], objs, ax)
     return [{k: o[k] for k in ('id', 'x', 'y', 'z', 'rx', 'ry', 'rz', 's')} for o in objs]
@@ -1091,7 +1176,7 @@ def book_pose(db, bounds, o):
     h = _axes(b)[2]
     R = _turned(o['rx'], o['ry'], o['rz'])
     vx, vy, vz = R[0][h], R[1][h], R[2][h]
-    if abs(vz) >= 0.9:
+    if abs(vz) >= 0.985:               # (within ten degrees of straight up; a tilt of fifteen is a lean)
         return 'upright', 0
     if abs(vz) <= 0.3:
         return 'flat', 0
@@ -1114,7 +1199,7 @@ def shelf_sense(db, bounds, fb, levels, objs, ax):
     for lv, row in rows.items():
         poses = {id(o): (book_pose(db, bounds, o) if o['kind'] == 'BOOK' else ('other', 0)) for o in row}
 
-        def beside(o, side, gap=10.0):
+        def beside(o, side, gap=4.0):
             """Something on this side of o along the row (its footprint within gap of o's edge)."""
             a = _fp_of(o)
             for p in row:
@@ -1144,6 +1229,10 @@ def shelf_sense(db, bounds, fb, levels, objs, ax):
         for o in row:
             kind, d = poses[id(o)]
             if kind != 'lean':
+                continue
+            # (the side its top tips to along the row, from the book's turned geometry; a book tipped
+            # back across the row leans on the shelf's back board, as the game's do: left as it is)
+            if abs(d[ax]) < 0.15:
                 continue
             side = 1 if (d[ax] > 0) else -1
             if beside(o, side) is not None:

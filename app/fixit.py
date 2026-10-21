@@ -192,7 +192,13 @@ def _narrow_tall(m, H, skip=()):
         if r['k'] in skip or r['type'] != 'STAT':
             continue
         bx = _world_box(r)
-        if bx and bx[3] - bx[0] <= 110 and bx[4] - bx[1] <= 110 and bx[5] - bx[2] >= H * 0.4:
+        if not bx or bx[5] - bx[2] < H * 0.4:
+            continue
+        w, d = bx[3] - bx[0], bx[4] - bx[1]
+        # (the Common sets' in_c_pillar_wood / _stone are 132 across: wider than 110, and the post rules
+        # never saw them, so no corner of a Common place ever "wanted" a post. A piece named for a post
+        # counts up to 160 across)
+        if (w <= 110 and d <= 110) or (COLUMN_WORDS.search(r['id'].lower()) and w <= 160 and d <= 160):
             out.append((r, bx))
     return out
 
@@ -1060,6 +1066,72 @@ def _hole_fixes(db, sc, hole, near=(), tile_refs=(), near_tiles=()):
     return good
 
 
+def _opening_issues(db, m, tiles, floors):
+    """The edges of a stairwell's opening on the floor the stairs come out on: no tile stands there, so
+    the tile-by-tile scan never looks out from it. An edge with no floor piece beyond it, where rays
+    from the tiles round the opening get out to the void, is a hole (the stair piece's own back wall,
+    when it has one at that height, stops them and nothing is reported)."""
+    import seethrough
+    out = []
+    stairs = [r for r in m['refs'] if r.get('ri') is not None and r['type'] == 'STAT' and re.search(r'stair|ramp', r['id'].lower())]
+    if not stairs or not tiles:
+        return out
+    sc = None
+    for r in stairs:
+        pre = kits.kit_prefix(r['id'])
+        info = kits.stairs(db, pre) if pre and pre in kits.kits(db) else None
+        sp = next((p for p in (info or {}).get('pieces', []) if p['id'].lower() == r['id'].lower()), None)
+        if not sp or sp.get('len', 1) > 1 or 'cx' in sp:
+            continue
+        kp = kits.kit_pieces(db, pre)
+        T, H = kp['tile'], kp['height']
+        upper = r['p'][2] + sp['z_low'] + kp['zmin'] + sp['rise']
+        ox, oy = r['p'][0], r['p'][1]
+        if any(abs(t['x'] - ox) < 24 and abs(t['y'] - oy) < 24 and abs(t['floor'] - upper) < 64 for t in tiles):
+            continue                                  # (floored over: no opening)
+        near = [t for t in tiles if abs(t['floor'] - upper) < 64 and abs(t['x'] - ox) <= T * 1.1 and abs(t['y'] - oy) <= T * 1.1
+                and not (abs(t['x'] - ox) < 24 and abs(t['y'] - oy) < 24)]
+        if not near:
+            continue
+        for s, (dx, dy) in STEP.items():
+            bx_, by_ = ox + dx * T, oy + dy * T
+            if any(abs(t['x'] - bx_) < 24 and abs(t['y'] - by_) < 24 and abs(t['floor'] - upper) < 64 for t in tiles):
+                continue
+            if any(b[0] <= bx_ <= b[3] and b[1] <= by_ <= b[4] and b[2] <= upper + 64 and b[5] >= upper - 16 for b in floors):
+                continue
+            if sc is None:
+                sc = seethrough.place_scene(db, m)
+            ex, ey = ox + dx * T / 2, oy + dy * T / 2
+            ax, ay = abs(dy), abs(dx)
+            rays = []
+            for t in near:
+                eye = (t['x'], t['y'], t['floor'] + min(H * 0.45, 128))
+                for k in range(-4, 5):
+                    u = k * T * 0.1
+                    for j in range(6):
+                        tgt = (ex + ax * u, ey + ay * u, upper + 20 + (H - 40) * (j + 0.5) / 6.0)
+                        d = (tgt[0] - eye[0], tgt[1] - eye[1], tgt[2] - eye[2])
+                        L = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2) or 1.0
+                        d = (d[0] / L, d[1] / L, d[2] / L)
+                        if not sc.blocked(eye, d, 4000):
+                            rays.append((eye, d, 4000))
+            if len(rays) < 6:
+                continue
+            wall = (kp['walls'] and None) or kits.family_wall(db, pre)
+            fixes = []
+            if kp['walls'] or wall:
+                t_ = {'x': ox, 'y': oy, 'floor': upper, 'T': T, 'H': H, 'kit': kp}
+                if kp['walls']:
+                    fixes = [_wall_fix(db, t_, [s])] if _wall_fix(db, t_, [s]) else []
+                else:
+                    import builder
+                    rid_, pos_, _e = builder._loose_wall_ref(db, wall, ox, oy, s, upper, T)
+                    fixes = [{'label': 'Add a wall piece (%s)' % rid_, 'ops': [{'op': 'place', 'id': rid_, 'p': list(pos_)}]}]
+            out.append({'kind': 'hole', 'side': s, 'ref': r['k'], 'id': r['id'], 'x': ex, 'y': ey, 'z': upper + H / 2,
+                        'text': 'The stairwell\'s opening looks out onto nothing here: the void shows through', 'fixes': fixes})
+    return out
+
+
 def _short_issues(db, m):
     """Half-length pieces (a hall piece 128 long) put down where a whole tile should be: the floor and
     walls stop short of the next piece. Fixed the way you would by hand: a second one end to end
@@ -1338,6 +1410,8 @@ def _scan(db, cell_key):
     issues += _short_issues(db, m)
     # what the player can actually see through: slits and corners where pieces don't meet
     issues += _hole_issues(db, m, tiles, floors, issues, cell_key)
+    # a stairwell opening's own edge on the floor above, with nothing beyond it
+    issues += _opening_issues(db, m, tiles, floors)
     # in the order to fix them in (posts first: they often close what's below them in the list)
     issues.sort(key=lambda i: _rank(i) if i['fixes'] else 3)
     for n, i in enumerate(issues):

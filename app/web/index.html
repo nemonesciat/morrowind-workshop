@@ -1888,7 +1888,7 @@ cv.addEventListener('mousemove', e => {
     return;
   }
   const hit = hitTest(e.offsetX, e.offsetY), tip = $('#maptip');
-  if (hit){ const r = hit[1]; tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10) + 'px'; tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>`; }
+  if (hit){ const r = hit[1]; tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10) + 'px'; tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>${r.to ? ' → ' + esc(r.to.cell || r.to.label || 'outdoors') : ''}`; }
   else tip.style.display = 'none';
 });
 window.addEventListener('mouseup', async e => {
@@ -2292,7 +2292,7 @@ function renderWside(){
         <div class="msg">${esc(S.typeLabels[sel.type] || 'unknown type')} · ${sel.mine ? '<span class="mine">your mod</span>' : 'from ' + esc(sel.src)}</div></div></div>
       <div class="xyz"><div><label>X</label><input class="inp" id="s-x" value="${sel.p[0].toFixed(1)}"></div><div><label>Y</label><input class="inp" id="s-y" value="${sel.p[1].toFixed(1)}"></div><div><label>Height</label><input class="inp" id="s-z" value="${sel.p[2].toFixed(1)}"></div></div>
       <div class="two"><div><label>Turn (degrees)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div></div>
-      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.arch ? '<button class="btn sm" data-sa="variants" title="Other pieces of this building style that fit the same spot">↻ Other pieces</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
+      <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.arch ? '<button class="btn sm" data-sa="variants" title="Other pieces of this building style that fit the same spot">↻ Other pieces</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}<span id="w-dress"></span>${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
       <div class="dd" style="margin-top:10px"><input class="inp" id="w-swap" placeholder="Swap for… (search for a replacement)" autocomplete="off"><div class="ddlist" id="w-swap-l"></div></div>
       <div id="w-props" style="margin-top:8px"></div>
       ${sel.type === 'DOOR' ? `<h3>Leads to</h3>
@@ -2333,6 +2333,7 @@ function renderWside(){
   bindWside();
   if (i.interior) renderPlaceSettings(i); else regViewBind(i);
   if (typeof refPropsRender === 'function') refPropsRender();
+  if (sel) dressProbe(W.sel.cell, sel);
   disposeViews('sel');
   for (const p of ['place', 'sel', 'objs', 'view']) if (PNL.isShown('world', p)) v3ThumbScan(body(p));
   for (const [id, v, s] of keepTyped){ const e = $('#' + id); if (e){ e.value = v; e.focus(); try { e.setSelectionRange(s, s); } catch (x){} } }
@@ -2673,7 +2674,9 @@ function ddSearch(id, types, onPick, pictures){
   inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
     const q = inp.value.trim(); const my = ++seq;
     if (!q){ list.style.display = 'none'; return; }
-    const r = await api('/api/search?' + new URLSearchParams({q, types, limit: 40}));
+    // (placing: the models the game places most come first, so the common bookshelf is at the top and its
+    // twenty variants under it)
+    const r = await api('/api/search?' + new URLSearchParams(pictures ? {q, types, limit: 40, sort: 'uses'} : {q, types, limit: 40}));
     if (my !== seq) return;
     list.innerHTML = r.rows.map((x, n) => pictures
       ? `<div data-n="${n}" class="hasthumb" draggable="true" data-pid="${esc(x.id)}" data-pname="${esc(x.name || x.id)}" data-ptype="${esc(x.type)}" data-hid="${esc(x.id)}">${thumbImg(x.id, x.type, 48, 'sm')}<span>${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></span></div>`
@@ -2722,8 +2725,42 @@ document.addEventListener('mouseover', e => {
 });
 let hoverT_el = null;
 document.addEventListener('mouseout', e => { if (e.target.closest && e.target.closest('#world .pbody [data-hid]') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('[data-hid]') === hoverT_el)){ hoverT_el = null; hidePreview(); } });
+// "Dress this (the game's way)": one placed piece given what the game puts on that model (a bookshelf's
+// books, a table's dishes, a counter's wares, a planter's plant, a hearth's pots); again for a fresh draw.
+// The button shows only for models the game dresses somewhere (asked once per piece, kept in W.dressable).
+W.dressable = W.dressable || {};
+function dressKey(ck, k){ return ck + '|' + k; }
+function dressButtonHtml(d){
+  if (!d || !d.dressable) return '';
+  return `<button class="btn sm" data-sa="dress" title="${esc(d.dressed ? 'Take its dressing off and lay a fresh one, drawn from the game\'s ' + d.dressings_known + ' dressings of this model' : 'Put on it what the game puts on this model (' + d.dressings_known + ' dressings seen); one undoable change')}">${d.dressed ? '🎲 Dress again' : '🪄 Dress this (the game\'s way)'}</button>`;
+}
+W.dressing = W.dressing || {};        // (the probes in flight, by piece: a menu opened meanwhile waits on one)
+function dressProbe(ck, sel){
+  if (!sel || !['STAT', 'ACTI', 'CONT', 'DOOR'].includes(sel.type)) return null;
+  const key = dressKey(ck, sel.k);
+  if (key in W.dressable && W.dressable[key] !== null) return null;      // (answered already)
+  if (W.dressing[key]) return W.dressing[key];                           // (asked already: the same wait)
+  W.dressable[key] = null;
+  W.dressing[key] = (async () => {
+    try { W.dressable[key] = await api('/api/furnish/piece?' + new URLSearchParams({cell: ck, ref: sel.k})); } catch (e){ W.dressable[key] = {dressable: false}; }
+    delete W.dressing[key];
+    const box = $('#w-dress'); if (box && W.sel && W.sel.k === sel.k) box.innerHTML = dressButtonHtml(W.dressable[key]);
+    return W.dressable[key];
+  })();
+  return W.dressing[key];
+}
+async function dressPiece(ck, k, name){
+  try {
+    const m = await post('/api/furnish/piece', {cell: ck, ref: k, replace: true});
+    delete W.dressable[dressKey(ck, k)];
+    toast((m.removed ? 'Took ' + m.removed + ' things off and ' : '') + 'laid ' + m.placed + ' on ' + (name || m.model) + ' (one of the game\'s ' + m.dressings_known + ' dressings of it)');
+    await refreshAfterEdits();
+    if (findRef(ck, k)) selectRef(ck, k, true);
+  } catch (err){ toast(err.message, true); }
+}
 async function selAction(a){
   const sel = W.sel && findRef(W.sel.cell, W.sel.k); if (!sel) return;
+  if (a === 'dress'){ if (!await needProject()) return; return dressPiece(W.sel.cell, sel.k, sel.name || sel.id); }
   if (a === 'talk') return openCharacterDialogue(sel.id);
   if (a === 'char') return cOpen(sel.id);
   if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
@@ -2965,7 +3002,8 @@ function formHtml(kind){
     return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds the floors, walls, ceilings, doorways, stairs and a way out from the style's own pieces, so it looks like the base game, and furnishes the rooms the way similar places in the game are furnished. <b>Plans ▾</b> has ready-made layouts, your saved plans, <b>Plan from a place in the game</b> (a house the game made, read as a plan of its rooms, doorways and stairs, to study and build from) and <b>Copy a place from the game</b>: a room or house the game made, copied whole, with a working door from outside.</p>
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
       <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
-      <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div></div>
+      <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div>
+        <label class="hint" style="display:block;cursor:pointer"><input type="checkbox" id="cr-bshowall"> Show styles no place in your game uses</label></div>
     </div>
     <div id="pl-root" style="margin:10px 0 14px;${copy ? 'display:none' : ''}"></div>
     <div class="ccopy" id="cr-copy" style="${copy ? '' : 'display:none'}">
@@ -3289,7 +3327,19 @@ async function bindBuild(){
   // (the stars: how far the Workshop trusts itself in the style, from how many of the game's places teach it,
   // how many in-game rounds it has had and what the lab says: styletrust.py)
   const stars = s => s.trust ? '★'.repeat(s.trust.stars) + '☆'.repeat(5 - s.trust.stars) + ' ' : '';
-  st.innerHTML = CR.bstyles.map(s => `<option value="${esc(s.id)}" ${s.id === (CR.bstyle || 'in_hlaalu') ? 'selected' : ''}>${stars(s)}${esc(s.name)}${s.floors ? ' ⇅' : ''}</option>`).join('');
+  // houses first; the sewers, forts and chapels under their own heading; styles no place in the game uses
+  // (kind 'untaught') only when asked for (the checkbox under the hint, remembered)
+  const showAll = $('#cr-bshowall');
+  let allPref = false; try { allPref = localStorage.getItem('ws-styles-all') === '1'; } catch (e){}
+  if (showAll){ showAll.checked = allPref; showAll.onchange = () => { try { localStorage.setItem('ws-styles-all', showAll.checked ? '1' : '0'); } catch (e){} fill(); showHint(); }; }
+  const fill = () => {
+    const all = showAll ? showAll.checked : allPref, cur = CR.bstyle || 'in_hlaalu';
+    const opt = s => `<option value="${esc(s.id)}" ${s.id === cur ? 'selected' : ''}>${stars(s)}${esc(s.name)}${s.floors ? ' ⇅' : ''}</option>`;
+    const shown = CR.bstyles.filter(s => all || s.kind !== 'untaught' || s.id === cur);
+    const houses = shown.filter(s => !['passage', 'fort', 'chapel'].includes(s.kind)), other = shown.filter(s => ['passage', 'fort', 'chapel'].includes(s.kind));
+    st.innerHTML = houses.map(opt).join('') + (other.length ? `<optgroup label="Dungeons, forts and passages">${other.map(opt).join('')}</optgroup>` : '');
+  };
+  fill();
   const showHint = () => {
     const s = CR.bstyles.find(x => x.id === st.value); CR.bstyle = st.value; if (!s) return;
     hint.textContent = `${s.trust ? stars(s) + s.trust.why + ' ' : ''}${s.pieces} floor pieces · tiles of ${s.tile} units (about ${(s.tile / 72).toFixed(1)} m)${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : ' · one floor only (no stair pieces)'}. Doorways are built the way the game builds them in this style.${s.uses ? '' : ' No place in your game is built in this style yet, so the Workshop can\'t learn how its doorways go together: expect rough edges.'}`;
@@ -3580,6 +3630,7 @@ poll();
 <script src="/web/worldpanels.js"></script>
 <script src="/web/refprops.js"></script>
 <script src="/web/comfort.js"></script>
+<script src="/web/secretdoor.js"></script>
 <script src="/web/qol.js"></script>
 <script src="/web/pathedit.js"></script>
 <script src="/web/toolbar.js"></script>

@@ -1,0 +1,20 @@
+# your own work and settings (never publish these: the settings hold your API key)
+workshop_settings.json
+projects/
+prefabs/
+releases/
+backups/
+reports/
+cache/
+link_data/
+play_commands.txt
+workshop_running.json
+*.log
+
+# build output
+packaging/out/
+packaging/nexus/
+
+# Python
+__pycache__/
+*.pyc

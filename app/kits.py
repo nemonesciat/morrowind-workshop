@@ -255,7 +255,11 @@ STYLE_KITS = {}
 # words that name a kind of piece; a kit's name is everything before the first of them
 PIECE_WORDS = {'room', 'roomt', 'hall', 'hallt', 'hallway', 'wall', 'corner', 'center', 'centre', 'side', 'door',
                'doorway', 'entry', 'jamb', 'doorjamb', 'end', '3way', '4way', 'post', 'rail', 'stair', 'stairs', 'stairsl',
-               'stairsr', 'ramp', 'floor', 'ceiling', 'pillar', 'column', 'arch', 'entrance', 'entr'}
+               'stairsr', 'ramp', 'floor', 'ceiling', 'pillar', 'column', 'arch', 'entrance', 'entr', 'partition',
+               # (the Common sets' endcap, in_c_plain_endcap / in_c_stone_endcap: three walls and a doorway, 51 and
+               # 37 uses, the piece the game stands under a landing in front of its tall stair's underside and at
+               # the end of a one-tile closet; without it the kits had no three-walled piece at all)
+               'endcap'}
 # kits whose "entrance" piece the builder must not build with (see kit_pieces), measured on the two-floor
 # test house: Redoran (small)'s in_r_s_int_entrance_01 measures as a doorway (OODO, 24 uses) but the house
 # then fails to build ("no piece for a spot with walls on 1 sides"), where without it it builds with 3
@@ -264,6 +268,16 @@ PIECE_WORDS = {'room', 'roomt', 'hall', 'hallt', 'hallway', 'wall', 'corner', 'c
 # measured doorway), but admitting it moved the upstairs link door from the middle of the south wall to a
 # corner tile and a fresh gap survey then reported 12 and 10 holes for the two floors instead of 4 and 4
 NO_ENTRANCE_KITS = {'in_r_s_int', 'in_v_s_int'}
+# A roof kit: a set the game only ever stands as the top storey over another set of its family. Common
+# thatch (in_c_thatch_room_p*, 364 tall pitched-roof pieces) is the attic of a Common house: in all 15 of
+# the game's thatch places that have stairs the thatch floor stands exactly 256 above a plain, stone or
+# rich floor (Caldera's Falanaamo, Dagon Fel's End of the World, Old Ebonheart's Katariah, Helnim's
+# guild of fighters...), never over another thatch floor, and the stairs are the family's
+# in_c_stair_plain_tall_01 (8 places) or the thatch set's own in_c_stair_thatch_pend_01/02 (9), all
+# climbing 256. Built as a kit of its own with floors 512 apart it had no stairs the builder would use.
+# So the kit builds its lower floors from the family's plain pieces (tagged 'lower') and only the top
+# floor from its own (tagged 'top'), the storey being the plain set's.
+ROOF_KITS = {'in_c_thatch': 'in_c_plain'}
 
 
 def _named_entrance(low):
@@ -428,13 +442,22 @@ def kit_pieces(db, prefix):
             continue
         if 'jamb' not in low and long_ < tile * 0.8:
             continue
+        # (a loose wall must reach nearly to the ceiling: the Indoril chapel's Room_Wall_01/02 are 212
+        # tall under a 255 storey, screens rather than walls, and every side closed with one leaked
+        # under the ceiling: seven of the test house's eleven holes. Indoril's Room_Wall_03, 215 under
+        # 236, stays)
+        if 'jamb' not in low and h < full_h * 0.85:
+            continue
         item = {'id': db.recs[ri][1], 'ri': ri, 'uses': game_uses(db, low), 'thin_x': w < d,
                 'thick': thin, 'zmin': b[2], 'width': long_}
         if 'jamb' in low or 'doorway' in low or ('door' in low and 'load' not in low and 'jamb' in low):
             item['load'] = 'load' in low
             jambs.append(item)
-        elif 'wall' in low and 'door' not in low and thin >= 3 and 'addon' not in low:
-            walls.append(item)          # (not the paper-thin panels laid over walls for decoration)
+        elif ('wall' in low or 'partition' in low) and 'door' not in low and thin >= 3 and 'addon' not in low:
+            # (not the paper-thin panels laid over walls for decoration; Redoran (small)'s partition_01 is
+            # its loose wall, 4 thick and a tile long, 27 uses: the game closes the sides of its
+            # notches with it, and it is what lets a one-tile room close in that style)
+            walls.append(item)
         elif 'door' in low and 'load' not in low and 'trap' not in low and long_ >= tile * 0.9:
             # a wall section with a doorway through it (Tamriel Data's Redguard "Wall_Door"): the
             # same thing as a Hlaalu door frame, by another name, if there's a hole to walk through
@@ -495,7 +518,65 @@ def kit_pieces(db, prefix):
                 if best is None or u > best[2]:
                     best = (db.recs[ri][1], ri, u, b)
         k['ceiling'] = best and {'id': best[0], 'ri': best[1], 'box': best[3]}
+    # a roof kit (see ROOF_KITS): the family's base set builds the lower floors, this set the top one
+    base = ROOF_KITS.get(prefix.lower())
+    kb = kit_pieces(db, base) if base else None
+    if kb and kb['tile'] == tile and kb['pieces']:
+        for p in k['pieces']:
+            p['storey'] = 'top'
+        k['pieces'] = [dict(p, storey='lower') for p in kb['pieces']] + k['pieces']
+        k['halves'] = [dict(p, storey='lower') for p in kb['halves']] + k['halves']
+        k['jambs'] = kb['jambs'] or k['jambs']
+        k['walls'] = kb['walls'] or k['walls']
+        k['frame_doors'] = kb['frame_doors']
+        k['entry_doors'] = kb['entry_doors'] or k['entry_doors']
+        k['slab'] = kb['slab']
+        k['zmin'] = kb['zmin']
+        k['roof_height'] = k['height']           # (the roof storey's own: thatch 364, for the stairs under it)
+        k['height'] = kb['height']
+        k['roof_kit'] = True
+        k['roof_of'] = base
     return k
+
+
+_family_walls = {}
+
+
+def family_wall(db, prefix):
+    """The loose wall a kit's family keeps under the family's name, when the kit itself has none: the
+    Common sets close an open side with in_c_wall_plain / in_c_wall_stone / in_c_wall_rich (96, 50 uses),
+    which file under "in_c", not under any kit. The one named with the kit's word first, else the most
+    used; shaped like a kit_pieces wall item. None when there is no such wall."""
+    k = kit_pieces(db, prefix)
+    if not k:
+        return None
+    key = prefix.lower()
+    if key in _family_walls and _family_walls[key][0] is db.recs:
+        return _family_walls[key][1]
+    tile, full_h = k['tile'], k['height']
+    parts = key.split('_')
+    fam, word = ('_'.join(parts[:-1]), parts[-1]) if len(parts) >= 3 else (key, '')
+    best = None
+    for (tag, key2), lst in db.by_key.items():
+        if tag != 'STAT' or not key2.startswith(fam + '_wall') or not lst or lst[-1] in db.dead:
+            continue
+        ri = lst[-1]
+        b = mapdata.object_bounds(db, ri)
+        if not b:
+            continue
+        w, d, h = b[3] - b[0], b[4] - b[1], b[5] - b[2]
+        thin, long_ = min(w, d), max(w, d)
+        if thin > tile * 0.35 or not tile * 0.8 <= long_ <= tile * 1.15 or h < full_h * 0.85 or h > full_h * 1.2:
+            continue
+        if any(x in key2 for x in ('window', 'rail', 'screen', 'door')):
+            continue
+        item = {'id': db.recs[ri][1], 'ri': ri, 'uses': game_uses(db, key2), 'thin_x': w < d, 'thick': thin, 'zmin': b[2], 'width': long_}
+        score = (word and word in key2.split('_'), item['uses'])
+        if best is None or score > best[0]:
+            best = (score, item)
+    res = best[1] if best else None
+    _family_walls[key] = (db.recs, res)
+    return res
 
 
 _fits = {}
@@ -615,8 +696,11 @@ def stairs(db, prefix):
     # the style picker, which asks for every kit's stairs, sat on "Loading styles…" meanwhile, with the
     # planner unable to place any stairs until it had)
     disk = _stairs_disk(db)
-    if prefix.lower() in disk:
-        res = disk[prefix.lower()]
+    # (a roof kit's stairs are learnt against its base set's storey: kept apart from what was learnt
+    # before it was one)
+    dkey = prefix.lower() + ('@roof' if k.get('roof_kit') else '')
+    if dkey in disk:
+        res = disk[dkey]
         if res:
             res = dict(res, pieces=[dict(p, ri=db.resolve_id(p['id'])) for p in res['pieces']])
             res['pieces'] = [p for p in res['pieces'] if p['ri'] is not None]
@@ -626,7 +710,7 @@ def stairs(db, prefix):
         return res
     res = _stairs_learn(db, prefix, k)
     _stairs[prefix] = (db.recs, res)
-    disk[prefix.lower()] = res
+    disk[dkey] = res
     _stairs_save(db, disk)
     return res
 
@@ -636,10 +720,11 @@ def learn_stairs(db):
     Workshop starts (learning.prewarm), so the style list has them the first time it is opened."""
     disk = _stairs_disk(db)
     for prefix in kits(db):
-        if prefix.lower() in disk:
-            continue
         k = kit_pieces(db, prefix)
-        disk[prefix.lower()] = _stairs_learn(db, prefix, k) if k else None
+        dkey = prefix.lower() + ('@roof' if k and k.get('roof_kit') else '')
+        if dkey in disk:
+            continue
+        disk[dkey] = _stairs_learn(db, prefix, k) if k else None
     _stairs_save(db, disk)
     return disk
 
@@ -817,7 +902,11 @@ def _stairs_learn(db, prefix, k):
         if storey:
             pieces = [p for p in out if any(abs(p['rise'] * n - storey) < 8 for n in (1, 2))]
             # closed-in stairs first (nothing to patch around them), then the ones used most
-            pieces.sort(key=lambda p: (len(p['open']), -p['uses']))
+            # (a roof kit's own stairs before the family's: Common thatch's in_c_stair_thatch_pend_01/02
+            # reach from the ground floor up to the roof's ridge, 620 tall, so nothing shows over them,
+            # while the family's in_c_stair_plain_tall_01 stops 122 short of the thatch storey's top)
+            word = prefix.lower().split('_')[-1] if k.get('roof_kit') else None
+            pieces.sort(key=lambda p: (len(p['open']), bool(word) and word not in p['id'].lower().split('_'), -p['uses']))
             if pieces:
                 # a proper staircase that climbs a whole floor (not only ramps meant for halls): the
                 # style looks right with stairs, so they are the default

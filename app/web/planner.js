@@ -34,6 +34,20 @@ function plSave(){ try { localStorage.setItem('ws-plan', JSON.stringify(CR.plan)
 function plSnap(){ PL.hist.push(JSON.stringify(CR.plan)); if (PL.hist.length > 80) PL.hist.shift(); PL.fut = []; }
 function plUndo(){ if (!PL.hist.length) return; PL.fut.push(JSON.stringify(CR.plan)); CR.plan = JSON.parse(PL.hist.pop()); plChanged(); }
 function plRedo(){ if (!PL.fut.length) return; PL.hist.push(JSON.stringify(CR.plan)); CR.plan = JSON.parse(PL.fut.pop()); plChanged(); }
+// a blank slate: the drawing thrown away (rooms, doorways, floors, stairs and their pins), one room left to
+// start from; a step in the planner's own undo, so ↶ brings it back
+function plClear(){
+  const P = plData();
+  const n = (P.rooms || []).length;
+  if (n > 1 || (P.doors || []).length || (P.stairs || []).length){
+    if (!confirm('Throw this plan away (' + n + ' room' + (n === 1 ? '' : 's') + ') and start again from one room? Undo (↶) brings it back.')) return;
+  }
+  plSnap();
+  CR.plan = plDefault();
+  PL.floor = 0;
+  plChanged(); plFit(); plRender();
+  if (typeof toast === 'function') toast('Plan cleared: one room to start from. Undo brings the old plan back.');
+}
 
 // ----- what is where
 const plRoom = id => plData().rooms.find(r => r.id === id);
@@ -197,6 +211,14 @@ function plStairsShown(){
   for (const s of res ? res.stairs : []){
     PL.stLen[s.floor] = s.tiles.length;
     if (s.floor === live || well) continue;
+    const pin = s.moved && P.stairPins && P.stairPins[s.floor];
+    if (pin){
+      // (the Workshop would stand them elsewhere: yours stay where you put them, drawn as a ghost, and its
+      // spot is a faint hint behind them)
+      out.push({floor: s.floor, tiles: plPinTiles(pin, s.tiles.length), up: pin.up, pinned: true, ghost: true, bad: true});
+      out.push({floor: s.floor, tiles: s.tiles.map(t => [t[0], t[1]]), up: s.up, pinned: false, hint: true, land: s.land || []});
+      continue;
+    }
     out.push({floor: s.floor, tiles: s.tiles.map(t => [t[0], t[1]]), up: s.up, pinned: !!s.pinned, land: s.land || []});
   }
   for (const [fs, p] of Object.entries(P.stairPins || {})){
@@ -228,13 +250,14 @@ function plAsk(){
     catch (e){ PL.res = {error: e.message}; }
     PL.resKey = key;
     if (plExitClear()) plSave();
-    // stairs put by hand where only two short flights (with a strip of void) would fit: the Workshop moved
-    // them to the nearest spot for the tall stairwell, so the pin follows (the note says where they went)
-    const P = plData(); let followed = false;
+    // stairs put by hand where the Workshop would rather stand them elsewhere (only two short flights with
+    // a strip of void would fit there): the pin stays where you put it (it used to follow the Workshop's
+    // choice, so the stairs jumped away after every drop); the Workshop's spot is kept as a suggestion,
+    // drawn faintly, with a button in the panel to take it
+    const P = plData(); PL.suggest = {};
     for (const s of (PL.res && PL.res.stairs) || []) if (s.moved && P.stairPins && P.stairPins[s.floor]){
-      P.stairPins[s.floor] = {x: s.tiles[0][0], y: s.tiles[0][1], up: s.up}; P.stairSrc = s.floor; followed = true;
+      PL.suggest[s.floor] = {tiles: s.tiles.map(t => [t[0], t[1]]), up: s.up, note: s.note || ''};
     }
-    if (followed){ plSave(); PL.resKey = JSON.stringify([st && st.value, L.rooms, plStairsOut(plNames()), L.floors_as, L.doors]); }
     plRender(); plNote(); if (!PL.sel) plSide();
   }, 350);
 }
@@ -287,7 +310,9 @@ function plSnapStair(f){
     return (lo ? 2 : 0) + (hi ? 2 : 0);
   };
   const was = score(pin);
-  if (was >= 4) return false;
+  // (only when neither end lands in a room: a drop that has one end right is left where you put it; the
+  // nudge after every drop was one more thing fighting the hand)
+  if (was > 0) return false;
   let best = null;
   for (const dx of [0, 1, -1]) for (const dy of [0, 1, -1]){
     if (!dx && !dy) continue;
@@ -374,6 +399,7 @@ function plMount(){
       <span class="sep"></span>
       <button class="btn sm" id="pl-undo" title="Undo (Ctrl+Z)">↶</button><button class="btn sm" id="pl-redo" title="Redo (Ctrl+Y)">↷</button>
       <button class="btn sm" id="pl-fit" title="Fit the plan in view">⤢ Fit</button>
+      <button class="btn sm" id="pl-clear" title="Throw this drawing away and start again from one room (Undo brings it back)">🗑 Clear plan</button>
     </div>
     <div class="pl-body"><div class="pl-stage" id="pl-stage" tabindex="0" data-ownkeys><svg id="pl-svg"></svg><canvas id="pl-3d" style="display:none"></canvas>
       <div class="pl-hint" id="pl-hint"></div>
@@ -392,6 +418,7 @@ function plMount(){
   $('#pl-pre').addEventListener('click', () => plPlansMenu());
   root.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { PL.view = b.dataset.v; plRender(); });
   $('#pl-undo').onclick = plUndo; $('#pl-redo').onclick = plRedo; $('#pl-fit').onclick = () => { plFit(); plRender(); };
+  root.querySelector('#pl-clear').onclick = plClear;
   $('#pl-zin').onclick = () => plZoom(1.25); $('#pl-zout').onclick = () => plZoom(0.8);
   plBind();
   plFix(); plFit(); plRender(); plSide(); plAsk();
@@ -512,7 +539,14 @@ function plRender(){
   // stairs: where the Workshop put them, or where you're putting them (drag them, R turns them)
   for (const sx of plStairsShown()){
     if (sx.floor !== f && sx.floor + 1 !== f) continue;
-    const up = sx.floor === f, colr = sx.bad ? '#ff8a6a' : '#f0cd87', chosen = PL.selStair === sx.floor;
+    const up = sx.floor === f, colr = sx.hint ? '#9c917c' : sx.bad ? '#ff8a6a' : '#f0cd87', chosen = PL.selStair === sx.floor && !sx.hint;
+    if (sx.hint){
+      // the Workshop's own spot for stairs you put elsewhere: a faint outline, nothing to grab
+      for (const t of sx.tiles) s += `<rect x="${plSX(t[0])}" y="${plSY(t[1] + 1)}" width="${z}" height="${z}" fill="none" stroke="${colr}" stroke-opacity=".55" stroke-dasharray="2 4" style="pointer-events:none"/>`;
+      const a0 = sx.tiles[0];
+      s += `<text x="${plSX(a0[0] + .5)}" y="${plSY(a0[1] + .5) + 4}" fill="${colr}" fill-opacity=".8" font-size="9" text-anchor="middle" style="pointer-events:none">fits here</text>`;
+      continue;
+    }
     // a landing the stairs needed, joined to the room beside it
     for (const t of sx.land || []) if (t[2] === f) s += `<rect x="${plSX(t[0])}" y="${plSY(t[1] + 1)}" width="${z}" height="${z}" fill="#f0cd8722" stroke="#f0cd8766" stroke-dasharray="3 3"/>`;
     for (const t of sx.tiles){
@@ -685,7 +719,7 @@ function plSide(){
       }
       pairs.push(`<div style="${picked ? 'border:1px solid var(--goldline);border-radius:8px;padding:6px;margin:6px -6px;background:#f0cd870d' : ''}">
         <div class="row" style="flex-wrap:wrap"><span style="min-width:100%">${linked ? (f < 0 ? 'Trapdoor down to the ' + esc(plFloorName(f).toLowerCase()) : 'Door up from the ' + esc(plFloorName(f).toLowerCase())) : 'Stairs from the ' + esc(plFloorName(f).toLowerCase()) + ' up' + (well ? ' (and the stairwell above)' : '')}</span></div>
-        ${linked ? '' : pin ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">📌 Where you put them. Drag to move, <b>R</b> turns.</span><button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R)">↻ Turn</button><button class="btn sm" data-stfree="${f}" title="Let the Workshop choose where they go again (Delete)">Unpin</button></div>`
+        ${linked ? '' : pin ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">📌 Where you put them. Drag to move, <b>R</b> turns.</span><button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R)">↻ Turn</button><button class="btn sm" data-stfree="${f}" title="Let the Workshop choose where they go again (Delete)">Unpin</button></div>${PL.suggest && PL.suggest[f] ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">They don't quite fit there; the faint outline on the plan is where they would. Built as they are, the Workshop stands them at that spot.</span><button class="btn sm" data-stsuggest="${f}" title="Move the stairs to the spot the Workshop found">↪ Use that spot</button></div>` : ''}`
           : `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">Where they fit best. Drag to move, <b>R</b> turns.</span>${shown ? `<button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R); they then stay where they are">↻ Turn</button>` : ''}</div>`}
       </div>`);
     }
@@ -714,6 +748,10 @@ function plSide(){
       plChanged();
     });
     box.querySelectorAll('[data-stfree]').forEach(b => b.onclick = () => { plSnap(); delete P.stairPins[plPinFloor(+b.dataset.stfree)]; plChanged(); });
+    box.querySelectorAll('[data-stsuggest]').forEach(b => b.onclick = () => {
+      const f = +b.dataset.stsuggest, sg = PL.suggest && PL.suggest[f]; if (!sg) return;
+      plSnap(); P.stairPins[f] = {x: sg.tiles[0][0], y: sg.tiles[0][1], up: sg.up}; P.stairSrc = f; PL.selStair = f; plChanged();
+    });
     box.querySelectorAll('[data-stkeep]').forEach(b => b.onclick = () => {
       const f = plPinFloor(+b.dataset.stkeep), s = plStairsShown().find(x => x.floor === f); if (!s) return;
       plSnap(); P.stairPins[f] = {x: s.tiles[0][0], y: s.tiles[0][1], up: s.up}; P.stairSrc = f; PL.selStair = f; plChanged();
@@ -913,12 +951,16 @@ function plWhat(sx, sy){
   const cands = [];
   if (dv < tol) cands.push([dv, true]);
   if (dh < tol) cands.push([dh, false]);
-  // the stairs (on either floor they join): grab them to move them
+  // the stairs (on either floor they join): grab them to move them. Anywhere inside their tiles but a thin
+  // band at the very edge is the stairs, not the wall line beside them (the wall's band used to reach a
+  // fifth of the way into each tile, so a grab near the stairs' side panned the map or made a doorway)
   const tx = Math.floor(px), ty = Math.floor(py);
   const stair = plStairsShown().find(s => (s.floor === f || s.floor + 1 === f) && s.tiles.some(t => t[0] === tx && t[1] === ty));
+  const edgeBand = Math.min(0.08, 3 / PL.z);
+  if (stair && !stair.hint && dv >= edgeBand && dh >= edgeBand) return {kind: 'stair', s: stair};
   cands.sort((a, b) => a[0] - b[0]);
   for (const [, vertical] of cands){ const h = tryEdge(vertical); if (h) return plEdgeHit(h); }
-  if (stair) return {kind: 'stair', s: stair};      // (after the walls, so a doorway beside them can still be clicked)
+  if (stair && !stair.hint) return {kind: 'stair', s: stair};
   const r = plRoomAt(Math.floor(px), Math.floor(py), f);
   if (r) return {kind: 'room', r};
   return {kind: 'bg'};

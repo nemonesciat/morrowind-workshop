@@ -169,6 +169,15 @@ function cfPickMany(list){
   renderWside(); drawMap(); if (V3.on) v3Refresh();
 }
 function cfSelectAll(){ cfPickMany(visibleRefs().filter(([ck, r]) => !(r.arch && W.lockArch) && (W.ext || ck === W.key))); }
+async function cfSelectWithContents(ck, r){
+  let c;
+  try { c = await api('/api/ref/contents?' + new URLSearchParams({cell: ck, ref: r.k})); } catch (e){ return toast(e.message, true); }
+  const want = new Set([r.k, ...(c.on || [])]);
+  const list = visibleRefs().filter(([k2, x]) => k2 === ck && want.has(x.k));
+  if (list.length <= 1){ selectRef(ck, r.k); return toast(`Nothing is standing on ${r.name || r.id}.`); }
+  cfPickMany(list);
+  toast(`Selected ${r.name || r.id} and the ${list.length - 1} things on it.`);
+}
 function cfSelectLike(r){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLowerCase() === r.id.toLowerCase() && (W.ext || ck === W.key))); }
 
 // ---------------------------------------------------------------- right-click menus
@@ -199,17 +208,29 @@ function cfMenuAt(e, hit, at){
     if (V3.on) items.push({label: '⤓ Set it down on what\'s below', act: () => v3DropToFloor()});
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
-    items.push({label: `Select all the ${r.name || r.id} here`, act: () => cfSelectLike(r)}, {label: '◌ Hide it (H)', act: () => cfRun('hide')}, {label: 'Hide everything else (Shift+H)', act: () => cfRun('isolate')});
+    items.push({label: `Select all the ${r.name || r.id} here`, act: () => cfSelectLike(r)});
+    // a shelf, a table, a counter, a crate: it and everything standing on it, in one go (the Workshop reads
+    // the geometry, the same way it reads the game's dressed shelves)
+    if (['STAT', 'ACTI', 'CONT'].includes(r.type)) items.push({label: '⊞ Select it with everything on it', act: () => cfSelectWithContents(ck, r)});
+    items.push({label: '◌ Hide it (H)', act: () => cfRun('hide')}, {label: 'Hide everything else (Shift+H)', act: () => cfRun('isolate')});
     if (r.type === 'DOOR'){
       sep();
       if (r.to) items.push({label: '→ Go where it leads', act: () => selAction('gotodest')}, {label: '📍 Pick where you arrive…', act: () => selAction('arrive')});
       else items.push({label: 'Make it lead somewhere…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-relink'); if (s) s.focus(); }, 50); }});
     }
-    if (r.type === 'STAT' || r.type === 'ACTI'){
-      sep();
-      if (r.type === 'STAT') items.push({label: '🚪 Make it a hidden door (looks the same)', act: () => selAction('secretdoor')});
-      if (r.type === 'STAT') items.push({label: '⚙ Make it an activator (for a script)', act: () => selAction('secretacti')});
+    if (['STAT', 'ACTI', 'CONT', 'DOOR'].includes(r.type) && typeof dressProbe === 'function'){
+      // (dress this piece the game's way: shown once the Workshop has answered whether the game dresses
+      // this model; a menu opened before the answer is rebuilt with the entry when it comes)
+      const d = W.dressable && W.dressable[dressKey(ck, r.k)];
+      if (d && d.dressable){ sep(); items.push({label: d.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id); }}); }
+      else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } }); }
+    }
+    if (['STAT', 'ACTI', 'CONT', 'DOOR'].includes(r.type)){
+      // secret entrances (web/secretdoor.js): a door to somewhere, an ordinary object again, a rotating or sliding panel
+      sep(); head('Secret entrance');
+      if (typeof sdMenuItems === 'function') items.push(...sdMenuItems(ck, r));
       else items.push({label: '🚪 Make it a hidden door (looks the same)', act: () => selAction('secretdoor')});
+      if (r.type === 'STAT') items.push({label: '⚙ Make it an activator (for a script)', act: () => selAction('secretacti')});
     }
     if (r.type === 'NPC_' || r.type === 'CREA'){ sep(); items.push({label: '💬 Dialogue', act: () => selAction('talk')}, {label: r.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character', act: () => selAction('char')}); }
     sep();
@@ -238,8 +259,10 @@ function cfMenuAt(e, hit, at){
   }
   while (items[items.length - 1] === '-') items.pop();
   const m = pnlMenu(pt, items);
+  cfMenuOpen = m;
   m.querySelectorAll('button').forEach((b, n) => { const it = items.filter(x => x !== '-')[n]; if (it && it.head){ b.className = 'phd'; } });
 }
+let cfMenuOpen = null;      // (the right-click menu showing now, to rebuild when a late answer adds an entry)
 function cfRun(id){ const a = CF_ACT.find(x => x.id === id); if (a) a.run(); }
 
 // the flat map, and the object lists in the panels

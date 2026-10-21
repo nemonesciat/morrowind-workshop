@@ -298,6 +298,31 @@ class SetupForm : Form
         Say("Done.", 100);
     }
 
+    // Which running programs live in the install folder (the Workshop itself, or something started with
+    // its Python, like a test script): named in the error, since "is the Workshop still open?" was not it
+    // when a script run with the Workshop's python.exe held the folder.
+    static string Holding(string target)
+    {
+        var names = new System.Collections.Generic.List<string>();
+        try
+        {
+            foreach (var pr in Process.GetProcesses())
+            {
+                string path = null;
+                try { path = pr.MainModule.FileName; } catch { continue; }
+                if (path != null && path.StartsWith(target, StringComparison.OrdinalIgnoreCase))
+                {
+                    string cmd = pr.ProcessName + " (pid " + pr.Id + ")";
+                    try { if (!string.IsNullOrEmpty(pr.MainWindowTitle)) cmd += " \"" + pr.MainWindowTitle + "\""; } catch { }
+                    names.Add(cmd);
+                }
+            }
+        }
+        catch { }
+        if (names.Count == 0) return "Is the Workshop still open? Close it (and anything started with its Python) and try again.";
+        return "Still running from that folder: " + string.Join(", ", names) + ". Close it and try again.";
+    }
+
     // Replace the program files in target with the ones in this setup (projects etc. are left alone).
     public static void Extract(string target, Action<string, int> say)
     {
@@ -313,7 +338,7 @@ class SetupForm : Form
                 catch (IOException) { Thread.Sleep(500); }
                 catch (UnauthorizedAccessException) { Thread.Sleep(500); }
             }
-            if (Directory.Exists(Common.Long(p))) throw new Exception("Could not replace " + p + ". Is the Workshop still open?");
+            if (Directory.Exists(Common.Long(p))) throw new Exception("Could not replace " + p + ". " + Holding(target));
         }
 
         using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip"))

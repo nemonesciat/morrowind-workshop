@@ -41,6 +41,12 @@ ANCHOR_ORDER = ('counter', 'bed', 'shrine', 'forge', 'loom', 'bath', 'well', 'fi
                 'cupboard', 'rack', 'shelf', 'chest', 'bench', 'chair', 'screen', 'brazier', 'lamp', 'plant', 'bannerpost',
                 'cage', 'crate', 'barrel', 'sack', 'urn', 'basket', 'rug', 'bedroll', 'pillow', 'apparatus')
 SKIP = re.compile(r'marker|_nf$|collision|invisible')
+# Auto-furnish's room purposes in this survey's room kinds (the room survey sorts rooms by what's in
+# them: a hall or an entry with planters and lamps only is 'empty'; the room-kind survey's purposes take
+# the nearest kind's scenes, or none: a bathing room's and an armoury's scenes are its own recipe's)
+PURPOSE_KINDS = {'hall': ('empty', 'living'), 'living': ('living', 'empty'), 'camp': (), 'ruin': (),
+                 'corridor': ('empty',), 'entry': ('empty', 'living'), 'landing': ('empty',), 'bath': (),
+                 'barracks': ('bedroom',), 'mess': ('living', 'tavern'), 'guardroom': ('empty', 'living'), 'armoury': (), 'training': ()}
 
 
 def family(db, rid, tag):
@@ -228,7 +234,7 @@ def alone_share(db, fam, purpose, limit=LIMIT):
     s = ready(db, limit)
     if not s or 'alone' not in s:
         return None
-    kinds = {'hall': ('empty', 'living'), 'living': ('living', 'empty')}.get(purpose, (purpose,))
+    kinds = PURPOSE_KINDS.get(purpose, (purpose,))
     grp = lone = 0
     for kd in kinds:
         v = s['alone'].get(kd, {}).get(fam)
@@ -264,7 +270,7 @@ def scene(db, fam, purpose, theme, rng, limit=LIMIT, like=None):
         share = 0.0
     if share is not None and rng.random() < share:
         return None
-    kinds = {'hall': ('empty', 'living'), 'living': ('living', 'empty'), 'camp': (), 'ruin': ()}.get(purpose, (purpose,))
+    kinds = PURPOSE_KINDS.get(purpose, (purpose,))
     if not kinds:
         return None
     pool = []
@@ -375,7 +381,7 @@ def pick(db, purpose, theme, rng, tiles, limit=LIMIT, want=(), like=None):
     the kind, else in any room at all."""
     # (the survey sorts rooms by what's in them: a hall or an entry with planters and lamps only is 'empty'
     # there; a living room is 'living')
-    kinds = {'hall': ('empty', 'living'), 'living': ('living', 'empty'), 'camp': (), 'ruin': ()}.get(purpose, (purpose,))
+    kinds = PURPOSE_KINDS.get(purpose, (purpose,))
     if not kinds:
         return []
     cands = arrangements(db, None, theme, min_n=1 if want else 2, limit=limit)

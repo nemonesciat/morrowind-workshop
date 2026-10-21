@@ -74,6 +74,7 @@ _styles = {}
 NOT_A_HOUSE_KIT = {'in_v_l_int'}
 _debug = None       # a function given build_interior's needs and choices per tile (the lab uses it)
 CLOSURE = True       # lay what the game stands round a stair, from closuresurvey.py
+EDGE_WALL = True     # a loose wall (and posts) on an edge of the stairwell's opening that faces nothing, where the stair piece is open there
 STAIR_OPEN_LOW = False  # the room beside a stair's open side: open downstairs too (True), never (False), or by the piece's height (None).
 #                         Measured (lab, two-floor test houses): walled downstairs, the see-through holes round a Common tall
 #                         stairwell fall from 8 to 1, Gold Coast 4 to 3, Hlaalu 8 to 7; never worse
@@ -89,6 +90,13 @@ def _family(pid):
     return 'hall' if 'hall' in pid.lower() else 'room'
 
 
+def _storey_ok(p, need):
+    """Whether a piece may stand on this tile's floor: a roof kit's own pieces (tagged 'top') only on the
+    top floor, its base set's ('lower') below it; need['_top'] says which floor the tile is on."""
+    st = p.get('storey')
+    return not st or (st == 'top') == bool(need.get('_top'))
+
+
 def _pick(kp, need, family=None):
     """Best piece and turn for a tile: (piece, quarter turns, sides still needing a wall). family:
     'hall' in a corridor, 'room' in a room: of pieces that fit as well, one of that family (the game
@@ -96,6 +104,8 @@ def _pick(kp, need, family=None):
     ledges step up and down along the corridor)."""
     best = None
     for p in kp['pieces']:
+        if not _storey_ok(p, need):
+            continue
         for q in range(4):
             pat = kits.rotate(p['pattern'], q)
             # passable where people walk through (an archway will do, a plain opening is better), a doorway
@@ -119,11 +129,39 @@ def _pick(kp, need, family=None):
     return best[1], best[2], best[3], best[4]
 
 
+def _stack_closer(kp, need, pat):
+    """A second piece for the same spot, turned so its walls cover the sides the chosen piece (pattern
+    pat) leaves open where need wants a wall, and standing nothing (no wall, no arch) on the sides that
+    must stay open or be a doorway: the way the game stacks two of its pieces to make a corner, and the
+    way the user closed a "phantom side" by hand (a second in_c_stone_room_corner on the same spot,
+    turned to the void). (piece, q, pattern) or None when the kit has no piece that does it."""
+    missing = [s for s in kits.SIDES if need.get(s) == 'wall' and pat[s] != 'wall']
+    if not missing:
+        return None
+    best = None
+    for p in kp['pieces']:
+        if not _storey_ok(p, need):
+            continue
+        for q in range(4):
+            r = kits.rotate(p['pattern'], q)
+            if any(r[s] != 'wall' for s in missing):
+                continue
+            if any(r[s] != 'open' for s in kits.SIDES if need.get(s) in ('open', 'door') and s not in missing):
+                continue
+            extra = sum(1 for s in kits.SIDES if r[s] == 'wall' and s not in missing)
+            score = (extra, p['uses'] == 0, -p['uses'])
+            if best is None or score < best[0]:
+                best = (score, p, q, r)
+    return (best[1], best[2], best[3]) if best else None
+
+
 def _pick_fit(kp, need, side, fits):
     """Like _pick, but only pieces whose doorway on `side` the game itself fills with a door (so the
     door that goes there is known to fit). None if there is no such piece for this spot."""
     best = None
     for p in kp['pieces']:
+        if not _storey_ok(p, need):
+            continue
         for q in range(4):
             pat = kits.rotate(p['pattern'], q)
             if any((need[s] == 'open' and pat[s] == 'wall') or (need[s] == 'door' and pat[s] != 'door') or
@@ -236,7 +274,7 @@ def _pick_under(kp, want, side, way):
     doorway side faces this side, when it fits the spot: (piece, q, missing walls, pattern) or None."""
     pid, own = way.get('piece'), way.get('piece_side')
     p = next((x for x in kp['pieces'] if pid and x['id'].lower() == pid.lower()), None)
-    if not p or way.get('piece_uses', 0) < 3:          # (seen enough to be how the style does it)
+    if not p or way.get('piece_uses', 0) < 3 or not _storey_ok(p, want):   # (seen enough to be how the style does it)
         return None
     q = (kits.SIDES.index(side) - kits.SIDES.index(own)) % 4
     pat = kits.rotate(p['pattern'], q)
@@ -248,6 +286,28 @@ def _pick_under(kp, want, side, way):
         elif pat[s] != want[s]:
             return None                  # (a wall or doorway where the room carries on)
     return p, q, missing, pat
+
+
+def _named_door(db, kp, jamb):
+    """The set's own load door made for this door frame, by name: a frame "…Doorjamb_L_01" and a door
+    "…LoadDoor_L_01" of the same set (Tamriel Data's Dres: Doorjamb_L/S with LoadDoor_L/S; the set's
+    one game place uses an Indoril door, so there is no pair to learn). None when there is no such door."""
+    parts = jamb['id'].lower().split('_')
+    size = next((parts[i + 1] for i, w in enumerate(parts[:-1]) if w in ('doorjamb', 'jamb', 'doorframe', 'frame')), None)
+    if not size or len(size) > 2 or not size.isalpha():
+        return None
+    pre = (kp.get('prefix') or '').lower()
+    fam = pre[:-2] if pre.endswith('_i') else pre
+    best = None
+    for (tag, key), lst in db.by_key.items():
+        if tag != 'DOOR' or not key.startswith(fam + '_') or not lst or lst[-1] in db.dead:
+            continue
+        kparts = key.split('_')
+        if size in kparts and any(w in key for w in ('loaddoor', 'door')) and not any(w in key for w in ('trap', 'cage', 'jail', 'secret')):
+            score = ('loaddoor' in key, kits.game_uses(db, key))
+            if best is None or score > best[0]:
+                best = (score, db.recs[lst[-1]][1])
+    return best[1] if best else None
 
 
 def _co_used(db, kp, tag, want=None):
@@ -1090,6 +1150,11 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
         # it fits; the pair stays as a last resort (a pin where nothing else fits), and a style
         # with only short flights keeps them
         wedge = 150 if n == 2 and whole and piece.get('height', 1e9) < H + kp['height'] - 16 else 0
+        # (under a roof storey, a stair that stops short of the roof's top leaves the void showing over
+        # it from upstairs: Common thatch's own in_c_stair_thatch_pend_01/02 reach the ridge, 620 tall;
+        # the family's in_c_stair_plain_tall_01, 498, stops 122 short. Two see-through holes measured)
+        if kp.get('roof_kit') and piece.get('height', 1e9) < H + kp.get('roof_height', kp['height']) - 16:
+            wedge += 6
         # a piece several tiles long climbs the whole storey on its own
         L = piece.get('len', 1)
         if L > 1 and n != 1:
@@ -1661,10 +1726,13 @@ def _stairs_fit(kp, grid, st, lo, hi, up, carve, land, extra=None):
         g[t] = r
     stair_xy = {(s[0], s[1]) for s in st}
     near = {t for t in g if any(abs(t[0] - s[0]) <= 1 and abs(t[1] - s[1]) <= 1 for s in stair_xy)} | {lo, hi}
+    top = max(t[2] for t in g) if g else 0
     for t in near:
         if t not in g:
             continue
         need = {s: 'open' if g.get(nb(t, s)) == g[t] else 'wall' for s in STEP}
+        if kp.get('roof_kit'):
+            need['_top'] = t[2] == top
         if t == lo:
             need[up] = 'open'
         if t == hi:
@@ -1680,13 +1748,13 @@ def _stairs_fit(kp, grid, st, lo, hi, up, carve, land, extra=None):
 def _stair_need(kp, need, facing):
     """A tile next to stairs: walls towards them if the style has a piece for that, else those sides
     open. Changes need; returns the sides left open, or None if neither fits."""
-    piece, _q, missing, _p = _pick(kp, need)
-    if piece is not None and not (missing and not kp['walls']):
+    piece, _q, missing, pat = _pick(kp, need)
+    if piece is not None and not (missing and not kp['walls'] and not _stack_closer(kp, need, pat)):
         return []
     for s in facing:
         need[s] = 'open'
-    piece, _q, missing, _p = _pick(kp, need)
-    if piece is not None and not (missing and not kp['walls']):
+    piece, _q, missing, pat = _pick(kp, need)
+    if piece is not None and not (missing and not kp['walls'] and not _stack_closer(kp, need, pat)):
         return list(facing)
     return None
 
@@ -1744,6 +1812,9 @@ def plan(db, style, rooms, stairs=None, floors_as='auto', doors=None):
                            'This style has no stair pieces, so each floor becomes a place of its own') +
                           ', joined by a door (a trapdoor down to a cellar).']}
     stairs, notes = _place_stairs(db, style, kp, grid, rooms, _wanted_stairs(rooms, names, stairs), _door_pairs(rooms, names, doors))
+    if kp.get('roof_kit') and len({t[2] for t in grid}) > 1:
+        notes = list(notes) + ['The %s pieces make the top floor (the roof storey); the floors under it are built from %s pieces, '
+                               'the way the game\'s own houses in this style are.' % (kits.friendly(style), kits.friendly(kp['roof_of']))]
     return {'tiles': [[t[0], t[1], t[2], r] for t, r in sorted(grid.items())],
             'stairs': [{'tiles': [[s[0], s[1], s[2]] for s in x['tiles']], 'up': x['up'], 'floor': x['floor'], 'pinned': x['pinned'],
                         'stacked': bool(x.get('stacked')), 'land': [[t[0], t[1], t[2]] for t in x['land']],
@@ -1820,8 +1891,12 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
 
     # ---- what each tile needs on each side: open within a room, a wall at its edge
     need = {}
+    top_floor = max(t[2] for t in grid)
     for t, ra in grid.items():
         need[t] = {s: 'open' if grid.get(nb(t, s)) == ra else 'wall' for s in STEP}
+        if kp.get('roof_kit'):
+            # (a roof kit: the set's own pieces only on the top floor, its base set's below; _storey_ok)
+            need[t]['_top'] = t[2] == top_floor
     # (the rooms upstairs round a hall's opening look down into it: open on that side, over a railing)
     wells = {t for t in wells if t in grid}
     voids = {v for v in voids if v not in grid}
@@ -1885,6 +1960,8 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             if piece is None:
                 return None
             stubs += sum(1 for s in kits.SIDES if need[t][s] == 'open' and pat[s] == 'door')
+            if miss and not kp['walls'] and _stack_closer(kp, need[t], pat):
+                miss = []                     # (a second piece on the spot walls the rest)
             missing += len(miss)
         if missing and not kp['walls']:
             return None
@@ -1892,6 +1969,9 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
 
     # how the game itself makes doorways in this style: a frame (and a door) standing on the edge
     learned = kits.edge_doors(db, style)
+    if kp.get('roof_kit'):
+        # (a roof kit's lower floors are its base set's: the base set's doorways first, the roof's after)
+        learned = kits.edge_doors(db, kp['roof_of']) + learned
     inner_ways = [e for e in learned if e['b'] != 'out' and 'wall' not in (e['a'], e['b'])][:10]
     if not inner_ways:
         # none seen in the game: borrow from the style its own door frames come from (Tamriel Data's
@@ -2077,6 +2157,8 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         inside), where no room of that floor is, its walls never across a room (nor across the way
         off the top of the stairs), and one wall to a side."""
         closed = set()                                   # (level, side) walled already
+        covered = set()                                  # levels with a ceiling over the stairwell
+        home = min(x['tiles'], key=lambda s_: math.hypot(centre(s_)[0] - ox_, centre(s_)[1] - oy_))
         for cap in sp.get('cap') or []:
             cri = db.resolve_id(cap[0])
             cb = mapdata.object_bounds(db, cri) if cri is not None else None
@@ -2084,7 +2166,6 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                 continue
             cz = oz_ + cap[1]
             level = int(round((cz + cb[2]) / H))
-            home = min(x['tiles'], key=lambda s_: math.hypot(centre(s_)[0] - ox_, centre(s_)[1] - oy_))
             spot = (home[0], home[1], level)
             if spot in grid or (spot in stair_tiles and spot not in x['tiles']):
                 continue
@@ -2099,7 +2180,46 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                                  for d in walls_):
                 continue
             closed |= {(level, d) for d in walls_}
+            if wpat.get('ceiling'):
+                covered.add(level)
             refs.append((cap[0], (ox_, oy_, cz, 0, 0, crot), []))
+        # the game caps this stairwell, but none of its caps can stand here (their walls would cross the
+        # rooms round the stairwell: the Indoril chapel's Hall_3way_nf1 over Room_Stair_H1, with the stair
+        # in the middle of a room): the kit's floorless piece that covers the stairwell with the fewest
+        # walls, the one the game stands most (the chapel's Room_Ceiling1 slab), on the floor the stair
+        # comes out on, where that tile is no room's and the stair itself stops short of its ceiling
+        lv = x['floor'] + 1
+        spot = (home[0], home[1], lv)
+        if sp.get('cap') and lv not in covered and spot not in grid and spot not in stair_tiles \
+                and sp.get('height', 0) < 2 * H - 32:
+            best = None
+            for ri_ in kp['ris']:
+                rid_ = db.recs[ri_][1]
+                low_ = rid_.lower()
+                if not re.search(r'nf|nofloor|ceil', low_) or re.search(r'stair|ramp|rail|wall_|door', low_):
+                    continue
+                cb = mapdata.object_bounds(db, ri_)
+                if not cb or max(cb[3] - cb[0], cb[4] - cb[1]) > T * 1.15 or min(cb[3] - cb[0], cb[4] - cb[1]) < T * 0.8:
+                    continue
+                cpat = kits.measure(db, ri_, T)
+                # (a slab named for a ceiling counts as one: the chapel's Room_Ceiling1 hangs at 223..251,
+                # too high up for the measure to see it as the piece's ceiling)
+                if not cpat or cpat.get('floor') or not (cpat.get('ceiling') or 'ceil' in low_):
+                    continue
+                for cq in range(4):
+                    wpat = kits.rotate(cpat, cq)
+                    walls_ = [d for d in kits.SIDES if wpat[d] == 'wall']
+                    if any(nb(spot, d) in grid or d == x['up'] or (lv, d) in closed for d in walls_):
+                        continue
+                    shut = sum(1 for d in kits.SIDES if wpat[d] != 'open')
+                    # (the one the game stands most, then the one that shuts most sides)
+                    score = (len(walls_), kits.game_uses(db, low_), shut, -cq)
+                    if best is None or score > best[0]:
+                        best = (score, rid_, cq, cb, walls_)
+            if best:
+                _sc, rid_, cq, cb, walls_ = best
+                closed |= {(lv, d) for d in walls_}
+                refs.append((rid_, (centre(home)[0], centre(home)[1], z0 + lv * H, 0, 0, cq * math.pi / 2), []))
 
     for x in stair_list:
         sp = x['piece']
@@ -2134,6 +2254,44 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                                 continue
                             refs.append((sp['post'], (sx_ + (ax + bx * along) * T / 2, sy_ + (ay + by * along) * T / 2,
                                                       z0 + lv * H, 0, 0, 0), []))
+    # ---- the stairwell opening's own edges on the floor the stairs come out on: a side of the opening
+    # with no tile beyond it (the house ends there), where the stair piece itself is open at that
+    # height, looks straight onto the void. The game closes such an edge with the set's loose wall
+    # between the posts (Common: in_c_wall_plain q0 at the foot end's edge, +256, in its places where no
+    # floor piece stands beyond; a wall the kits never list, filed under "in_c": kits.family_wall). Laid
+    # only where the piece is open there (seethrough.side_open: a Common tall stairwell's low end is
+    # walled above the way in, and gets nothing)
+    import seethrough
+    edge_wall = (plain_wall(kp, db) if kp['walls'] else kits.family_wall(db, style)) if EDGE_WALL else None
+    for x in stair_list:
+        sp = x['piece']
+        if sp.get('len', 1) > 1 or 'cx' in sp or not edge_wall:
+            continue
+        s0 = x['tiles'][0]
+        o_ = (s0[0], s0[1], x['floor'] + 1)
+        land_tiles = {t_ for t_ in x.get('land', ())}
+        for s in STEP:
+            beyond = nb(o_, s)
+            if s == x['up'] or beyond in grid or beyond in land_tiles or beyond[:2] in {(t_[0], t_[1]) for t_ in stair_tiles}:
+                continue
+            # the piece's own side there, in its frame, over the band of the upper storey
+            local = kits.SIDES[(kits.SIDES.index(s) - x['q']) % 4]
+            zb = sp['z_low'] + sp['rise']                       # (the upper floor, in the piece's frame)
+            try:
+                opening = seethrough.side_open(db, sp['ri'], local, zb + 24, zb + H - 24, T)
+            except Exception:
+                opening = 0.0
+            if opening < 0.5:
+                continue
+            cx_, cy_ = centre(o_)
+            fz = z0 + zf(o_)
+            refs.append(_loose_wall_ref(db, edge_wall, cx_, cy_, s, fz, T))
+            if sp.get('post'):
+                ax_, ay_ = STEP[s]
+                for along in (-1, 1):
+                    wx, wy = cx_ + ax_ * T / 2 + (-ay_) * along * T / 2, cy_ + ay_ * T / 2 + ax_ * along * T / 2
+                    if not _has_column(refs, wx, wy, fz):
+                        refs.append((sp['post'], (wx, wy, fz, 0, 0, 0), []))
     # ---- what the game stands over and beside these stairs, at the heights its own places show
     # (closuresurvey.py: Gold Coast's loose walls over the stairwell, the Common corner behind the foot,
     # Indoril's no-floor piece over the stair), where the spot is no room tile, no stair and not filled
@@ -2151,11 +2309,18 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             s0 = x['tiles'][0]
             sx0, sy0 = centre(s0)
             base_z = z0 + zf(s0) - sp['z_low']
+            kit_ids = {p['id'].lower() for p in kp['pieces']}
             for (ix, iy, dz), (pid, dq) in sorted(col.items()):
                 if dz % int(H) or 'stair' in pid or 'ramp' in pid or not pid.startswith(fam_ + '_') or COLUMN_WORDS_RE.search(pid):
                     continue
                 ri_ = db.resolve_id(pid)
                 if ri_ is None:
+                    continue
+                # (a room-sized piece only when it is one of the kit's own: Redoran (large)'s two-storey
+                # hall pieces round its stairs, in_r_l_int_lcorner_01, are no kit piece and stood outside
+                # the house, 764 tall; loose walls and the like pass)
+                b_ = mapdata.object_bounds(db, ri_)
+                if pid not in kit_ids and b_ and min(b_[3] - b_[0], b_[4] - b_[1]) > T * 0.6 and b_[5] - b_[2] > T * 0.5:
                     continue
                 wx, wy = stairtemplate.world_tile((sx0, sy0), x['q'], ix, iy, T)
                 t = (int(round(wx / T)), int(round(wy / T)), s0[2] + int(round(dz / H)))
@@ -2219,7 +2384,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             wx, wy = stairtemplate.world_tile(centre(s0), x['q'], ix, iy, T)
             t = (int(round(wx / T)), int(round(wy / T)), s0[2] + lv)
             piece = by_id.get(pid.lower())
-            if t not in grid or t in own or not piece or t in forced:
+            if t not in grid or t in own or not piece or t in forced or not _storey_ok(piece, need[t]):
                 continue
             q = (x['q'] + dq) % 4
             pat = kits.rotate(piece['pattern'], q)
@@ -2296,7 +2461,10 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             continue                       # (laid with the voids, below)
         if t == exit_tile and exit_how == 'entry':
             # the way out: a doorway piece the game itself puts a door in, and that same door
-            got = _pick_fit(kp, need[t], exit_side, kits.door_fits(db, style))
+            fits_ = kits.door_fits(db, style)
+            if kp.get('roof_kit'):
+                fits_ = dict(kits.door_fits(db, kp['roof_of']), **fits_)
+            got = _pick_fit(kp, need[t], exit_side, fits_)
             if got and (len(got[2]) <= len(missing) or kp['walls']):
                 piece, q, missing, pat, exit_fit = got
         tile_piece[t] = (piece, q)
@@ -2307,12 +2475,19 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             if pat[s] == 'door':
                 door_at[(t, s)] = pat['offset'].get(s, T / 2 - 16)
         cx, cy = centre(t)
-        if missing and not kp['walls']:
+        stacked = _stack_closer(kp, need[t], pat) if missing and not kp['walls'] else None
+        if missing and not kp['walls'] and not stacked:
             raise EditError('The %s style has no piece for a spot with walls on %d sides (in room "%s"), and no loose '
                             'wall pieces to close it off. In this style, make rooms and corridors at least 2 tiles '
                             'wide, and let corridors end in a room.' % (kits.friendly(style), list(need[t].values()).count('wall'),
                                                                          rooms[ra].get('name') or ra + 1))
         refs.append((piece['id'], (cx, cy, z0 + zf(t), 0, 0, q * math.pi / 2), []))
+        if stacked:
+            # (a second piece on the same spot, its walls where the first has none: the game's own way of
+            # making a three-walled spot from two pieces, and the user's fix for a side that looked onto
+            # the void)
+            refs.append((stacked[0]['id'], (cx, cy, z0 + zf(t), 0, 0, stacked[1] * math.pi / 2), []))
+            missing = []
         # the small things the game hangs from or stands against this piece (a rope and lantern under a
         # Hlaalu side piece, a skirting along a Gold Coast wall), as often and where it does (extras.py)
         for eid, epos in extras.for_piece(db, style, piece['id'], q, cx, cy, z0 + zf(t) + piece['zmin'], erng):
@@ -2464,7 +2639,15 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                     """How much bigger a door must be to fill the hole (0 when it can't be measured)."""
                     dwid, dhei = max(b[3] - b[0], b[4] - b[1]), b[5] - b[2]
                     return max(hole_w / dwid, hole_h / dhei) if dwid > 1 and dhei > 1 else 0
-                if not exit_door:
+                named = None if exit_door else _named_door(db, kp, small_jamb)
+                if named is not None:
+                    # the set's own door made for this frame (Dres's Doorjamb_L_01 and LoadDoor_L_01, named
+                    # for each other, no game place to learn the pair from): the pair at the frame's size
+                    door_id, db_door = named, db.resolve_id(named)
+                    db_door_b = mapdata.object_bounds(db, db_door) or db_door_b
+                    door_thin_x = (db_door_b[3] - db_door_b[0]) < (db_door_b[4] - db_door_b[1])
+                    door_scale = jamb_scale
+                elif not exit_door:
                     # of the doors used with this style, the one that fills the hole best when sized to it
                     # (a big arch with a small door left the void showing round it)
                     best_d = None
@@ -2486,7 +2669,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                     if best_d:
                         door_id, db_door, db_door_b = best_d[1], best_d[2], best_d[3]
                         door_thin_x = (db_door_b[3] - db_door_b[0]) < (db_door_b[4] - db_door_b[1])
-                f = fill(db_door_b)
+                f = fill(db_door_b) if named is None else 0
                 if f > 0:
                     door_scale = max(0.8, min(2.0, f * 1.02))
             px, py = _centred(db, small_jamb['ri'], dx, dy, rot, jamb_scale)

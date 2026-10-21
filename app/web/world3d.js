@@ -1478,7 +1478,7 @@ function v3Hover(e){
   if (h && h.obj){
     const r = h.obj.r, b = $('#v3wrap').getBoundingClientRect();
     tip.style.display = 'block'; tip.style.left = (e.clientX - b.left + 14) + 'px'; tip.style.top = (e.clientY - b.top + 10) + 'px';
-    tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>`;
+    tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>${r.to ? ' → ' + esc(r.to.cell || r.to.label || 'outdoors') : ''}`;
   } else tip.style.display = 'none';
 }
 

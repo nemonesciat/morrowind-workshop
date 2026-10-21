@@ -810,7 +810,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(create.options(db))
             elif u.path == '/api/create/interiors':
                 style = q.get('style', '')
-                self._json([t for t in create.interior_templates(db) if not style or t['style'] == style][:400])
+                lst = [t for t in create.interior_templates(db) if not style or t['style'] == style]
+                self._json(lst if q.get('all') else lst[:400])        # (all=1: the secret-door dialog lists every style)
             elif u.path == '/api/create/doors':
                 self._json(create.outside_doors(db, q.get('template'), q.get('style')))
             elif u.path == '/api/create/suggest_id':
@@ -872,6 +873,13 @@ class Handler(BaseHTTPRequestHandler):
                     k = q['key'].lower()
                     out['this'] = {'key': k, 'marked': taste.is_marked(k), 'game_made': kits.game_made(db, k)}
                 self._json(out)
+            elif u.path == '/api/furnish/piece':
+                # can this placed piece be dressed the game's way, and does it carry a dressing already
+                return self._json(furnish.piece_info(db, q['cell'], q['ref']))
+            elif u.path == '/api/ref/contents':
+                # the things standing on a placed piece (its books, dishes, wares), for selecting them with it
+                import contents
+                return self._json(contents.on_piece(db, q['cell'], q['ref']))
             elif u.path == '/api/furnish/placesurvey':
                 # where the game stands each kind of furniture (placesurvey.py)
                 import placesurvey
@@ -960,7 +968,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(items.template_info(db, int(q['i'])))
             elif u.path == '/api/build/styles':
                 import styletrust
-                self._json([dict(s, trust=styletrust.rate(s['id'], s.get('uses'))) for s in builder.styles(db)])
+                self._json([dict(s, trust=styletrust.rate(s['id'], s.get('uses')), kind=styletrust.kind(s['id'], s.get('uses'))) for s in builder.styles(db)])
             elif u.path == '/api/build/plans':
                 # saved floor plans, and the places in your mod built from pieces (to start from one)
                 import plans
@@ -1490,6 +1498,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(furnish.furnish(db, body['cell'], body.get('plan'), walls=body.get('walls', True) is not False,
                                                       walls_only=bool(body.get('walls_only')), replace=bool(body.get('replace')),
                                                       level=body.get('level'), like=body.get('like') or None))
+                if u.path == '/api/furnish/piece':
+                    # one placed piece dressed the game's way (a bookshelf's books, a table's dishes, a
+                    # counter's wares, a planter's plant, a hearth's pots): one undoable change; a second
+                    # call takes the earlier dressing off first and lays a fresh draw
+                    import random as _random
+                    return self._json(furnish.furnish(db, body['cell'], piece=body['ref'], replace=True, seed=_random.randrange(1 << 30)))
                 if u.path == '/api/taste':
                     # mark one of the game's places as an example (or unmark it): the surveys that
                     # Auto-furnish goes by weigh it several times over, and run again in the background
@@ -1650,6 +1664,10 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/ref/restore':
                     editing.restore_ref(db, body['cell'], body['ref'])
                     return self._json(mapdata.cellmap(db, body['cell']))
+                if u.path.startswith('/api/secret/'):
+                    # secret entrances: a door to somewhere, an ordinary object again, a rotating or sliding panel
+                    import mechanism
+                    return self._json(mechanism.api(db, u.path, body))
             self._json({'error': 'not found'}, 404)
         except editing.EditError as e:
             self._json({'error': str(e)}, 400)

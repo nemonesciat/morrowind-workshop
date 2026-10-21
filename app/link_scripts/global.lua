@@ -118,8 +118,11 @@ local function split(s, sep)
   return out
 end
 
+-- The game's own order for a placed object's angles (Misc::Convert::makeOsgQuat, and what
+-- getAnglesZYX gives back): turned about Z first, then Y, then X. Combined transforms apply from the
+-- right, so Z goes last in the product. (Z*Y*X applied X first: a leaning book came out on its side.)
 local function makeRot(rx, ry, rz)
-  return util.transform.rotateZ(rz) * util.transform.rotateY(ry) * util.transform.rotateX(rx)
+  return util.transform.rotateX(rx) * util.transform.rotateY(ry) * util.transform.rotateZ(rz)
 end
 
 local function readState()

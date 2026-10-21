@@ -7,6 +7,7 @@ interiors (it faces into the room), so beds and shelves end up with their backs 
 import math
 import random
 import re
+import sys
 from collections import Counter
 import struct
 
@@ -36,7 +37,7 @@ FAMILIES = {
     'urn': (('urn', '_pot'), ('CONT', 'STAT')),
     'rug': (('rug', 'carpet'), ('STAT',)),
     'counter': (('counter', 'bar'), ('STAT', 'ACTI')),      # (the game's counters are its "bar" pieces)
-    'shrine': (('shrine', 'altar'), ('ACTI', 'STAT')),
+    'shrine': (('shrine', 'altar'), ('ACTI', 'STAT')),         # (NOT: a bare altar base, block or slab with no statue on it)
     'dish': (('plate', 'bowl', 'cup', 'goblet', 'mug', 'pitcher', 'tankard', 'flask', 'jug'), ('MISC',)),
     'bottle': (('bottle',), ('MISC', 'ALCH')),
     'book': (('',), ('BOOK',)),
@@ -49,25 +50,47 @@ FAMILIES = {
     'basket': (('basket',), ('CONT', 'STAT')),
     'screen': (('wallscreen', 'screen'), ('STAT',)),
     'planter': (('planter', 'flowerbox', 'plantpot', 'plant_pot'), ('STAT', 'ACTI', 'CONT')),
+    # (the room-kind survey's kinds: a bathing room's tub or basin, an armoury's weapon rack, a training
+    # room's practice dummy)
+    'bath': (('bath', 'tub', 'basin', 'washstand'), ('STAT', 'ACTI', 'CONT')),
+    'rack': (('weaponrack', 'weapon_rack', 'armorrack', 'armourrack'), ('STAT', 'CONT', 'ACTI')),
+    'target': (('practice_dummy', 'dummy', 'archerytarget', 'archery_target', 'target_'), ('STAT', 'ACTI')),
 }
 NOT = {'table': ('tablet',), 'bed': ('bedroll',), 'shelf': ('bookshelf', 'bookcase'), 'chest': ('chestnut',),
        'counter': ('door', 'barrel'), 'screen': ('in_', 'ex_', 'marker', 'window'), 'planter': ('marker',),
-       'fire': ('in_', 'ex_', 'marker', 'chimney', 'smoke', 'light_fire', 'sound')}      # (a kit's hearth wall is the building, not furniture)
+       'fire': ('in_', 'ex_', 'marker', 'chimney', 'smoke', 'light_fire', 'sound'),      # (a kit's hearth wall is the building, not furniture)
+       'shrine': ('base', 'block', 'slab', 'pedestal', 'stand', 'platform', 'plinth', 'podium', 'pillar', 'column', 'cube', 'step', 'in_', 'ex_'),
+       'bath': ('tube', 'bathroom', 'marker', 'in_', 'ex_'), 'rack': ('wine', 'bottle', 'scroll', 'spice', 'coat', 'hat'), 'target': ('targeting', 'marker')}
+# (a bare stone piece: an altar base, a block, a slab, a plinth, a pedestal with nothing on it. Never
+# furniture in a house, whatever family a name puts it in: the user's "white stone block" by a tapestry)
+BARE_STONE = re.compile(r'(altar|shrine)[^a-z]*(base|block|slab|plinth|pedestal|step|platform)|pedestal|plinth|podium|_slab|stoneblock|stone_block|marbleblock')
 HANGING_KINDS = ('shelf',)      # the only furniture put up on a wall (at the height the game hangs it)
 WINERACK = re.compile(r'winerack|wine_rack|bottlerack')
 COUNTER_PART = re.compile(r'_end|_cnr|corner|_curve|_short|_half')      # the end and corner pieces of a counter run
 KEEPER_GAP = 96                 # a counter stands this far off the wall: the keeper's side (the game's traders stand 71 behind it)
 TALL_BOTTLE = re.compile(r'misc_com_bottle|t_com_bottle|t_imp_drink_|t_de_drink_|wine')     # the slim bottles the game racks
 FAT_BOTTLE = re.compile(r'^potion_|^p_|liquor|brew|brandy|whiskey|sujamma|mazte|shein|greef|flin|cyro')   # Dunmer flasks and potions
-DRESSED_KINDS = ('bookshelf', 'shelf', 'table', 'counter')     # set out the way the game dresses the model (shelfsurvey.py)
+DRESSED_KINDS = ('bookshelf', 'shelf', 'table', 'counter', 'rack')     # set out the way the game dresses the model (shelfsurvey.py)
 ARRANGE = True                  # lay the game's own set pieces first (arrangesurvey.py)
 SCENES = True                   # and every recipe kind the game keeps company as a scene (arrangesurvey.scene)
 SCENE_KINDS = ('table', 'bed', 'bookshelf', 'shelf', 'cupboard', 'counter', 'shrine', 'bench', 'planter', 'fire', 'chest', 'screen')
-ESSENTIAL = {'bedroom': 'bed', 'shop': 'counter', 'tavern': 'counter', 'shrine': 'shrine'}   # the piece a room of the kind is for
+SMALL_KINDS = ('crate', 'planter', 'urn', 'basket', 'chest', 'sack', 'barrel', 'screen')   # never alone in open floor
+# what rides on what: a set piece's small member only on the kind of main piece the game had it on
+SURFACE_KINDS = ('table', 'counter', 'shelf', 'bookshelf', 'cupboard', 'chest', 'crate', 'barrel', 'bench')
+RIDE = {'pillow': ('bed', 'bench', 'chair'), 'plant': ('planter',), 'basket': SURFACE_KINDS, 'lamp': SURFACE_KINDS + ('bed',),
+        'apparatus': ('table', 'counter', 'shelf', 'bookshelf', 'cupboard')}
+HANGING_LIGHT = re.compile(r'chandelier|candelabra|lantern|hanging|_hang|chain')
+ESSENTIAL = {'bedroom': 'bed', 'shop': 'counter', 'tavern': 'counter', 'shrine': 'shrine', 'bath': 'bath', 'barracks': 'bed',
+             'armoury': 'rack', 'mess': 'table', 'training': 'target'}   # the piece a room of the kind is for
 CONTAINER_KINDS = ('chest', 'crate', 'barrel', 'sack', 'urn', 'cupboard')   # the game's own filled ones, by room (containersurvey.py)
+# how the game groups its floor clutter, until the room survey has counted its groups (roomrules.clusters):
+# groups of two to five, mostly along the walls, a fifth out on the floor, a crate's width apart
+DEFAULT_CLUSTERS = {'sizes': [[1, 0.25], [2, 0.3], [3, 0.25], [4, 0.12], [5, 0.08]], 'where': {'corner': 0.3, 'wall': 0.5, 'middle': 0.2},
+                    'nn': {'crate': 70, 'barrel': 70, 'sack': 55, 'urn': 60, 'basket': 50, 'chest': 80}, 'nn_any': 65, 'mixed': 0.3, 'groups': 0}
 last_placed = []                # what the last Auto-furnish put where (for tests)
 last_trace = []                 # why recipe items were left out: (room, kind, id, reason) (for tests)
 last_clutter = []               # how the clutter groups went (for tests)
+last_dress = []                 # (model, room, things in the dressing, things that stood) per dressed piece (for tests)
 
 # what goes in a kind of room: (kind of thing, how many, where). Rugs go where the game puts them: under
 # the table, beside the bed, in front of a shrine or counter (where people stand); a long one down a hall;
@@ -96,8 +119,31 @@ RECIPES = {
     'ruin': [('crate', 2, 'wall'), ('barrel', 2, 'corner'), ('urn', 2, 'corner'), ('chest', 1, 'wall'), ('sack', 1, 'wall')],
     'tavern': [('counter', 1, 'wall'), ('table', 2, 'centre'), ('chair', 5, 'by_table'), ('barrel', 3, 'corner'),
                ('bench', 1, 'wall'), ('bottle', 4, 'on_table'), ('dish', 4, 'on_table'), ('food', 2, 'on_table')],
+    # the room-kind survey's kinds (roomkindsurvey.py, packaging/nexus/room-kinds-survey.md): these are
+    # the hand-written stand-ins until it has run; roomrules.kind_recipe gives the game's own rates
+    'bath': [('bath', 1, 'wall'), ('screen', 1, 'centre'), ('chair', 1, 'wall'), ('bench', 1, 'wall'), ('shelf', 1, 'wall'),
+             ('planter', 1, 'wall'), ('dish', 2, 'on_table')],
+    'corridor': [('chair', 1, 'wall'), ('shelf', 1, 'wall')],
+    'entry': [('rug', 1, 'runner'), ('bench', 1, 'wall'), ('basket', 1, 'wall'), ('planter', 1, 'corner')],
+    'landing': [('barrel', 1, 'wall'), ('urn', 1, 'corner'), ('chair', 1, 'corner')],
+    'barracks': [('bed', 3, 'wall'), ('chest', 3, 'by_bed'), ('table', 1, 'wall'), ('chair', 1, 'by_table'), ('shelf', 1, 'wall'),
+                 ('dish', 2, 'on_table'), ('candle', 1, 'on_table')],
+    'armoury': [('rack', 3, 'wall'), ('chest', 2, 'wall'), ('crate', 2, 'wall'), ('barrel', 1, 'corner'), ('table', 1, 'wall'),
+                ('shelf', 1, 'wall')],
+    'training': [('target', 2, 'centre'), ('rack', 2, 'wall'), ('crate', 2, 'wall'), ('barrel', 1, 'corner'), ('bench', 1, 'wall')],
+    'mess': [('table', 1, 'centre'), ('bench', 2, 'by_table'), ('chair', 2, 'by_table'), ('shelf', 1, 'wall'), ('chest', 1, 'wall'),
+             ('dish', 4, 'on_table'), ('bottle', 2, 'on_table'), ('food', 2, 'on_table'), ('candle', 1, 'on_table')],
+    'guardroom': [('bench', 1, 'wall'), ('chair', 1, 'corner'), ('chest', 1, 'corner'), ('barrel', 1, 'corner')],
 }
-PURPOSE_WORDS = {'bed': 'bedroom', 'sleep': 'bedroom', 'kitchen': 'kitchen', 'cook': 'kitchen', 'pantry': 'kitchen',
+# (the words first in the list win: "weapon store" is an armoury before "store" is storage, "barracks"
+# a barracks before "bar" is a tavern)
+PURPOSE_WORDS = {'barracks': 'barracks', 'bunk': 'barracks', 'dormitory': 'barracks', 'sleeping quarters': 'barracks',
+                 'armoury': 'armoury', 'armory': 'armoury', 'arms room': 'armoury', 'weapon store': 'armoury',
+                 'training': 'training', 'practice': 'training', 'drill': 'training', 'sparring': 'training',
+                 'mess': 'mess', 'canteen': 'mess', 'refectory': 'mess',
+                 'guard': 'guardroom', 'watch room': 'guardroom', 'gatehouse': 'guardroom',
+                 'bath': 'bath', 'washroom': 'bath', 'privy': 'bath', 'lavatory': 'bath',
+                 'bed': 'bedroom', 'sleep': 'bedroom', 'kitchen': 'kitchen', 'cook': 'kitchen', 'pantry': 'kitchen',
                  'store': 'storage', 'cellar': 'storage', 'storage': 'storage', 'study': 'study', 'library': 'study',
                  'office': 'study', 'shop': 'shop', 'store front': 'shop', 'trader': 'shop', 'shrine': 'shrine',
                  'chapel': 'shrine', 'temple': 'shrine', 'hall': 'hall', 'corridor': 'hall', 'tavern': 'tavern',
@@ -350,6 +396,43 @@ def rooms(db, cell_key, names=None, trace=True):
 _facing = {}
 
 
+_mesh_index = {}
+
+
+def mesh_siblings(db, rid):
+    """The other records (statics, activators, containers, doors) with the very same mesh as this one,
+    the ones the game uses most first: the game's activator bookshelf and its furniture twin, the
+    user's hidden door made from a bookcase. What the game taught about one holds for the others (the
+    dressings, which way it faces, how high it hangs), since the mesh is what stands in the room."""
+    if _mesh_index.get('recs') is not db.recs:
+        idx = {}
+        for ri, r in enumerate(db.recs):
+            if r[0] in ('STAT', 'ACTI', 'CONT', 'DOOR') and r[5] and ri not in db.dead:
+                idx.setdefault(r[5].lower().replace('/', '\\'), []).append(ri)
+        _mesh_index.clear()
+        _mesh_index.update({'recs': db.recs, 'idx': idx})
+    ri = db.resolve_id(rid)
+    if ri is None:
+        return []
+    m = (db.recs[ri][5] or '').lower().replace('/', '\\')
+    if not m:
+        return []
+    out = [db.recs[j][1] for j in _mesh_index['idx'].get(m, []) if j != ri and db.recs[j][1].lower() != rid.lower()]
+    out.sort(key=lambda i: -kits.game_uses(db, i.lower()))
+    return out
+
+
+def taught_twin(db, rid):
+    """A record of the same mesh the game stands somewhere, for one it stands nowhere (an activator
+    bookshelf, a mod's own copy): its id, or None."""
+    if kits.game_uses(db, rid.lower()):
+        return None
+    for sib in mesh_siblings(db, rid):
+        if kits.game_uses(db, sib.lower()):
+            return sib
+    return None
+
+
 def front_of(db, rid):
     """The direction an object's front points in its own coordinates, learnt from real interiors
     (furniture faces into the room). (x, y) unit vector, or None if it can't be told."""
@@ -360,6 +443,10 @@ def front_of(db, rid):
     kept = modelcache.get(db, 'front', low)
     if kept is not None:
         _facing[low] = tuple(kept) if kept else None
+        return _facing[low]
+    twin = taught_twin(db, rid)
+    if twin:
+        _facing[low] = front_of(db, twin)      # (the same mesh under another id: what the game taught of it)
         return _facing[low]
     sx = sy = 0.0
     n = 0
@@ -421,6 +508,12 @@ def hang_height(db, rid):
         if kept[1] is not None:
             _mount[low] = kept[1]
         return kept[0]
+    twin = taught_twin(db, rid)
+    if twin:
+        _heights[low] = hang_height(db, twin)  # (the same mesh under another id)
+        if twin.lower() in _mount:
+            _mount[low] = _mount[twin.lower()]
+        return _heights[low]
     ri = db.resolve_id(rid)
     b = mapdata.object_bounds(db, ri) if ri is not None else None
     out = 0.0
@@ -518,6 +611,70 @@ def _overlaps(a, b, pad=4):
     return a[0] < b[2] - pad and b[0] < a[2] - pad and a[1] < b[3] - pad and b[1] < a[3] - pad
 
 
+def room_rects(room, T):
+    """The room's floor as the walls bound it: each tile's rectangle, cut back to the wall's measured face
+    on its wall sides (kept on the room under '_rects'). Every path that stands a thing on the floor
+    checks its box against these with on_floor(), so nothing cuts into a wall or reaches across the
+    mouth of a one-tile nook into the wall beside it (the user's "chair standing inside the wall", the
+    lamp and the stone block "with its back half clipped into the wall")."""
+    if room.get('_rects') is not None:
+        return room['_rects']
+    rects = []
+    for t in room['_tiles']:
+        r_ = [t['x'] - T / 2, t['y'] - T / 2, t['x'] + T / 2, t['y'] + T / 2]
+        for s, (dx, dy) in STEP.items():
+            if t['pat'][s] != 'wall':
+                continue
+            face = (t['x'] if s in ('E', 'W') else t['y']) + (dx + dy) * t['pat']['offset'].get(s, T / 2 - 16)
+            if s == 'E':
+                r_[2] = min(r_[2], face + 2)
+            elif s == 'W':
+                r_[0] = max(r_[0], face - 2)
+            elif s == 'N':
+                r_[3] = min(r_[3], face + 2)
+            else:
+                r_[1] = max(r_[1], face - 2)
+        rects.append(tuple(r_))
+    room['_rects'] = rects
+    return rects
+
+
+def wall_behind(b, rot, x, y, room, T, front, scale=1.0, reach=14):
+    """Is there a wall (the room's edge as the walls bound it) right behind this thing's back along
+    its whole width: the two ends and the middle of its back edge, `reach` units behind it, all off
+    the room's floor (room_rects). front: the model's own front (front_of), (0, -1) when unknown."""
+    rects = room_rects(room, T)
+    fr = front or (0.0, -1.0)
+    c, s = math.cos(rot), math.sin(rot)
+    fx, fy = fr[0] * c + fr[1] * s, -fr[0] * s + fr[1] * c
+    bx, by = -fx, -fy
+    box = _footprint([v * scale for v in b], rot, x, y)
+    # the back edge: the box's side the back direction points to
+    if abs(bx) > abs(by):
+        ex = box[2] if bx > 0 else box[0]
+        pts = ((ex + bx * reach, box[1] + 4), (ex + bx * reach, box[3] - 4), (ex + bx * reach, (box[1] + box[3]) / 2))
+    else:
+        ey = box[3] if by > 0 else box[1]
+        pts = ((box[0] + 4, ey + by * reach), (box[2] - 4, ey + by * reach), ((box[0] + box[2]) / 2, ey + by * reach))
+    for px, py in pts:
+        if any(r_[0] - 1 <= px <= r_[2] + 1 and r_[1] - 1 <= py <= r_[3] + 1 for r_ in rects):
+            return False                        # (floor behind it: nothing to hang on)
+    return True
+
+
+def on_floor(box, rects, inner=None):
+    """Is the box wholly on the room's floor as the walls bound it (room_rects): every corner and
+    mid-edge on some tile's rectangle, and inside `inner` when given."""
+    if inner is not None and not (box[0] >= inner[0] and box[1] >= inner[1] and box[2] <= inner[2] and box[3] <= inner[3]):
+        return False
+    pts = ((box[0], box[1]), (box[2], box[1]), (box[0], box[3]), (box[2], box[3]),
+           ((box[0] + box[2]) / 2, box[1]), ((box[0] + box[2]) / 2, box[3]), (box[0], (box[1] + box[3]) / 2), (box[2], (box[1] + box[3]) / 2))
+    for px, py in pts:
+        if not any(r_[0] - 1 <= px <= r_[2] + 1 and r_[1] - 1 <= py <= r_[3] + 1 for r_ in rects):
+            return False
+    return True
+
+
 # ------------------------------------------------------------------ choosing things
 CORE_KINDS = ('bed', 'table', 'chair', 'bench', 'chest', 'cupboard', 'shelf')
 _related = {}
@@ -577,7 +734,7 @@ def _sort_into(fam, groups):
                     continue
                 if any(w in low for w in NOT.get(k, ())):
                     continue
-                if 'marker' in low or 'unique' in low:
+                if 'marker' in low or 'unique' in low or BARE_STONE.search(it['id'].lower()):
                     continue
                 if it['id'] not in fam[k]:
                     fam[k].append(it['id'])
@@ -610,7 +767,7 @@ def candidates(db, cell_key):
 _hearths = {}
 
 
-def hearth_models(db, culture):
+def hearth_models(db, culture, pits=False):
     """The free-standing hearths the game's places of this culture use (a fireplace, a firepit, a stove;
     never a kit's hearth wall, which is the building), most used first. The palette seldom has one (the
     game's kit kitchens have a free-standing one in one room in twelve: the Common sets' hearths are in
@@ -627,6 +784,8 @@ def hearth_models(db, culture):
             continue
         if not k.startswith(DECOR_SETS.get(culture, ())) and not k.startswith(('furn_', 'light_')):
             continue
+        if not pits and 'pit' in k:
+            continue                  # (a firepit is a camp's or a yurt's: a house kitchen takes a fireplace or a stove, or none)
         n = kits.game_uses(db, k)
         if n < 3:
             continue
@@ -715,10 +874,38 @@ def wall_decor(db, cell_key):
     return out
 
 
-DECOR_PER_PURPOSE = {'storage': 0.15, 'kitchen': 0.25, 'hall': 0.3, 'camp': 0.1}       # share of free wall spots used (default 0.4)
+DECOR_PER_PURPOSE = {'storage': 0.15, 'kitchen': 0.25, 'hall': 0.3, 'camp': 0.1, 'corridor': 0.3, 'entry': 0.3, 'landing': 0.3,
+                     'bath': 0.3, 'armoury': 0.2, 'training': 0.2}       # share of free wall spots used (default 0.4)
 DECOR_KINDS = {'shrine': ('banner', 'tapestry', 'sconce'), 'storage': ('rack', 'herbs', 'decor', 'sconce'),
                'kitchen': ('herbs', 'decor', 'sconce', 'tapestry'), 'camp': ('herbs', 'sconce', 'light')}
-SURVEY_KIND = {'hall': 'empty'}      # Auto-furnish's room purposes in wallsurvey2's words (its halls are rooms with no furniture)
+SURVEY_KIND = {'hall': 'empty', 'corridor': 'empty', 'entry': 'empty', 'landing': 'empty', 'bath': 'living', 'barracks': 'bedroom',
+               'mess': 'living', 'guardroom': 'living', 'armoury': 'storage', 'training': 'storage'}      # Auto-furnish's room purposes in wallsurvey2's words (its halls are rooms with no furniture)
+
+
+def bath_models(db, culture):
+    """The tubs and basins the game's places of this culture bathe in (room-kind survey R1): Imperial and
+    Gold Coast houses the marble basins and baths, every other culture the half-barrel tub, Hlaalu its own
+    basin too; only ids that exist here."""
+    imp = ('t_imp_furnr_basin_02', 't_imp_furnr_basin_02_w', 't_imp_furnr_basin_01', 't_imp_furnr_basin_03', 't_imp_furnr_bath_01',
+           't_imp_furnr_bath_02', 't_imp_furn_bath_01_cloth')
+    de = ('t_com_furn_bathhalfbarrel_01', 't_com_furn_bathhalfbarrel_02', 't_de_furn_basin_01')
+    ids = imp + de if culture == 'imperial' else de + imp
+    return [i for i in ids if db.resolve_id(i) is not None]
+
+
+def hall_kind(room, refs, T):
+    """Which kind of hall a hall is (room-kind survey R2): a 'corridor' (one tile wide, three or more
+    long), an 'entry' (the room with the front door, up to four tiles), else a 'landing'."""
+    if min(room['w'], room['h']) == 1 and max(room['w'], room['h']) >= 3:
+        return 'corridor'
+    fl = room['floor']
+    for d in refs:
+        if d['type'] != 'DOOR' or not (d.get('to') and not d['to'].get('cell')):
+            continue
+        if room['x_min'] - 40 <= d['p'][0] <= room['x_max'] + 40 and room['y_min'] - 40 <= d['p'][1] <= room['y_max'] + 40 and fl - 60 <= d['p'][2] <= fl + 200:
+            if room['tiles'] <= 4:
+                return 'entry'
+    return 'landing'
 
 
 def house_hangings(db, decor, rng):
@@ -756,13 +943,21 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
     floor = room['floor']
     # what already stands here, with its height (so a tapestry can hang above a low chest, not a shelf)
     solid = []
+    import roomsurvey
+    _tall = {}
     for r in list(refs) + list(placed):
         b = r.get('b')
         if not b or r.get('arch') or r['type'] in ('NPC_', 'CREA'):
             continue
         s = r.get('s') or 1.0
+        # (a counter, a shelf, a cupboard, a bookshelf, a bed or a shrine standing flush to the wall: the
+        # wall stretch its end butts against takes no hanging unless the hanging clears its top. The user's
+        # tapestry at the side wall, with the counter's end merged into it)
+        key = (r['id'].lower(), r['type'])
+        if key not in _tall:
+            _tall[key] = roomsurvey.family_of(db, r['id'], r['type']) in ('counter', 'shelf', 'cupboard', 'bookshelf', 'bed', 'shrine')
         solid.append((_footprint([v * s for v in b], r['p'][5], r['p'][0], r['p'][1]), r['p'][2] + b[2] * s, r['p'][2] + b[5] * s,
-                      r['type'] == 'DOOR'))
+                      r['type'] == 'DOOR', _tall[key]))
     # the room's walls as the game sees them (wallsurvey2.py): unbroken runs of wall between corners and
     # doorways. The game hangs things at the middle of a wall tile (four in five), one to a tile along a
     # long wall, on a one-tile wall half the time, and on the wall either side of a doorway in the door's
@@ -908,8 +1103,8 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
             box = _footprint(b, rot, x, y)
             # clear of doors (any height) and of whatever stands as high as it hangs, with a little room around
             pad = (box[0] - 24, box[1] - 24, box[2] + 24, box[3] + 24)
-            if any(_overlaps(pad if door else box, fb, 0) and (door or (zb < z1 + 4 and zt > z0 - 4 and (not flat or zt > floor + 110)))
-                   for fb, zb, zt, door in solid):
+            if any(_overlaps(pad if door else box, fb, 0) and (door or (zb < z1 + 4 and zt > z0 - 4 and (not flat or zt > floor + 110 or tall)))
+                   for fb, zb, zt, door, tall in solid):
                 continue
             # (beside a doorway: the thing must fit between the opening and the tile's edge)
             if sp.get('door') and max(box0[2] - box0[0], box0[3] - box0[1]) > 2 * (door_off - 56):
@@ -917,7 +1112,7 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
             rec = put(rid, x, y, rot, hang_from=z0, room=room['name'])
             if rec is None:
                 break
-            solid.append((box, z0, z1, False))
+            solid.append((box, z0, z1, False, False))
             # what it hangs from, where the game puts it (a hanger above a banner, a banner post...)
             pt = wallsurvey.partner(db, rid)
             if pt and wallsurvey.HANGY.search(pt['id']):
@@ -945,6 +1140,9 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
     return got
 
 
+placed_last = []                 # (the last furnish's records, with 'via': the path that laid each; for the lab)
+
+
 def placed_before(db, cell_key):
     """The keys of the things Auto-furnish put in this place earlier (they carry a mark), still there."""
     c = (db.project.cells or {}).get(cell_key) if db.project else None
@@ -953,7 +1151,40 @@ def placed_before(db, cell_key):
     return [k for k, r in c['refs'].items() if r.get('by') == 'furnish' and not r.get('deleted')]
 
 
-def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, replace=False, level=None, like=None):
+PIECE_KINDS = DRESSED_KINDS + ('planter', 'fire', 'shrine', 'cupboard', 'chest', 'crate', 'barrel', 'bench', 'rack')
+
+
+def piece_info(db, cell_key, ref):
+    """Can this placed piece be dressed the game's way (one of the game's own dressings of its model), and
+    does it carry one already: {'dressable', 'dressed', 'model', 'kind', 'dressings_known'}."""
+    import roomsurvey
+    c = (db.project.cells or {}).get(cell_key) if db.project else None
+    m = mapdata.cellmap(db, cell_key)
+    r = next((x for x in m.get('refs', []) if x.get('k') == ref), None)
+    if r is None:
+        return {'dressable': False, 'dressed': False, 'model': None, 'kind': None, 'dressings_known': 0}
+    rid, tag = r['id'], r['type']
+    fam_ = roomsurvey.family_of(db, rid, tag)
+    n = 0
+    rng = random.Random(0)
+    if fam_ == 'planter':
+        import arrangesurvey
+        n = 1 if arrangesurvey.plant_for(db, rid, rng) else 0
+    elif fam_ == 'fire':
+        n = 1 if roomsurvey.hearth_dressing(db, rid, rng, None) else 0
+    elif fam_ == 'shrine':
+        import shrinesurvey
+        rule_ = shrinesurvey.rule(db, rid)
+        n = len(rule_['examples']) if rule_ else 0
+    elif tag in ('STAT', 'ACTI', 'CONT', 'DOOR'):
+        # (an activator or a hidden door with a furniture model's mesh takes the model's dressings: shelfsurvey)
+        import shelfsurvey
+        n = len(shelfsurvey.survey(db, rid)['dressings'])
+    dressed = bool(c) and any(v.get('on') == ref and not v.get('deleted') for v in c['refs'].values())
+    return {'dressable': n > 0, 'dressed': dressed, 'model': rid, 'kind': fam_, 'dressings_known': n}
+
+
+def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, replace=False, level=None, like=None, piece=None):
     """Fill rooms with furniture. plan: [{'id': room id, 'purpose': ...}] (all rooms, by their
     guessed purpose, if None). Everything goes in as one change. Returns what was placed. replace:
     first take out what Auto-furnish put here before (else the rooms are furnished on top of it).
@@ -963,7 +1194,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
     'max_value': N} (nothing worth more than N gold anywhere, containers included).
     like: the cell key of one of the game's places (an exemplary one from the taste set, taste.py) to
     furnish like: its rooms are the model for what each kind of room holds, how full it is and which
-    scenes it is composed of; the game's rooms fill in what it lacks."""
+    scenes it is composed of; the game's rooms fill in what it lacks.
+    piece: the key of one placed thing here: only that piece is dressed, the way the game dresses its
+    model (a bookshelf's books, a table's dishes, a counter's wares, a planter's plant, a hearth's pots,
+    a shrine's statue), as one change tagged with the piece's key; with replace, what an earlier call
+    laid on it comes off first (a fresh draw). Returns {placed, removed, model, dressings_known}."""
     editing._require_project(db)
     import wealthsurvey
     L = wealthsurvey.level(db, level)
@@ -978,10 +1213,14 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         like_scenes = _as.one(db, like)
         if not like_rooms['cells']:
             raise EditError('That place has no rooms Auto-furnish can read (it is not built from room pieces).')
+    removed = 0
     if replace:
         c0 = db.project.cells.get(cell_key)
         for k in placed_before(db, cell_key):
+            if piece is not None and c0['refs'][k].get('on') != piece:
+                continue                     # (one piece: only what was laid on it before comes off)
             c0['refs'].pop(k, None)
+            removed += 1
         db.sync_project()
     info = rooms(db, cell_key)
     if not info['rooms']:
@@ -997,7 +1236,21 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 fam[k] = wealthsurvey.order_by_tier(fam[k], L['tiers'], L.get('keep', 1))
     extras_left = list(L['extras']) if L else []      # the trade's set pieces still to lay (once a house)
     if not fam.get('fire'):
-        fam['fire'] = hearth_models(db, STYLE_SET.get(style, 'imperial'))     # (a kitchen's hearth)
+        fam['fire'] = hearth_models(db, STYLE_SET.get(style, 'imperial'), pits=style in ('Ashlander', 'Cave', 'Mine'))     # (a kitchen's hearth; none in a Hlaalu house: "a log fire in the middle of the floor")
+    # (the room-kind survey's pieces the palettes seldom hold: a bathing room's tub, an armoury's rack, a
+    # training room's dummy)
+    if not fam.get('bath'):
+        fam['bath'] = bath_models(db, STYLE_SET.get(style, 'imperial'))
+    if not fam.get('rack'):
+        fam['rack'] = [i for i in ('furn_uni_weaponrack_01', 'furn_de_weaponrack_01', 't_com_furn_weaponrack_01') if db.resolve_id(i) is not None]
+    if not fam.get('target'):
+        fam['target'] = [i for i in ('furn_practice_dummy', 'furn_archery_target', 't_com_furn_practicedummy_01') if db.resolve_id(i) is not None]
+    if not fam.get('shrine'):
+        # (a shrine room in a house whose palette has no shrine: the game's own house shrines of the culture)
+        import shrinesurvey
+        import roomsurvey as _rs0
+        fam['shrine'] = shrinesurvey.house_models(db, _rs0.theme_of((mapdata.cell_info(db, cell_key) or {}).get('name') or cell_key),
+                                                  STYLE_SET.get(style, 'imperial'))[:6]
     cont_pool = wealthsurvey.containers_of(db, L['band']) if L else None
     # caves, camps and ruins aren't homes: rough sleeping and stores there, unless a room was named
     ROUGH = {'Cave': 'camp', 'Ashlander': 'camp', 'Mine': 'camp', 'Dwemer': 'ruin', 'Daedric': 'ruin', 'Ruin': 'ruin'}
@@ -1030,6 +1283,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
     # the building kit the place is made of (its light models are the style's: wallsurvey2.style_lights)
     _styles = Counter(kits.kit_prefix(r['id']) for r in info['refs'] if r.get('arch') and kits.kit_prefix(r['id']))
     cell_style = _styles.most_common(1)[0][0] if _styles else ''
+    # the kit's storey: nothing taller than the room is laid in it (the user's saint shrine "clipping the
+    # ceilings" of a Common stone cellar; the beams hang about 20 below the storey's top)
+    _kp = kits.kit_pieces(db, cell_style) if cell_style and cell_style in kits.kits(db) else None
+    storey_h = (_kp or {}).get('height') or None
+    room_top = (storey_h - 20) if storey_h else None
     wanted = {p['id']: p.get('purpose') for p in (plan or [])}
     # everything already standing here takes up room: (box, bottom, top), so that a room only minds
     # what stands on its own floor, not the furniture of the room above or below it
@@ -1113,6 +1371,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         if not b:
             return None
         tag = db.recs[ri][0]
+        if tag in ('STAT', 'ACTI') and theme != 'temple' and BARE_STONE.search(rid.lower()):
+            return None                      # (a bare stone block, slab or pedestal: never furniture in a house, by any path)
         if L and L['cap'] is not None and tag in mapdata.ITEM_TYPES:
             import shelfsurvey
             if shelfsurvey.value_of(db, rid)[1] > L['cap']:
@@ -1120,10 +1380,15 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         if L and L['cont_max'] is not None and tag == 'CONT':
             if (wealthsurvey.container_value(db, rid) or 0) > L['cont_max']:
                 return None                      # (a poor house, or loot kept worthless: no strongbox of gems on a shelf)
+        room_ = next((r for r in info['rooms'] if r['name'] == room), None) if room else None
         if at_z is not None:
             z = at_z                             # exactly where a game dressing puts it on its shelf
         elif hang_from is not None:
             z = hang_from - b[2]                 # hung on the wall at its usual height
+            # (a hung piece needs a wall right behind its back along its whole width: a wall shelf
+            # "hanging in mid-air a little out from a free-standing column, attached to nothing")
+            if tag in ('STAT', 'ACTI', 'CONT') and room_ is not None and T and not wall_behind(b, rot, x, y, room_, T, front_of(db, rid), scale, reach=24):
+                return None
         else:
             # on this room's own floor (not up on the floor of a room above it), or on a table in it; a
             # rug always on the floor
@@ -1138,14 +1403,35 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 # chair over a raised step's box floated; the Gold Coast stair piece's box top is not its floor);
                 # or up on the style's wall ledge, when the caller settled it there (catalogue rule 4)
                 zm = floor_by_mesh(x, y, floor)
+                if zm is not None and 24 < abs(zm - floor) <= 60 and not (ledge and 0 < zm - floor <= ledge + 30) and tag not in mapdata.ITEM_TYPES:
+                    return None                  # (its middle over a step, a bath's rim: a chair there sits at table height)
                 if zm is not None and (abs(zm - floor) <= 60 or (ledge and 0 < zm - floor <= ledge + 30)):
                     z = round(zm - b[2] * scale, 2)
+                elif z + b[2] * scale > floor + 10:
+                    # (no floor mesh under its middle, or none at this level: on the room's floor, never
+                    # on the top of whatever furniture its box reaches over. The user's chairs "raised,
+                    # their seats at the table-top height, as if sitting on the table")
+                    z = round(floor - b[2] * scale, 2)
+        if tag in ('STAT', 'ACTI', 'CONT') and not on_top and at_z is None and hang_from is None and room_ is not None:
+            # two rules every path keeps: nothing taller than the room (its turned top over the kit's
+            # storey less the beams), and a bookshelf, a cupboard or a standing shelf only with a real
+            # wall right behind its back (the user's "awkward bookshelf" out in the middle of a dining
+            # room, side-on to the table, and the saint shrine "clipping the ceilings")
+            if room_top and z + b[5] * scale > room_['floor'] + room_top:
+                last_trace.append((room, 'height', rid, 'taller than the room: %.0f over' % (z + b[5] * scale - room_['floor'] - room_top)))
+                return None
+            fam_p = roomsurvey.family_of(db, rid, tag)
+            if fam_p in ('bookshelf', 'cupboard', 'shelf') and T and not wall_behind(b, rot, x, y, room_, T, front_of(db, rid), scale, reach=30):
+                last_trace.append((room, fam_p, rid, 'no wall behind it: left out'))
+                return None
         nk = db.project.new_ref_key()
         editing._store(c, nk, mine, int(nk.rsplit('|', 1)[1]),
                        set_ref_pos([('NAME', zs(rid))], (x, y, z, tilt[0], tilt[1], rot), scale))
         c['refs'][nk]['by'] = 'furnish'          # (so a later Auto-furnish can take it out first)
+        if piece is not None:
+            c['refs'][nk]['on'] = piece          # (laid on this one piece: "Dress again" takes it off first)
         rec = {'id': rid, 'p': [x, y, z, tilt[0], tilt[1], rot], 's': scale, 'b': b, 'type': tag,
-               'arch': False, 'room': room}
+               'arch': False, 'room': room, 'k': nk, 'via': sys._getframe(1).f_code.co_name}   # (via: which path laid it, for the lab)
         surf.append(rec)
         placed.append(rec)
         if WINERACK.search(rid.lower()) and not on_top:
@@ -1175,6 +1461,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             else:
                 d = [o for o in d if not FAT_BOTTLE.search(o['id'].lower())]
         px, py, pz, rz = rec['p'][0], rec['p'][1], rec['p'][2], rec['p'][5]
+        room_d = next((r for r in info['rooms'] if r['name'] == rec.get('room')), None)
         # the furniture's own geometry, for checking that each thing rests on it (a gold ingot stood in
         # the air under a wall shelf: the dressing's level was the bracket's, not the board's)
         import seethrough
@@ -1186,15 +1473,105 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             # composes rotations: not simply rz added, which lays tilted books down)
             orx, ory, orz = shelfsurvey.compose_on(o['rx'], o['ry'], o['rz'], rz)
             ob = mapdata.object_bounds(db, db.resolve_id(o['id'])) if db.resolve_id(o['id']) is not None else None
-            bottom = pz + o['z'] + (ob[2] * o['s'] if ob else 0)
+            # (its bottom as it stands, turned: an upright book is modelled lying down and stood up by a
+            # quarter turn, so its unturned box put the bottom twenty units too high and the ray under it
+            # missed the board; two thirds of a full dressing were thrown away as "floating")
+            bottom = pz + o['z'] + (shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])[2] if ob else 0)
             # (not for a wine rack: a bottle lies across two slats of the lattice, nothing straight under its
             # middle, and the game's own racks are where its pose came from)
-            hit = own.nearest((px + wx, py + wy, bottom + 6), (0.0, 0.0, -1.0), 40) if own.tris and not WINERACK.search(rec['id'].lower()) else (0, None)
-            if hit is None or hit[0] > 6 + 14:
+            hit = own.nearest((px + wx, py + wy, bottom + 8), (0.0, 0.0, -1.0), 40) if own.tris and not WINERACK.search(rec['id'].lower()) else (0, None)
+            if hit is None or hit[0] > 8 + 14:
                 continue                                 # (nothing of the furniture within reach under it)
+            # (and within the room's walls: a ledger lying across a bookshelf's back edge reached into the wall)
+            if ob and room_d is not None and T:
+                tb_ = shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])
+                if not on_floor((px + wx + tb_[0], py + wy + tb_[1], px + wx + tb_[3], py + wy + tb_[4]), room_rects(room_d, T)):
+                    continue
             if put(o['id'], px + wx, py + wy, orz, at_z=pz + o['z'], tilt=(orx, ory), scale=o['s'], room=rec.get('room')):
                 kept.append(o)
+        last_dress.append((rec['id'], rec.get('room'), len(d), len(kept)))
         return kept or None
+
+    def shrine_ok(rid):
+        """May this shrine model be laid: the game stands it somewhere (a model the game never uses is
+        an unknown: the user's "blank monoliths"), where the game stands it (a home's shrine in a home,
+        the house's own culture's make, never a chapel's altar in a house), under the room's ceiling with
+        its statue (a shorter composition when the tallest would reach the beams), and, when the game
+        gives it a statue in half its places or more, one of the game's dressings with a statue is to
+        hand. (composition or None, allowed)."""
+        import shrinesurvey
+        r = shrinesurvey.rule(db, rid)
+        if shrinesurvey.ready(db) is None:
+            return None, True                 # (not surveyed yet: as before)
+        if not r:
+            return None, False
+        if not shrinesurvey.allowed(db, rid, theme, STYLE_SET.get(style) or fam.get('_borrowed')):
+            return None, False
+        b_ = mapdata.object_bounds(db, db.resolve_id(rid))
+        max_top = None
+        if room_top and b_:
+            max_top = room_top + b_[2]        # (the highest point allowed, over the base's origin)
+            if b_[5] > max_top:
+                return None, False            # (the base alone reaches the beams)
+        comp = shrinesurvey.composition(db, rid, rng, max_top=max_top)
+        if r['with_statue'] >= 0.5 and not (comp and comp['statue']):
+            return None, False
+        return comp, True
+
+    def dress_shrine(rec, comp):
+        """The shrine's statue, candles and offerings on its base, at the game's own offsets in the
+        base's frame (shrinesurvey.py): the saint or the god on the altar, the candles either side, the
+        flowers, coins and food laid before it. A home's low altar table whose game dressing is bare or
+        thin gets the user's offering set instead: gems, coins, a cup, a scroll, a book, candles, laid
+        on its top by the mesh."""
+        import shrinesurvey
+        px, py, pz, rz = rec['p'][0], rec['p'][1], rec['p'][2], rec['p'][5]
+        c_, s_ = math.cos(rz), math.sin(rz)
+        got_ = []
+        if comp:
+            for row in ([comp['statue']] if comp['statue'] else []) + list(comp['candles']) + list(comp['offer']):
+                oid, lx, ly, dz, drz, sc = row[:6]
+                if db.resolve_id(oid) is None:
+                    continue
+                wx, wy = px + lx * c_ + ly * s_, py - lx * s_ + ly * c_
+                ob_ = mapdata.object_bounds(db, db.resolve_id(oid))
+                if ob_ and row is not comp['statue']:
+                    # (a candle or an offering rests on the altar's real top under it, by the mesh: an
+                    # example's offset from a bigger altar left a scroll floating 123 over this one)
+                    top_ = surface_on(rec, wx, wy)
+                    if top_ is None or abs((pz + dz + ob_[2] * sc) - top_) > 30:
+                        if top_ is None:
+                            continue
+                        dz = top_ - ob_[2] * sc - pz
+                r_ = put(oid, wx, wy, (rz + drz) % (2 * math.pi), at_z=pz + dz, scale=sc, room=rec.get('room'), on_top=True)
+                if r_:
+                    got_.append(oid)
+        b_ = rec.get('b')
+        low_ = bool(b_) and (b_[5] - b_[2]) <= shrinesurvey.LOW_ALTAR
+        if low_ and theme != 'temple' and len([g for g in got_ if not re.search(r'candle', g.lower())]) < 2:
+            ab = _footprint([v * (rec.get('s') or 1.0) for v in b_], rz, px, py)
+            laid_ = []
+            for oid in shrinesurvey.offering_set(db, rng, books=(fam.get('book') or [])[:20]):
+                ob = mapdata.object_bounds(db, db.resolve_id(oid))
+                if not ob:
+                    continue
+                for _try in range(6):
+                    ox_ = rng.uniform(ab[0] + 14, ab[2] - 14)
+                    oy_ = rng.uniform(ab[1] + 14, ab[3] - 14)
+                    obox = _footprint(ob, 0, ox_, oy_)
+                    if any(_overlaps(obox, q, 0) for q in laid_):
+                        continue
+                    top_ = surface_on(rec, ox_, oy_)
+                    if top_ is None or top_ < pz + b_[2] + 20:
+                        continue
+                    r_ = put(oid, ox_, oy_, rng.uniform(0, 2 * math.pi), at_z=top_ - ob[2], room=rec.get('room'), on_top=True)
+                    if r_:
+                        got_.append(oid)
+                        laid_.append(obox)
+                    break
+            if laid_:
+                last_trace.append((rec.get('room'), 'shrine', rec['id'], 'the offering set on the altar table: %d things' % len(laid_)))
+        return got_
 
     def dress_hearth(rec, purpose):
         """What the game stands at a hearth like this one (roomsurvey.hearth_dressing): a cooking pot
@@ -1224,6 +1601,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if tag in ('STAT', 'CONT', 'ACTI') and not _overlaps(box, own, 0):
                 if any(_overlaps(box, o[0]) for o in taken if o[1] < fl_ + 150 and o[2] > fl_ + 4 and o[0] is not own):
                     continue
+                # (and on the room's floor as the walls bound it: a log pile through the wall behind the hearth)
+                room_ = next((r for r in info['rooms'] if r['name'] == rec.get('room')), None)
+                if room_ is not None and not on_floor(box, room_rects(room_, T)):
+                    continue
             up = dz * fs > 24 or _overlaps(box, own, 0)
             r_ = put(oid, wx, wy, (rz + drz) % (2 * math.pi), on_top=up and tag in mapdata.ITEM_TYPES, floor=None if up else fl_,
                      at_z=(pz + dz * fs) if up else None, scale=sc, room=rec.get('room'))
@@ -1250,12 +1631,28 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
 
     report = []
     groups = []                              # the sizes of the clutter groups made
+    piece_rec = None
+    if piece is not None:
+        piece_rec = next((r for r in refs if r.get('k') == piece and r.get('b')), None)
+        if piece_rec is None:
+            raise EditError('That thing is not here any more.')
+    piece_out = None
     for room in info['rooms']:
         purpose = wanted.get(room['id'], room['purpose']) if plan is not None else room['purpose']
-        if plan is not None and room['id'] not in wanted:
+        if plan is not None and room['id'] not in wanted and piece is None:
             continue
+        if piece is not None:
+            # (one piece: only the room it stands in, whatever that room is for)
+            pb_ = piece_rec['p'][2] + piece_rec['b'][2] * (piece_rec.get('s') or 1.0)
+            if not (room['x_min'] <= piece_rec['p'][0] <= room['x_max'] and room['y_min'] <= piece_rec['p'][1] <= room['y_max']
+                    and -60 <= pb_ - room['floor'] < 300):      # (a wall shelf hangs well above the floor)
+                continue
+            if not purpose or purpose == 'none' or purpose not in RECIPES:
+                purpose = 'living'
         if not purpose or purpose == 'none' or purpose not in RECIPES:
             continue
+        if purpose == 'hall':
+            purpose = hall_kind(room, refs, T)     # (a corridor, an entry or a landing: room-kind survey R2)
         tl = room['_tiles']
         # inside the room (wall spots already stand off the measured wall face)
         inner = (room['x_min'] + 8, room['y_min'] + 8, room['x_max'] - 8, room['y_max'] - 8)
@@ -1267,6 +1664,15 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         abs(u['x'] - (t['x'] + dx * T)) < 24 and abs(u['y'] - (t['y'] + dy * T)) < 24 for u in tl)):
                     mx, my = t['x'] + dx * T * 0.45, t['y'] + dy * T * 0.45
                     taken.append(((mx - 100, my - 100, mx + 100, my + 100), fl, fl + 200, True))
+            # the mouth of a one-tile nook (three walls: the game's alcove for a bed between posts) stays
+            # clear on the room's side: nothing stands across it (the user's cupboard blocking the alcove)
+            walls_t = [s for s in STEP if t['pat'][s] == 'wall']
+            if len(walls_t) == 3:
+                op = next(s for s in STEP if s not in walls_t)
+                dx, dy = STEP[op]
+                mx, my = t['x'] + dx * (T / 2 + 75), t['y'] + dy * (T / 2 + 75)
+                half = (T * 0.45, 75) if op in ('N', 'S') else (75, T * 0.45)
+                taken.append(((mx - half[0], my - half[1], mx + half[0], my + half[1]), fl, fl + 200, True))
         # spots along the walls: (x, y on the wall's inside face, direction into the room, is it a corner)
         slots = []
         for t in tl:
@@ -1330,6 +1736,17 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 # a run: the user's "barely started shop counter")
                 straight = [r for r in lst if not COUNTER_PART.search(r.lower())]
                 lst = straight or lst
+            if kind == 'shrine':
+                # (the shrine models the game stands in places like this, of the house's own culture; the
+                # game's own house shrines when the palette has none such)
+                import shrinesurvey
+                cu_ = STYLE_SET.get(style) or fam.get('_borrowed')
+                ok_ = [r for r in lst if shrinesurvey.allowed(db, r, theme, cu_)]
+                if not ok_ and shrinesurvey.ready(db) is not None:
+                    ok_ = shrinesurvey.house_models(db, theme, cu_)[:6]
+                    if not ok_:
+                        return None
+                lst = ok_ or lst
             if kind in CONTAINER_KINDS:
                 # the container the game stands in rooms like this, in places like this, with its
                 # contents (a kitchen barrel's saltrice, a bedroom chest's clothes and coins); in places
@@ -1347,8 +1764,14 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         return None
             return lst[min(len(lst) - 1, int(rng.random() ** 2 * min(4, len(lst))))]
 
-        def inside(box):
-            return box[0] >= inner[0] and box[1] >= inner[1] and box[2] <= inner[2] and box[3] <= inner[3]
+        # the room's floor as the walls bound it (room_rects): the one wall check every path goes through
+        tile_rects = room_rects(room, T)
+
+        def inside(box, loose=False):
+            if loose:
+                # (a plant's fronds may brush the wall its planter stands at)
+                return box[0] >= inner[0] and box[1] >= inner[1] and box[2] <= inner[2] and box[3] <= inner[3]
+            return on_floor(box, tile_rects, inner)
 
         def fits(box, clearings=True):
             """Inside the room and clear of what stands on this floor (and of doorways, unless clearings
@@ -1418,6 +1841,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 order = list(col_slots) + order
             if kind == 'counter':
                 order = [sl for sl in order if not sl.get('column') and not sl['corner']] or order
+            if kind in HANGING_KINDS:
+                order = [sl for sl in order if not sl.get('column')]      # (nothing hangs on a column's foot)
             for sl in order:
                 rot = _turn_to_face(front, sl['in'])
                 box0 = _footprint(b, rot, 0, 0)
@@ -1441,6 +1866,157 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     (col_slots if sl.get('column') else slots).remove(sl)
                     return (x, y, rot, box), sl['in']
             return None, None
+
+        def lay_counter_run(pp, dress_fn):
+            """A counter laid as one of the game's own runs (countersurvey.py: three to six segments in an
+            L, a U or a straight line, with its end and corner pieces, at the game's own offsets and
+            turns), with its back to a wall at the gap the game's run had (half the game's runs stand
+            against the wall; the rest leave a keeper's side of 96 to 256 behind), its ends flush to a
+            side wall as often as the game's are, every segment dressed the way the game dresses that
+            model, and what the game stands behind its counters (a shelf, a chair, a sack) at the game's
+            rates. Returns {anchor, done, face, n, ids} or None when no run fits the room."""
+            import countersurvey
+            culture = STYLE_SET.get(cell_style) or fam.get('_borrowed') or None
+            cands = countersurvey.compositions(db, cell_style, purpose, culture=culture)
+            if not cands:
+                return None
+            rule = countersurvey.rule(db, cell_style) or {}
+            cands = list(cands)
+            rng.shuffle(cands)
+            # (a run that suits the room: the game's eleven-segment U is a trade hall's, not a four-tile
+            # shop's; a run longer than three quarters of the room's longer wall only when none shorter fits)
+            long_wall = max(room['x_max'] - room['x_min'], room['y_max'] - room['y_min'])
+            n_cap = max(3, int(round(room['tiles'] * 0.5)))    # (a four-by-three shop: six segments at most)
+            suits = [r_ for r_ in cands if r_['length'] <= 0.75 * long_wall and r_['n'] <= n_cap]
+            cands = suits[:8] + sorted(cands, key=lambda r_: r_['length'])[:4] + [r_ for r_ in cands if r_ not in suits][:4]
+            order = [sl for sl in slot_order('wall', pp) if not sl.get('column') and not sl['corner']]
+            order += [sl for sl in slot_order('wall', pp) if not sl.get('column') and sl['corner']]   # (a corner slot last: an L's elbow in the room's corner)
+            if not order:
+                return None
+            flush_first = rng.random() < 2 * (rule.get('ends_at_wall') or 0.29)
+            for run in cands:
+                segs = []
+                for mid, rz, off, sc in zip(run['models'], run['rzs'], run['offsets'], run['scales']):
+                    ri_ = db.resolve_id(mid)
+                    b_ = mapdata.object_bounds(db, ri_) if ri_ is not None else None
+                    if not b_ or db.recs[ri_][0] not in ('STAT', 'ACTI', 'CONT'):
+                        break
+                    segs.append((mid, rz, off, sc, [v * sc for v in b_]))
+                if len(segs) != len(run['models']):
+                    continue
+                # (against the wall, or a keeper's side wide enough to stand in: never the cramped between)
+                gap = max(0, min(192, run.get('keeper_gap') or 0))
+                gap = 2 if gap < 40 else max(80, gap)
+                for sl in order:
+                    R = _turn_to_face(tuple(run['open']), sl['in'])
+                    c_, s_ = math.cos(R), math.sin(R)
+                    rel = []                 # (each segment turned about the first: offset, turn, box about (0, 0))
+                    for mid, rz, off, sc, b_ in segs:
+                        ox = off[0] * c_ + off[1] * s_
+                        oy = -off[0] * s_ + off[1] * c_
+                        rel.append((mid, (rz + R) % (2 * math.pi), ox, oy, sc, _footprint(b_, rz + R, ox, oy)))
+                    RB = (min(r_[5][0] for r_ in rel), min(r_[5][1] for r_ in rel), max(r_[5][2] for r_ in rel), max(r_[5][3] for r_ in rel))
+                    inx, iny = sl['in']
+                    # the run's back edge at the wall's gap, its middle on the slot, or an end flush to a side wall
+                    if iny:
+                        Y = sl['y'] + iny * gap - (RB[1] if iny > 0 else RB[3])
+                        mids = [sl['x'] - (RB[0] + RB[2]) / 2 + d for d in (0, T, -T, 2 * T, -2 * T)]
+                        flush = [inner[0] + 2 - RB[0], inner[2] - 2 - RB[2]]
+                        xs = (flush + mids) if flush_first else (mids + flush)
+                        tries = [(x_, Y) for x_ in xs]
+                    else:
+                        X = sl['x'] + inx * gap - (RB[0] if inx > 0 else RB[2])
+                        mids = [sl['y'] - (RB[1] + RB[3]) / 2 + d for d in (0, T, -T, 2 * T, -2 * T)]
+                        flush = [inner[1] + 2 - RB[1], inner[3] - 2 - RB[3]]
+                        ys = (flush + mids) if flush_first else (mids + flush)
+                        tries = [(X, y_) for y_ in ys]
+                    for X, Y in tries:
+                        boxes = [(r_[5][0] + X, r_[5][1] + Y, r_[5][2] + X, r_[5][3] + Y) for r_ in rel]
+                        if not all(fits(bx_) for bx_ in boxes):
+                            continue
+                        if gap > 20:
+                            # (the keeper's side behind the run stays clear: nothing between it and the wall)
+                            whole = (RB[0] + X, RB[1] + Y, RB[2] + X, RB[3] + Y)
+                            back = (whole[0] - max(0, inx) * gap + max(0, -inx) * 0, whole[1] - max(0, iny) * gap, whole[2] + max(0, -inx) * gap, whole[3] + max(0, -iny) * gap)
+                            strip = (back[0], back[1], back[2], back[3])
+                            if any(_overlaps(strip, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4):
+                                continue
+                        if any(floor_by_mesh(bx_[0] + 6, bx_[1] + 6, fl) is None or abs((floor_by_mesh((bx_[0] + bx_[2]) / 2, (bx_[1] + bx_[3]) / 2, fl) or fl) - fl) > 24 for bx_ in boxes):
+                            continue      # (every segment down on this floor, none up on a ledge or over a stairwell)
+                        recs_ = []
+                        for (mid, rz_, ox, oy, sc, _b), bx_ in zip(rel, boxes):
+                            r_ = put(mid, X + ox, Y + oy, rz_, floor=fl, room=room['name'], scale=sc)
+                            if r_ is None:
+                                continue
+                            recs_.append((r_, bx_))
+                        if not recs_:
+                            continue
+                        ids = []
+                        for r_, bx_ in recs_:
+                            taken.append((bx_, fl, fl + 200, False))
+                            laid_ = dress_fn(r_, purpose)
+                            tables.append({'box': bx_, 'items': [], 'dressed': bool(laid_), 'counter': True})
+                            fronts.append({'box': bx_, 'in': sl['in'], 'kind': 'counter'})
+                            ids.append(r_['id'])
+                        # the slots the run covers are used up (nothing else goes behind it); what the game
+                        # stands behind its counters goes there, at the game's rates
+                        whole = (RB[0] + X, RB[1] + Y, RB[2] + X, RB[3] + Y)
+                        behind_slots = [s2 for s2 in slots if s2['in'] == sl['in'] and
+                                        (whole[0] - T / 2 <= s2['x'] <= whole[2] + T / 2 if iny else whole[1] - T / 2 <= s2['y'] <= whole[3] + T / 2)]
+                        for s2 in behind_slots:
+                            slots.remove(s2)
+                        if gap >= 80 and behind_slots:
+                            rng.shuffle(behind_slots)
+                            for kind_, rate in sorted((rule.get('behind') or {}).items(), key=lambda kv: -kv[1]):
+                                if kind_ not in ('shelf', 'chair', 'sack', 'crate', 'barrel', 'chest', 'bookshelf') or rng.random() >= rate:
+                                    continue
+                                rid_ = pick(kind_)
+                                b2 = mapdata.object_bounds(db, db.resolve_id(rid_)) if rid_ else None
+                                if not b2:
+                                    continue
+                                fr_ = front_of(db, rid_)
+                                for s2 in list(behind_slots):
+                                    rot2 = _turn_to_face(fr_, s2['in'])
+                                    box0 = _footprint(b2, rot2, 0, 0)
+                                    depth_back = {(0, 1): -box0[1], (0, -1): box0[3], (1, 0): -box0[0], (-1, 0): box0[2]}[s2['in']]
+                                    x2, y2 = s2['x'] + s2['in'][0] * (depth_back + 2), s2['y'] + s2['in'][1] * (depth_back + 2)
+                                    box2 = _footprint(b2, rot2, x2, y2)
+                                    hang2 = shelf_hang(rid_, b2) if kind_ in HANGING_KINDS else 0.0
+                                    if hang2 is None or not fits(box2):
+                                        continue
+                                    r2 = put(rid_, x2, y2, rot2, floor=fl, room=room['name'], hang_from=(fl + hang2) if hang2 > 0 else None)
+                                    if r2 is None:
+                                        continue
+                                    if not hang2:
+                                        taken.append((box2, fl, fl + 200, False))
+                                    ids.append(rid_)
+                                    if kind_ in DRESSED_KINDS:
+                                        dress_fn(r2, purpose)
+                                    behind_slots.remove(s2)
+                                    break
+                        if gap >= 80:
+                            # (and the rest of the keeper's side stays clear like a doorway: the recipe's
+                            # bookshelf stood behind the run from a slot on the side wall)
+                            if iny:
+                                strip = (whole[0], min(whole[1], sl['y']), whole[2], max(whole[3], sl['y']))
+                            else:
+                                strip = (min(whole[0], sl['x']), whole[1], max(whole[2], sl['x']), whole[3])
+                            taken.append((strip, fl, fl + 200, True))
+                        # (the main piece for the scene's other members: the segment nearest the run's middle)
+                        mx_, my_ = (whole[0] + whole[2]) / 2, (whole[1] + whole[3]) / 2
+                        a_, abx = min(recs_, key=lambda rb: math.hypot(rb[0]['p'][0] - mx_, rb[0]['p'][1] - my_))
+                        # (the customer side, a tile deep along the run's open side, is kept clear like a
+                        # doorway once the scene's stools are in: the user's dresser "in the way" in front
+                        # of the counter, which "defeats the purpose of the counter")
+                        if iny:
+                            front_ = (whole[0], whole[3], whole[2], whole[3] + T) if iny > 0 else (whole[0], whole[1] - T, whole[2], whole[1])
+                        else:
+                            front_ = (whole[2], whole[1], whole[2] + T, whole[3]) if inx > 0 else (whole[0] - T, whole[1], whole[0], whole[3])
+                        last_trace.append((room['name'], 'counter', run['models'][0], 'a run of %d (%s) from %s, gap %d' % (len(recs_), run['shape'], run['cell'], gap)))
+                        return {'anchor': a_, 'done': (a_['p'][0], a_['p'][1], R, abx), 'face': sl['in'], 'n': len(recs_), 'ids': ids,
+                                'front': (front_, fl, fl + 200, True)}
+            last_trace.append((room['name'], 'counter', '-', 'no run of the game\'s fits this room'))
+            return None
 
         def divider_spot(b, front):
             """A shelf standing out from a wall as a room divider, the way Hlaalu's shops stand their
@@ -1502,9 +2078,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 done, face = wall_spot(b, front, where)
                 if not done:
                     done, face = wall_spot(b, front, 'wall' if where == 'corner' else 'corner')
-                if not done:
+                pp_ = placesurvey.prefs(db, kind, purpose)
+                if not done and target >= 2 and ((pp_ or {}).get('at', {}).get('middle', 0) >= 0.2 or purpose in ('storage', 'kitchen', 'armoury')):
+                    # (a store's groups stand out on the floor one time in four in the game: room-kind survey R3)
                     # (the wall slots all taken by furniture: a little way out from a wall, or out on the
-                    # floor, as a fifth of the game's groups are)
+                    # floor, as a fifth of the game's groups are; only a group of two or more, and only
+                    # for a kind the game does stand out in the room: never a lone crate mid-floor)
                     for _try in range(14):
                         side = rng.choice(list(STEP))
                         sx, sy = STEP[side]
@@ -1521,8 +2100,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                             done, face = (x, y, rot, box), (-sx, -sy)
                             break
                 if not done:
+                    # (no spot for this kind: the other kinds still get their turn; a storeroom whose
+                    # barrels found no corner lost its crates and sacks too, and stood half empty)
                     last_clutter.append((room['name'], kind, 'no spot for a group', len(items)))
-                    break
+                    items[:] = [k for k in items if k != kind]
+                    continue
                 rec = put(rid, done[0], done[1], done[2], floor=fl, room=room['name'], ledge=ledge_h)
                 if rec is None:
                     items.pop(0)
@@ -1673,6 +2255,102 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         import roomrules
         fam['lamp'] = roomrules.floor_lamps(db, purpose)
 
+        # the lanterns and hanging lamps: the game hangs a lantern (three in four hang, one in a hundred
+        # stands on the floor; decorsurvey.py) at the height it hangs the model, mostly out over the
+        # room (a wall one time in five), never over a doorway, as many as such rooms have up high
+        def hang_light(hid, up, gap, x, y):
+            """A light hung at (x, y), its bottom `up` above the floor (lowered under a ceiling to the gap
+            the game leaves there); None when it can't hang here, or when no ceiling is found over the
+            spot (a light hangs from the ceiling or not at all: the user's "floating candelabras")."""
+            hb = mapdata.object_bounds(db, db.resolve_id(hid))
+            if not hb:
+                return None
+            box = _footprint(hb, 0, x, y)
+            if not inside(box) or any(_overlaps(box, o[0]) for o in taken if o[3] and o[1] < fl + 150 and o[2] > fl + 4):
+                return None
+            if any(abs(h[0] - x) < 120 and abs(h[1] - y) < 120 for h in hung_here):
+                return None
+            z = fl + up - hb[2]
+            over = [r['p'][2] + r['b'][2] * (r.get('s') or 1) for r in refs if r.get('arch') and r.get('b')
+                    and r['p'][2] + r['b'][2] * (r.get('s') or 1) > fl + 100
+                    and mapdata._rotated_contains(r, x, y)]
+            if not over:
+                return None
+            ceiling = min(over)
+            if z + hb[5] > ceiling - 4:
+                z = ceiling - (gap if gap is not None and gap < 160 else 8) - hb[5]
+            if z + hb[2] < fl + 110:
+                return None
+            rec = put(hid, x, y, rng.uniform(0, 2 * math.pi), at_z=z, room=room['name'])
+            if rec:
+                got.append(hid)
+                hung_here.append((x, y))
+            return rec
+
+        def approach_box(box, rot, front):
+            """The half-tile behind a seat (away from what it faces)."""
+            f = front or (0.0, -1.0)
+            fx = f[0] * math.cos(rot) + f[1] * math.sin(rot)
+            fy = -f[0] * math.sin(rot) + f[1] * math.cos(rot)
+            cx_, cy_ = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            w_ = max(box[2] - box[0], box[3] - box[1]) / 2 + 10
+            ax_, ay_ = cx_ - fx * (w_ + 64), cy_ - fy * (w_ + 64)
+            return (ax_ - w_, ay_ - w_, ax_ + w_, ay_ + w_)
+
+        def keep_approach(box, rot, front):
+            """The half-tile behind a seat stays clear, the way a doorway does: nothing stands between a
+            chair and the room (the user's candle stand "right in front of the desk's chair, so the chair
+            can't be reached"). False when something stands there already: the seat is not laid."""
+            ab = approach_box(box, rot, front)
+            if any(_overlaps(ab, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4 and not o[3]):
+                return False
+            taken.append((ab, fl, fl + 150, True))
+            return True
+
+        def shelf_hang(rid_, b_):
+            """How high a wall shelf hangs: the game's height for the model, else the height the game
+            hangs shelves in rooms of this kind; 0 for a shelf unit that stands on the floor (tall), None
+            for a wall shelf with no known height (not placed: the user's Hlaalu ledge "lying on the
+            floor against the wall" with its urns and cups)."""
+            h_ = hang_height(db, rid_)
+            if h_ > 0:
+                return h_
+            if (b_[5] - b_[2]) >= 70:
+                return 0.0
+            import wallsurvey2
+            hr_ = wallsurvey2.hang_rule(db, SURVEY_KIND.get(purpose, purpose))
+            return ((hr_ or {}).get('height') or {}).get('shelf') or None
+
+        def surface_on(rec, x, y):
+            """The top of a placed piece's real surface straight under (x, y), by its mesh, or None."""
+            import seethrough
+            ov = seethrough.overlay(db, [{'op': 'place', 'id': rec['id'], 'p': list(rec['p']), 's': rec.get('s', 1.0)}])
+            if not ov.tris:
+                return None
+            top = rec['p'][2] + rec['b'][5] * (rec.get('s') or 1.0)
+            hit = ov.nearest((x, y, top + 10), (0.0, 0.0, -1.0), (rec['b'][5] - rec['b'][2]) * (rec.get('s') or 1.0) + 20)
+            return None if hit is None else top + 10 - hit[0]
+
+        def plant_in(prec, x_, y_, rot_):
+            """A plant in a planter just stood, as often as the game's planters hold one (catalogue rule 3;
+            three in five when the catalogue hasn't run), its bottom on the planter's own soil by the mesh,
+            never floating, never loose on the floor."""
+            pr = catalogue.rule(db, 'planters', cell_style)
+            # (at least one planter in two gets its plant whatever the style's own rate: the Common houses'
+            # planters stand empty in the game, and an empty planter box reads as a stone block)
+            if piece is None and rng.random() >= max(0.5, (pr or {}).get('with_plant') or 0.6):
+                return None               # (asked for this one planter, it always gets its plant)
+            pl = arrangesurvey.plant_for(db, prec['id'], rng)
+            if not pl:
+                return None
+            c_, s_ = math.cos(rot_), math.sin(rot_)
+            px_, py_ = x_ + pl['x'] * c_ + pl['y'] * s_, y_ - pl['x'] * s_ + pl['y'] * c_
+            pb = mapdata.object_bounds(db, db.resolve_id(pl['id']))
+            top = surface_on(prec, px_, py_)
+            if not pb or top is None or not inside(_footprint([v * pl['s'] for v in pb], (rot_ + pl['rz']) % (2 * math.pi), px_, py_), loose=True):
+                return None               # (and it stays in the room)
+            return put(pl['id'], px_, py_, (rot_ + pl['rz']) % (2 * math.pi), at_z=top - 6 - pb[2] * pl['s'], scale=pl['s'], room=room['name'])
+
         def lay_arrangement(ex, where=None, skip=()):
             """One of the game's own set pieces (arrangesurvey.py: a bar with its stools and barrels, a
             shrine with its bench and urns, planters along a wall, a dining set), laid as the game lays
@@ -1710,6 +2388,16 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     close = best or close
                 return rng.choice(close) if close else rid_
 
+            def _small_alone(fam_, ex_):
+                """A small piece (a crate, a planter, an urn, a basket, a chest, a screen) the game's example
+                had out in the room: mid-floor only as part of a scene of two or more floor pieces, and only
+                for a kind the placement survey shows out in the room one time in five; else to a wall."""
+                if fam_ not in SMALL_KINDS:
+                    return False
+                others = [m_ for m_ in ex_['members'] if not m_.get('anchor') and m_['fam'] in roomsurvey.FLOOR_KINDS + SMALL_KINDS and m_['z'] <= 24]
+                pp_ = placesurvey.prefs(db, fam_, purpose)
+                return len(others) < 2 or not pp_ or pp_['at'].get('middle', 0) < 0.2
+
             a = ex['anchor']
             rid = local(a['id'], a['fam'])
             ri = db.resolve_id(rid)
@@ -1719,16 +2407,38 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             import decorsurvey
             if a['fam'] == 'chest' and decorsurvey.off_floor(db, rid):
                 return kinds_laid         # (a strongbox belongs on a shelf, not loose on the floor)
+            # (a shrine only in a shrine room, a temple or a priest's home; a bar only in a shop, a tavern
+            # or a kitchen: the user's altar slab in a Common living room, "a strange choice here")
+            if a['fam'] == 'shrine' and purpose != 'shrine' and theme != 'temple' and 'shrine' not in extras_left:
+                return kinds_laid
+            if a['fam'] == 'counter' and purpose not in ('shop', 'tavern', 'kitchen'):
+                return kinds_laid
+            shrine_comp = None
+            if a['fam'] == 'shrine':
+                shrine_comp, ok_ = shrine_ok(rid)
+                if not ok_:
+                    last_trace.append((room['name'], 'shrine', rid, 'the game never stands this model, or never without its statue: left out'))
+                    return kinds_laid
             front = front_of(db, rid)
             done = face = None
             # (a bed always goes to a wall, whatever the game's example did: beds that followed a mid-room
             # example stood in the middle of the floor, the user's "beds always have a tendency to sit in
             # the middle of the room")
+            run_laid = None
             if a['fam'] == 'counter':
-                # (a counter run stands along a wall with the keeper's side against it, whatever the
-                # example did mid-room: the keeper's gap behind it, never in a corner)
-                done, face = wall_spot(b, front, 'wall', pp=placesurvey.prefs(db, 'counter', purpose), kind='counter', gap=KEEPER_GAP)
-            elif ex.get('wall', True) or a['fam'] == 'bed' or where in ('wall', 'corner'):
+                # (a counter is one of the game's own runs of segments, laid whole: countersurvey.py; the
+                # scene's stools and barrels come round it. Only when no run fits does a lone straight
+                # segment stand at a wall with the keeper's gap behind it)
+                run_laid = lay_counter_run(placesurvey.prefs(db, 'counter', purpose), dress)
+                if run_laid:
+                    done, face = run_laid['done'], run_laid['face']
+                else:
+                    done, face = wall_spot(b, front, 'wall', pp=placesurvey.prefs(db, 'counter', purpose), kind='counter', gap=KEEPER_GAP)
+            elif ex.get('wall', True) or a['fam'] in ('bed', 'bookshelf', 'cupboard', 'shelf', 'shrine') or where in ('wall', 'corner') or _small_alone(a['fam'], ex):
+                # (a wall piece, a bookshelf or a cupboard, always to a wall, whatever the game's example
+                # did: a bookshelf stood 223 units out in a study from a mid-room example; a shrine too:
+                # the game's stand at a median 90 from the wall, and the user's saint shrine stood "in
+                # the middle of a Common stone cellar room, beside a bench, nothing round it")
                 done, face = wall_spot(b, front, 'corner' if where == 'corner' else 'wall')
             else:
                 rot = _turn_to_face(front, (0, -1)) if front else 0.0
@@ -1744,24 +2454,38 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 return kinds_laid
             if a['fam'] == 'table' and any(_overlaps(done[3], t['box'], -160) for t in tables):
                 return kinds_laid         # (a dining set hard against the room's table: one table doubled)
-            arec = put(rid, done[0], done[1], done[2], floor=fl, room=room['name'], ledge=ledge_h if a['fam'] in catalogue.LEDGE_KINDS else None)
-            if arec is None:
-                return kinds_laid
-            taken.append((done[3], fl, fl + 200, False))
-            got.append(rid)
-            kinds_laid[a['fam']] += 1
+            a_hang = shelf_hang(rid, b) if a['fam'] in HANGING_KINDS else 0.0
+            if a_hang is None:
+                return kinds_laid         # (a wall shelf with no known hanging height)
+            if run_laid:
+                arec = run_laid['anchor']
+                rid = arec['id']
+                got.extend(run_laid['ids'])
+                kinds_laid['counter'] += run_laid['n']
+                skip = tuple(skip) + ('counter',)    # (the run is whole: the scene's own segments are not added to it)
+            else:
+                arec = put(rid, done[0], done[1], done[2], floor=fl, room=room['name'], ledge=ledge_h if a['fam'] in catalogue.LEDGE_KINDS else None,
+                           hang_from=(fl + a_hang) if a_hang > 0 else None)
+                if arec is None:
+                    return kinds_laid
+                taken.append((done[3], fl, fl + 200, False))
+                got.append(rid)
+                kinds_laid[a['fam']] += 1
             for m in ex['members']:
                 if m['fam'] in extras_left:
                     extras_left.remove(m['fam'])      # (the trade's set piece is laid: once a house)
-            laid = dress(arec, purpose) if a['fam'] in DRESSED_KINDS else None
+            laid = dress(arec, purpose) if a['fam'] in DRESSED_KINDS and not run_laid else None
             if a['fam'] == 'fire':
                 got.extend(dress_hearth(arec, purpose))
-            if a['fam'] in ('table', 'counter'):
+            if a['fam'] == 'shrine':
+                got.extend(dress_shrine(arec, shrine_comp))
+            if a['fam'] in ('table', 'counter') and not run_laid:
                 tables.append({'box': done[3], 'items': [], 'dressed': bool(laid), 'counter': a['fam'] == 'counter'})
-            if a['fam'] in ('bed', 'shrine', 'counter') and face:
+            if a['fam'] in ('bed', 'shrine', 'counter') and face and not run_laid:
                 fronts.append({'box': done[3], 'in': face, 'kind': a['fam']})
             R = done[2]
             c_, s_ = math.cos(R), math.sin(R)
+            anchor_mesh = []                  # (the main piece's geometry, built once, for what rides on it)
             for m in ex['members']:
                 if m.get('anchor') or m['fam'] in skip:
                     continue
@@ -1786,12 +2510,64 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 on_top = m['z'] > 24 or m['fam'] == 'pillow'
                 if not on_top and m['fam'] == 'chest' and decorsurvey.off_floor(db, m['id']):
                     continue              # (a strongbox belongs on a shelf, not loose on the floor)
-                # (only something small rides on the main piece: a pillow, a lamp, a plant, a small chest.
-                # A chest or a shelf the game had up on a ledge above a table would come out standing on
-                # the table: left out)
-                if on_top and not (m['fam'] in ('pillow', 'plant', 'lamp', 'apparatus', 'basket') or
-                                   max(mb[3] - mb[0], mb[4] - mb[1]) * m.get('s', 1.0) <= 48):
+                mtag = db.recs[mri][0]
+                mlow = mid.lower()
+                # a light is hung from the ceiling or stands on the floor, nothing in between: a hanging
+                # light (a lantern, a chandelier, a candelabra ring) goes up by the room's own ceiling at
+                # the height the game had it, or not at all; a standing light (a lamp or candle stand)
+                # goes down on the floor by the mesh; a candle rides a table or a shelf (the user's "floating
+                # candelabras", "lanterns on the floor")
+                hanging_light = mtag == 'LIGH' and (HANGING_LIGHT.search(mlow) or (decorsurvey.hangs(db, mid) or ('',))[0] == 'hung')
+                if mtag == 'LIGH' and not hanging_light and not ('candle' in mlow and 'stand' not in mlow and 'candelabra' not in mlow):
+                    on_top = False            # (a standing lamp or candle stand: down on the floor)
+                # (only something small rides on the main piece, and only the kind of piece it was learnt
+                # on: a pillow on a bed, never on a table; a plant in its planter; a candle, a small chest
+                # or a basket on a table or a shelf. A chest or a shelf the game had up on a ledge above a
+                # table would come out standing on the table: left out)
+                if on_top and not hanging_light:
+                    allowed = RIDE.get(m['fam'])
+                    if allowed is None:
+                        allowed = SURFACE_KINDS if max(mb[3] - mb[0], mb[4] - mb[1]) * m.get('s', 1.0) <= 48 else ()
+                    if a['fam'] not in allowed:
+                        continue
+                if m['fam'] in ('chair', 'bench'):
+                    # (a seat is laid only with something to sit at: the set piece's own table or counter,
+                    # a bed, a bookshelf, a hearth; and it faces the table's middle, whatever the game's
+                    # offset turn was for another table: the user's chairs "with their back to the table")
+                    near_t = [t for t in tables if max(t['box'][0] - wx, wx - t['box'][2], t['box'][1] - wy, wy - t['box'][3], 0) < 70]
+                    if a['fam'] in ('table', 'counter', 'fire', 'shrine'):
+                        dvx, dvy = done[0] - wx, done[1] - wy
+                        dn = math.hypot(dvx, dvy) or 1.0
+                        mrot = _turn_to_face(front_of(db, mid), (dvx / dn, dvy / dn))
+                    elif near_t:
+                        tb_ = near_t[0]['box']
+                        dvx, dvy = (tb_[0] + tb_[2]) / 2 - wx, (tb_[1] + tb_[3]) / 2 - wy
+                        dn = math.hypot(dvx, dvy) or 1.0
+                        mrot = _turn_to_face(front_of(db, mid), (dvx / dn, dvy / dn))
+                    else:
+                        # (a seat only at a table, a desk or a counter within reach: the user's "lone chair
+                        # standing in the middle of a room facing a bookshelf's side, pointless"; the
+                        # reading corner's chair comes when the recipe's table stands by it)
+                        continue
+                if m['fam'] == 'counter' and purpose not in ('shop', 'tavern', 'kitchen'):
+                    continue              # (a bar segment in a living room: "ugly broken desk/counter")
+                if not on_top and m['fam'] in ('bookshelf', 'cupboard', 'shelf', 'planter', 'screen'):
+                    # (a wall piece of the set piece stands with its back to a wall, as the game had it,
+                    # or not at all: the user's "bookshelf by the table in the place a chair would take",
+                    # "plants in place of chairs")
+                    box_ = _footprint([v * m.get('s', 1.0) for v in mb], mrot, wx, wy)
+                    at_wall = wall_behind([v * m.get('s', 1.0) for v in mb], mrot, wx, wy, room, T, front_of(db, mid), reach=30)
+                    at_col = m['fam'] == 'planter' and any(abs(cs['x'] - wx) < 60 and abs(cs['y'] - wy) < 60 for cs in col_slots)
+                    if not at_wall and not at_col:
+                        continue
+                if m['fam'] == 'shrine' and purpose != 'shrine' and theme != 'temple':
                     continue
+                # (a floor piece the game's set piece had at an odd angle stands square when it comes near
+                # a wall: a planter box at 46 degrees with a corner to the wall reads as a block clipped
+                # into it)
+                if not on_top and m['fam'] in roomsurvey.FLOOR_KINDS + SMALL_KINDS and abs(mrot / (math.pi / 2) - round(mrot / (math.pi / 2))) > 0.05 \
+                        and min(wx - inner[0], inner[2] - wx, wy - inner[1], inner[3] - wy) < T * 0.6:
+                    mrot = (round(mrot / (math.pi / 2)) * (math.pi / 2)) % (2 * math.pi)
                 # (a plant stands in its planter, a pillow on its bed: inside the main piece's own footprint,
                 # where the clear-space check would refuse it)
                 inside_anchor = abs(m['x']) <= (b[3] - b[0]) / 2 + 4 and abs(m['y']) <= (b[4] - b[1]) / 2 + 4
@@ -1803,14 +2579,42 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     if not inside(box) or any(_overlaps(box, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4
                                                and not any(o[0] is rb for rb in run_boxes)):
                         continue
+                elif not inside(box):
+                    continue              # (a stool under the table's edge, or up on a dais, still cuts no wall: the user's "chair standing inside the wall")
+                if on_top and not hanging_light and not (done[3][0] - 4 <= wx <= done[3][2] + 4 and done[3][1] - 4 <= wy <= done[3][3] + 4):
+                    # (a thing that rides on the main piece lands on the main piece as it stands here, in
+                    # its own turned footprint: the game's offset from a bed of another make or turn put
+                    # two pillows a tile out through the bedroom's wall)
+                    continue
                 elif not on_top and not inside_anchor and not fits(box):
                     continue
                 if m['fam'] == 'table' and any(_overlaps(box, f['box'], -100) for f in fronts if f.get('kind') == 'bed'):
                     continue              # (a set piece's table hard against the bed: the same gap as the recipe's)
                 if m['fam'] == 'table' and len([t for t in tables if not t.get('counter')]) >= table_cap:
                     continue              # (a scene's extra table over the room's cap: five tables in a kitchen)
+                if m['fam'] in ('chair', 'bench') and a['fam'] in ('table', 'counter') and not on_top:
+                    ab_ = approach_box(box, mrot, front_of(db, mid))
+                    if any(_overlaps(ab_, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4 and not o[3] and o[0] is not done[3]):
+                        continue          # (something already stands where one would sit down: no seat here)
+                if m['fam'] in HANGING_KINDS + ('rack',) and not on_top:
+                    sh_ = shelf_hang(mid, mb)
+                    if sh_ is None:
+                        continue
+                    if sh_ > 0:
+                        at_z = fl + sh_ - mb[2] * m.get('s', 1.0)
+                        on_top = True     # (a wall shelf of the set piece hangs at its height, never on the floor)
                 at_z = (arec['p'][2] + m['z']) if on_top else None
-                if on_top:
+                if hanging_light:
+                    # (a light the game hung by this set piece: hung from this room's ceiling at the height
+                    # the game had it, clear of doorways, or not at all; never set down on the floor)
+                    up_ = m['z'] * m.get('s', 1.0) + mb[2] * m.get('s', 1.0)
+                    if up_ < 110:
+                        continue
+                    hrec = hang_light(mid, up_, None, wx, wy)
+                    if hrec:
+                        kinds_laid[m['fam']] += 1
+                    continue
+                elif on_top:
                     # on a bed (or table) of the house's own palette, not the game's: the surveyed offset is
                     # the other model's, so the pillow floated at the game bed's mattress height over a lower
                     # one (or sank into a higher). The height things stand at on this model, from the game's
@@ -1821,11 +2625,22 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     lv_ = shelfsurvey.survey(db, rid).get('levels') or []
                     if lv_:
                         at_z = arec['p'][2] + max(lv_) - mb[2] * m.get('s', 1.0)
+                    # (and the main piece's real surface under it, by the mesh: nothing rides on empty
+                    # air over a swapped model whose top is elsewhere)
+                    if not anchor_mesh:
+                        import seethrough
+                        anchor_mesh.append(seethrough.overlay(db, [{'op': 'place', 'id': arec['id'], 'p': list(arec['p']), 's': arec.get('s', 1.0)}]))
+                    if anchor_mesh[0].tris:
+                        hit_ = anchor_mesh[0].nearest((wx, wy, at_z + mb[2] * m.get('s', 1.0) + 20), (0.0, 0.0, -1.0), 60)
+                        if hit_ is None or hit_[0] > 20 + 14:
+                            continue
                 mrec = put(mid, wx, wy, mrot, on_top=on_top, floor=fl, room=room['name'], scale=m.get('s', 1.0), at_z=at_z)
                 if mrec is None:
                     continue
                 if not on_top and not inside_anchor:
                     taken.append((box, fl, fl + 200, False))
+                if m['fam'] in ('chair', 'bench') and a['fam'] in ('table', 'counter'):
+                    keep_approach(box, mrec['p'][5], front_of(db, mid))
                 got.append(mid)
                 kinds_laid[m['fam']] += 1
                 mlaid = dress(mrec, purpose) if m['fam'] in DRESSED_KINDS else None
@@ -1835,8 +2650,35 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     tables.append({'box': box, 'items': [], 'dressed': bool(mlaid), 'counter': m['fam'] == 'counter'})
                 if m['fam'] in ('bed', 'shrine', 'counter'):
                     fronts.append({'box': box, 'in': face or (0, -1), 'kind': m['fam']})
+            if run_laid:
+                taken.append(run_laid['front'])      # (the customer side stays clear, the scene's stools in)
             return kinds_laid
 
+        import arrangesurvey
+        if piece is not None:
+            # one piece, dressed the way the game dresses its model, by the same paths as a whole house:
+            # the shelf dressings for furniture, the plant for a planter, the hearth's pots and firewood,
+            # the shrine's statue, candles and offerings. The user: "If I right click a bookshelf and
+            # choose auto-furnish, it will populate a bookshelf, maybe doing it again clears it and does
+            # a new arrangement"
+            prec = dict(piece_rec)
+            prec['room'] = room['name']
+            fam_ = roomsurvey.family_of(db, prec['id'], prec['type'])
+            got_ = []
+            if fam_ == 'planter':
+                p_ = plant_in(prec, prec['p'][0], prec['p'][1], prec['p'][5])
+                got_ = [p_['id']] if p_ else []
+            elif fam_ == 'fire':
+                got_ = dress_hearth(prec, purpose)
+            elif fam_ == 'shrine':
+                import shrinesurvey
+                got_ = dress_shrine(prec, shrinesurvey.composition(db, prec['id'], rng))
+            else:
+                d_ = dress(prec, purpose)
+                got_ = [o['id'] for o in (d_ or [])]
+            piece_out = {'placed': len(got_), 'model': prec['id'], 'kind': fam_, 'room': room['name']}
+            report.append({'room': room['name'], 'purpose': purpose, 'placed': len(got_)})
+            break
         # the game's own set pieces first: a bar, a shrine with its bench, planters along a wall, a dining
         # set, a reading corner, laid the way the game lays them (arrangesurvey.py), then the recipe
         # fills in what such rooms hold besides, less what the set pieces stood already
@@ -1856,7 +2698,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             while picks:
                 ex = picks.pop(0)
                 # (no bed outside a bedroom, whatever set piece brings it: a kitchen got a bed)
-                laid_kinds = lay_arrangement(ex, skip=() if purpose == 'bedroom' else ('bed',))
+                laid_kinds = lay_arrangement(ex, skip=() if purpose in ('bedroom', 'barracks') else ('bed',))
                 pre.update(laid_kinds)
                 last_arrangements.append({'room': room['name'], 'purpose': purpose, 'cell': ex['cell'],
                                           'sig': '+'.join(sorted(m['fam'] for m in ex['members'])), 'laid': dict(laid_kinds)})
@@ -1865,10 +2707,19 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         ess = ESSENTIAL.get(purpose)
         if not ess or any(m['fam'] == ess for ex in picks for m in ex['members']):
             lay_pending()
-        # (floor clutter goes in groups after the furniture, the way the game stands it, once surveyed)
-        cs = roomrules.clusters(db)
+        # (floor clutter goes in groups after the furniture, the way the game stands it, once surveyed;
+        # before that, in groups of the game's usual sizes, so a storeroom isn't limited to one piece a
+        # wall tile: the game packs 38 pieces into nine tiles of store)
+        cs = roomrules.clusters(db) or DEFAULT_CLUSTERS
         clutter = []
-        for kind, count, where in ([] if walls_only else roomrules.recipe(db, purpose, RECIPES[purpose], theme=theme, like=like_rooms)):
+        if walls_only:
+            recipe_rows = []
+        elif purpose in roomrules.KIND_PURPOSES:
+            recipe_rows = roomrules.kind_recipe(db, purpose, RECIPES[purpose], culture=STYLE_SET.get(cell_style) or fam.get('_borrowed'),
+                                                tiles=room['tiles'], style=style)
+        else:
+            recipe_rows = roomrules.recipe(db, purpose, RECIPES[purpose], theme=theme, like=like_rooms)
+        for kind, count, where in recipe_rows:
             if picks and kind != ess:
                 lay_pending()
             # (a big room gets more of most things, not more beds, shrines or counters)
@@ -1885,6 +2736,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     n = 1                    # (a second bed only where there is floor for two)
             else:
                 n = count if where in ('centre', 'on_table') or kind in ('rug', 'bed', 'shrine', 'counter', 'chest') else max(1, int(round(count * area_k)))
+                if purpose == 'barracks' and kind in ('bed', 'chest'):
+                    n = max(2, int(round(count * area_k)))     # (a barracks' bunks and their chests come by the room's size)
             if L and L['density'] != 1.0 and kind not in ('bed', 'shrine', 'counter', 'rug') and where != 'centre':
                 # (a poor house holds fewer things than the game's middling ones, a rich one more:
                 # the surveyed band's pieces per nine tiles over the comfortable band's)
@@ -1905,6 +2758,13 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     last_trace.append((room['name'], kind, 'to the clutter groups', [f.get('kind') for f in fronts]))
                 clutter += [kind] * n
                 continue
+            if clutter and purpose in ('storage', 'kitchen', 'armoury') and kind not in roomsurvey.CLUTTER:
+                # (a store's stores take the walls before its shelf and its chest do, not after: the
+                # crates and sacks found no wall left and the room stood half empty)
+                if rng.random() > cs.get('mixed', 0.3):
+                    clutter.sort()
+                groups += place_clutter(clutter, cs)
+                clutter = []
             left = n
             while left > 0:
                 left -= 1
@@ -2001,6 +2861,19 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                                 break
                     if not done:
                         where = 'wall'
+                if kind == 'counter':
+                    if purpose not in ('shop', 'tavern', 'kitchen'):
+                        continue          # (the living rooms' recipe a hall borrows has the odd bar: none here)
+                    if any(t.get('counter') for t in tables):
+                        continue
+                    # (the recipe's counter, when no scene brought one: one of the game's runs, whole;
+                    # never a lone segment in a shop or a tavern, "a barely started shop counter")
+                    run_ = lay_counter_run(pp, dress)
+                    if run_:
+                        got.extend(run_['ids'])
+                        taken.append(run_['front'])
+                    if run_ or purpose != 'kitchen':
+                        continue
                 if where in ('wall', 'corner'):
                     done, face = wall_spot(b, front, where, pp=pp, kind=kind, gap=KEEPER_GAP if kind == 'counter' else 2)
                 elif where == 'centre':
@@ -2032,7 +2905,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     for x, y, face in sides:
                         rot = _turn_to_face(front, face)
                         box = _footprint(b, rot, x + (-face[0]) * 10, y + (-face[1]) * 10)
-                        if fits(box):
+                        if fits(box) and keep_approach(box, rot, front):
                             done = (x + (-face[0]) * 10, y + (-face[1]) * 10, rot, box)
                             break
                 elif where == 'on_table' and tables:
@@ -2058,7 +2931,19 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     continue                  # (a table by the wall hard against the bed, as much as one mid-room)
                 # (only wall shelves hang on the wall: a chest or a crate the game keeps up on a shelf or a
                 # table stands on the floor here)
-                hang = hang_height(db, rid) if where in ('wall', 'corner') and kind in HANGING_KINDS else 0.0
+                hang = shelf_hang(rid, b) if where in ('wall', 'corner', 'divider') and kind in HANGING_KINDS else 0.0
+                if hang is None:
+                    last_trace.append((room['name'], kind, rid, 'a wall shelf with no known hanging height: left out'))
+                    continue
+                if hang and where == 'divider':
+                    last_trace.append((room['name'], kind, rid, 'a wall shelf stands out from no wall: no divider'))
+                    continue              # (a room divider is a standing shelf; a hung one would float in the air)
+                shrine_comp = None
+                if kind == 'shrine':
+                    shrine_comp, ok_ = shrine_ok(rid)
+                    if not ok_:
+                        last_trace.append((room['name'], kind, rid, 'the game never stands this model, or never without its statue: left out'))
+                        continue
                 rec = put(rid, done[0], done[1], done[2], on_top=(where == 'on_table'),
                           hang_from=(fl + hang) if hang > 0 else None, floor=fl, room=room['name'],
                           ledge=ledge_h if where in ('wall', 'corner', 'divider') and kind in catalogue.LEDGE_KINDS else None)
@@ -2071,26 +2956,134 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 if kind == 'planter':
                     # (a plant in it, as often as the game's planters hold one: catalogue rule 3; never a
                     # plant loose on the floor)
-                    pr = catalogue.rule(db, 'planters', cell_style)
-                    if pr and rng.random() < (pr.get('with_plant') or 0):
-                        pl = arrangesurvey.plant_for(db, rid, rng)
-                        if pl:
-                            c_, s_ = math.cos(done[2]), math.sin(done[2])
-                            prec = put(pl['id'], done[0] + pl['x'] * c_ + pl['y'] * s_, done[1] - pl['x'] * s_ + pl['y'] * c_,
-                                       (done[2] + pl['rz']) % (2 * math.pi), at_z=rec['p'][2] + pl['z'], scale=pl['s'], room=room['name'])
-                            if prec:
-                                got.append(pl['id'])
+                    prec = plant_in(rec, done[0], done[1], done[2])
+                    if prec:
+                        got.append(prec['id'])
                 # what stands on it, the way the game sets out this very model (books packed along a
                 # bookshelf, dishes and a candle on a table, wares on a counter)
                 laid = dress(rec, purpose) if kind in DRESSED_KINDS else None
                 if kind == 'fire':
                     got.extend(dress_hearth(rec, purpose))      # (the pot on the fire, the firewood by it)
+                if kind == 'shrine':
+                    got.extend(dress_shrine(rec, shrine_comp))  # (the statue on the altar, the candles, the offerings)
                 if kind in ('table', 'counter'):
                     tables.append({'box': done[3], 'items': [], 'dressed': bool(laid), 'counter': kind == 'counter'})
                 if kind in ('bed', 'shrine', 'counter') and done[3] is not None and face:
                     fronts.append({'box': done[3], 'in': face, 'kind': kind})
         if picks:
             lay_pending()                        # (a recipe with nothing after the essential piece)
+        # what rides on the stores, the way the game tops them (room-kind survey R3): a small crate, a
+        # sack, a bowl or a travel lantern on one crate in two, a sack on a sack one in four, the odd thing
+        # on a barrel or a chest; and a kitchen's hearth gets its cookery and its logs (R4)
+        if not walls_only:
+            import roomkindsurvey
+            RK = roomkindsurvey.ready(db)
+            KK = (RK or {}).get('kinds', {}).get(roomrules.KIND_OF.get(purpose, 'storage'), {}).get('*') if RK else None
+            if KK and purpose in ('storage', 'kitchen', 'armoury', 'landing', 'entry', 'training'):
+                tops_done = 0
+                for srec in [p for p in placed if p.get('room') == room['name'] and roomsurvey.family_of(db, p['id'], p['type']) in ('crate', 'sack', 'barrel', 'chest')]:
+                    sfam = roomsurvey.family_of(db, srec['id'], srec['type'])
+                    if rng.random() >= (KK.get('topped') or {}).get(sfam, 0.0):
+                        continue
+                    pool_ = [i for i, _n in (KK.get('top_ids') or {}).get(sfam, []) if db.resolve_id(i) is not None]
+                    if not pool_:
+                        continue
+                    sb = _footprint([v * (srec.get('s') or 1.0) for v in srec['b']], srec['p'][5], srec['p'][0], srec['p'][1])
+                    for _try in range(4):
+                        tid = rng.choice(pool_)
+                        tb = mapdata.object_bounds(db, db.resolve_id(tid))
+                        if not tb or max(tb[3] - tb[0], tb[4] - tb[1]) > min(sb[2] - sb[0], sb[3] - sb[1]) + 10:
+                            continue      # (nothing wider than the top it rides on)
+                        tx_ = rng.uniform(sb[0] + (tb[3] - tb[0]) / 2, sb[2] - (tb[3] - tb[0]) / 2) if sb[2] - sb[0] > tb[3] - tb[0] else (sb[0] + sb[2]) / 2
+                        ty_ = rng.uniform(sb[1] + (tb[4] - tb[1]) / 2, sb[3] - (tb[4] - tb[1]) / 2) if sb[3] - sb[1] > tb[4] - tb[1] else (sb[1] + sb[3]) / 2
+                        top_ = surface_on(srec, tx_, ty_)
+                        if top_ is None:
+                            continue
+                        trot = rng.choice((0.0, math.pi / 2, math.pi, 3 * math.pi / 2)) if db.recs[db.resolve_id(tid)][0] in ('CONT', 'STAT') else rng.uniform(0, 2 * math.pi)
+                        trec = put(tid, tx_, ty_, trot, on_top=True, at_z=top_ - tb[2], room=room['name'])
+                        if trec:
+                            got.append(tid)
+                            tops_done += 1
+                        break
+                if tops_done:
+                    last_trace.append((room['name'], 'tops', '-', '%d things on the stores' % tops_done))
+            if purpose == 'kitchen' and KK:
+                hearths_ = [p for p in placed if p.get('room') == room['name'] and roomsurvey.family_of(db, p['id'], p['type']) == 'fire']
+                cooks_ = [p for p in placed if p.get('room') == room['name'] and roomkindsurvey.mark_of(p) == 'cook']
+                if hearths_ and not cooks_:
+                    hrec_ = hearths_[0]
+                    pool_ = [i for i, _n in KK.get('cook_ids') or [] if db.resolve_id(i) is not None
+                             and re.search(r'pan_|pot|kettle|cauldron|skillet|teapot|cook', i) and not re.search(r'flute|music|instrument|potion|flower|plant', i)]
+                    hb = _footprint([v * (hrec_.get('s') or 1.0) for v in hrec_['b']], hrec_['p'][5], hrec_['p'][0], hrec_['p'][1])
+                    for _try in range(6):
+                        if not pool_:
+                            break
+                        cid = rng.choice(pool_)
+                        cb = mapdata.object_bounds(db, db.resolve_id(cid))
+                        if not cb:
+                            continue
+                        # (on the hearth where it has a surface, else on the floor beside it)
+                        cx_, cy_ = (hb[0] + hb[2]) / 2 + rng.uniform(-20, 20), (hb[1] + hb[3]) / 2 + rng.uniform(-20, 20)
+                        top_ = surface_on(hrec_, cx_, cy_)
+                        crec = None
+                        if top_ is not None and top_ - fl < 120:
+                            if not inside(_footprint(cb, 0, cx_, cy_)):
+                                continue      # (a cauldron on the hearth's top reached into the wall behind it)
+                            crec = put(cid, cx_, cy_, rng.uniform(0, 2 * math.pi), on_top=True, at_z=top_ - cb[2], room=room['name'])
+                        else:
+                            side_ = rng.choice(((hb[2] + 30, (hb[1] + hb[3]) / 2), (hb[0] - 30, (hb[1] + hb[3]) / 2), ((hb[0] + hb[2]) / 2, hb[3] + 30), ((hb[0] + hb[2]) / 2, hb[1] - 30)))
+                            crot = rng.choice((0.0, math.pi / 2, math.pi, 3 * math.pi / 2))
+                            cbox = _footprint(cb, crot, side_[0], side_[1])
+                            if not fits(cbox):
+                                continue
+                            crec = put(cid, side_[0], side_[1], crot, floor=fl, room=room['name'])   # (the turn the box was checked at)
+                            if crec:
+                                taken.append((cbox, fl, fl + 100, False))
+                        if crec:
+                            got.append(cid)
+                            last_trace.append((room['name'], 'cookery', cid, 'on or by the hearth'))
+                            break
+                    # (three or four logs in the corner next to the hearth: firewood 0.5 per nine tiles, 40% in a corner)
+                    logs_ = [i for i in ('furn_log_01', 'furn_log_03', 'furn_log_04', 'furn_log_02') if db.resolve_id(i) is not None]
+                    if logs_ and not any(roomkindsurvey.mark_of(p) == 'firewood' for p in placed if p.get('room') == room['name']):
+                        lb = mapdata.object_bounds(db, db.resolve_id(logs_[0]))
+                        for side_ in ((hb[2] + 40, (hb[1] + hb[3]) / 2), (hb[0] - 40, (hb[1] + hb[3]) / 2)):
+                            n_logs = 0
+                            for k_ in range(rng.choice((3, 4))):
+                                lx_, ly_ = side_[0] + rng.uniform(-18, 18), side_[1] + rng.uniform(-18, 18)
+                                lrot = rng.uniform(0, 2 * math.pi)
+                                lid_ = rng.choice(logs_)
+                                lb = mapdata.object_bounds(db, db.resolve_id(lid_)) or lb
+                                lbox = _footprint(lb, lrot, lx_, ly_)
+                                if not inside(lbox) or any(_overlaps(lbox, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4 and o[3]):
+                                    break
+                                lrec = put(lid_, lx_, ly_, lrot, floor=fl, room=room['name'])
+                                if lrec:
+                                    got.append(lrec['id'])
+                                    n_logs += 1
+                            if n_logs:
+                                taken.append(((side_[0] - 40, side_[1] - 40, side_[0] + 40, side_[1] + 40), fl, fl + 60, False))
+                                last_trace.append((room['name'], 'firewood', logs_[0], '%d logs by the hearth' % n_logs))
+                                break
+        # every seat in the room faces the table it stands at: a reading chair laid before the recipe's
+        # table came beside it was left with its back to the table (the user's "chairs not facing their
+        # table or desk")
+        for r_ in [p for p in placed if p.get('room') == room['name'] and p.get('k') and roomsurvey.family_of(db, p['id'], p['type']) == 'chair']:
+            near_t = [t for t in tables if max(t['box'][0] - r_['p'][0], r_['p'][0] - t['box'][2], t['box'][1] - r_['p'][1], r_['p'][1] - t['box'][3], 0) < 70]
+            if not near_t:
+                continue
+            tb_ = near_t[0]['box']
+            dvx, dvy = (tb_[0] + tb_[2]) / 2 - r_['p'][0], (tb_[1] + tb_[3]) / 2 - r_['p'][1]
+            dn = math.hypot(dvx, dvy) or 1.0
+            rot_ = _turn_to_face(front_of(db, r_['id']), (dvx / dn, dvy / dn))
+            # (turned only when it still stands on the room's floor as the walls bound it: a chair turned
+            # a quarter by the wall put its back through it; and only its turn changes, never its height)
+            if abs((rot_ - r_['p'][5] + math.pi) % (2 * math.pi) - math.pi) > 0.3 and r_['k'] in c['refs'] \
+                    and inside(_footprint([v * (r_.get('s') or 1.0) for v in r_['b']], rot_, r_['p'][0], r_['p'][1])):
+                r_['p'][5] = rot_
+                editing._store(c, r_['k'], mine, int(r_['k'].rsplit('|', 1)[1]),
+                               set_ref_pos([('NAME', zs(r_['id']))], tuple(r_['p']), r_.get('s', 1.0)))
+                c['refs'][r_['k']]['by'] = 'furnish'
         if purpose == 'hall' and not walls_only and slots and not any(roomsurvey.family_of(db, r['id'], r['type']) in roomsurvey.FLOOR_KINDS + ('planter', 'basket')
                                                                    for r in placed if r.get('room') == room['name']):
             # (a hall whose bench found no wall clear of its doorways: something smaller against a wall,
@@ -2101,15 +3094,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 if not b:
                     continue
                 done, face = wall_spot(b, front_of(db, rid), 'corner', pp=placesurvey.prefs(db, kind, purpose), kind=kind)
-                if done and put(rid, done[0], done[1], done[2], floor=fl, room=room['name'], ledge=ledge_h):
+                prec_ = put(rid, done[0], done[1], done[2], floor=fl, room=room['name'], ledge=ledge_h) if done else None
+                if prec_:
                     taken.append((done[3], fl, fl + 200, False))
                     got.append(rid)
                     if kind == 'planter':
-                        pl = arrangesurvey.plant_for(db, rid, rng)
-                        if pl:
-                            c_, s_ = math.cos(done[2]), math.sin(done[2])
-                            put(pl['id'], done[0] + pl['x'] * c_ + pl['y'] * s_, done[1] - pl['x'] * s_ + pl['y'] * c_,
-                                (done[2] + pl['rz']) % (2 * math.pi), at_z=fl + pl['z'], scale=pl['s'], room=room['name'])
+                        plant_in(prec_, done[0], done[1], done[2])
                     break
         if clutter:
             rng.shuffle(clutter)
@@ -2117,36 +3107,6 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if rng.random() > cs.get('mixed', 0.3):
                 clutter.sort()
             groups += place_clutter(clutter, cs)
-        # the lanterns and hanging lamps: the game hangs a lantern (three in four hang, one in a hundred
-        # stands on the floor; decorsurvey.py) at the height it hangs the model, mostly out over the
-        # room (a wall one time in five), never over a doorway, as many as such rooms have up high
-        def hang_light(hid, up, gap, x, y):
-            """A light hung at (x, y), its bottom `up` above the floor (lowered under a ceiling to the gap
-            the game leaves there); None when it can't hang here."""
-            hb = mapdata.object_bounds(db, db.resolve_id(hid))
-            if not hb:
-                return None
-            box = _footprint(hb, 0, x, y)
-            if not inside(box) or any(_overlaps(box, o[0]) for o in taken if o[3] and o[1] < fl + 150 and o[2] > fl + 4):
-                return None
-            if any(abs(h[0] - x) < 120 and abs(h[1] - y) < 120 for h in hung_here):
-                return None
-            z = fl + up - hb[2]
-            over = [r['p'][2] + r['b'][2] * (r.get('s') or 1) for r in refs if r.get('arch') and r.get('b')
-                    and r['p'][2] + r['b'][2] * (r.get('s') or 1) > fl + 100
-                    and mapdata._rotated_contains(r, x, y)]
-            if over:
-                ceiling = min(over)
-                if z + hb[5] > ceiling - 4:
-                    z = ceiling - (gap if gap is not None and gap < 160 else 8) - hb[5]
-                if z + hb[2] < fl + 110:
-                    return None
-            rec = put(hid, x, y, rng.uniform(0, 2 * math.pi), at_z=z, room=room['name'])
-            if rec:
-                got.append(hid)
-                hung_here.append((x, y))
-            return rec
-
         if not walls_only and purpose not in ('ruin', 'camp'):
             import wallsurvey2
             skind = SURVEY_KIND.get(purpose, purpose)
@@ -2309,9 +3269,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         px, py = (x - sx, y - sy)
                         side = (-py / T * 70, px / T * 70)
                         box = _footprint(lb, 0, x + side[0], y + side[1])
-                        if any(_overlaps(box, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4):
+                        rects_ = room_rects(rm, T)
+                        # (clear of what stands there, and on the room's floor as the walls bound it: the
+                        # user's lamps 20 to 33 units into a wall came from here)
+                        if any(_overlaps(box, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4) or not on_floor(box, rects_):
                             box = _footprint(lb, 0, x - side[0], y - side[1])
-                            if any(_overlaps(box, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4):
+                            if any(_overlaps(box, o[0]) for o in taken if o[1] < fl + 150 and o[2] > fl + 4) or not on_floor(box, rects_):
                                 continue
                             side = (-side[0], -side[1])
                         rec = put(lid, x + side[0], y + side[1], rng.uniform(0, 2 * math.pi), floor=fl, room=rm['name'])
@@ -2339,6 +3302,20 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     if rec:
                         lit_by.append(rec)
                         break
+    if piece is not None:
+        known = piece_info(db, cell_key, piece)['dressings_known']
+        if piece_out is None:
+            raise EditError('That piece stands in no room Auto-furnish can read (not on a room piece\'s floor).')
+        if not placed:
+            if not known:
+                raise EditError('The game never puts anything on this (%s), so there is nothing to copy.' % piece_out['model'])
+            raise EditError('None of the game\'s %d dressings of this model fit here as it stands (too close to a wall, or things in the way).' % known)
+        db.sync_project()
+        import modelcache
+        modelcache.save()
+        placed_last[:] = placed
+        editing.commit(db, 'Dressed %s the game\'s way (%d things)' % (piece_out['model'], len(placed)))
+        return {'placed': len(placed), 'removed': removed, 'model': piece_out['model'], 'kind': piece_out['kind'], 'dressings_known': known}
     if not placed:
         if walls_only:
             raise EditError('Found no free wall to hang things on, or nothing that hangs on walls in places like this.')
@@ -2353,6 +3330,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             pass
     import modelcache
     modelcache.save()                        # (what was learnt about the models this time, kept for the next furnish)
+    placed_last[:] = placed                  # (for the lab: what was laid, and by which path)
     editing.commit(db, 'Auto-furnished %s (%d things in %d rooms)' % (editing.cell_label(db, cell_key), len(placed),
                                                                       len([r for r in report if r['placed']])))
     # how many of the containers stood here hold something (the game's own filled ones)

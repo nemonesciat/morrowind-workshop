@@ -463,6 +463,38 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=
     return out, sc
 
 
+_side_open = {}
+
+
+def side_open(db, ri, side, z0, z1, T):
+    """How much of one side of a piece is open between heights z0 and z1 (in the piece's own frame,
+    0..1): rays from inside the piece's tile, across its middle, out through that side. A Common tall
+    stairwell's low end is open below (the way in) and walled above; its sides are walled where the
+    measure says so."""
+    key = (ri, side, round(z0), round(z1), round(T))
+    if key in _side_open and _side_open[key][0] is db.recs:
+        return _side_open[key][1]
+    tris = model_tris(db, db.recs[ri][5])
+    if not tris:
+        return 1.0
+    sc = Scene()
+    sc.add_model(tris, (0, 0, 0, 0, 0, 0))
+    nx, ny = {'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0)}[side]
+    ax, ay = abs(ny), abs(nx)
+    free = total = 0
+    for k in range(-4, 5):
+        u = k * T * 0.1
+        for j in range(8):
+            z = z0 + (z1 - z0) * (j + 0.5) / 8.0
+            o = (ax * u, ay * u, z)
+            total += 1
+            if not sc.blocked(o, (float(nx), float(ny), 0.0), T):
+                free += 1
+    res = free / float(total)
+    _side_open[key] = (db.recs, res)
+    return res
+
+
 def facing(db, ri, inward, default):
     """The turn (of the four) that shows the most of a wall piece to someone looking at it from the
     side inward points to (from the room): many are seen from one side only, and some are open or

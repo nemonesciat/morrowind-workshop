@@ -792,6 +792,11 @@ class Database:
                     return 1
                 return 2
             matches.sort(key=rank)
+        # the ones the game places most first (the placing search: the common bookshelf before its
+        # twenty variants, so there is less to scroll past)
+        if sort == 'uses':
+            used = self.used_in
+            matches.sort(key=lambda i: -len(used.get(recs[i][1].lower(), ())))
         # sorted by a column of the list ("-name": the other way round)
         col = (sort or '').lstrip('-')
         if col in ('id', 'name', 'type', 'plugin', 'extra'):

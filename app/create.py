@@ -179,9 +179,10 @@ def _rot2(dx, dy, angle):
     return dx * c + dy * s, -dx * s + dy * c
 
 
-def create_interior(db, template_key, name, contents, entrance, door_id=None):
+def create_interior(db, template_key, name, contents, entrance, door_id=None, save=True):
     """Copy a template room into a new interior and link it to a new outside door.
-    contents: 'furnished' | 'lights' | 'empty'. entrance: {cell, x, y, z, rz} or None."""
+    contents: 'furnished' | 'lights' | 'empty'. entrance: {cell, x, y, z, rz} or None.
+    save=False leaves the commit to the caller (a hidden door made in the same change: mechanism.py)."""
     editing._require_project(db)
     p = db.project
     name = (name or '').strip()
@@ -311,9 +312,10 @@ def create_interior(db, template_key, name, contents, entrance, door_id=None):
         dsubs = _insert_before_data(dsubs, [('DODT', struct.pack('<6f', *inside_arrival)), ('DNAM', zs(name))])
         nk = p.new_ref_key()
         editing._store(oc, nk, mine, int(nk.rsplit('|', 1)[1]), dsubs)
-    editing.commit(db, 'Created interior "%s" (copied from %s)%s' % (
-        name, tinfo['name'] if tinfo else template_key,
-        ' with its entrance in %s' % editing.cell_label(db, outside[0]) if outside else ''))
+    if save:
+        editing.commit(db, 'Created interior "%s" (copied from %s)%s' % (
+            name, tinfo['name'] if tinfo else template_key,
+            ' with its entrance in %s' % editing.cell_label(db, outside[0]) if outside else ''))
     return key
 
 

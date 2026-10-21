@@ -545,11 +545,12 @@ def swap_ref(db, cell_key, refkey, new_id):
     return refkey
 
 
-def secret_ref(db, cell_key, refkey, kind='door'):
+def secret_ref(db, cell_key, refkey, kind='door', save=True, sound=None):
     """Turn a placed piece of scenery (a wall, a bookcase) into a hidden door or an activator that looks
     just the same: a new DOOR or ACTI record in your mod with the piece's own model, and the placed
     piece swapped for it, keeping its spot and turn. A door can then be made to lead somewhere (or just
-    swing open on its hinge); an activator is for a script. One record per model is reused."""
+    swing open on its hinge); an activator is for a script. One record per model is reused.
+    save=False leaves the commit to the caller (one change made of several steps: mechanism.py)."""
     _require_project(db)
     c, refs = _cell(db, cell_key)
     ref = refs.get(refkey)
@@ -569,7 +570,10 @@ def secret_ref(db, cell_key, refkey, kind='door'):
     model = next((zstr(d) for t, d in iter_subrecords(data) if t == 'MODL'), None)
     if not model:
         raise EditError('"%s" has no model.' % r[1])
-    name = next((zstr(d) for t, d in iter_subrecords(data) if t == 'FNAM'), None) or (r[2] or '').strip() or 'Wall'
+    name = next((zstr(d) for t, d in iter_subrecords(data) if t == 'FNAM'), None) or (r[2] or '').strip()
+    if not name:
+        import mechanism
+        name = mechanism.nice_name(r[1]) or 'Wall'
     # (one made before, for the same model and kind, is used again)
     suffix = '_hidden' if tag == 'DOOR' else '_acti'
     base = re.sub(r'_(hidden|acti)(_\d+)?$', '', r[1])          # (a door made this way, turned into an activator)
@@ -583,7 +587,7 @@ def secret_ref(db, cell_key, refkey, kind='door'):
             n += 1
         subs = [('NAME', zs(new_id)), ('MODL', zs(model)), ('FNAM', zs(name[:31]))]
         if tag == 'DOOR':
-            snd = 'wood' if re.search(r'wood|plank|thatch', model, re.I) else 'stone'
+            snd = sound if sound in DOOR_SOUNDS else 'wood' if re.search(r'wood|plank|thatch', model, re.I) else 'stone'
             for sub, sid in zip(('SNAM', 'ANAM'), DOOR_SOUNDS[snd]):
                 if db.resolve_id(sid) is not None:
                     subs.append((sub, zs(sid)))
@@ -594,8 +598,9 @@ def secret_ref(db, cell_key, refkey, kind='door'):
     if tag != 'DOOR':
         subs = [(t, d) for t, d in subs if t not in ('DODT', 'DNAM')]
     _store(c, refkey, ref['origin'], ref['idx'], subs)
-    commit(db, 'Made "%s" into %s "%s" in %s' % (old, 'the activator' if tag == 'ACTI' else 'the hidden door',
-                                                 new_id, cell_label(db, cell_key)))
+    if save:
+        commit(db, 'Made "%s" into %s "%s" in %s' % (old, 'the activator' if tag == 'ACTI' else 'the hidden door',
+                                                     new_id, cell_label(db, cell_key)))
     return {'id': new_id, 'type': tag, 'ref': refkey}
 
 

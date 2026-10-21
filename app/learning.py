@@ -11,6 +11,7 @@ import background
 _SURVEYS = [
     ('roomsurvey', 'ready'), ('wealthsurvey', 'ready'), ('placesurvey', 'ready'), ('arrangesurvey', 'ready'),
     ('catalogue', 'ready'), ('wallsurvey2', 'ready'), ('decorsurvey', 'ready'), ('shelfsurvey', 'interest_ready'),
+    ('countersurvey', 'ready'), ('shrinesurvey', 'ready'), ('roomkindsurvey', 'ready'),
 ]
 
 

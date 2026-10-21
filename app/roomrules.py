@@ -13,12 +13,122 @@ WHERE = {'table': 'centre', 'chair': 'by_table', 'rug': 'rug', 'fire': 'centre',
          'shrine': 'wall', 'chest': 'by_bed'}
 ON_TOP = {'dish': 'dish', 'food': 'food', 'bottle': 'bottle', 'book': 'book', 'candle': 'candle'}
 LAMP = re.compile(r'lamp|lantern|torch|brazier')
-NOT_LAMP = re.compile(r'sconce|candle|wall|hang|chandelier|_de_paper')
+NOT_LAMP = re.compile(r'sconce|candle|wall|hang|chandelier|_de_paper|torch')     # (a torch is a wall mount: stood on the floor it floated)
 
 
 ONE_ONLY = ('bed', 'counter', 'shrine')          # one to a room, whatever the game's average (a bunk room comes as a set piece)
 MIN_PER_9 = 0.2                                  # a kind the game stands less often than this per 3 x 3 room is left to the set pieces
-TABLE_CAP = {'bedroom': 1, 'living': 2, 'storage': 1, 'hall': 1, 'kitchen': 2, 'shop': 1, 'study': 2, 'shrine': 1}    # (a second table in a bedroom reads as clutter, not as lived in; five in a kitchen made "a pathetic dining room")
+TABLE_CAP = {'bedroom': 1, 'living': 2, 'storage': 1, 'hall': 1, 'kitchen': 2, 'shop': 1, 'study': 2, 'shrine': 1,
+             'bath': 1, 'corridor': 1, 'entry': 0, 'landing': 0, 'barracks': 1, 'armoury': 1, 'training': 1, 'mess': 2, 'guardroom': 1}    # (a second table in a bedroom reads as clutter, not as lived in; five in a kitchen made "a pathetic dining room")
+# the room-kind survey's purposes (roomkindsurvey.py): Auto-furnish's purpose -> (the survey's kind, its sub-kind)
+KIND_OF = {'bath': 'bath', 'corridor': 'hall', 'entry': 'hall', 'landing': 'hall', 'storage': 'storage', 'kitchen': 'kitchen',
+           'barracks': 'guard', 'armoury': 'guard', 'training': 'guard', 'mess': 'guard', 'guardroom': 'guard'}
+KIND_SUB = {'corridor': 'corridor', 'entry': 'entry', 'landing': 'landing', 'barracks': 'barracks', 'armoury': 'armoury',
+            'training': 'training', 'mess': 'mess', 'guardroom': 'guardroom'}
+KIND_PURPOSES = ('bath', 'corridor', 'entry', 'landing', 'storage', 'barracks', 'armoury', 'training', 'mess', 'guardroom')
+KIND_FLOOR = roomsurvey.FLOOR_KINDS + ('basket', 'screen', 'planter', 'bath', 'rack', 'target')     # what Auto-furnish can stand of the survey's kinds
+KIND_CENTRE = ('target', 'screen', 'table')      # out in the room when the game has them there
+MIN_KIND_ROOMS = 4
+# (the survey counts the lights the game stands on the floor; Auto-furnish's standing lamps are one of
+# roomrules.floor_lamps for the nearest room kind)
+LIGHT_KIND = {'bath': 'living', 'corridor': 'empty', 'entry': 'empty', 'landing': 'empty', 'barracks': 'bedroom', 'mess': 'living',
+              'guardroom': 'living', 'armoury': 'storage', 'training': 'storage'}
+
+
+def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
+    """[(kind, count per nine tiles, where)] for one of the room-kind survey's purposes (a bathing room, a
+    corridor, an entry, a landing, a storeroom, a barracks, an armoury, a training room, a mess, a
+    guardroom), from the game's rooms of the kind (its own culture's when it has four or more, else all):
+    every furniture kind the game stands there at its rate, where the game stands it (a corner, the
+    wall, out in the room), the one-to-a-room kinds capped, the lights at the game's rate; the hand-written
+    stand-in until the survey has run."""
+    import roomkindsurvey
+    s = roomkindsurvey.ready(db)
+    if not s:
+        return fallback
+    K = s['kinds'].get(KIND_OF.get(purpose))
+    if not K:
+        return fallback
+    S = None
+    sub = KIND_SUB.get(purpose)
+    if sub and K.get('sub:' + sub, {}).get('rooms', 0) >= MIN_KIND_ROOMS:
+        S = K['sub:' + sub]
+    elif not sub:
+        # (the house's own building style when the survey has eight rooms of the kind in it: the
+        # survey's "Imperial" stores are the Legion forts', not a Common house's)
+        S = K.get(style) if style and K.get(style, {}).get('rooms', 0) >= MIN_KIND_ROOMS * 2 else K.get('*')
+    if not S or S.get('rooms', 0) < MIN_KIND_ROOMS:
+        S = K.get('*')
+    if not S:
+        return fallback
+    out = []
+    for fam, rate in sorted(S['per_9'].items(), key=lambda kv: -kv[1]):
+        if fam not in KIND_FLOOR or rate < MIN_PER_9:
+            continue
+        count = float(rate)
+        if fam == 'counter' or fam == 'shrine':
+            continue
+        if fam == 'bed' and purpose != 'barracks':
+            continue
+        if fam == 'rack' and purpose not in ('armoury', 'training', 'barracks', 'guardroom'):
+            continue                    # (a storeroom's racks are wine racks, the dressings' business; a weapon rack is a guard's)
+        if fam == 'target' and purpose != 'training':
+            continue
+        if fam == 'bath' and purpose != 'bath':
+            continue                    # (a washtub among a storeroom's barrels is not a bathing room's)
+        if purpose == 'storage' and fam in ('planter', 'screen', 'bench', 'table', 'cupboard'):
+            continue                    # (a store is stores: the odd planter or bench in the game's is a back room's)
+        if fam == 'planter' and rate < 0.5:
+            continue
+        if fam == 'table':
+            cap = TABLE_CAP.get(purpose, 1)
+            if not cap:
+                continue
+            count = min(count, float(cap))
+        elif fam == 'rug':
+            continue                    # (rugs go by the room's own rule below)
+        elif fam == 'bath':
+            count = max(1.0, count)     # (a bathing room always has its tub)
+        w = S.get('where_f', {}).get(fam, {})
+        tot = float(sum(w.values()) or 1)
+        if fam == 'chair' and purpose in ('mess', 'barracks', 'guardroom'):
+            where = 'by_table' if any(f == 'table' for f, _c, _w in out) or 'table' in S['per_9'] else 'wall'
+        elif fam in ('chair', 'bench') and purpose == 'mess':
+            where = 'by_table'
+        elif fam == 'chest' and purpose == 'barracks':
+            where = 'by_bed'
+        elif fam in KIND_CENTRE and w.get('middle', 0) / tot >= 0.5:
+            where = 'centre'
+        elif w.get('corner', 0) / tot >= 0.4:
+            where = 'corner'
+        else:
+            where = 'wall'
+        out.append((fam, count, where))
+    # (the room's own piece first, then the big pieces, then the rest, as the other recipes)
+    first = ('bath', 'bed', 'rack', 'target', 'table')
+    out.sort(key=lambda r: (r[0] not in first, first.index(r[0]) if r[0] in first else 9, r[0] in ('chair', 'chest', 'rug')))
+    if purpose == 'entry' and S.get('rug_rooms', 0) >= 0.1:
+        out.append(('rug', 1, 'runner'))
+    if purpose == 'barracks' and S.get('rug_rooms', 0) >= 0.1:
+        out.append(('rug', 1, 'by_bed'))
+    if purpose == 'mess':
+        out.append(('rug', 1, 'under_table'))
+    # what goes on the tables (the survey's tops of its tables), and the lights
+    tops = dict((S.get('tops') or {}).get('table', []))
+    total = sum(tops.values()) or 1
+    n_tables = sum(c for f, c, _w in out if f == 'table') or 1
+    for what, n in sorted(tops.items(), key=lambda kv: -kv[1]):
+        if what in ON_TOP and n / float(total) >= 0.06:
+            out.append((ON_TOP[what], max(1, int(round(5 * n / float(total) * n_tables))), 'on_table'))
+    lw = S.get('lights_where') or {}
+    ltot = float(sum(lw.values()) or 1)
+    floor_n = int(round(S.get('lights_per_9', 0) * lw.get('floor', 0) / ltot))
+    if floor_n and floor_lamps(db, LIGHT_KIND.get(purpose, 'living')):
+        out.append(('lamp', floor_n, 'wall'))
+    cand_n = int(round(S.get('lights_per_9', 0) * lw.get('furniture', 0) / ltot * 0.5))
+    if cand_n and any(f == 'table' for f, _c, _w in out) and not any(f == 'candle' for f, _c, _w in out):
+        out.append(('candle', cand_n, 'on_table'))
+    return out
 EXTRA_KINDS = ('basket', 'screen', 'planter')    # the set pieces' other kinds Auto-furnish can stand on its own (furnish.FAMILIES has them)
 BUNK_THEMES = ('guild', 'tavern')                # where the game's bedrooms are bunk rooms: as many beds as it stands, up to three
 
@@ -35,6 +145,11 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
         return _hall_recipe(s, fallback)
     K = s['kinds'].get(purpose) if s else None
     if not K or K['rooms'] < MIN_ROOMS:
+        if purpose == 'kitchen':
+            out = _kitchen_stores(db, list(fallback))
+            if not any(f == 'fire' for f, _c, _w in out):
+                out.append(('fire', 1, 'wall'))
+            return out
         return fallback
     if like and like.get('kinds', {}).get(purpose, {}).get('rooms'):
         K = _blend(like['kinds'][purpose], K)
@@ -51,6 +166,8 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
             continue                # (the game's bar pieces turn up as ledges in a bedroom or two: no bar there)
         if fam == 'bed' and purpose != 'bedroom':
             continue
+        if fam == 'shrine' and purpose != 'shrine':
+            continue                # (an altar in a living room: "a strange choice here")
         if fam == 'bed' and theme in BUNK_THEMES:
             count = max(1.0, min(3.0, count))   # (a guild's or an inn's bunk room)
         elif fam in ONE_ONLY:
@@ -70,6 +187,8 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
     for fam, rate in (K.get('extra_per_9') or {}).items():
         if fam in EXTRA_KINDS and rate >= MIN_PER_9:
             out.append((fam, float(rate), 'wall'))
+    if purpose == 'kitchen':
+        out = _kitchen_stores(db, out)
     if purpose == 'kitchen' and not any(f == 'fire' for f, _c, _w in out):
         # a hearth in every kitchen (the user's catalogue: a Common stone kitchen's fireplace with a pot
         # beside it). The game's kit kitchens have a free-standing one in only one room in twelve, because
@@ -105,6 +224,28 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
             out.append(('lamp', floor_n, 'wall'))
         if cand_n and not any(f == 'candle' for f, _c, _w in out):
             out.append(('candle', cand_n, 'on_table'))
+    return out
+
+
+def _kitchen_stores(db, out):
+    """A kitchen's stores at the room-kind survey's rates, which read Tamriel Data's crates, sacks and
+    barrels by name as well as id (R4): six crates, six sacks, five barrels per nine tiles along the
+    walls, baskets and an urn; the recipe's own lines for those kinds replaced."""
+    try:
+        import roomkindsurvey
+        rk = roomkindsurvey.ready(db)
+        KK = rk['kinds']['kitchen']['*'] if rk and rk.get('kinds', {}).get('kitchen') else None
+    except Exception:
+        KK = None
+    if not KK or KK.get('rooms', 0) < MIN_KIND_ROOMS:
+        return out
+    for fam in ('crate', 'sack', 'barrel', 'basket', 'urn'):
+        rate = KK['per_9'].get(fam, 0)
+        if rate < MIN_PER_9:
+            continue
+        w = KK.get('where_f', {}).get(fam, {})
+        where = 'corner' if w.get('corner', 0) >= 0.4 * sum(w.values() or [1]) else 'wall'
+        out = [r for r in out if r[0] != fam] + [(fam, float(rate), where)]
     return out
 
 
@@ -179,6 +320,7 @@ def lights(db, purpose):
     """How a room of this kind is lit, from the game: {'per_9': lights per 3 x 3 tiles, 'where': shares,
     'ids': the lights used most}; None when too few rooms were seen."""
     s = roomsurvey.ready(db)
+    purpose = LIGHT_KIND.get(purpose, purpose)
     K = s['kinds'].get(purpose) if s else None
     if not K or K['rooms'] < MIN_ROOMS or not K.get('lights_where'):
         return None
