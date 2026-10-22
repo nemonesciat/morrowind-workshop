@@ -414,6 +414,39 @@ class LiveLink:
                 else:
                     action, target = 'mod', _fmt_t(w_pos, w_s)
                 out.append('ref\t%s\t%s\t%s\t%s\t%s\t%s%s' % (k, action, rid, cell, orig, target, door))
+        # Started from a saved game: the save puts every room the character has visited back as it was
+        # when they saved, each door's destination included, over the plugin. So a door linked (or
+        # relinked) after that save swings on its hinge in the game instead of leading anywhere (the
+        # user's log pile and arched door). Every door of ours that leads somewhere is told its
+        # destination here, as a door changed while the game runs is, and the game's door handler
+        # (global.lua useDoor) takes the player there whatever the save remembers.
+        if getattr(self, 'from_save', False):
+            sent = {ln.split('\t')[1] for ln in out}
+            for ck, c in cur_cells.items():
+                if not reachable(ck):
+                    continue
+                cell = self._cell_fields(ck)
+                if not cell:
+                    continue
+                for k, ref in (c.get('refs') or {}).items():
+                    if k in sent or ref.get('deleted'):
+                        continue
+                    s = {t: unb64(d) for t, d in ref['subs']}
+                    if 'DODT' not in s or len(s['DODT']) < 24:
+                        continue
+                    rid, pos, scale, deleted = ref_info([(t, d) for t, d in s.items()])
+                    if deleted or not rid or not record_in_game(rid):
+                        continue
+                    dn = zstr(s['DNAM']) if 'DNAM' in s else ''
+                    if dn and not reachable(dn.lower()):
+                        continue
+                    d = struct.unpack_from('<6f', s['DODT'])
+                    dest = self._cell_fields(dn.lower()) if dn else 'ext\t\t%d\t%d' % (math.floor(d[0] / 8192), math.floor(d[1] / 8192))
+                    if not dest:
+                        continue
+                    door = '\tdoor\t%s\t%.3f\t%.3f\t%.3f\t%.4f' % (dest, d[0], d[1], d[2], d[5])
+                    t = _fmt_t(pos, scale)
+                    out.append('ref\t%s\tmod\t%s\t%s\t%s\t%s%s' % (k, rid, cell, t, t, door))
         self.waiting = sorted(waiting)
         return out
 

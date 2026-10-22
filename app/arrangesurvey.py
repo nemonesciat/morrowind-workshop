@@ -46,7 +46,8 @@ SKIP = re.compile(r'marker|_nf$|collision|invisible')
 # the nearest kind's scenes, or none: a bathing room's and an armoury's scenes are its own recipe's)
 PURPOSE_KINDS = {'hall': ('empty', 'living'), 'living': ('living', 'empty'), 'camp': (), 'ruin': (),
                  'corridor': ('empty',), 'entry': ('empty', 'living'), 'landing': ('empty',), 'bath': (),
-                 'barracks': ('bedroom',), 'mess': ('living', 'tavern'), 'guardroom': ('empty', 'living'), 'armoury': (), 'training': ()}
+                 'barracks': ('bedroom',), 'mess': ('living', 'tavern'), 'guardroom': ('empty', 'living'), 'armoury': (), 'training': (),
+                 'dining': ()}      # (a dining room is its own recipe: the long table, not a living room's small set)
 
 
 def family(db, rid, tag):

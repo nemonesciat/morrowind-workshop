@@ -6,7 +6,7 @@
 
 function sdMenuItems(ck, r){
   const items = [];
-  const scenery = ['STAT', 'ACTI', 'CONT'].includes(r.type);
+  const scenery = ['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC'].includes(r.type);    // (anything with a model: a log pile too)
   if (scenery || (r.type === 'DOOR' && !r.to)) items.push({label: '🚪 Make this a door to…', act: () => sdDoorTo(ck, r)});
   if (r.type === 'DOOR' || r.type === 'ACTI') items.push({label: '▭ Make this an ordinary object again', act: () => sdPlain(ck, r)});
   items.push({label: '↪ Rotating panel…', act: () => sdSwing(ck, r)});

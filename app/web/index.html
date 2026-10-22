@@ -1275,6 +1275,82 @@ function projectModal(){
     } catch (err){ $('#pm-err').textContent = err.message; }
   };
 }
+// Merge another mod into this one: pick one of your other mods, see what would come over and settle
+// each clash (a record, a placed game object or a script both mods changed differently), then merge
+// as one change. POST /api/project/merge {name, preview} / {name, resolve} (merge.py).
+function mergeModal(){
+  const p = S.summary && S.summary.project;
+  if (!p){ projectModal(); return; }
+  const projects = ((S.summary && S.summary.projects) || []).filter(n => n !== p.name);
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>Merge another mod into this one</h2>
+    <p class="msg">Everything the other mod holds is added to <b>${esc(p.name)}</b>: its places and the objects in them, its records, scripts and grass. The other mod's own file is left as it is. Where both mods changed the same thing differently, you choose which to keep.</p>
+    <p class="msg sev-warning"><b>Merging clears the Undo history of this mod.</b> A backup is kept under Backups first, so the mod as it was before the merge can be brought back from there.</p>
+    ${projects.length ? `<label>Which mod</label><select class="inp" id="mg-pick"><option value="">(choose)</option>${projects.map(n => `<option>${esc(n)}</option>`).join('')}</select>`
+                      : '<div class="msg">You have no other mod to merge: this is the only one.</div>'}
+    <div id="mg-preview" style="margin-top:12px"></div>
+    <div class="msg err" id="mg-err" style="margin-top:8px"></div>
+    <div class="foot"><button class="btn" id="mg-cancel">Cancel</button><button class="btn primary" id="mg-ok" disabled>Merge</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = s => bg.querySelector(s);
+  const pick = q('#mg-pick'), ok = q('#mg-ok'), box = q('#mg-preview'), err = q('#mg-err');
+  q('#mg-cancel').onclick = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+  let pv = null;
+  const n = (k, one, many) => `${fmtN(k)} ${k === 1 ? one : many || one + 's'}`;
+  const radios = (list, what) => list.map((c, i) => `<div class="arow" style="padding:4px 8px;gap:10px;align-items:center">
+      <span class="atext">${what(c)}</span>
+      <label class="msg" style="white-space:nowrap"><input type="radio" name="mg-${esc(c.key)}" value="mine" checked> keep mine</label>
+      <label class="msg" style="white-space:nowrap"><input type="radio" name="mg-${esc(c.key)}" value="theirs"> take theirs</label></div>`).join('');
+  if (pick) pick.onchange = async () => {
+    pv = null; ok.disabled = true; err.textContent = ''; box.innerHTML = '';
+    if (!pick.value) return;
+    box.innerHTML = '<span class="spin"></span> Looking at what it holds…';
+    try { pv = await post('/api/project/merge', {name: pick.value, preview: true}); }
+    catch (e){ box.innerHTML = ''; err.textContent = e.message; return; }
+    const cells = pv.cells, r = pv.records;
+    let h = '';
+    if (pv.missing_masters.length){
+      h += `<div class="msg err">"${esc(pv.name)}" needs <b>${pv.missing_masters.map(esc).join(', ')}</b>, which is not in your load order. Add it under Load order first.</div>`;
+    }
+    const lines = [];
+    if (cells.new.length) lines.push(`<b>${n(cells.new.length, 'place')}</b> this mod doesn't have yet: ${cells.new.map(esc).join(', ')}`);
+    if (cells.shared.length) lines.push(`<b>${n(cells.shared.length, 'place')}</b> both mods change: ${cells.shared.map(esc).join(', ')}`);
+    lines.push(`<b>${n(cells.objects, 'object')}</b> placed, moved or removed${cells.same ? ` (${fmtN(cells.same)} more the same in both)` : ''}`);
+    lines.push(`<b>${n(r.add, 'record')}</b> (items, people, scripts, dialogue…) this mod doesn't have${r.same ? `, ${fmtN(r.same)} the same in both` : ''}`);
+    if (pv.lua.add || pv.lua.same) lines.push(`<b>${n(pv.lua.add, 'Lua script')}</b>${pv.lua.same ? ` (${pv.lua.same} the same in both)` : ''}`);
+    if (pv.grass.items) lines.push(`grass in <b>${n(pv.grass.cells, 'place')}</b>`);
+    if (cells.edited_here) lines.push(`${n(cells.edited_here, 'object')} of "${esc(pv.name)}" that this mod had already moved or removed become this mod's own, as changed here`);
+    if (cells.stale) lines.push(`<span class="sev-warning">${n(cells.stale, 'change')} here to objects "${esc(pv.name)}" no longer has will be dropped</span>`);
+    if (pv.files.missing.length) lines.push(`<span class="sev-warning">${n(pv.files.missing.length, 'Library file')} it uses can't be found in your mods folder: ${pv.files.missing.slice(0, 6).map(esc).join(', ')}${pv.files.missing.length > 6 ? '…' : ''}</span>`);
+    if (pv.files.extra.length) lines.push(`${n(pv.files.extra.length, 'extra file')} of its (readme pictures and the like) copied to this mod's files folder`);
+    if (pv.orphans.length) lines.push(`<span class="sev-warning">${pv.orphans.length === 1 ? 'A change' : pv.orphans.length + ' changes'} to something no file in your load order has: ${pv.orphans.slice(0, 5).map(esc).join(', ')}${pv.orphans.length > 5 ? '…' : ''}</span>`);
+    h += `<div class="card"><div class="lab" style="margin-bottom:4px">What comes over from "${esc(pv.name)}"</div><ul style="margin:0;padding-left:18px">${lines.map(l => `<li>${l}</li>`).join('')}</ul></div>`;
+    if (pv.conflicts){
+      h += `<h3 style="margin:14px 0 4px;color:var(--muted);font-weight:500">Both mods changed these differently <span class="msg">${pv.conflicts}</span></h3>
+        <p class="msg" style="margin:0 0 6px">"Keep mine" leaves this mod's version as it is; "take theirs" replaces it with "${esc(pv.name)}"'s.</p><div class="alist">` +
+        radios(r.conflicts, c => `${esc(S.typeLabels[c.tag] || c.tag)} <b>${esc(c.name || c.id)}</b>${c.name ? ` <span class="msg">${esc(c.id)}</span>` : ''}`) +
+        radios(cells.conflicts, c => `<b>${esc(c.id)}</b> in ${esc(c.cell)} <span class="msg">(${esc(c.mine)} here, ${esc(c.theirs)} there)</span>`) +
+        radios(pv.lua.conflicts, c => `Lua script <b>${esc(c.name)}</b>`) + '</div>';
+    } else if (!pv.missing_masters.length) h += '<p class="msg" style="margin:8px 0 0">Nothing clashes: the two mods never changed the same thing differently.</p>';
+    box.innerHTML = h;
+    ok.disabled = !!pv.missing_masters.length;
+  };
+  ok.onclick = async () => {
+    if (!pv || !pick) return;
+    const resolve = {};
+    bg.querySelectorAll('input[type=radio]:checked').forEach(i => { resolve[i.name.slice(3)] = i.value; });
+    ok.disabled = true; err.textContent = '';
+    try {
+      const r = await post('/api/project/merge', {name: pick.value, resolve});
+      bg.remove();
+      toast(r.note + (r.missing_files.length ? ` (${r.missing_files.length} Library file${r.missing_files.length === 1 ? '' : 's'} it uses could not be found)` : ''), !!r.missing_files.length);
+      await refreshAfterEdits();
+      if ($('#mymod').classList.contains('on')) renderMyMod();
+      if ($('#createv').classList.contains('on')) renderCreate();
+    } catch (e){ err.textContent = e.message; ok.disabled = false; }
+  };
+}
 function rememberSelection(){
   if (S.cur) S.reopen = {type: S.cur.type, id: S.cur.id};
 }
@@ -1307,6 +1383,7 @@ async function renderMyMod(){
       <button class="btn primary" id="mm-release" title="Check the mod, write a readme and pack a zip to share">📦 Get ready to share</button>
       ${p.enabled_in_cfg ? '' : `<button class="btn" id="mm-enable">Add to my OpenMW load order</button>`}
       <button class="btn" id="mm-switch">Switch or start another mod</button>
+      <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>
     </div>`;
   if (!P.changes.length) h += `<div class="card">No changes yet. Open anything in <b>Browse</b> and press <b>✎ Edit</b> or <b>⧉ Use as template</b>, or move things around on the <b>World map</b>.</div>`;
   for (const [t, list] of Object.entries(byType)){
@@ -1352,6 +1429,7 @@ async function renderMyMod(){
     catch (err){ toast(err.message, true); }
   };
   $('#mm-switch').onclick = projectModal;
+  $('#mm-merge').onclick = mergeModal;
   $('#mm-release').onclick = () => showView('release');
   const la = $('#mm-logall'); if (la) la.onclick = () => { S.logAll = true; renderMyMod(); };
   const su = $('#mm-undone'); if (su) su.onchange = () => { S.showUndone = su.checked; renderMyMod(); };
@@ -1966,9 +2044,16 @@ function recentre(){
     drawMap();
   }, 150);
 }
+// (edits are numbered: a reply that comes back after a later edit's reply is stale, and putting its map
+// in place would throw the later move away on screen, the "snaps back at the last second" of a quick
+// drag after a slow one)
+W.editSeq = 0; W.editDone = 0;
 async function refAction(path, body, cellKey, keepSel, msg){
+  const seq = ++W.editSeq;
   try {
     const m = await post(path, body);
+    if (seq < W.editDone){ toast(msg); afterChange(); return m; }
+    W.editDone = seq;
     W.cells[cellKey] = prepCell(m);
     if (cellKey === W.key) W.info = m;
     if (keepSel) selectRef(cellKey, keepSel, true);
@@ -1995,8 +2080,11 @@ function worldKey(e){
 
 // ----- groups: copy, paste, duplicate, turn, delete, prefabs
 async function groupAction(path, body, msg){
+  const seq = ++W.editSeq;
   try {
     const r = await post(path, body);
+    if (seq < W.editDone){ toast(msg); afterChange(); return r; }
+    W.editDone = seq;
     for (const k of r.cells || []) await worldReloadCell(k);
     toast(msg); await afterChange();
     return r;
@@ -2732,7 +2820,18 @@ W.dressable = W.dressable || {};
 function dressKey(ck, k){ return ck + '|' + k; }
 function dressButtonHtml(d){
   if (!d || !d.dressable) return '';
-  return `<button class="btn sm" data-sa="dress" title="${esc(d.dressed ? 'Take its dressing off and lay a fresh one, drawn from the game\'s ' + d.dressings_known + ' dressings of this model' : 'Put on it what the game puts on this model (' + d.dressings_known + ' dressings seen); one undoable change')}">${d.dressed ? '🎲 Dress again' : '🪄 Dress this (the game\'s way)'}</button>`;
+  return `<button class="btn sm" data-sa="dress" title="${esc(d.dressed ? 'Take its dressing off and lay a fresh one, drawn from the game\'s ' + d.dressings_known + ' dressings of this model' : 'Put on it what the game puts on this model (' + d.dressings_known + ' dressings seen); one undoable change')}">${d.dressed ? '🎲 Dress again' : '🪄 Dress this (the game\'s way)'}</button>` +
+    `<button class="btn sm" data-sa="addone" title="One more thing the game stands on this model, at a free spot, keeping all that is on it; press again for another">➕ Add one thing</button>`;
+}
+async function addOne(ck, k, name){
+  try {
+    const m = await post('/api/furnish/piece', {cell: ck, ref: k, add: 1});
+    if (!m.placed){ toast(m.note || 'No room left on it', true); return; }
+    delete W.dressable[dressKey(ck, k)];
+    toast('Added ' + (m.name || m.added) + ' to ' + (name || m.model));
+    await refreshAfterEdits();
+    if (findRef(ck, k)) selectRef(ck, k, true);
+  } catch (err){ toast(err.message, true); }
 }
 W.dressing = W.dressing || {};        // (the probes in flight, by piece: a menu opened meanwhile waits on one)
 function dressProbe(ck, sel){
@@ -2758,9 +2857,37 @@ async function dressPiece(ck, k, name){
     if (findRef(ck, k)) selectRef(ck, k, true);
   } catch (err){ toast(err.message, true); }
 }
+// "Furnish this room (the game's way)": one room laid fresh by the whole-house path (its own kind, or the
+// kind you pick), what Auto-furnish laid in it before taken out first, nothing in the other rooms touched.
+// The user: "We need this feature for Rooms."
+W.roomInfo = W.roomInfo || {}; W.roomAsk = W.roomAsk || {};
+function roomKey(ck, at){ return ck + '|' + Math.round(at[0] / 128) + ',' + Math.round(at[1] / 128) + ',' + (at[2] == null ? '' : Math.round(at[2] / 64)); }
+function roomProbe(ck, at){
+  const key = roomKey(ck, at);
+  if (key in W.roomInfo && W.roomInfo[key] !== null) return null;
+  if (W.roomAsk[key]) return W.roomAsk[key];
+  W.roomInfo[key] = null;
+  W.roomAsk[key] = (async () => {
+    try { W.roomInfo[key] = await api('/api/furnish/room?' + new URLSearchParams({cell: ck, at: (at[2] == null ? at.slice(0, 2) : at.slice(0, 3)).map(v => Math.round(v)).join(',')})); }
+    catch (e){ W.roomInfo[key] = {room: null}; }
+    delete W.roomAsk[key];
+    return W.roomInfo[key];
+  })();
+  return W.roomAsk[key];
+}
+async function furnishRoom(ck, roomId, purpose, name){
+  if (!await needProject()) return;
+  try {
+    const m = await post('/api/furnish/room', {cell: ck, room: roomId, purpose: purpose || null, replace: true});
+    W.roomInfo = {};
+    toast((m.removed ? 'Took ' + m.removed + ' things out and ' : '') + 'furnished the ' + (m.name || name) + ' as a ' + m.purpose + ' (' + m.placed + ' things)');
+    await refreshAfterEdits();
+  } catch (err){ toast(err.message, true); }
+}
 async function selAction(a){
   const sel = W.sel && findRef(W.sel.cell, W.sel.k); if (!sel) return;
   if (a === 'dress'){ if (!await needProject()) return; return dressPiece(W.sel.cell, sel.k, sel.name || sel.id); }
+  if (a === 'addone'){ if (!await needProject()) return; return addOne(W.sel.cell, sel.k, sel.name || sel.id); }
   if (a === 'talk') return openCharacterDialogue(sel.id);
   if (a === 'char') return cOpen(sel.id);
   if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
@@ -2935,10 +3062,11 @@ const CR_CARDS = {
   spell: ['✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone, or to the player.', 'Magic'],
   lists: ['🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.', 'A list'],
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
+  merge: ['⊕', 'Merge another mod into this one', 'Everything another of your mods holds (its places, objects, records and scripts) added to this mod. The other mod is left as it is; this mod\'s Undo history starts afresh (a backup is kept).', 'A change'],
 };
 const CR_GROUPS = [['Make something new', ['build', 'npc', 'container', 'item', 'book', 'spell', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
-                   ['Change something that exists', ['itemed']]];
+                   ['Change something that exists', ['itemed', 'merge']]];
 // the rest of a form, folded away under a line
 function moreHtml(label, inner){ return `<details class="cmore"><summary>${esc(label)}</summary><div class="frow">${inner}</div></details>`; }
 function chk(id, label, on, title){ return `<label class="msg" style="display:flex;gap:6px;align-items:center" ${title ? `title="${esc(title)}"` : ''}><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`; }
@@ -3111,7 +3239,8 @@ function renderItems(){
 }
 function bindForm(){
   document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'lists'){ LV.id = null; LV.data = null; showView('lists'); return; }
-    if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; } CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false; renderCreate(); });
+    if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; }
+    if (b.dataset.ck === 'merge'){ mergeModal(); return; } CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false; renderCreate(); });
   if (!CR.kind) return;
   const name = $('#cr-name'), idf = $('#cr-id');
   if (name && idf){

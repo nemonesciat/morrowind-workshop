@@ -45,7 +45,7 @@ from project import APP_DIR, PROJECTS_DIR, Project, load_settings, save_settings
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 db = Database()
-edit_lock = threading.Lock()
+edit_lock = threading.RLock()        # (re-entrant: a request that holds it may flush pending writes, which take it too)
 
 
 def code_stamp():
@@ -64,6 +64,7 @@ def api_key():
 
 assistant = ai.Assistant(db, api_key)
 link = LiveLink(db, edit_lock)
+editing.WRITE_LOCK = edit_lock         # (the project file and the plugin are written a moment after each change, under this lock)
 db.on_project_change = link.write_state
 
 
@@ -361,6 +362,7 @@ def play(body):
         args = [exe, '--load-savegame', save, '--script-run', script] + _game_content_args()
     else:
         args = [exe, '--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
+    link.from_save = bool(save)          # (a save remembers visited rooms' doors: the link re-tells them their links)
     _spawn(args, install, body.get('launch'))
     return {'ok': True, 'start': start, 'commands': cmds, 'setup': setup['name'] if setup else None,
             'as': who if save else None}
@@ -384,6 +386,7 @@ def start_openmw(mode, launch=None):
         editing.build(db)
         if getattr(db.project, 'pending_write', None):
             raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
+    link.from_save = False               # (the main menu: whichever save the player loads, the link re-tells doors on request below)
     args = [exe] + (_game_content_args() if db.state == 'ready' else [])
     _spawn(args, install, launch)
     return {'ok': True}
@@ -876,6 +879,12 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/furnish/piece':
                 # can this placed piece be dressed the game's way, and does it carry a dressing already
                 return self._json(furnish.piece_info(db, q['cell'], q['ref']))
+            elif u.path == '/api/furnish/room':
+                # which room is at this spot (?at=x,y,z) or this id (?room=), and what Auto-furnish laid in it
+                if q.get('room'):
+                    return self._json(furnish.room_info(db, q['cell'], room=int(q['room'])))
+                at = [float(v) for v in (q.get('at') or '0,0').split(',')]
+                return self._json(furnish.room_info(db, q['cell'], at=at))
             elif u.path == '/api/ref/contents':
                 # the things standing on a placed piece (its books, dishes, wares), for selecting them with it
                 import contents
@@ -1192,6 +1201,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok': True})
             # the OpenMW button works even while (or because) the game data couldn't load
             if u.path == '/api/openmw/start':
+                editing.flush(db)           # (the plugin on disk before the game reads it)
                 return self._json(start_openmw(body.get('mode', 'menu'), body.get('launch')))
             if u.path == '/api/launch':
                 return self._json(save_launch(body))
@@ -1386,6 +1396,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/release/fix':
                     return self._json(release.fix(db, body.get('action')))
                 if u.path == '/api/release/package':
+                    editing.flush(db)       # (the zip takes the plugin from disk)
                     return self._json(release.package(db))
                 if u.path == '/api/release/clean_test':
                     return self._json(clean_test(body))
@@ -1498,11 +1509,25 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(furnish.furnish(db, body['cell'], body.get('plan'), walls=body.get('walls', True) is not False,
                                                       walls_only=bool(body.get('walls_only')), replace=bool(body.get('replace')),
                                                       level=body.get('level'), like=body.get('like') or None))
+                if u.path == '/api/furnish/room':
+                    # one room furnished the game's way (as its own kind, or as the kind asked for): one
+                    # undoable change; a second call takes the room's earlier things out first
+                    import random as _random
+                    room_id = body.get('room')
+                    if room_id is None and body.get('at'):
+                        room_id = furnish.room_info(db, body['cell'], at=body['at'])['room']
+                    if room_id is None:
+                        return self._json({'error': 'That spot is in no room Auto-furnish can read.'}, 400)
+                    return self._json(furnish.furnish(db, body['cell'], room=int(room_id), purpose=body.get('purpose') or None,
+                                                      replace=body.get('replace', True) is not False, seed=_random.randrange(1 << 30)))
                 if u.path == '/api/furnish/piece':
                     # one placed piece dressed the game's way (a bookshelf's books, a table's dishes, a
                     # counter's wares, a planter's plant, a hearth's pots): one undoable change; a second
                     # call takes the earlier dressing off first and lays a fresh draw
                     import random as _random
+                    if body.get('add'):
+                        # one more thing on the piece, everything on it kept
+                        return self._json(furnish.furnish(db, body['cell'], piece=body['ref'], add=True, replace=False, seed=_random.randrange(1 << 30)))
                     return self._json(furnish.furnish(db, body['cell'], piece=body['ref'], replace=True, seed=_random.randrange(1 << 30)))
                 if u.path == '/api/taste':
                     # mark one of the game's places as an example (or unmark it): the surveys that
@@ -1562,6 +1587,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(create.create_book(db, body))
                 if u.path == '/api/create/container':
                     return self._json(create.create_container(db, body))
+                if u.path == '/api/project/merge':
+                    # another mod of yours folded into this one, as one change (merge.py)
+                    import merge
+                    if body.get('preview'):
+                        return self._json(merge.preview(db, body.get('name') or ''))
+                    return self._json(merge.merge(db, body.get('name') or '', body.get('resolve') or {}))
                 if u.path == '/api/undo_entry':
                     # with everything built on it, unless asked to take back just this one
                     e = (editing.undo_entry if body.get('only') else editing.undo_branch)(db, int(body['id']))
@@ -1571,6 +1602,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'ok': True, 'undone': undone, 'depth': editing.undo_depth(db)})
                 if u.path in ('/api/project/new', '/api/project/open'):
                     _end_together()
+                    editing.flush(db)       # (the mod being left is written out first)
                 if u.path == '/api/project/new':
                     p = Project.create(body.get('name', 'MyMod'), body.get('author', ''), body.get('description', ''))
                     s = load_settings()
@@ -1592,6 +1624,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/project/enable':
                     return self._json(enable_in_cfg())
                 if u.path == '/api/play':
+                    editing.flush(db)
                     return self._json(play(body))
                 if u.path == '/api/edit':
                     return self._json({'i': editing.edit_record(db, int(body['i']), body['changes'])})
@@ -1803,6 +1836,7 @@ def main():
             json.dump({'pid': os.getpid(), 'port': port, 'url': url}, f)
         import atexit
         atexit.register(_forget_running)
+        atexit.register(lambda: editing.flush(db))      # (nothing left unwritten when the Workshop closes)
     except OSError:
         pass
     print('=' * 60)

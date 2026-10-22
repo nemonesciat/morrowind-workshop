@@ -3,6 +3,8 @@ placing/moving/removing objects in cells. Every change is saved immediately."""
 import os
 import re
 import struct
+import threading
+import time
 
 from esm import ENC, iter_subrecords, zstr
 from project import b64, join_subs, ref_info, set_ref_pos, state_diff, zs
@@ -69,8 +71,7 @@ def commit(db, note=None, reverts=None):
             total -= len(stack.pop(0)[0])
     p.last_state = after
     db.sync_project()
-    p.save()
-    build(db)
+    _write_soon(db)
     _notify(db)
     try:
         import together
@@ -79,6 +80,73 @@ def commit(db, note=None, reverts=None):
     except Exception as e:                  # sharing must never break editing
         print('building together:', e)
     return entry
+
+
+# The project file and the plugin are written a moment after a change, not inside it: writing a big
+# project (the user's: 7 MB with its change log) took most of a second on every move, so dragging
+# things about lagged and a quick second move could be answered after the first. One writer thread
+# writes once for a burst of changes, under the server's edit lock (WRITE_LOCK, set by the server; with
+# none, as in the lab, every change is written at once). flush() writes what is pending now, for the
+# places that need the files on disk: starting the game, packaging a release, switching mods, closing.
+WRITE_LOCK = None
+WRITE_DELAY = 0.3
+_writer = {'pending': None, 'thread': None, 'lock': threading.Lock(), 'done': threading.Event()}
+
+
+def _write_now(db):
+    try:
+        db.project.save()
+    except Exception as e:
+        print('could not save the project:', e)
+    try:
+        build(db)
+    except Exception as e:
+        print('could not write the mod:', e)
+
+
+def _write_soon(db):
+    if WRITE_LOCK is None:
+        _write_now(db)
+        return
+    with _writer['lock']:
+        _writer['pending'] = db
+        _writer['done'].clear()
+        t = _writer['thread']
+        if t is None or not t.is_alive():
+            t = threading.Thread(target=_writer_run, name='project-writer', daemon=True)
+            _writer['thread'] = t
+            t.start()
+
+
+def _writer_run():
+    while True:
+        time.sleep(WRITE_DELAY)                # (a burst of moves becomes one write)
+        with _writer['lock']:
+            db = _writer['pending']
+            _writer['pending'] = None
+        if db is None:
+            with _writer['lock']:
+                if _writer['pending'] is None:
+                    _writer['done'].set()
+                    return
+            continue
+        with WRITE_LOCK:
+            _write_now(db)
+
+
+def flush(db=None):
+    """Write any change still pending, now (and wait for it)."""
+    if WRITE_LOCK is None:
+        return
+    with _writer['lock']:
+        pending = _writer['pending']
+        _writer['pending'] = None
+    if pending is not None:
+        with WRITE_LOCK:
+            _write_now(pending)
+    t = _writer['thread']
+    if t is not None and t.is_alive() and threading.current_thread() is not t:
+        _writer['done'].wait(30)
 
 
 def _notify(db):
@@ -131,8 +199,7 @@ def undo(db, to_depth=None):
     entry['reverts'] = ids
     p.last_state = after
     db.sync_project()
-    p.save()
-    build(db)
+    _write_soon(db)
     _notify(db)
     return undone
 
@@ -564,8 +631,8 @@ def secret_ref(db, cell_key, refkey, kind='door', save=True, sound=None):
     tag = 'ACTI' if kind == 'activator' else 'DOOR'
     if r[0] == tag:
         raise EditError('It already is %s.' % ('an activator' if tag == 'ACTI' else 'a door'))
-    if r[0] not in ('STAT', 'ACTI', 'DOOR', 'CONT'):
-        raise EditError('Only scenery (a wall, a bookcase, a rock) can be made into one.')
+    if r[0] not in ('STAT', 'ACTI', 'DOOR', 'CONT', 'LIGH', 'MISC'):
+        raise EditError('Only something with a model (a wall, a bookcase, a rock, a log pile) can be made into one.')
     _t, _f, data = db.files[r[3]].record_at(r[4])
     model = next((zstr(d) for t, d in iter_subrecords(data) if t == 'MODL'), None)
     if not model:

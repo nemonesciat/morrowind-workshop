@@ -285,7 +285,7 @@ def make_door(db, cell_key, refkey, target=None, new=None, sound=None):
     editing._require_project(db)
     c, refs, ref, rid, ri = _placed(db, cell_key, refkey)
     r = db.recs[ri]
-    if r[0] not in ('STAT', 'ACTI', 'CONT', 'DOOR'):
+    if r[0] not in ('STAT', 'ACTI', 'CONT', 'DOOR', 'LIGH', 'MISC'):
         raise EditError('Only scenery (a bookcase, a wall, a wardrobe) or a door can be made into a door.')
     if new:
         import create
@@ -293,6 +293,10 @@ def make_door(db, cell_key, refkey, target=None, new=None, sound=None):
         db.sync_project()
     if not target:
         raise EditError('Pick where the door should lead.')
+    if str(target).lower() == str(cell_key).lower():
+        # (a door into the room it stands in: the game would teleport you a step across the same floor,
+        # which looks like nothing happening; the user's log pile did exactly that)
+        raise EditError('That is the place the door is in. Pick another place for it to lead to.')
     made = None
     if r[0] != 'DOOR':
         made = editing.secret_ref(db, cell_key, refkey, 'door', save=False, sound=sound)
@@ -422,7 +426,7 @@ def make_swing(db, cell_key, refkey, hinge='left', sound=None):
         raise EditError('The hinge goes on the left, the right or in the centre.')
     c, refs, ref, rid, ri = _placed(db, cell_key, refkey)
     r = db.recs[ri]
-    if r[0] not in ('STAT', 'ACTI', 'CONT', 'DOOR'):
+    if r[0] not in ('STAT', 'ACTI', 'CONT', 'DOOR', 'LIGH', 'MISC'):
         raise EditError('Only scenery or a door can be made a rotating panel.')
     model, name = _model_and_name(db, ri)
     if not model:
@@ -526,7 +530,7 @@ def make_slide(db, cell_key, refkey, way='back', distance=None, sound=None, trig
         raise EditError('Which way? left, right, up, down, back or forward.')
     c, refs, ref, rid, ri = _placed(db, cell_key, refkey)
     r = db.recs[ri]
-    if r[0] not in ('STAT', 'ACTI', 'CONT', 'DOOR'):
+    if r[0] not in ('STAT', 'ACTI', 'CONT', 'DOOR', 'LIGH', 'MISC'):
         raise EditError('Only scenery or a door can be made a sliding panel.')
     model, name = _model_and_name(db, ri)
     if not model:

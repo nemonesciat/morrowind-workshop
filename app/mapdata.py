@@ -1,6 +1,7 @@
 """Data for the World map: objects in a cell and terrain heights."""
 import base64
 import math
+import re
 import struct
 
 from esm import iter_subrecords, zstr
@@ -271,7 +272,9 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
             if oid in skip or 'marker' in oid:
                 continue
             counts[oid] = counts.get(oid, 0) + weight
-    groups = {'Furniture': [], 'Containers': [], 'Lights': [], 'Clutter & items': [], 'People & creatures': []}
+    # (the user: "Furniture divided into three sections of their own: Furniture, Wall, and Floor")
+    groups = {'Furniture': [], 'Wall hangings': [], 'Rugs & mats': [], 'Containers': [], 'Lights': [], 'Clutter & items': [],
+              'People & creatures': []}
     for oid, n in sorted(counts.items(), key=lambda kv: -kv[1]):
         ri = db.resolve_id(oid)
         if ri is None:
@@ -281,7 +284,7 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
         if is_architecture(r[0], r[1], b):
             continue
         if r[0] in ('STAT', 'ACTI', 'DOOR'):
-            g = 'Furniture'
+            g = _palette_kind(r[1], b)
         elif r[0] == 'CONT':
             g = 'Containers'
         elif r[0] == 'LIGH':
@@ -289,6 +292,13 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
         elif r[0] in ITEM_TYPES:
             g = 'Clutter & items'
         elif r[0] in ('NPC_', 'CREA', 'LEVC'):
+            # (only people the game itself stands in more than one place: guards, Ordinators, the stock
+            # fighters and merchants of a set; a named person stood once in the game would be a duplicate
+            # here. The user: "might be undesired to place duplicate NPCs in a new interior")
+            if r[0] == 'NPC_':
+                cells_with = {db.recs[ci][7] for ci in db.used_in.get(oid, ()) if db.recs[ci][0] == 'CELL'}
+                if len(cells_with) < 2 and not re.search(r'guard|ordinator|templar|legion|soldier|watch', oid):
+                    continue
             g = 'People & creatures'
         else:
             continue
@@ -297,6 +307,25 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
                               'size': [round(b[3] - b[0]), round(b[4] - b[1]), round(b[5] - b[2])] if b else None})
     db.meshes.save()
     return [{'name': k, 'items': v} for k, v in groups.items() if v]
+
+
+_WALL_RE = re.compile(r'tapestr|banner|hanger|flag|pennant|curtain|painting|picture|plaque|wallhang|wall_hang|mounted|skull_wall|antler|trophy', re.I)
+_FLOOR_RE = re.compile(r'rug|carpet|mat_|_mat\b|floormat|doormat|cushion|pillow', re.I)
+
+
+def _palette_kind(rid, b):
+    """Which palette group a piece of scenery belongs to: 'Wall hangings' (tapestries, banners, hangers,
+    paintings), 'Rugs & mats' (rugs, mats, cushions; also anything flat and wide that lies on the floor), else
+    'Furniture'."""
+    low = rid.lower()
+    if _WALL_RE.search(low):
+        return 'Wall hangings'
+    if _FLOOR_RE.search(low):
+        return 'Rugs & mats'
+    if b and (b[5] - b[2]) <= 10 and (b[3] - b[0]) >= 60 and (b[4] - b[1]) >= 60 \
+            and not re.search(r'lid|door|grate|trap|hatch|plank|board|sign|panel', low):
+        return 'Rugs & mats'       # (flat and wide, lying on the floor: a mat with an odd name; not a crate lid or a door)
+    return 'Furniture'
 
 
 def object_bounds(db, ri):

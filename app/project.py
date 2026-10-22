@@ -173,12 +173,25 @@ class Project:
                        'description': description[:255], 'records': {}, 'cells': {}, 'next_ref': 1}, f)
         return cls(path)
 
+    def _log_to_keep(self, limit=2_000_000, count=500):
+        """The newest log entries, no more than `count` and about `limit` bytes of them: the diffs kept
+        with each change made a 1 MB project a 7 MB file, written again after every move."""
+        out, total = [], 0
+        for e in reversed(self.log):
+            size = len(json.dumps(e))
+            if out and (total + size > limit or len(out) >= count):
+                break
+            out.append(e)
+            total += size
+        out.reverse()
+        return out
+
     def save(self):
         tmp = self.path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump({'name': self.name, 'plugin': self.plugin, 'author': self.author,
                        'description': self.description, 'records': self.records, 'cells': self.cells,
-                       'next_ref': self.next_ref, 'log': self.log[-500:], 'release': self.release,
+                       'next_ref': self.next_ref, 'log': self._log_to_keep(), 'release': self.release,
                        'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass}, f)
         os.replace(tmp, self.path)
         try:

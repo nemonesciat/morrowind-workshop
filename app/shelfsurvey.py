@@ -190,6 +190,24 @@ def _cell_items(db, ck):
     return out
 
 
+_busy = set()       # the ids being surveyed right now (a twin that names this one back never recurses into it)
+
+
+def _own_result(db, rid, limit=120):
+    """This id's own dressings, from the memory cache, the disk cache or a walk of the game's places:
+    never its twins' (so a twin's lookup cannot call back into the model that asked)."""
+    low = rid.lower()
+    if low in _cache and _cache[low][0] is db.recs:
+        return _cache[low][1]
+    import modelcache
+    kept = modelcache.get(db, 'shelfdress', low)
+    if kept is not None:
+        return kept
+    out = _survey_own(db, rid, limit)
+    modelcache.put(db, 'shelfdress', low, out)
+    return out
+
+
 def survey(db, rid, limit=120):
     """Every dressing of this furniture model in the game's own places: {'n': instances looked at,
     'levels': [surface heights above the model's origin], 'dressings': [{'cell', 'purpose', 'objects':
@@ -198,42 +216,50 @@ def survey(db, rid, limit=120):
     low = rid.lower()
     if low in _cache and _cache[low][0] is db.recs:
         return _cache[low][1]
-    import modelcache
-    kept = modelcache.get(db, 'shelfdress', low)         # (on disk from an earlier furnish: the cells aren't walked again)
-    if kept is not None:
-        if len(kept['dressings']) < 3:
-            s2 = twin_survey(db, rid, limit)              # (a thin result kept from before the twins were looked up)
-            if s2 is not None and len(s2['dressings']) > len(kept['dressings']):
-                kept = s2
-        _cache[low] = (db.recs, kept)
-        return kept
-    # (a model the game stands nowhere under this id, with the very same mesh as one it dresses: the
-    # game's activator bookshelf beside its furniture twin, a hidden door made from a bookcase: the
-    # twin's dressings, in the same frame. The user: "Why doesn't this bookshelf have an auto decorate
-    # option? other ones do")
-    import furnish
-    twin = furnish.taught_twin(db, rid)
-    if twin:
-        s2 = survey(db, twin, limit)
-        _cache[low] = (db.recs, s2)
-        return s2
-    out = _survey_own(db, rid, limit)
-    if len(out['dressings']) < 3:
-        # (a variant record the game stands once or twice, furn_com_r_bookshelf_01_telvos: the same mesh's
-        # twin with the game's dressings, else the id's stem, furn_com_r_bookshelf_01)
-        s2 = twin_survey(db, rid, limit)
-        if s2 is not None and len(s2['dressings']) > len(out['dressings']):
+    if low in _busy:
+        return _own_result(db, rid, limit)       # (asked again from inside its own twins' lookup: its own result, no further twins)
+    _busy.add(low)
+    try:
+        import modelcache
+        kept = modelcache.get(db, 'shelfdress', low)         # (on disk from an earlier furnish: the cells aren't walked again)
+        if kept is not None:
+            if len(kept['dressings']) < 3:
+                s2 = twin_survey(db, rid, limit)              # (a thin result kept from before the twins were looked up)
+                if s2 is not None and len(s2['dressings']) > len(kept['dressings']):
+                    kept = s2
+            _cache[low] = (db.recs, kept)
+            return kept
+        # (a model the game stands nowhere under this id, with the very same mesh as one it dresses: the
+        # game's activator bookshelf beside its furniture twin, a hidden door made from a bookcase: the
+        # twin's dressings, in the same frame. The user: "Why doesn't this bookshelf have an auto decorate
+        # option? other ones do")
+        import furnish
+        twin = furnish.taught_twin(db, rid)
+        if twin and twin.lower() != low and twin.lower() not in _busy:
+            s2 = survey(db, twin, limit)
             _cache[low] = (db.recs, s2)
             return s2
-    _cache[low] = (db.recs, out)
-    modelcache.put(db, 'shelfdress', low, out)
-    return out
+        out = _survey_own(db, rid, limit)
+        if len(out['dressings']) < 3:
+            # (a variant record the game stands once or twice, furn_com_r_bookshelf_01_telvos: the same mesh's
+            # twin with the game's dressings, else the id's stem, furn_com_r_bookshelf_01; two thin models that
+            # name each other as twins each keep their own thin result)
+            s2 = twin_survey(db, rid, limit)
+            if s2 is not None and len(s2['dressings']) > len(out['dressings']):
+                _cache[low] = (db.recs, s2)
+                return s2
+        _cache[low] = (db.recs, out)
+        modelcache.put(db, 'shelfdress', low, out)
+        return out
+    finally:
+        _busy.discard(low)
 
 
 def twin_survey(db, rid, limit=120):
     """The dressings of a model's twin (the same mesh, most used by the game first) or of its id's stem
     (the name less its last suffix: a Telvos or a Huleen variant of a bookshelf), the first with three
-    dressings or more; None when there is none."""
+    dressings or more; None when there is none. Each twin's own dressings only (never the twin's twins),
+    so two thin models that name each other can never call each other forever."""
     import furnish
     low = rid.lower()
     tried = {low}
@@ -244,10 +270,10 @@ def twin_survey(db, rid, limit=120):
         if db.resolve_id(stem) is not None:
             cands.append(stem)
     for c in cands:
-        if c.lower() in tried:
+        if c.lower() in tried or c.lower() in _busy:
             continue
         tried.add(c.lower())
-        s2 = survey(db, c, limit)
+        s2 = _own_result(db, c, limit)
         if len(s2['dressings']) >= 3:
             return s2
     return None

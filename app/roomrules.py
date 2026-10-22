@@ -19,7 +19,7 @@ NOT_LAMP = re.compile(r'sconce|candle|wall|hang|chandelier|_de_paper|torch')    
 ONE_ONLY = ('bed', 'counter', 'shrine')          # one to a room, whatever the game's average (a bunk room comes as a set piece)
 MIN_PER_9 = 0.2                                  # a kind the game stands less often than this per 3 x 3 room is left to the set pieces
 TABLE_CAP = {'bedroom': 1, 'living': 2, 'storage': 1, 'hall': 1, 'kitchen': 2, 'shop': 1, 'study': 2, 'shrine': 1,
-             'bath': 1, 'corridor': 1, 'entry': 0, 'landing': 0, 'barracks': 1, 'armoury': 1, 'training': 1, 'mess': 2, 'guardroom': 1}    # (a second table in a bedroom reads as clutter, not as lived in; five in a kitchen made "a pathetic dining room")
+             'bath': 1, 'corridor': 1, 'entry': 0, 'landing': 0, 'barracks': 1, 'armoury': 1, 'training': 1, 'mess': 2, 'guardroom': 1, 'dining': 1}    # (a second table in a bedroom reads as clutter, not as lived in; five in a kitchen made "a pathetic dining room")
 # the room-kind survey's purposes (roomkindsurvey.py): Auto-furnish's purpose -> (the survey's kind, its sub-kind)
 KIND_OF = {'bath': 'bath', 'corridor': 'hall', 'entry': 'hall', 'landing': 'hall', 'storage': 'storage', 'kitchen': 'kitchen',
            'barracks': 'guard', 'armoury': 'guard', 'training': 'guard', 'mess': 'guard', 'guardroom': 'guard'}
@@ -31,7 +31,7 @@ KIND_CENTRE = ('target', 'screen', 'table')      # out in the room when the game
 MIN_KIND_ROOMS = 4
 # (the survey counts the lights the game stands on the floor; Auto-furnish's standing lamps are one of
 # roomrules.floor_lamps for the nearest room kind)
-LIGHT_KIND = {'bath': 'living', 'corridor': 'empty', 'entry': 'empty', 'landing': 'empty', 'barracks': 'bedroom', 'mess': 'living',
+LIGHT_KIND = {'bath': 'living', 'corridor': 'empty', 'entry': 'empty', 'landing': 'empty', 'barracks': 'bedroom', 'mess': 'living', 'dining': 'living',
               'guardroom': 'living', 'armoury': 'storage', 'training': 'storage'}
 
 
@@ -104,11 +104,37 @@ def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
         else:
             where = 'wall'
         out.append((fam, count, where))
+    if purpose == 'kitchen':
+        # (the catalogue's R3 kitchen: the hearth with its cookery, the long bench table at the wall and
+        # the plate dresser, always; the survey's kit kitchens have their hearth in the wall pieces, so
+        # it never reached the recipe, and the stores took every wall before anything else)
+        have = {f for f, _c, _w in out}
+        if 'fire' not in have:
+            out.append(('fire', 1, 'wall'))
+        if 'table' not in have:
+            out.append(('table', 1.0, 'wall'))
+        else:
+            out = [(f, max(c, 1.0) if f == 'table' else c, w) for f, c, w in out]
+        if 'cupboard' not in have:
+            out.append(('cupboard', 1.0, 'wall'))
+        else:
+            out = [(f, max(c, 1.0) if f == 'cupboard' else c, w) for f, c, w in out]
     # (the room's own piece first, then the big pieces, then the rest, as the other recipes)
-    first = ('bath', 'bed', 'rack', 'target', 'table')
+    first = ('fire', 'bath', 'bed', 'rack', 'target', 'table', 'cupboard')
     out.sort(key=lambda r: (r[0] not in first, first.index(r[0]) if r[0] in first else 9, r[0] in ('chair', 'chest', 'rug')))
-    if purpose == 'entry' and S.get('rug_rooms', 0) >= 0.1:
-        out.append(('rug', 1, 'runner'))
+    if purpose == 'entry':
+        # (the catalogue's R1: an entrance hall is symmetrical about the door's axis: a bench either side
+        # of the door, a candle stand at each end, a planter either side of the stair foot. The recipe
+        # brings one of each at least, and Auto-furnish mirrors them across the axis)
+        have = {f for f, _c, _w in out}
+        if 'bench' not in have:
+            out.insert(0, ('bench', 1.0, 'wall'))
+        else:
+            out = [(f, max(c, 1.0) if f == 'bench' else c, w) for f, c, w in out]
+        if 'planter' not in have:
+            out.append(('planter', 0.6, 'corner'))
+        if S.get('rug_rooms', 0) >= 0.1:
+            out.append(('rug', 1, 'runner'))
     if purpose == 'barracks' and S.get('rug_rooms', 0) >= 0.1:
         out.append(('rug', 1, 'by_bed'))
     if purpose == 'mess':
@@ -123,6 +149,8 @@ def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
     lw = S.get('lights_where') or {}
     ltot = float(sum(lw.values()) or 1)
     floor_n = int(round(S.get('lights_per_9', 0) * lw.get('floor', 0) / ltot))
+    if purpose == 'entry':
+        floor_n = max(1, floor_n)             # (a candle stand to mirror, R1)
     if floor_n and floor_lamps(db, LIGHT_KIND.get(purpose, 'living')):
         out.append(('lamp', floor_n, 'wall'))
     cand_n = int(round(S.get('lights_per_9', 0) * lw.get('furniture', 0) / ltot * 0.5))
@@ -148,7 +176,7 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
         if purpose == 'kitchen':
             out = _kitchen_stores(db, list(fallback))
             if not any(f == 'fire' for f, _c, _w in out):
-                out.append(('fire', 1, 'wall'))
+                out.insert(0, ('fire', 1, 'wall'))    # (first: the hearth takes its wall before the stores do, R3)
             return out
         return fallback
     if like and like.get('kinds', {}).get(purpose, {}).get('rooms'):
@@ -189,6 +217,16 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
             out.append((fam, float(rate), 'wall'))
     if purpose == 'kitchen':
         out = _kitchen_stores(db, out)
+        # (the catalogue's R3 kitchen: the long bench table at the wall and the plate dresser, always)
+        have = {f for f, _c, _w in out}
+        if 'table' not in have:
+            out.append(('table', 1, 'wall'))
+        else:
+            out = [(f, max(c, 1.0) if f == 'table' else c, w) for f, c, w in out]
+        if 'cupboard' not in have:
+            out.append(('cupboard', 1, 'wall'))
+        else:
+            out = [(f, max(c, 1.0) if f == 'cupboard' else c, w) for f, c, w in out]
     if purpose == 'kitchen' and not any(f == 'fire' for f, _c, _w in out):
         # a hearth in every kitchen (the user's catalogue: a Common stone kitchen's fireplace with a pot
         # beside it). The game's kit kitchens have a free-standing one in only one room in twelve, because

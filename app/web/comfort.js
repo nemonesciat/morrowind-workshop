@@ -222,11 +222,16 @@ function cfMenuAt(e, hit, at){
       // (dress this piece the game's way: shown once the Workshop has answered whether the game dresses
       // this model; a menu opened before the answer is rebuilt with the entry when it comes)
       const d = W.dressable && W.dressable[dressKey(ck, r.k)];
-      if (d && d.dressable){ sep(); items.push({label: d.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id); }}); }
+      if (d && d.dressable){
+        sep();
+        items.push({label: d.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id); }});
+        items.push({label: '➕ Add one thing (keeps what is on it; again for another)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); addOne(ck, r.k, r.name || r.id); }});
+      }
       else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } }); }
     }
-    if (['STAT', 'ACTI', 'CONT', 'DOOR'].includes(r.type)){
-      // secret entrances (web/secretdoor.js): a door to somewhere, an ordinary object again, a rotating or sliding panel
+    if (['STAT', 'ACTI', 'CONT', 'DOOR', 'LIGH', 'MISC'].includes(r.type)){
+      // secret entrances (web/secretdoor.js); a light (a log pile) or a misc thing with a model can be one too
+      // (the user tried a log pile and found no entry): a door to somewhere, an ordinary object again, a rotating or sliding panel
       sep(); head('Secret entrance');
       if (typeof sdMenuItems === 'function') items.push(...sdMenuItems(ck, r));
       else items.push({label: '🚪 Make it a hidden door (looks the same)', act: () => selAction('secretdoor')});
@@ -256,6 +261,22 @@ function cfMenuAt(e, hit, at){
     items.push({label: 'Select everything you can see', act: () => cfSelectAll()});
     if (W.sel || W.multi.size) items.push({label: 'Clear the selection', act: () => cfRun('clearsel')});
     sep(); items.push({label: '▤ Panels and layouts…', act: () => PNL.windowsMenu('world', pt)}, {label: '⌘ All commands… (Ctrl+K)', act: () => cfPalette()});
+  }
+  // the room under the click (a floor piece, a wall, a thing in it, or empty floor): furnish it the game's
+  // way, again, or as another kind of room; shown once the Workshop has said which room is there
+  const spot = at || (hit && hit[1] && hit[1].p) || null;
+  const rck = hit ? hit[0] : (W.info && W.info.interior ? W.key : null);
+  if (spot && rck && typeof roomProbe === 'function' && !(hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k))){
+    const ri = W.roomInfo && W.roomInfo[roomKey(rck, spot)];
+    if (ri && ri.room != null){
+      sep();
+      const nm = ri.name || 'room';
+      items.push({label: ri.furnished ? `🎲 Furnish the ${nm} again (${ri.furnished} things now)` : `🪑 Furnish the ${nm} (the game's way)`, act: () => furnishRoom(rck, ri.room, null, nm)});
+      items.push({label: `🪑 Furnish the ${nm} as…`, act: () => { const ms = ri.purposes.map(p => ({label: (p === ri.purpose ? '● ' : '') + p, act: () => furnishRoom(rck, ri.room, p, nm)})); setTimeout(() => pnlMenu(pt, ms), 0); }});
+    } else {
+      const p = roomProbe(rck, spot);
+      if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } });
+    }
   }
   while (items[items.length - 1] === '-') items.pop();
   const m = pnlMenu(pt, items);

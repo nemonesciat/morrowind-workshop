@@ -1132,6 +1132,170 @@ def _opening_issues(db, m, tiles, floors):
     return out
 
 
+# How many clips and coplanar face pairs the game's own places show per 100 architecture pieces, by the kind
+# of pair (measured 2026-10-21 on 18 Common stone, Common plain and Gold Coast places with stairs, 1,633
+# pieces: posts sunk into the wall ends they cover, tiles overlapping at their seams, a post's face flush
+# with a wall). A place is only told about a kind it shows more than twice as often.
+CLASH_BASELINE = {('clip', 'post-tile'): 37.0, ('zfight', 'post-tile'): 20.0, ('clip', 'tile-tile'): 14.5,
+                  ('zfight', 'post-wall'): 11.2, ('zfight', 'tile-tile'): 11.0, ('clip', 'tile-wall'): 9.6,
+                  ('zfight', 'post-stair'): 4.8, ('clip', 'post-stair'): 4.4, ('clip', 'wall-wall'): 3.9,
+                  ('zfight', 'tile-wall'): 1.4, ('clip', 'stair-tile'): 0.9, ('zfight', 'post-post'): 0.8}
+
+
+def _pair_kind(i):
+    tag = lambda s: 'post' if COLUMN_WORDS.search(s) else 'stair' if 'stair' in s else 'wall' if re.search(r'_wall|wall_', s) else 'tile'
+    return '-'.join(sorted((tag(i['id'].lower()), tag((i.get('other') or '').lower()))))
+
+
+def clash_issues(db, m, tiles=None):
+    """The user's two acceptance rules for closure pieces, as the finder's lines: 'clip' (a piece's mesh
+    cuts into a neighbouring piece's solid: a post sunk through a beam, a wall through the stair) and
+    'zfight' (faces of two pieces lying in one plane within a unit of each other and overlapping, which
+    flicker in the game). Looked for between every pair of architecture pieces whose boxes overlap by
+    more than a seam, with the known good stack left out: two room pieces on one spot share their floor
+    and ceiling by design (the game's own corners, the user's hand fix), only their walls must differ."""
+    import seethrough
+    if tiles is None:
+        tiles, _p = _tiles(db, m)
+    refs = [r for r in m['refs'] if r.get('ri') is not None and r['type'] == 'STAT' and r.get('arch')]
+    if len(refs) < 2:
+        return []
+    sc = seethrough.place_scene(db, m)
+    boxes = {r['k']: _world_box(r) for r in refs}
+    tile_ref = {t['ref'] for t in tiles}
+    spot_of = {t['ref']: (round(t['x'] / 8), round(t['y'] / 8), round(t['floor'] / 8)) for t in tiles}
+    is_tile = lambda r: r['k'] in tile_ref
+    # the world triangles of a piece, with their planes
+    tri_cache = {}
+
+    def tris_of(k):
+        if k in tri_cache:
+            return tri_cache[k]
+        out = []
+        for n in range(*sc.of_ref.get(k, (0, 0))):
+            x0, y0, z0, ax, ay, az, bx, by, bz = sc.tris[n]
+            nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
+            L = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if L < 1e-6:
+                continue
+            nx, ny, nz = nx / L, ny / L, nz / L
+            if (nx, ny, nz) < (0, 0, 0):            # (one sign for both faces of a plane)
+                nx, ny, nz = -nx, -ny, -nz
+            d = nx * x0 + ny * y0 + nz * z0
+            xs = (x0, x0 + ax, x0 + bx)
+            ys = (y0, y0 + ay, y0 + by)
+            zs = (z0, z0 + az, z0 + bz)
+            out.append(((nx, ny, nz), d, (min(xs), min(ys), min(zs), max(xs), max(ys), max(zs)), L / 2.0))
+        tri_cache[k] = out
+        return out
+
+    def plane_key(n, d):
+        return (round(n[0], 2), round(n[1], 2), round(n[2], 2), int(round(d)))
+
+    def overlap_area(b1, b2, n):
+        # (the two triangles' boxes, projected along the plane's normal: how much they share)
+        axes = sorted(range(3), key=lambda i: abs(n[i]))[:2]
+        area = 1.0
+        for i in axes:
+            w = min(b1[i + 3], b2[i + 3]) - max(b1[i], b2[i])
+            if w <= 0:
+                return 0.0
+            area *= w
+        return area
+    out = []
+    seen = set()
+    for i, a in enumerate(refs):
+        A = boxes[a['k']]
+        if not A:
+            continue
+        for b in refs[i + 1:]:
+            B = boxes[b['k']]
+            if not B:
+                continue
+            ox = min(A[3], B[3]) - max(A[0], B[0])
+            oy = min(A[4], B[4]) - max(A[1], B[1])
+            oz = min(A[5], B[5]) - max(A[2], B[2])
+            if ox < 12 or oy < 12 or oz < 4:
+                continue
+            stacked = is_tile(a) and is_tile(b) and spot_of.get(a['k']) == spot_of.get(b['k'])
+            ta, tb = tris_of(a['k']), tris_of(b['k'])
+            if not ta or not tb:
+                continue
+            region = (max(A[0], B[0]) - 2, max(A[1], B[1]) - 2, max(A[2], B[2]) - 2, min(A[3], B[3]) + 2, min(A[4], B[4]) + 2, min(A[5], B[5]) + 2)
+            inside = lambda bx: not (bx[3] < region[0] or bx[0] > region[3] or bx[4] < region[1] or bx[1] > region[4] or bx[5] < region[2] or bx[2] > region[5])
+            # --- coplanar faces
+            planes = {}
+            for n, d, bx, area in tb:
+                if inside(bx) and area >= 16:
+                    planes.setdefault(plane_key(n, d), []).append((n, d, bx))
+            hits, where = 0, None
+            for n, d, bx, area in ta:
+                if not inside(bx) or area < 16:
+                    continue
+                if stacked and abs(n[2]) > 0.99:
+                    continue                     # (floor and ceiling of two pieces on one spot: by design)
+                k0 = plane_key(n, d)
+                for dd in (-1, 0, 1):
+                    for n2, d2, bx2 in planes.get(k0[:3] + (k0[3] + dd,), ()):
+                        if abs(d - d2) <= 1.0 and overlap_area(bx, bx2, n) >= 64:
+                            hits += 1
+                            if where is None:
+                                where = ((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2)
+                            break
+                    else:
+                        continue
+                    break
+            if hits >= 2:
+                out.append({'kind': 'zfight', 'ref': a['k'], 'id': a['id'], 'other': b['id'], 'other_ref': b['k'],
+                            'x': where[0], 'y': where[1], 'z': where[2], 'n_faces': hits,
+                            'text': 'Faces of %s and %s lie in one plane here (%d): they would flicker' % (a['id'], b['id'], hits), 'fixes': []})
+            # --- one piece's mesh cutting into the other's solid: points on the closure-like piece's faces
+            # that fall inside the other's mesh (a ray straight up from the point crosses the other's
+            # faces an odd number of times), deep enough to be no seam
+            if stacked or (is_tile(a) and is_tile(b)):
+                continue
+            for p, q in ((a, b), (b, a)) if not (is_tile(a) or is_tile(b)) else (((b, a),) if is_tile(a) else ((a, b),)):
+                if (p['k'], q['k']) in seen:
+                    continue
+                seen.add((p['k'], q['k']))
+                tp = [t for t in tris_of(p['k']) if inside(t[2]) and t[3] >= 16]
+                tq = [(x, y, z, ax, ay, az, bx, by, bz) for n_ in range(*sc.of_ref.get(q['k'], (0, 0)))
+                      for (x, y, z, ax, ay, az, bx, by, bz) in [sc.tris[n_]]
+                      if not (max(x, x + ax, x + bx) < region[0] or min(x, x + ax, x + bx) > region[3] or
+                              max(y, y + ay, y + by) < region[1] or min(y, y + ay, y + by) > region[4])]
+                if not tp or not tq:
+                    continue
+                buried = 0
+                for n, d, bx, area in tp[:400]:
+                    px, py, pz = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2
+                    if px < region[0] + 3 or px > region[3] - 3 or py < region[1] + 3 or py > region[4] - 3:
+                        continue
+                    above = below = 0
+                    for (x, y, z, ax, ay, az, bx2, by2, bz2) in tq:
+                        # the point's xy inside the triangle's xy projection
+                        det = ax * by2 - ay * bx2
+                        if abs(det) < 1e-9:
+                            continue
+                        u = ((px - x) * by2 - (py - y) * bx2) / det
+                        v = (ax * (py - y) - ay * (px - x)) / det
+                        if u < 0 or v < 0 or u + v > 1:
+                            continue
+                        tz = z + u * az + v * bz2
+                        if tz > pz + 3:
+                            above += 1
+                        elif tz < pz - 3:
+                            below += 1
+                    if above % 2 == 1 and below % 2 == 1:
+                        buried += 1
+                        if buried >= 3:
+                            break
+                if buried >= 3:
+                    out.append({'kind': 'clip', 'ref': p['k'], 'id': p['id'], 'other': q['id'], 'other_ref': q['k'],
+                                'x': (region[0] + region[3]) / 2, 'y': (region[1] + region[4]) / 2, 'z': (region[2] + region[5]) / 2,
+                                'text': '%s cuts into %s here' % (p['id'], q['id']), 'fixes': []})
+    return out
+
+
 def _short_issues(db, m):
     """Half-length pieces (a hall piece 128 long) put down where a whole tile should be: the floor and
     walls stop short of the next piece. Fixed the way you would by hand: a second one end to end
@@ -1278,13 +1442,38 @@ def _hole_issues(db, m, tiles, floors, issues, cell_key):
     return out
 
 
-def scan(db, cell_key, everything=False):
+def scan(db, cell_key, everything=False, clashes=False):
     """The gaps of a place: {'issues': [{kind, text, x, y, z, ref, side(s), fixes: [{label, ops}]}],
     'tiles': how many floor pieces were looked at, 'style', 'typical': how gappy the game's own places
     of this style are (gapsurvey.py), 'rate': this place's see-through holes per floor piece, 'hidden':
     how many see-through holes were left out because the place has no more of them than the game's own
     places of the style (everything=True: none left out)}."""
     res = _scan(db, cell_key)
+    if clashes:
+        # (the user's acceptance rules for closure pieces: nothing clips, nothing flickers. The game's own
+        # places are full of both by the raw measure: posts sunk into wall ends, tiles overlapping at
+        # their seams, faces of a post flush with a wall. So a kind of pair is only reported where this
+        # place shows more than twice the game's rate of it; the rest is counted, not listed)
+        try:
+            m_ = mapdata.cellmap(db, cell_key)
+            found = clash_issues(db, m_)
+            n_pieces = max(1, sum(1 for r in m_['refs'] if r.get('ri') is not None and r['type'] == 'STAT' and r.get('arch')))
+            by = {}
+            for i in found:
+                by.setdefault((i['kind'], _pair_kind(i)), []).append(i)
+            like_game, excess = {}, []
+            for key, lst in by.items():
+                base = CLASH_BASELINE.get(key, 0.0) * n_pieces / 100.0
+                if len(lst) > 2 * base + 1:
+                    excess += lst
+                else:
+                    like_game[' '.join(key)] = len(lst)
+            res['issues'] += excess
+            res['clashes_like_the_game'] = like_game
+            for n, i in enumerate(res['issues']):
+                i['n'] = n
+        except Exception as e:
+            print('clash check:', e)
     res['hidden'] = 0
     res['typical'] = None
     tiles = res.get('tiles') or 0
