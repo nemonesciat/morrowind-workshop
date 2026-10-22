@@ -1,6 +1,8 @@
 """Builds a searchable in-memory index of every record in the OpenMW load order,
 plus a health report (missing masters, missing meshes/icons, dirty edits)."""
+import hashlib
 import os
+import pickle
 import re
 import struct
 import threading
@@ -10,6 +12,13 @@ from collections import defaultdict
 
 from esm import PluginFile, bsa_entries, iter_subrecords, read_openmw_config, zstr
 from nif import MeshIndex
+
+# The record index cache: what reading a plugin file derives (its records' ids, names, search text,
+# crcs, which cells and lists use what, which meshes and icons it names) kept in cache/records/, one
+# file per plugin, so the next start reads the cache instead of the plugin. Bump when the derived
+# shape changes (a Nexus user with a 2,000-plugin list waited an hour at every start).
+INDEX_VERSION = 1
+PLUGIN_EXTS = ('.esm', '.esp', '.omwaddon', '.omwgame')
 
 TYPE_NAMES = {
     'ACTI': 'Activators', 'ALCH': 'Potions', 'APPA': 'Apparatus', 'ARMO': 'Armor',
@@ -212,6 +221,21 @@ class VirtualFile:
         pass
 
 
+def _cache_dir():
+    from project import APP_DIR
+    return os.path.join(APP_DIR, 'cache', 'records')
+
+
+def _cache_path(path):
+    h = hashlib.md5(os.path.normcase(os.path.abspath(path)).encode('utf-8')).hexdigest()[:10]
+    return os.path.join(_cache_dir(), '%s.%s.pkl' % (os.path.basename(path), h))
+
+
+def _file_stamp(path):
+    st = os.stat(path)
+    return st.st_size, int(st.st_mtime)
+
+
 class Database:
     def __init__(self):
         self.project = None
@@ -222,6 +246,8 @@ class Database:
         self.progress = {'step': 'Starting', 'done': 0, 'total': 1}
         self.error = None
         self.lock = threading.Lock()
+        self.adding = None          # plugins being added to the end of the load order right now
+        self.last_add = None        # what the last incremental add did (for the page's note)
         self.reset()
 
     def reset(self):
@@ -335,54 +361,18 @@ class Database:
         self.cfg_content_all = list(self.config['content'])
         # the plugin being edited is shown from the project itself, not from its compiled file
         self.config['content'] = [c for c in self.config['content'] if c.lower() != proj_plugin]
-        content = [c for c in self.config['content'] if os.path.splitext(c)[1].lower() in ('.esm', '.esp', '.omwaddon', '.omwgame')]
+        content = [c for c in self.config['content'] if os.path.splitext(c)[1].lower() in PLUGIN_EXTS]
         scripts_only = [c for c in self.config['content'] if c not in content]
-        sizes = {}
-        for c in content:
-            p = self._find_file(c)
-            sizes[c] = os.path.getsize(p) if p else 0
-        total = sum(sizes.values()) or 1
-        done_bytes = 0
-        loaded_names = []
-        for c in content:
-            path = self._find_file(c)
-            entry = {'name': c, 'path': path, 'header': {}, 'counts': {}, 'records': 0, 'size': sizes[c],
-                     'overrides': 0, 'new': 0, 'dirty': 0, 'missing_assets': 0, 'problems': []}
-            if not path:
-                entry['problems'].append('File not found in any data folder')
-                self.issues.append({'severity': 'error', 'kind': 'Missing plugin', 'plugin': c,
-                                    'detail': 'openmw.cfg enables "%s" but the file is not in any data folder. '
-                                              'OpenMW will refuse to start, or skip it.' % c, 'items': []})
-                self.plugins.append(entry)
-                self.files.append(None)
-                continue
-            self.progress = {'step': 'Reading %s' % c, 'done': done_bytes, 'total': total}
-            pf = PluginFile(path)
-            entry['header'] = pf.header
-            low_loaded = [n.lower() for n in loaded_names]
-            for m in pf.header['masters']:
-                if m.lower() not in low_loaded:
-                    later = m.lower() in [x.lower() for x in content]
-                    msg = ('is loaded after it - move "%s" higher in the load order.' % m) if later else 'is not enabled or not installed.'
-                    entry['problems'].append('Needs master "%s", which %s' % (m, msg))
-                    self.issues.append({'severity': 'error', 'kind': 'Missing master', 'plugin': c,
-                                        'detail': '"%s" requires "%s", which %s' % (c, m, msg), 'items': []})
-            self.plugins.append(entry)
-            self.files.append(pf)
-            pidx = len(self.plugins) - 1
-            self._index_plugin(pf, pidx, entry, done_bytes, total)
-            done_bytes += sizes[c]
-            loaded_names.append(c)
+        self._crcs = {}
+        self.load_from_cache = 0
+        self._read_plugins(content, content, [])
         for s in scripts_only:
-            self.plugins.append({'name': s, 'path': self._find_file(s), 'header': {}, 'counts': {}, 'records': 0,
-                                 'size': 0, 'overrides': 0, 'new': 0, 'dirty': 0, 'missing_assets': 0,
-                                 'problems': [], 'lua_only': True})
+            self.plugins.append(self._lua_entry(s))
             self.files.append(None)
         self._resolve_effect_names()
         self.winner = bytearray(len(self.recs))
         for lst in self.by_key.values():
             self.winner[lst[-1]] = 1
-        self._crcs = None
         self.overlay = {}
         self.dead = set()
         self.proj_pidx = None
@@ -394,29 +384,107 @@ class Database:
                 editing.build(self)
             except Exception as e:
                 print('Could not write the plugin:', e)
-        self.progress = {'step': 'Done', 'done': total, 'total': total}
+        self.progress = {'step': 'Done', 'done': 1, 'total': 1}
         self.load_seconds = round(time.time() - t0, 1)
 
-    def _index_plugin(self, pf, pidx, entry, done_bytes, total):
-        recs, stext, by_key, by_id, used_in = self.recs, self.search_text, self.by_key, self.by_id, self.used_in
+    def _lua_entry(self, name):
+        return {'name': name, 'path': self._find_file(name), 'header': {}, 'counts': {}, 'records': 0,
+                'size': 0, 'overrides': 0, 'new': 0, 'dirty': 0, 'missing_assets': 0, 'problems': [], 'lua_only': True}
+
+    def _read_plugins(self, names, content, loaded_names, before_project=False):
+        """Read these plugin files, in order, into the index: from the record cache when the file is
+        unchanged, else parsed (and cached). `content` is the whole content list (for the master
+        notes); `loaded_names` what is loaded already (extended here)."""
+        sizes = {}
+        for c in names:
+            p = self._find_file(c)
+            sizes[c] = os.path.getsize(p) if p else 0
+        total = sum(sizes.values()) or 1
+        done_bytes = 0
+        n_all = len(names)
+        low_content = [x.lower() for x in content]
+        for n, c in enumerate(names):
+            path = self._find_file(c)
+            entry = {'name': c, 'path': path, 'header': {}, 'counts': {}, 'records': 0, 'size': sizes[c],
+                     'overrides': 0, 'new': 0, 'dirty': 0, 'missing_assets': 0, 'problems': []}
+            if not path:
+                entry['problems'].append('File not found in any data folder')
+                self.issues.append({'severity': 'error', 'kind': 'Missing plugin', 'plugin': c,
+                                    'detail': 'openmw.cfg enables "%s" but the file is not in any data folder. '
+                                              'OpenMW will refuse to start, or skip it.' % c, 'items': []})
+                self.plugins.append(entry)
+                self.files.append(None)
+                continue
+            step = 'Reading %s of %s: %s' % (format(n + 1, ','), format(n_all, ','), c)
+            self.progress = {'step': step, 'done': done_bytes, 'total': total}
+            pf = PluginFile(path)
+            payload = self._payload(pf, c, step, done_bytes, total)
+            entry['header'] = pf.header
+            low_loaded = [x.lower() for x in loaded_names]
+            for m in pf.header['masters']:
+                if m.lower() not in low_loaded:
+                    later = m.lower() in low_content
+                    msg = ('is loaded after it - move "%s" higher in the load order.' % m) if later else 'is not enabled or not installed.'
+                    entry['problems'].append('Needs master "%s", which %s' % (m, msg))
+                    self.issues.append({'severity': 'error', 'kind': 'Missing master', 'plugin': c,
+                                        'detail': '"%s" requires "%s", which %s' % (c, m, msg), 'items': []})
+            self.plugins.append(entry)
+            self.files.append(pf)
+            pidx = len(self.plugins) - 1
+            self._merge_plugin(payload, pidx, entry, before_project)
+            done_bytes += sizes[c]
+            loaded_names.append(c)
+
+    def _payload(self, pf, name, step, done_bytes, total):
+        """What a plugin file's records derive to: from the cache when the file is unchanged, else
+        parsed from the file and written to the cache."""
+        cp = _cache_path(pf.path)
+        try:
+            size, mtime = _file_stamp(pf.path)
+        except OSError:
+            size, mtime = -1, -1
+        try:
+            with open(cp, 'rb') as f:
+                pl = pickle.load(f)
+            if pl.get('version') == INDEX_VERSION and pl.get('size') == size and pl.get('mtime') == mtime:
+                self.load_from_cache += 1
+                return pl
+        except (OSError, EOFError, ValueError, pickle.UnpicklingError, AttributeError, TypeError):
+            pass
+        pl = self._parse_plugin(pf, name, step, done_bytes, total)
+        pl.update({'version': INDEX_VERSION, 'size': size, 'mtime': mtime, 'path': pf.path})
+        try:
+            os.makedirs(_cache_dir(), exist_ok=True)
+            tmp = cp + '.%d.tmp' % os.getpid()
+            with open(tmp, 'wb') as f:
+                pickle.dump(pl, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, cp)
+        except OSError as e:
+            print('Could not write the record cache for %s: %s' % (name, e))
+        return pl
+
+    def _parse_plugin(self, pf, pname, step, done_bytes, total):
+        """Read every record of a plugin file. Pure: nothing here depends on the other plugins, the
+        data folders or the position in the load order, so the result can be cached."""
+        recs, crcs = [], []
+        used_in = defaultdict(list)      # object id -> [local rec idx] (cells, lists, inventories)
+        assets = []                      # (local rec idx, kind, folder, path as written)
+        dial = []                        # (info local idx, dial local idx)
         counts = defaultdict(int)
-        missing = defaultdict(list)
         current_dial = None
+        dial_id = ''
         tick = 0
-        crcs = getattr(self, '_crcs', None)
-        if crcs is None:
-            crcs = self._crcs = {}
         for tag, offset, flags, data in pf.records():
             tick += 1
             if tick % 4000 == 0:
-                self.progress = {'step': 'Reading %s' % entry['name'], 'done': done_bytes + offset, 'total': total}
+                self.progress = {'step': step, 'done': done_bytes + offset, 'total': total}
             ri = len(recs)
             if tag == 'CELL':
                 rid, name, extra, key = self._cell_info(data)
                 for m in CELL_REF_RE.finditer(data):
                     size = struct.unpack('<I', m.group(1))[0]
                     obj = zstr(data[m.end():m.end() + size]).lower()
-                    used_in[obj].add(ri)
+                    used_in[obj].append(ri)
             elif tag == 'LAND':
                 xy = struct.unpack_from('<ii', data, 8) if data[:4] == b'INTV' else (0, 0)
                 rid, name, extra, key = '%d, %d' % xy, '', '', '%d,%d' % xy
@@ -437,59 +505,97 @@ class Database:
                         text = zstr(sd)
                     elif st == 'ONAM' and not extra:
                         extra = zstr(sd)
-                dial = recs[current_dial][1] if current_dial is not None else ''
                 rid, name = inam, text[:300]
-                extra = (dial + ' ' + extra).strip()
-                key = (dial + '|' + inam).lower()
+                extra = (dial_id + ' ' + extra).strip()
+                key = (dial_id + '|' + inam).lower()
                 if current_dial is not None:
-                    self.dial_infos[current_dial].append(ri)
-                    self.info_dial[ri] = current_dial
+                    dial.append((ri, current_dial))
             else:
                 rid, name, extra = _id_of(tag, data)
                 key = rid.lower()
                 if tag in ('NPC_', 'CREA', 'CONT'):
                     for st, sd in iter_subrecords(data):
                         if st == 'NPCO' and len(sd) >= 36:
-                            used_in[zstr(sd[4:36]).lower()].add(ri)
+                            used_in[zstr(sd[4:36]).lower()].append(ri)
                         elif st == 'NPCS':
-                            used_in[zstr(sd).lower()].add(ri)
+                            used_in[zstr(sd).lower()].append(ri)
                 elif tag in ('LEVI', 'LEVC'):
                     for st, sd in iter_subrecords(data):
                         if st in ('INAM', 'CNAM'):
-                            used_in[zstr(sd).lower()].add(ri)
+                            used_in[zstr(sd).lower()].append(ri)
             if tag == 'DIAL':
-                current_dial = ri
-            # asset checks
+                current_dial, dial_id = ri, rid
+            # the meshes and icons it names (checked against the data folders when loaded)
             if tag not in ('CELL', 'LAND', 'PGRD', 'INFO', 'DIAL', 'GMST', 'GLOB', 'SCPT', 'TES3'):
                 for st, sd in iter_subrecords(data):
                     if st == 'MODL':
                         mp = zstr(sd)
-                        if mp and not self._asset_ok('meshes', mp):
-                            missing[('Mesh', 'meshes/' + mp.replace('\\', '/'))].append(rid)
+                        if mp:
+                            assets.append((ri, 'Mesh', 'meshes', mp))
                     elif st == 'ITEX' and tag != 'LTEX':
                         ip = zstr(sd)
-                        if ip and not self._asset_ok('icons', ip):
-                            missing[('Icon', 'icons/' + ip.replace('\\', '/'))].append(rid)
-            # overrides / dirty edits
-            crc = zlib.crc32(data)
-            k = (tag, key)
-            prev = by_key.get(k)
+                        if ip:
+                            assets.append((ri, 'Icon', 'icons', ip))
+            crcs.append(zlib.crc32(data))
+            recs.append((tag, rid, name, offset, extra, flags, key))
+            counts[tag] += 1
+        # (the search text is rebuilt from the records when loaded: a third of the cache file otherwise)
+        return {'recs': recs, 'crcs': crcs, 'used': dict(used_in), 'assets': assets,
+                'dial': dial, 'counts': dict(counts)}
+
+    def _merge_plugin(self, pl, pidx, entry, before_project=False):
+        """Put a plugin's parsed records into the index as plugin `pidx`: overrides and dirty edits
+        against what is loaded before it, the missing meshes and icons against the data folders.
+        `before_project`: the mod being edited is loaded already and stays last (its records keep
+        winning), so this plugin's versions slot in just before them."""
+        recs, stext, by_key, by_id, used_in = self.recs, self.search_text, self.by_key, self.by_id, self.used_in
+        crcs = self._crcs
+        base = len(recs)
+        proj = self.proj_pidx if before_project else None
+        new = over = dirty = 0
+        pcrcs = pl['crcs']
+        for i, (tag, rid, name, offset, extra, flags, key) in enumerate(pl['recs']):
+            ri = base + i
+            crc = pcrcs[i]
+            prev = by_key.get((tag, key))
             if prev:
-                entry['overrides'] += 1
-                if crcs.get(prev[-1]) == crc:
-                    entry['dirty'] += 1
+                over += 1
+                last = prev[-1]
+                if proj is not None and recs[last][3] == proj:
+                    last = prev[-2] if len(prev) > 1 else None
+                    prev.insert(len(prev) - 1, ri)
+                else:
+                    prev.append(ri)
+                if last is not None and crcs.get(last) == crc:
+                    dirty += 1
             else:
-                entry['new'] += 1
+                new += 1
+                by_key[(tag, key)] = [ri]
             crcs[ri] = crc
-            by_key[k].append(ri)
             if rid:
-                by_id[rid.lower()].append(ri)
+                lst = by_id[rid.lower()]
+                if proj is not None and lst and recs[lst[-1]][3] == proj:
+                    lst.insert(len(lst) - 1, ri)
+                else:
+                    lst.append(ri)
             recs.append((tag, rid, name, pidx, offset, extra, flags, key))
             stext.append(('%s\t%s\t%s' % (rid, name, extra)).lower())
-            counts[tag] += 1
-            self.type_counts[tag] += 1
+        for obj, lst in pl['used'].items():
+            used_in[obj].update(base + x for x in lst)
+        for ii, di in pl['dial']:
+            self.dial_infos[base + di].append(base + ii)
+            self.info_dial[base + ii] = base + di
+        counts = pl['counts']
+        for tag, n in counts.items():
+            self.type_counts[tag] += n
+        missing = defaultdict(list)
+        prec = pl['recs']
+        for i, kind, folder, p in pl['assets']:
+            if not self._asset_ok(folder, p):
+                missing[(kind, folder + '/' + p.replace('\\', '/'))].append(prec[i][1])
+        entry['overrides'], entry['new'], entry['dirty'] = over, new, dirty
         entry['counts'] = dict(counts)
-        entry['records'] = sum(counts.values())
+        entry['records'] = len(prec)
         entry['missing_assets'] = len(missing)
         if missing:
             items = [{'kind': k[0], 'path': k[1], 'used_by': sorted(set(v))[:8], 'uses': len(v)}
@@ -535,12 +641,15 @@ class Database:
         rid = '%s (%d, %d)' % (name or region or 'Wilderness', gx, gy)
         return rid, '', 'exterior ' + region, '#%d,%d' % (gx, gy)
 
-    def _resolve_effect_names(self):
+    def _resolve_effect_names(self, start=0):
         for i, g in enumerate(EFFECT_GMST):
             lst = self.by_key.get(('GMST', ('sEffect' + g).lower()))
             self.effect_names[i] = self.recs[lst[-1]][2] if lst else g
         # name MGEF records by their effect
-        for ri, r in enumerate(self.recs):
+        for ri in range(start, len(self.recs)):
+            r = self.recs[ri]
+            if r is None:
+                continue
             if r[0] == 'MGEF' and r[1].lstrip('-').isdigit():
                 n = self.effect_names.get(int(r[1]), '')
                 self.recs[ri] = r[:2] + (n,) + r[3:]
@@ -549,6 +658,74 @@ class Database:
                 n = SKILLS[int(r[1])]
                 self.recs[ri] = r[:2] + (n,) + r[3:]
                 self.search_text[ri] = ('%s\t%s\t%s' % (r[1], n, r[5])).lower()
+
+    # ---------- the load order changed ----------
+    def apply_order(self, order):
+        """The load order was saved as `order`. Plugins switched on at the end of the list are read and
+        added to what is loaded (quick, no loading screen); any other change reads everything again
+        (from the record cache, so quick too). Returns what was chosen, for the page."""
+        from loadorder import INTERNAL
+        old = [c.lower() for c in getattr(self, 'cfg_content_all', []) if c.lower() not in INTERNAL]
+        new = [o.lower() for o in order]
+        proj = self.project.plugin.lower() if self.project else None
+        tail = list(order[len(old):]) if len(new) > len(old) and new[:len(old)] == old else None
+        if tail and self.state == 'ready' and self.adding is None and proj not in new[len(old):]:
+            self.adding = tail
+            self.last_add = None
+            threading.Thread(target=self._add_safe, args=(tail,), daemon=True).start()
+            return {'mode': 'added', 'added': tail}
+        self.state = 'loading'
+        self.load_async()
+        return {'mode': 'reload'}
+
+    def _add_safe(self, names):
+        try:
+            self._add(names)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print('Could not add %s to what is loaded (%s); reading everything again.' % (', '.join(names), e))
+            self.adding = None
+            self.state = 'loading'
+            self._load_safe()
+        finally:
+            self.adding = None
+
+    def _add(self, names):
+        """Append these plugins (the end of the new load order) to the index without a full reload."""
+        t0 = time.time()
+        start = len(self.recs)
+        content = [c for c in names if os.path.splitext(c)[1].lower() in PLUGIN_EXTS]
+        before = [p['name'] for p in self.plugins if not p.get('lua_only') and not p.get('project')]
+        # new list objects: whatever keyed a cache on this load's lists starts afresh
+        self.recs = list(self.recs)
+        self.search_text = list(self.search_text)
+        first = len(self.plugins)
+        self._read_plugins(content, before + content, before, before_project=self.proj_pidx is not None)
+        for s in names:
+            if s not in content:
+                self.plugins.append(self._lua_entry(s))
+                self.files.append(None)
+        self._resolve_effect_names(start)
+        winner = bytearray(len(self.recs))
+        for lst in self.by_key.values():
+            winner[lst[-1]] = 1
+        self.winner = winner
+        self.cfg_content_all = list(getattr(self, 'cfg_content_all', [])) + list(names)
+        self.config['content'] = list(self.config.get('content', [])) + list(names)
+        if self.project:
+            self.sync_project()
+            try:
+                import editing
+                editing.build(self)
+            except Exception as e:
+                print('Could not write the plugin:', e)
+        n = len(self.recs) - start
+        self.last_add = {'names': list(names), 'records': n, 'seconds': round(time.time() - t0, 1),
+                         'problems': [{'plugin': p['name'], 'text': t} for p in self.plugins[first:]
+                                      for t in p.get('problems', [])],
+                         'stamp': time.time()}
+        self.progress = {'step': 'Done', 'done': 1, 'total': 1}
 
     # ---------- project overlay ----------
     def attach_project(self, project):
@@ -760,8 +937,10 @@ class Database:
             pidx = int(plugin)
         winner = self.winner
         # Show only the winning (last-loaded) version of each record unless filtering by plugin
+        # (while a plugin is being added at the end of the load order the lists grow; the winners
+        # are settled last, so only what has them is searched)
         matches = []
-        for i in range(len(recs)):
+        for i in range(min(len(recs), len(winner))):
             r = recs[i]
             if types and r[0] not in types:
                 continue
@@ -829,6 +1008,13 @@ class Database:
         return {
             'state': self.state, 'progress': self.progress, 'error': self.error,
             'records': len(self.recs), 'seconds': getattr(self, 'load_seconds', None),
+            'from_cache': getattr(self, 'load_from_cache', 0),
+            # plugins being added at the end of the load order right now, and what the last add did
+            'adding': self.adding, 'last_add': self.last_add,
+            # (what went wrong while reading the load order, said on screen when the load ends: a Nexus user
+            # with a 2,000-plugin list wished the Workshop had told them about a missing esp instead of
+            # "running in the background silently"; it was only on the Health check page)
+            'load_problems': [{'plugin': p['name'], 'text': t} for p in self.plugins for t in p.get('problems', [])][:12],
             'types': [{'group': g, 'types': [{'tag': t, 'label': TYPE_NAMES[t], 'count': self.type_counts.get(t, 0)}
                                              for t in ts]} for g, ts in TYPE_GROUPS],
             'plugins': [{'index': n, 'name': p['name'], 'records': p['records'], 'lua_only': p.get('lua_only', False),
@@ -841,10 +1027,17 @@ class Database:
         p = self.project
         if not p:
             return None
+        stack = getattr(p, 'undo_stack', None)
+        if stack:
+            import editing
+            last = stack[-1]
+            undo_note = editing.note_label(p, last[1], last[2] if len(last) > 2 else None)
+        else:
+            undo_note = ''
         return {'name': p.name, 'plugin': p.plugin, 'author': p.author, 'description': p.description,
                 'changes': p.change_count(), 'pidx': self.proj_pidx,
                 'masters': [m for m, _s in getattr(self, 'proj_masters', [])],
-                'undo_depth': len(getattr(p, 'undo_stack', [])),
+                'undo_depth': len(stack or []),
                 'plugin_pending': bool(getattr(p, 'pending_write', None)),
-                'undo_note': p.undo_stack[-1][1] if getattr(p, 'undo_stack', None) else '',
+                'undo_note': undo_note,
                 'enabled_in_cfg': p.plugin.lower() in [c.lower() for c in getattr(self, 'cfg_content_all', [])]}

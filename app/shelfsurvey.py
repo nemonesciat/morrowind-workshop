@@ -148,6 +148,11 @@ def _bounds_of(db, cache, rid):
     return cache[k]
 
 
+PLANTER = re.compile(r'planter|flowerbox|plantpot|plant_pot|gardenbed|garden_bed')
+# what the game grows in its planters, whatever its size: plants, shrubs, small trees, rocks, ferns, moss
+GARDEN = re.compile(r'flora_|_plant|fern|shrub|bush|tree|vine|mushroom|flower|ivy|rock|stone|grass|moss|kelp|reed|weed')
+
+
 def _small_kind(tag, b):
     """BOOK, MISC... for items; STAT or CONT only when small enough to stand on a shelf; else None."""
     if tag in SMALL:
@@ -193,6 +198,79 @@ def _cell_items(db, ck):
 _busy = set()       # the ids being surveyed right now (a twin that names this one back never recurses into it)
 
 
+def groups_of(db, bounds, dressing):
+    """The compositions in one dressing: each object that stands on the surface itself, with whatever
+    the game stands on or in it (a fish on a plate, a pen in an inkwell, an ingredient on a paper, coins
+    on a scale): [{'base': object, 'riders': [objects]}]. A rider's middle lies inside the base's
+    footprint and its bottom is up off the base's bottom (on its top, or down inside it); a book packed
+    beside another on the same board is no rider."""
+    boxes = []
+    for o in dressing['objects']:
+        ob, _tag = _bounds_of(db, bounds, o['id'])
+        if not ob:
+            boxes.append(None)
+            continue
+        tb = box_turned(ob, o['rx'], o['ry'], o['rz'], o['s'])
+        boxes.append((o['x'] + tb[0], o['y'] + tb[1], o['z'] + tb[2], o['x'] + tb[3], o['y'] + tb[4], o['z'] + tb[5]))
+    rider_of = {}
+    for i, o in enumerate(dressing['objects']):
+        wb = boxes[i]
+        if wb is None:
+            continue
+        best = None
+        for j, p in enumerate(dressing['objects']):
+            pb = boxes[j]
+            if j == i or pb is None:
+                continue
+            if not (pb[0] - 2 <= o['x'] <= pb[3] + 2 and pb[1] - 2 <= o['y'] <= pb[4] + 2):
+                continue
+            if wb[2] < pb[2] + 2 or wb[2] > pb[5] + 6:
+                continue                # (not up off the base's bottom, or floating above its top)
+            area = (pb[3] - pb[0]) * (pb[4] - pb[1])
+            if area <= (wb[3] - wb[0]) * (wb[4] - wb[1]) * 0.8:
+                continue                # (the base is the bigger footprint: a plate under the fish, not the fish under the plate)
+            if best is None or area < best[0]:
+                best = (area, j)
+        if best is not None:
+            rider_of[i] = best[1]
+    # (a rider's rider rides the same base: the pen in the inkwell on the tray)
+    def root(i):
+        seen = set()
+        while i in rider_of and i not in seen:
+            seen.add(i)
+            i = rider_of[i]
+        return i
+    out = {}
+    for i, o in enumerate(dressing['objects']):
+        if boxes[i] is None:
+            continue
+        r = root(i)
+        if r == i:
+            out.setdefault(i, {'base': o, 'riders': []})
+        else:
+            out.setdefault(r, {'base': dressing['objects'][r], 'riders': []})['riders'].append(o)
+    return list(out.values())
+
+
+def alone_rates(db, bounds, survey):
+    """For every id in a model's dressings: (times it stands on its own or as a base, times it rides on
+    something). An id the game only ever stands on another thing (a fish only ever on a plate, a pen
+    only in an inkwell) is not offered on its own."""
+    from collections import Counter
+    alone, rode = Counter(), Counter()
+    for d in survey['dressings']:
+        for g in groups_of(db, bounds, d):
+            alone[g['base']['id'].lower()] += 1
+            for o in g['riders']:
+                rode[o['id'].lower()] += 1
+    return alone, rode
+
+
+# (the on-disk table of dressings per model: 'shelfdress2' since the model reader began ignoring a mesh's root
+# transform, which moved the bounds, and so the surface levels kept here, of 268 of the game's models)
+SHELF_TABLE = 'shelfdress2'
+
+
 def _own_result(db, rid, limit=120):
     """This id's own dressings, from the memory cache, the disk cache or a walk of the game's places:
     never its twins' (so a twin's lookup cannot call back into the model that asked)."""
@@ -200,11 +278,11 @@ def _own_result(db, rid, limit=120):
     if low in _cache and _cache[low][0] is db.recs:
         return _cache[low][1]
     import modelcache
-    kept = modelcache.get(db, 'shelfdress', low)
+    kept = modelcache.get(db, SHELF_TABLE, low)
     if kept is not None:
         return kept
     out = _survey_own(db, rid, limit)
-    modelcache.put(db, 'shelfdress', low, out)
+    modelcache.put(db, SHELF_TABLE, low, out)
     return out
 
 
@@ -221,7 +299,7 @@ def survey(db, rid, limit=120):
     _busy.add(low)
     try:
         import modelcache
-        kept = modelcache.get(db, 'shelfdress', low)         # (on disk from an earlier furnish: the cells aren't walked again)
+        kept = modelcache.get(db, SHELF_TABLE, low)         # (on disk from an earlier furnish: the cells aren't walked again)
         if kept is not None:
             if len(kept['dressings']) < 3:
                 s2 = twin_survey(db, rid, limit)              # (a thin result kept from before the twins were looked up)
@@ -249,7 +327,7 @@ def survey(db, rid, limit=120):
                 _cache[low] = (db.recs, s2)
                 return s2
         _cache[low] = (db.recs, out)
-        modelcache.put(db, 'shelfdress', low, out)
+        modelcache.put(db, SHELF_TABLE, low, out)
         return out
     finally:
         _busy.discard(low)
@@ -299,6 +377,10 @@ def _survey_own(db, rid, limit=120):
     cells = taste.order(sorted(set(cells) | {c for c in taste.places() if low in db.used_in and c in {db.recs[ci][7] for ci in db.used_in.get(low, ()) if db.recs[ci][0] == 'CELL'}}))
     # pass 1: every candidate object inside each instance's box, with its bottom relative to the instance
     inst = []           # (cell, name, pos, [(obj rec, bottom_rel)])
+    # (a planter's dressing is its garden: plants, shrubs, small trees and rocks of any size, sunk into
+    # the soil or standing up on a rock, not only the small things a shelf holds)
+    is_planter = bool(PLANTER.search(low))
+    top_slack = 60 if is_planter else LEVEL_NEAR
     for ck in cells:
         items = _cell_items(db, ck)
         if items is None:
@@ -310,6 +392,9 @@ def _survey_own(db, rid, limit=120):
                 if abs((sc or 1.0) - 1.0) < 0.02:
                     mine.append(pos)
                 continue
+            if not kd and is_planter and b and GARDEN.search(r2low) and not PLANTER.search(r2low) \
+                    and _bounds_of(db, bounds, r2)[1] in ('STAT', 'ACTI'):
+                kd = 'STAT'
             if kd and b:
                 things.append((r2, pos, sc or 1.0, b, kd))
         for pos in mine:
@@ -321,11 +406,15 @@ def _survey_own(db, rid, limit=120):
                 lx, ly = _local(p2[0] - px, p2[1] - py, rz)
                 lrx, lry, lrz = local_rot(p2[3], p2[4], p2[5], rz)
                 ob = box_turned(b2, lrx, lry, lrz, s2)
-                # its footprint inside the furniture's box (a little overhang allowed)
-                if lx + ob[0] < fb[0] - EDGE or lx + ob[3] > fb[3] + EDGE or ly + ob[1] < fb[1] - EDGE or ly + ob[4] > fb[4] + EDGE:
+                # its footprint inside the furniture's box (a little overhang allowed); a plant in a planter
+                # by its root (its origin): a shrub's fronds overhang the box on every side
+                if is_planter:
+                    if not (fb[0] - EDGE <= lx <= fb[3] + EDGE and fb[1] - EDGE <= ly <= fb[4] + EDGE):
+                        continue
+                elif lx + ob[0] < fb[0] - EDGE or lx + ob[3] > fb[3] + EDGE or ly + ob[1] < fb[1] - EDGE or ly + ob[4] > fb[4] + EDGE:
                     continue
                 bottom = p2[2] + ob[2] - pz
-                if bottom < fb[2] - LEVEL_NEAR or bottom > fb[5] + LEVEL_NEAR:
+                if bottom < fb[2] - LEVEL_NEAR or bottom > fb[5] + top_slack:
                     continue
                 found.append({'id': r2, 'kind': kd, 'x': round(lx, 1), 'y': round(ly, 1), 'z': round(p2[2] - pz, 1),
                               'rx': round(lrx, 3), 'ry': round(lry, 3), 'rz': round(lrz, 3),
@@ -352,7 +441,9 @@ def _survey_own(db, rid, limit=120):
         for o in found:
             lv = next((lv for lv in levels if abs(o['bottom'] - lv) <= LEVEL_NEAR), None)
             if lv is None:
-                continue
+                if not is_planter:
+                    continue
+                lv = min(levels, key=lambda l: abs(o['bottom'] - l)) if levels else o['bottom']    # (soil is uneven: every plant counts)
             o = dict(o)
             o['level'] = round(lv, 1)
             objs.append(o)
@@ -361,7 +452,7 @@ def _survey_own(db, rid, limit=120):
         else:
             out['empty'] += 1
     _cache[low] = (db.recs, out)
-    modelcache.put(db, 'shelfdress', low, out)
+    modelcache.put(db, SHELF_TABLE, low, out)
     return out
 
 
@@ -607,6 +698,10 @@ FAMILY_WORDS = (('bottle', r'bottle|flask|decanter'), ('cup', r'cup|goblet|mug|t
                 ('bowl', r'bowl'), ('pitcher', r'pitcher|jug|vase|urn'), ('cutlery', r'fork|knife|spoon'),
                 ('pot', r'_pot_|pot_|_pot$'), ('cloth', r'cloth|folded'), ('paper', r'paper|scroll|quill|inkwell'))
 ROUND = ('bottle', 'cup', 'bowl', 'pitcher', 'pot', 'drink')
+# things the game only stands as part of a scene (a painter's palette and pots with the easel, brushes and
+# canvases; the alchemist's apparatus; a smith's tongs): never swapped in as an everyday thing, never stood
+# alone on a bedside or dining table (the user: "the paints look out of place without the easel")
+SCENE_ONLY = re.compile(r'paint|pigment|easel|canvas|brush|dye_|_dye|inkpot|ink_pot|palette|mortar|pestle|alembic|retort|calcinator|tongs|anvil')
 
 
 def family(db, rid):
@@ -620,6 +715,8 @@ def family(db, rid):
         return 'food'
     if tag != 'MISC' or 'soulgem' in low or re.search(r'gold_\d|coin|bookend', low):
         return None
+    if SCENE_ONLY.search(low):
+        return None            # (a painter's pot is no cooking pot: never swapped in among cups and bottles)
     for fam, pat in FAMILY_WORDS:
         if re.search(pat, low):
             return fam
@@ -637,9 +734,9 @@ def _wrap(a):
 
 
 def _idisk(db):
-    import hashlib
     import project
-    sig = hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    import taste
+    sig = taste.sig(db)                 # (keyed by the plugins that hold interiors, like every other survey)
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, 'shelfinterest_%s_%s.json' % (sig, INTEREST_V))

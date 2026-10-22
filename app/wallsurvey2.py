@@ -40,6 +40,7 @@ TOUCH = (('rug', re.compile(r'rug|carpet')), ('planter', re.compile(r'planter|pl
          ('barrel', re.compile(r'barrel')), ('crate', re.compile(r'crate')), ('sack', re.compile(r'sack')), ('urn', re.compile(r'urn_|_urn')),
          ('basket', re.compile(r'basket')), ('chest', re.compile(r'chest')), ('bench', re.compile(r'bench')), ('stool', re.compile(r'stool|chair')))
 AT_WALL = 70                # an origin this close to a wall's inside face is at the wall
+WINDOW = re.compile(r'win(dow)?(_|$|\d)')     # the kits' window props (placesurvey.WINDOW)
 _cache = {}
 _thread = {}
 _light_recs = {}
@@ -76,7 +77,22 @@ def light_record(db, rid):
 
 def _disk(db, limit):
     import taste
-    return taste.cache_file('wallsurvey2_%s_%d_v2' % (taste.sig(db), limit))
+    return taste.cache_file('wallsurvey2_%s_%d_v6' % (taste.sig(db), limit))     # (v3: hangings and posts by the stairs, planters under windows; v4: hangings over windows; v5: how planters stand together; v6: a post's foot by its box)
+
+
+POST_REACH = 60
+
+
+def at_post(a, px, py, reach=POST_REACH):
+    """Whether a point stands at the foot of this column piece: within reach of its box, not of its origin
+    (a Common wood pillar's box is 133 wide, so a planter at its face stands 102 from the origin)."""
+    import fixit
+    b = fixit._world_box(a)
+    if not b:
+        return math.hypot(a['p'][0] - px, a['p'][1] - py) < reach + 30
+    dx = max(b[0] - px, 0.0, px - b[3])
+    dy = max(b[1] - py, 0.0, py - b[4])
+    return math.hypot(dx, dy) < reach
 
 
 def ready(db, limit=LIMIT):
@@ -179,7 +195,19 @@ def _survey(db, limit):
                               'at_wall': Counter()})
     ST = defaultdict(lambda: {'cells': 0, 'hang': Counter(), 'light': defaultdict(Counter), 'radius': defaultdict(list), 'colour': defaultdict(list)})
     CO = {'rooms': 0, 'tiles': 0, 'lights': Counter(), 'spacing': [], 'per_room': [], 'at_wall': 0, 'n': 0, 'hang': Counter(), 'hang_n': 0}
-    SW = {'n': 0, 'with': 0, 'kinds': Counter(), 'dist': []}
+    SW = {'n': 0, 'with': 0, 'kinds': Counter(), 'dist': [],
+          # (the flat hangings by a flight, within a tile and a half of it: tapestries flanking a stair;
+          # a pair when one hangs either side of the flight's line; the posts standing by it)
+          'hang': 0, 'hang_pair': 0, 'hang_n': [], 'hang_dist': [], 'hang_kinds': Counter(), 'posts': 0, 'post_ids': Counter()}
+    WI = {'rooms': 0, 'windows': 0, 'under': Counter(), 'with_any': 0, 'rooms_with': 0, 'planters': 0, 'planters_under': 0, 'baskets': 0, 'baskets_under': 0,
+          'hung_over': 0}       # (windows with a hanging on their own tile's wall: the game's rate of tapestries over windows)
+    # how the game stands its planters and potted plants, per room kind: in groups of how many (within 160 of
+    # one another), at what spot (a window, a post's foot, beside a doorway, by a stair, by a bench or a
+    # table, a plain wall, out in the room), with what beside (a vase or urn, a lamp, loose flora), and the
+    # loose flora (plants with no planter) a room holds. The user: "single potted plants in the middle of the
+    # floor by the wall look garish; placed with each other, in a nook or by a window"
+    PL = defaultdict(lambda: {'rooms': 0, 'tiles': 0, 'rooms_with': 0, 'n': 0, 'groups': Counter(), 'spots': Counter(), 'beside': Counter(),
+                              'lone_plain': 0, 'g': 0, 'flora': 0, 'flora_groups': Counter(), 'flora_rooms': 0})
     TO = defaultdict(lambda: {'rooms': 0, 'wall_floor': Counter(), 'rooms_with': Counter(), 'under_shelf': Counter(), 'hooks': Counter(),
                               'hook_n': 0, 'hook_alone': 0, 'by_fire': Counter(), 'fires': 0, 'rug_wall': [0, 0]})
     import taste
@@ -464,6 +492,109 @@ def _survey(db, limit):
                         break
             for tk in got:
                 TK['rooms_with'][tk] += 1
+            # ---- the windows: what stands at their feet (planters and baskets under the windows)
+            wins = [a for a in arch if WINDOW.search(a['id'].lower()) and fl - 60 <= a['p'][2] <= fl + 300
+                    and rm['x_min'] - 40 <= a['p'][0] <= rm['x_max'] + 40 and rm['y_min'] - 40 <= a['p'][1] <= rm['y_max'] + 40]
+            if wins:
+                WI['rooms'] += 1
+                WI['windows'] += len(wins)
+                any_ = False
+                for w in wins:
+                    under = [r for r in inside if r['_fam'] in ('planter', 'basket', 'urn', 'chest', 'bench', 'table', 'crate', 'barrel', 'sack')
+                             and r['p'][2] + r['b'][2] * (r.get('s') or 1) < fl + 40
+                             and math.hypot(r['p'][0] - w['p'][0], r['p'][1] - w['p'][1]) < T * 0.55]
+                    for r in under:
+                        WI['under'][r['_fam']] += 1
+                    if under:
+                        WI['with_any'] += 1
+                        any_ = True
+                    if any(abs(h[6]['p'][0] - w['p'][0]) < T * 0.45 and abs(h[6]['p'][1] - w['p'][1]) < T * 0.45 for h in hangs):
+                        WI['hung_over'] += 1
+                WI['rooms_with'] += 1 if any_ else 0
+                for r in inside:
+                    if r['_fam'] in ('planter', 'basket') and r['p'][2] + r['b'][2] * (r.get('s') or 1) < fl + 40:
+                        WI[r['_fam'] + 's'] += 1
+                        if any(math.hypot(r['p'][0] - w['p'][0], r['p'][1] - w['p'][1]) < T * 0.55 for w in wins):
+                            WI[r['_fam'] + 's_under'] += 1
+            # ---- planters and potted plants: how they stand together, and where
+            PK = PL[kind]
+            PK['rooms'] += 1
+            PK['tiles'] += rm['tiles']
+            planters_ = [r for r in inside if r['_fam'] == 'planter' and r['p'][2] + r['b'][2] * (r.get('s') or 1) < fl + 60]
+            import catalogue as _cat
+            cols_ = [a for a in arch if _cat.COLUMN.search(a['id'].lower()) and fl - 60 <= a['p'][2] <= fl + 200
+                     and rm['x_min'] - 40 <= a['p'][0] <= rm['x_max'] + 40 and rm['y_min'] - 40 <= a['p'][1] <= rm['y_max'] + 40]
+            room_doors_ = [d for d in doors if fl - 60 <= d['p'][2] <= fl + 200 and rm['x_min'] - 60 <= d['p'][0] <= rm['x_max'] + 60 and rm['y_min'] - 60 <= d['p'][1] <= rm['y_max'] + 60]
+            room_stairs_ = [s for s in stairs if abs(s['p'][2] - fl) < 100 and rm['x_min'] - T <= s['p'][0] <= rm['x_max'] + T and rm['y_min'] - T <= s['p'][1] <= rm['y_max'] + T]
+            wins_ = [a for a in arch if WINDOW.search(a['id'].lower()) and fl - 60 <= a['p'][2] <= fl + 300
+                     and rm['x_min'] - 40 <= a['p'][0] <= rm['x_max'] + 40 and rm['y_min'] - 40 <= a['p'][1] <= rm['y_max'] + 40]
+            if planters_:
+                PK['rooms_with'] += 1
+                PK['n'] += len(planters_)
+                left_ = list(planters_)
+                groups_ = []
+                while left_:
+                    grp_ = [left_.pop(0)]
+                    i_ = 0
+                    while i_ < len(grp_):
+                        a_ = grp_[i_]
+                        for b_ in list(left_):
+                            if math.hypot(a_['p'][0] - b_['p'][0], a_['p'][1] - b_['p'][1]) <= 160:
+                                grp_.append(b_)
+                                left_.remove(b_)
+                        i_ += 1
+                    groups_.append(grp_)
+                for grp_ in groups_:
+                    PK['g'] += 1
+                    PK['groups'][min(len(grp_), 4)] += 1
+                    near_ = lambda lst, reach: any(math.hypot(a_['p'][0] - m_['p'][0], a_['p'][1] - m_['p'][1]) < reach for m_ in grp_ for a_ in lst)
+                    at_w = any(at_line(m_) for m_ in grp_)
+                    if near_(wins_, T * 0.55):
+                        spot = 'window'
+                    elif any(at_post(a_, m_['p'][0], m_['p'][1]) for m_ in grp_ for a_ in cols_):
+                        spot = 'post'
+                    elif near_(room_doors_, 200):
+                        spot = 'door'
+                    elif near_(room_stairs_, T * 1.2):
+                        spot = 'stair'
+                    elif near_([f for f in floor if f['_fam'] in ('bench', 'table', 'chair')], 110):
+                        spot = 'seat'
+                    elif at_w:
+                        spot = 'plain wall'
+                    else:
+                        spot = 'open'
+                    PK['spots'][spot] += 1
+                    if len(grp_) == 1 and spot in ('plain wall', 'open'):
+                        PK['lone_plain'] += 1
+                    for o in inside:
+                        if o in grp_ or not any(math.hypot(o['p'][0] - m_['p'][0], o['p'][1] - m_['p'][1]) < 100 for m_ in grp_):
+                            continue
+                        ol = o['id'].lower()
+                        if o['_fam'] == 'urn' or re.search(r'vase|jug|pitcher', ol):
+                            PK['beside']['vase'] += 1
+                        elif o['type'] == 'LIGH' and (_kind(ol, LIGHT_KIND) in ('lamp', 'candle')) and o['p'][2] + o['b'][2] * (o.get('s') or 1) < fl + 40:
+                            PK['beside']['lamp'] += 1
+                        elif o['_fam'] in ('bench', 'chair', 'table', 'chest', 'basket', 'screen'):
+                            PK['beside'][o['_fam']] += 1
+            # loose flora: plants standing in the room with no planter under them
+            flora_ = [r for r in inside if re.search(r'flora_|_plant|fern|shrub|bush|tree|ivy|flower', r['id'].lower()) and r['_fam'] != 'planter'
+                      and r['type'] in ('STAT', 'ACTI') and r['p'][2] + r['b'][2] * (r.get('s') or 1) < fl + 60
+                      and not any(abs(r['p'][0] - p_['p'][0]) < 60 and abs(r['p'][1] - p_['p'][1]) < 60 for p_ in planters_)]
+            if flora_:
+                PK['flora_rooms'] += 1
+                PK['flora'] += len(flora_)
+                left_ = list(flora_)
+                while left_:
+                    grp_ = [left_.pop(0)]
+                    i_ = 0
+                    while i_ < len(grp_):
+                        a_ = grp_[i_]
+                        for b_ in list(left_):
+                            if math.hypot(a_['p'][0] - b_['p'][0], a_['p'][1] - b_['p'][1]) <= 160:
+                                grp_.append(b_)
+                                left_.remove(b_)
+                        i_ += 1
+                    PK['flora_groups'][min(len(grp_), 6)] += 1
             for f in floor:
                 if f['_fam'] != 'fire':
                     continue
@@ -482,7 +613,26 @@ def _survey(db, limit):
                 SW['with'] += 1
                 SW['kinds'].update(_kind(r['id'].lower(), LIGHT_KIND) or 'other' for r in near)
                 SW['dist'].append(round(min(math.hypot(r['p'][0] - st['p'][0], r['p'][1] - st['p'][1]) for r in near)))
-    return _fold(seen, H, LT, ST, CO, SW, TO)
+            # the flat hangings within a tile and a half of the flight, on its own level, and whether
+            # they flank it (one either side of its line); the posts standing by it
+            flat = [r for r in refs if r['type'] in ('STAT', 'ACTI') and _kind(r['id'].lower(), HANG_KIND) in ('tapestry', 'banner', 'painting')
+                    and not NOT_HANG.search(r['id'].lower())
+                    and math.hypot(r['p'][0] - st['p'][0], r['p'][1] - st['p'][1]) < T * 1.6 and st['p'][2] - 100 <= r['p'][2] <= st['p'][2] + 450]
+            if flat:
+                SW['hang'] += 1
+                SW['hang_n'].append(len(flat))
+                SW['hang_dist'].append(round(min(math.hypot(r['p'][0] - st['p'][0], r['p'][1] - st['p'][1]) for r in flat)))
+                SW['hang_kinds'].update(_kind(r['id'].lower(), HANG_KIND) for r in flat)
+                along_x = abs(math.sin(st['p'][5])) < 0.5
+                sides = set((1 if ((r['p'][1] if along_x else r['p'][0]) > (st['p'][1] if along_x else st['p'][0])) else -1) for r in flat)
+                if len(sides) == 2:
+                    SW['hang_pair'] += 1
+            posts = [r for r in refs if r['type'] == 'STAT' and re.search(r'post|pillar|column', r['id'].lower()) and not re.search(r'banner|rope|sign', r['id'].lower())
+                     and math.hypot(r['p'][0] - st['p'][0], r['p'][1] - st['p'][1]) < T * 1.6 and st['p'][2] - 100 <= r['p'][2] <= st['p'][2] + 450]
+            if len(posts) >= 2:
+                SW['posts'] += 1
+                SW['post_ids'].update(r['id'].lower() for r in posts)
+    return _fold(seen, H, LT, ST, CO, SW, TO, WI, PL)
 
 
 def _med(v):
@@ -490,8 +640,16 @@ def _med(v):
     return v[len(v) // 2] if v else None
 
 
-def _fold(seen, H, LT, ST, CO, SW, TO):
-    out = {'cells': seen, 'hangings': {}, 'lights': {}, 'styles': {}, 'corridors': {}, 'stairs': {}, 'touches': {}}
+def _fold(seen, H, LT, ST, CO, SW, TO, WI=None, PL=None):
+    out = {'cells': seen, 'hangings': {}, 'lights': {}, 'styles': {}, 'corridors': {}, 'stairs': {}, 'touches': {}, 'windows': {}, 'plants': {}}
+    for kind, PK in (PL or {}).items():
+        g = float(PK['g'] or 1)
+        out['plants'][kind] = {'rooms': PK['rooms'], 'rooms_with': round(PK['rooms_with'] / float(PK['rooms'] or 1), 3), 'n': PK['n'], 'groups': PK['g'],
+                               'groups_per_9': round(9.0 * PK['g'] / float(PK['tiles'] or 1), 3),
+                               'size': {int(k): round(v / g, 3) for k, v in PK['groups'].items()}, 'spots': {k: round(v / g, 3) for k, v in PK['spots'].items()},
+                               'beside': {k: round(v / g, 3) for k, v in PK['beside'].items()}, 'lone_plain': round(PK['lone_plain'] / g, 3),
+                               'flora': PK['flora'], 'flora_rooms': round(PK['flora_rooms'] / float(PK['rooms'] or 1), 3),
+                               'flora_groups': {int(k): v for k, v in PK['flora_groups'].items()}}
     for kind, K in H.items():
         n = float(K['n'] or 1)
         out['hangings'][kind] = {
@@ -539,7 +697,17 @@ def _fold(seen, H, LT, ST, CO, SW, TO):
                         'spacing': _med(CO['spacing']), 'spacing_dist': dict(Counter(min(int(round(s / 256.0)), 6) for s in CO['spacing'])),
                         'at_wall': round(CO['at_wall'] / float(CO['n'] or 1), 2),
                         'hangings_per_tile': round(CO['hang_n'] / float(CO['tiles'] or 1), 3), 'hang_kinds': dict(CO['hang'].most_common())}
-    out['stairs'] = {'n': SW['n'], 'lit': round(SW['with'] / float(SW['n'] or 1), 2), 'kinds': dict(SW['kinds'].most_common()), 'dist': _med(SW['dist'])}
+    out['stairs'] = {'n': SW['n'], 'lit': round(SW['with'] / float(SW['n'] or 1), 2), 'kinds': dict(SW['kinds'].most_common()), 'dist': _med(SW['dist']),
+                     # (flights with a flat hanging within a tile and a half, how many then, a pair flanking, posts)
+                     'hang': round(SW.get('hang', 0) / float(SW['n'] or 1), 2), 'hang_n': _med(SW.get('hang_n', [])), 'hang_dist': _med(SW.get('hang_dist', [])),
+                     'hang_pair': round(SW.get('hang_pair', 0) / float(SW.get('hang', 0) or 1), 2), 'hang_kinds': dict(SW.get('hang_kinds', Counter()).most_common()),
+                     'posts': round(SW.get('posts', 0) / float(SW['n'] or 1), 2), 'post_ids': SW.get('post_ids', Counter()).most_common(8)}
+    if WI:
+        out['windows'] = {'rooms': WI['rooms'], 'windows': WI['windows'], 'with_any': round(WI['with_any'] / float(WI['windows'] or 1), 2),
+                          'rooms_with': round(WI['rooms_with'] / float(WI['rooms'] or 1), 2), 'under': dict(WI['under'].most_common()),
+                          'planters': WI['planters'], 'planters_under': round(WI['planters_under'] / float(WI['planters'] or 1), 2),
+                          'baskets': WI['baskets'], 'baskets_under': round(WI['baskets_under'] / float(WI['baskets'] or 1), 2),
+                          'hung_over': round(WI['hung_over'] / float(WI['windows'] or 1), 2)}
     for kind, TK in TO.items():
         rooms = float(TK['rooms'] or 1)
         out['touches'][kind] = {'rooms': TK['rooms'], 'wall_floor': dict(TK['wall_floor'].most_common()),
@@ -633,6 +801,21 @@ def corridor_rule(db):
             'rooms_lit': C['rooms_lit'], 'at_wall': C['at_wall'], 'hangings_per_tile': C['hangings_per_tile']}
 
 
+def plant_rule(db, purpose):
+    """How the game stands planters in rooms of this kind (the merged home kinds when it has too few):
+    {'groups_per_9', 'rooms_with', 'size': {1: share, 2:, 3:, 4:}, 'spots': {'window', 'post', 'door',
+    'stair', 'seat', 'plain wall', 'open'}, 'beside': {'vase', 'lamp', 'bench', ...: per group}, 'lone_plain':
+    share of groups that are one planter at a plain wall or in the open, 'flora_rooms', 'flora_groups'};
+    None while the survey runs."""
+    s = ready(db)
+    if not s or not s.get('plants'):
+        return None
+    K = s['plants'].get(purpose)
+    if not K or K['rooms'] < MIN_ROOMS or K['groups'] < 10:
+        K = s['plants'].get('living')
+    return K
+
+
 def style_lights(db, prefix):
     """The light models a style's places use, by kind, with radius and colour; None when the style was
     not seen."""
@@ -658,6 +841,9 @@ def report(db):
                    % (kind, L['rooms'], L['tiles'], L['n'], L['per_9'], L['rooms_with'], L['per_room_when'], L['on'], L['height'], L['rel'], L['at_wall'], L['door_d']))
     out.append('corridors: %s' % s['corridors'])
     out.append('stairs: %s' % s['stairs'])
+    out.append('windows: %s' % s.get('windows'))
+    for kind, P in sorted((s.get('plants') or {}).items(), key=lambda kv: -kv[1]['rooms']):
+        out.append('plants, %s: %s' % (kind, P))
     for kind, Tk in sorted(s['touches'].items(), key=lambda kv: -kv[1]['rooms']):
         out.append('touches, %s: %s' % (kind, Tk))
     for st, S in sorted(s['styles'].items(), key=lambda kv: -kv[1]['cells']):

@@ -91,7 +91,7 @@ def kind_of(low, b, T, H):
         return 'doorwall'             # (a loose wall with a doorway through it)
     if thin <= T * 0.2 and T * 0.8 <= long_ <= T * 1.15 and h <= 100 and b[2] >= H * 0.85:
         return 'cornice'
-    if 'rail' in low and thin <= 50 and T * 0.75 <= long_ <= T * 1.15 and h <= 160 and b[2] < H * 0.5:
+    if 'rail' in low and thin <= 64 and T * 0.75 <= long_ <= T * 1.15 and h <= 160 and b[2] < H * 0.6:
         return 'rail'
     return None
 
@@ -243,7 +243,9 @@ def _survey(db, style):
                     bound = sum(1 for p in comp for v in VEC.values() if (p[0] + v[0], p[1] + v[1]) in here)
                     if bound < 0.6 * (bound + edge):
                         continue
-                    cand = {p for p in comp if (p[0], p[1], gz + 4) not in at}
+                    # (a floorless upper-storey piece over the hole, the Hlaalu manor's NoFloor pieces, is the
+                    # hall's upper storey, not a floor over it)
+                    cand = {p for p in comp if (p[0], p[1], gz + 4) not in at or ids[at[(p[0], p[1], gz + 4)][0]].get('floorless')}
                     if len(cand) >= max(1, len(comp) // 2) and any((p[0] + v[0], p[1] + v[1], gz + 4) in at for p in cand for v in VEC.values()):
                         well |= {(p[0], p[1], gz) for p in cand}
         A['well'] += len(well)
@@ -397,13 +399,15 @@ def _survey(db, style):
 def _disk(db, style):
     """Where this style's survey is kept on disk (keyed by the load order): the walk of a kit's places
     takes about 40 s for Gold Coast's 2,000, and the style picker asked for it on every start."""
-    import hashlib
     import os
     import project
-    sig = hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'dressingsurvey_%s_%s_v1.json' % (style.lower(), sig))
+    # (v2, 2026-10-22: the mesh reader ignores a model's root transform as the game does; a hall's opening
+    # with the kit's floorless upper-storey pieces over it counts as a well; a railing up to 64 thick and up
+    # to six tenths of the storey over its origin counts as one, the Hlaalu manor's LedgeRailSide_01)
+    return os.path.join(folder, 'dressingsurvey_%s_%s_v2.json' % (style.lower(), taste.sig(db)))
 
 
 def survey(db, style):

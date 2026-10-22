@@ -13,7 +13,8 @@ NODE_TYPES = {b'NiNode', b'NiBSAnimationNode', b'NiBSParticleNode', b'NiBillboar
 GEOM_TYPES = {b'NiTriShape', b'NiTriStrips'}
 SKIP_SUBTREES = {b'RootCollisionNode', b'AvoidNode'}
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3      # 3: the root node's transform ignored, as the game does
+_IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 
 def _blocks(data):
@@ -95,6 +96,8 @@ def bounds_from_nif(data):
             flags, (lR, lt, ls), p = _read_av(data, p)
             if flags & 1 and i != 0:
                 return                   # hidden
+            if i == 0:
+                lR, lt, ls = _IDENTITY, (0.0, 0.0, 0.0), 1.0     # (the game ignores the root node's own transform)
             nR = _mul(R, lR)
             nt = [t[k] + s * v for k, v in enumerate(_apply(R, lt))]
             ns = s * ls
@@ -230,6 +233,12 @@ def mesh_from_nif(data, max_verts=60000):
         _f, (lR, lt, ls), p2 = _read_av(data, p)
         if flags & 1 and i != 0:
             return
+        if i == 0:
+            # The game ignores the root node's own transform (Morrowind, and OpenMW for it). Measured on
+            # Ald-ruhn, Sarethi Manor: in_redoran_l_3way_01's root is turned 180°, and only with that turn
+            # ignored do its three-way pieces at x=0 open east onto the corner and three-way at x=512, as
+            # the game's hall does. 268 of the game's placed models carry such a root transform.
+            lR, lt, ls = _IDENTITY, (0.0, 0.0, 0.0), 1.0
         # property refs sit just before the bounding-volume flag: re-read them
         q = q + 2 + 12 + 36 + 4 + 12
         nprops = struct.unpack_from('<I', data, q)[0]
@@ -334,9 +343,28 @@ class MeshIndex:
         if not self.dirty:
             return
         with self.lock:
-            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
-            tmp = self.cache_path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump({'v': CACHE_VERSION, 'bounds': self.cache}, f)
-            os.replace(tmp, self.cache_path)
-            self.dirty = False
+            # (the survey processes and the Workshop itself share this file: each writes its own
+            # temporary file, keeps what another process put on disk meanwhile, and a write that loses
+            # the race is tried again next time rather than failing the build or furnish that called it.
+            # Measured 2026-10-22: with one shared ".tmp" name, every house of the detector suite failed
+            # with "the process cannot access the file because it is being used by another process")
+            try:
+                os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+                try:
+                    with open(self.cache_path, encoding='utf-8') as f:
+                        d = json.load(f)
+                    if d.get('v') == CACHE_VERSION and isinstance(d.get('bounds'), dict):
+                        for k, v in d['bounds'].items():
+                            self.cache.setdefault(k, v)
+                except (OSError, ValueError, KeyError, AttributeError):
+                    pass
+                tmp = '%s.%d.tmp' % (self.cache_path, os.getpid())
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    json.dump({'v': CACHE_VERSION, 'bounds': self.cache}, f)
+                os.replace(tmp, self.cache_path)
+                self.dirty = False
+            except OSError:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass

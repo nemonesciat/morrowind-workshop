@@ -18,7 +18,7 @@ import mapdata
 import roomsurvey
 import shelfsurvey
 
-V = 'v4'
+V = 'v5'                 # (v5: which hanging and rug models each place has, for the rich and poor tiers)
 LIMIT = 250
 BANDS = ('poor', 'modest', 'comfortable', 'rich', 'exquisite')
 # the makes of the game's furniture sets, by the token after "furn" (and the culture) in the ID:
@@ -258,10 +258,13 @@ def _survey(db, limit):
         n_tiles = sum(t for _c, t in cover) or 1
         # hangings, rugs and lights in the whole place
         hangings = rugs = lights = candles = 0
+        hang_ids = Counter()         # (which hanging and rug models: the rich tier the game hangs in its rich homes)
+        rug_ids = Counter()
         for r in refs:
             low = r['id'].lower()
             if r['_fam'] == 'rug':
                 rugs += 1
+                rug_ids[low] += 1
             elif r['type'] == 'LIGH':
                 lights += 1
                 if 'candle' in low:
@@ -269,6 +272,7 @@ def _survey(db, limit):
             elif r['type'] in ('STAT', 'ACTI', 'MISC') and wallsurvey2.HANG.search(low) and not wallsurvey2.NOT_HANG.search(low) \
                     and 'sconce' not in low and r['p'][2] + r['b'][2] * (r.get('s') or 1) > min(rm['floor'] for rm in info['rooms']) + 40:
                 hangings += 1
+                hang_ids[low] += 1
         # the loose things lying about, and what they're worth
         vals = []
         interesting = 0
@@ -316,6 +320,7 @@ def _survey(db, limit):
             'cover': round(sum(c * t for c, t in cover) / n_tiles, 3),
             'per9': round(sum(p for p, _t in pieces) / n_tiles * 9, 2),
             'hangings': hangings, 'rugs': rugs, 'lights': lights, 'candles': candles,
+            'hang_ids': dict(hang_ids), 'rug_ids': dict(rug_ids),
             'loose': {'n': len(vals), 'total': round(sum(vals)), 'max': vals[-1] if vals else 0, 'p90': p90,
                       'interesting': interesting, 'gold': gold},
             'cont': {'n': len(conts), 'total': round(sum(conts)), 'max': conts[-1] if conts else 0,
@@ -419,6 +424,62 @@ def bands(db, limit=LIMIT):
             'character': {k: round(v / float(len(R)), 2) for k, v in character.items()}}
     _cache[key] = (db.recs, out)
     return out
+
+
+_tiers = {}
+
+
+def decor_tiers(db, limit=LIMIT):
+    """Which hanging and rug models the game's rich homes use and which its poor ones: {'hang': {id:
+    'rich'|'poor'}, 'rug': {...}, 'shares': {band: {'hang_rich', 'hang_poor', 'rug_rich', 'rug_poor'}}}.
+    A model is of the rich tier when its share of the hangings (rugs) in rich and exquisite homes is twice
+    its share in poor and modest ones, seen three times or more there; of the poor tier the other way
+    round. The shares say how much of each band's hangings and rugs are of each tier, the figure to measure
+    a furnished house against. None while the survey runs. The user: "for rich and exquisitely decorated
+    homes, remember to incorporate wall paintings, fancy rugs, fancy tapestries"."""
+    s = ready(db, limit)
+    if not s:
+        return None
+    key = ('tiers', limit)
+    if key in _tiers and _tiers[key][0] is db.recs:
+        return _tiers[key][1]
+    rows = [r for r in s['rows'] if r['theme'] in HOME_THEMES and r['rooms'] >= 1 and r['per9'] > 0 and 'hang_ids' in r]
+    out = {'hang': {}, 'rug': {}, 'shares': {}}
+    for what in ('hang', 'rug'):
+        rich, poor = Counter(), Counter()
+        for r in rows:
+            b = band_of(r)
+            if b in ('rich', 'exquisite'):
+                rich.update(r[what + '_ids'])
+            elif b in ('poor', 'modest'):
+                poor.update(r[what + '_ids'])
+        nr, np_ = float(sum(rich.values()) or 1), float(sum(poor.values()) or 1)
+        for i in set(rich) | set(poor):
+            sr, sp = rich[i] / nr, poor[i] / np_
+            if rich[i] >= 3 and sr >= 2 * sp:
+                out[what][i] = 'rich'
+            elif poor[i] >= 3 and sp >= 2 * sr:
+                out[what][i] = 'poor'
+    for b in BANDS:
+        R = [r for r in rows if band_of(r) == b]
+        sh = {}
+        for what in ('hang', 'rug'):
+            c = Counter()
+            for r in R:
+                c.update(r[what + '_ids'])
+            n = float(sum(c.values()) or 1)
+            sh[what + '_rich'] = round(sum(v for i, v in c.items() if out[what].get(i) == 'rich') / n, 3)
+            sh[what + '_poor'] = round(sum(v for i, v in c.items() if out[what].get(i) == 'poor') / n, 3)
+            sh[what + '_n'] = int(n) if c else 0
+        out['shares'][b] = sh
+    _tiers[key] = (db.recs, out)
+    return out
+
+
+def decor_tier(db, rid, what='hang'):
+    """'rich', 'poor' or None for a hanging ('hang') or rug ('rug') model."""
+    t = decor_tiers(db)
+    return (t or {}).get(what, {}).get(rid.lower()) if t else None
 
 
 def trades(db, limit=LIMIT):

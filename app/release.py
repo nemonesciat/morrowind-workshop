@@ -547,6 +547,15 @@ def checks(db):
                               'Hiding them underground does the same for players and is safe.',
                     'items': [{'label': 'In %s' % _cell_label(db, ck), 'cell': ck} for ck, rk in dl[:30]],
                     'fix': {'action': 'hide_deleted', 'label': 'Hide them underground instead'}})
+    st = stale_edits(db)
+    if st:
+        files = sorted({f for f, _ck, _rk in st})
+        out.append({'id': 'stale', 'sev': 'warning',
+                    'title': '%d change%s to objects of a file not in your load order' % (len(st), '' if len(st) == 1 else 's'),
+                    'detail': 'Moves or removals of objects that belong to %s, which is switched off or not installed. They are not written '
+                              'into your mod and do nothing in the game (a mod you merged into this one and switched off, say).' % ', '.join(files),
+                    'items': [{'label': 'In %s (%s)' % (_cell_label(db, ck), f), 'cell': ck} for f, ck, rk in st[:30]],
+                    'fix': {'action': 'drop_stale', 'label': 'Remove them'}})
     miss = _missing_links(db)
     out.append({'id': 'links', 'sev': 'error' if miss else 'ok',
                 'title': ('%d thing%s point%s to something missing' % (len(miss), '' if len(miss) == 1 else 's', 's' if len(miss) == 1 else '')) if miss else 'Everything points to things that exist',
@@ -645,7 +654,29 @@ def fix(db, action):
         db.sync_project()
         commit(db, 'Release check: hid %d deleted object%s underground instead' % (len(dl), '' if len(dl) == 1 else 's'))
         return {'fixed': len(dl)}
+    if action == 'drop_stale':
+        st = stale_edits(db)
+        for _f, ck, rk in st:
+            p.cells[ck]['refs'].pop(rk, None)
+        for ck in [ck for ck, c in p.cells.items() if not c['refs'] and not c.get('props')]:
+            p.cells.pop(ck, None)
+        db.sync_project()
+        commit(db, 'Release check: removed %d change%s to objects of files not in the load order' % (len(st), '' if len(st) == 1 else 's'))
+        return {'fixed': len(st)}
     raise EditError('Unknown fix.')
+
+
+def stale_edits(db):
+    """Changes to objects of a file that is not in the load order: [(file, cell key, ref key)]."""
+    p = db.project
+    own = p.plugin.lower()
+    out = []
+    for ck, c in p.cells.items():
+        for rk, r in c['refs'].items():
+            o = r.get('origin') or ''
+            if o != own and db.plugin_index(o) is None:
+                out.append((o, ck, rk))
+    return out
 
 
 # ------------------------------------------------------------------ what the mod adds (for the readme)

@@ -149,4 +149,4 @@ def save(db, order):
     with open(tmp, 'w', encoding='utf-8', newline='') as f:
         f.write(nl.join(out) + nl)
     os.replace(tmp, cfg)
-    return {'ok': True, 'backup': backup, 'count': len(clean)}
+    return {'ok': True, 'backup': backup, 'count': len(clean), 'order': clean}

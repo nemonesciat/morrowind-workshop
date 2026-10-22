@@ -21,7 +21,7 @@ TRUST = {
     't_de_setind_i_cha': (3, 'Indoril chapel: builds and looks right in 3D; its ceiling slab now caps the open stairwell and its 212-tall screens no longer stand in for walls, three slits left round the stairwell (eleven before); no in-game round.'),
     'in_mh_int': (3, 'Mournhold: floors joined by doors as its houses are, front doorway now the game\'s own; no stairs, no in-game round.'),
     'in_r_s_int': (3, 'Redoran small: ramps as stairs, round rooms; one-tile rooms close with its partition wall, as the game\'s do; three slits round its stair box in the lab; no in-game round.'),
-    'in_r_l_int': (2, 'Redoran large: only 13 game places teach it, and those are two-storey halls of pieces the builder can\'t stack; six slits round its stair box (eleven before its partition wall); untested in the game.'),
+    'in_r_l_int': (2, 'Redoran large: a room ticked "Two storeys tall" is built from the set\'s own 764-tall hall pieces with the stairs inside and the bridge to the upper door, as its manors are (3 slits where a single-storey room joins the hall upstairs, 9 before); a plain two-floor house still stacks its lesser single-storey pieces round a stair box (6 slits); untested in the game.'),
     'in_t_s': (3, 'Telvanni small: builds; its ramps are hall pieces (Telvanni levitate), so floors default to doors; no in-game round.'),
     'in_v_s_int': (2, 'Vivec small: canton rooms, no stairs and no doorway piece; corner tiles read as walled-off one-tile rooms. Nothing in the kit to gain: its pieces are the cantons\' cells and corridors, not a house\'s.'),
     'in_impsmall_r': (3, 'Imperial small rich: one floor only (no stairs); its front doorway is now the game\'s own; no in-game round.'),
@@ -50,28 +50,50 @@ TRUST = {
 
 # What kind of place a style builds, for the picker: 'house' (listed first), 'passage' (the sewers), 'fort'
 # and 'chapel' (listed after the houses under "Dungeons, forts and passages"), 'untaught' (no place in the
-# load order is built in it: hidden unless asked for). Styles not named here are houses, unless no place
-# teaches them.
+# load order is built in it: hidden unless asked for), 'unsound' (taught, but cannot build a sound house:
+# hidden with the untaught ones). Styles not named here are houses, unless no place teaches them.
 KIND = {
     'in_m_sewer': 'passage',
     't_de_sethla_i_sewerl': 'passage',
     't_imp_legioncyr_i': 'fort',
     't_imp_setchapel_i': 'chapel',
+    # Vivec small: the lab's two-floor house keeps eight see-through holes before and after the style
+    # campaign (its pieces are the cantons' cells and corridors, with corner tiles that read as walled-off
+    # one-tile rooms, no stairs and no doorway piece); nothing in the kit to close them with
+    'in_v_s_int': 'unsound',
+}
+
+# The short, honest word under the name of a two-star style in the picker (the stars alone made the
+# user "not even want to test them"): why it stays at two, in a few words. Stronghold builds a sound
+# plain box (0 gaps in the lab) and stays listed; Vivec small does not (KIND above).
+BRIEF = {
+    'in_v_s_int': 'canton cells, no stairs or doorway piece: 8 gaps in the lab house',
+    'in_stronghold': 'one wall, one floor, no stair or door frame: a plain box, nothing more to learn',
+    'in_r_l_int': 'tick "Two storeys tall" on the hall for the manors\' halls, stairs and bridge; a plain stair box leaves 6 slits',
+    'in_m_sewer': 'a tunnel, not a house',
+    't_de_sethla_i_sewerl': 'a tunnel, not a house',
+    't_de_setdres_i': 'one game place teaches it; no stairs; its door\'s openwork shows the void',
+    't_imp_setchapel_i': 'stairs the builder can\'t stand properly; a chapel, not a house',
 }
 
 
 def rate(style_id, uses=None):
     """(stars, reason) for a style; a style not in the table goes by whether the game teaches it."""
     t = TRUST.get(style_id) or TRUST.get(style_id.split('@')[0])
+    brief = BRIEF.get(style_id) or BRIEF.get(style_id.split('@')[0])
     if t:
-        return {'stars': t[0], 'why': t[1]}
+        out = {'stars': t[0], 'why': t[1]}
+        if brief and t[0] <= 2:
+            out['brief'] = brief
+        return out
     if not uses:
         return {'stars': 1, 'why': 'No place in your game is built in it: nothing to learn from.'}
-    return {'stars': 2, 'why': 'Builds, but has not been surveyed or walked in the game yet.'}
+    return {'stars': 2, 'why': 'Builds, but has not been surveyed or walked in the game yet.', 'brief': 'not surveyed or walked yet'}
 
 
 def kind(style_id, uses=None):
-    """'house', 'passage', 'fort', 'chapel' or 'untaught' (a one-star set no place in the game uses)."""
+    """'house', 'passage', 'fort', 'chapel', 'untaught' (a one-star set no place in the game uses) or
+    'unsound' (taught, but it cannot build a sound house)."""
     k = KIND.get(style_id) or KIND.get(style_id.split('@')[0])
     if k:
         return k

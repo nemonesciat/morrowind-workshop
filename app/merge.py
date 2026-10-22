@@ -49,6 +49,10 @@ def _same_ref(a, b):
     return a.get('subs') == b.get('subs') and bool(a.get('deleted')) == bool(b.get('deleted'))
 
 
+def _subs_key(r):
+    return tuple((t, d) for t, d in (r.get('subs') or []))
+
+
 def _ref_id(r):
     for t, d in r.get('subs') or []:
         if t == 'NAME':
@@ -122,13 +126,34 @@ def plan(db, other):
         mc = p.cells.get(ck)
         keymap = {}                                  # the other's own refkeys -> this mod's new ones
         add, conf = {}, {}
+        # the other mod's objects this mod already holds as its own, from an earlier merge of it:
+        # the same object at the same place, so a second merge adds nothing twice
+        # (matched by where it came from, 'src', which a merge writes on each copy; or, for copies made
+        # before that was written, by the same object at the same place)
+        had, had_src = {}, {}
+        gone = set((mc or {}).get('gone') or [])     # merged copies this mod removed since (see merge())
+        for mk, m in (mc or {}).get('refs', {}).items():
+            if m.get('origin') == mine_pl:
+                if m.get('src'):
+                    had_src.setdefault(m['src'], mk)
+                if not m.get('deleted'):
+                    had.setdefault(_subs_key(m), mk)
         for rk, r in oc.get('refs', {}).items():
             origin = r['origin']
             if origin == other_pl:
+                if r.get('deleted'):
+                    continue                         # its own object it removed again: nothing to bring over
+                src = '%s|%s' % (other_pl, rk)
+                mk = had_src.get(src) or had.get(_subs_key(r))
+                if mk or src in gone:
+                    if mk:
+                        keymap[rk] = mk
+                    out['cells']['same'] += 1
+                    continue
                 tk = '%s|%d' % (mine_pl, next_ref)
                 next_ref += 1
                 keymap[rk] = tk
-                add[tk] = dict(r, origin=mine_pl, idx=int(tk.rsplit('|', 1)[1]))
+                add[tk] = dict(r, origin=mine_pl, idx=int(tk.rsplit('|', 1)[1]), src=src)
                 continue
             if origin != mine_pl and db.plugin_index(origin) is None:
                 missing.add(r['origin'])
@@ -165,6 +190,10 @@ def plan(db, other):
         if not mc and not any(v not in db.dead for v in db.by_key.get(('CELL', ck), [])) and not oc.get('header'):
             out['orphans'].append('the place "%s"' % ck)
     out['missing_masters'] = sorted(missing)
+    # the other mod switched on in the game's load order too: the game would then show its places twice
+    # (its own copy and the merged one), so the merge offers to switch it off
+    content = getattr(db, 'cfg_content_all', None) or (db.config or {}).get('content', [])
+    out['in_load_order'] = other_pl in [c.lower() for c in content]
 
     # ----- scripts and grass
     mine_lua = {s.get('name'): s for s in p.lua}
@@ -263,8 +292,11 @@ def merge(db, name, resolve=None):
             if not m or not nk or nk not in c['refs']:
                 continue
             if m.get('deleted'):
-                c['refs'].pop(nk, None)
+                gone_ = c['refs'].pop(nk, None)
                 n_obj -= 1
+                if gone_ and gone_.get('src'):
+                    # remembered, so a later merge of the same mod doesn't bring the object back
+                    c.setdefault('gone', []).append(gone_['src'])
             else:
                 c['refs'][nk].update({'subs': m['subs'], 'deleted': False})
         if not c['refs'] and not c.get('props'):
@@ -308,6 +340,7 @@ def merge(db, name, resolve=None):
     p.undo_stack = []                      # (Undo starts afresh after a merge; the backup holds the state before)
     for e in p.log:
         e.pop('diff', None)                # (and the per-change undo of earlier changes goes with it)
-    return {'ok': True, 'note': note, 'records': n_rec, 'places': len(places), 'objects': n_obj, 'lua': n_lua,
+    return {'ok': True, 'note': note, 'plugin': other['plugin'], 'in_load_order': pl['in_load_order'],
+            'records': n_rec, 'places': len(places), 'objects': n_obj, 'lua': n_lua,
             'grass': n_grass, 'copied': copied, 'missing_files': pl['files']['missing'],
             'stale': pl['cells']['stale'], 'edited_here': pl['cells']['edited_here']}

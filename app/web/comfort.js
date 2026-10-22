@@ -74,6 +74,7 @@ const CF_ACT = [
   {id: 'view3d', label: 'Switch between the flat map and 3D', keys: [], world: true, run: () => { const b = document.querySelector(`[data-view3d="${V3.on ? 0 : 1}"]`); if (b) b.click(); }},
   {id: 'panels', label: 'Panels and layouts menu', keys: [], world: true, run: () => PNL.windowsMenu('world', $('#w-panels'))},
   {id: 'fixit', label: 'Find gaps in this place', keys: [], world: true, run: () => W.info && W.info.interior ? fixitOpen(W.info.key) : toast('Open an interior first.', true)},
+  {id: 'check', label: 'Check this place (what\'s wrong with the furnishing)', keys: [], world: true, run: () => W.info && W.info.interior ? placecheckOpen(W.info.key) : toast('Open an interior first.', true)},
   {id: 'play', label: 'Play here (pick a spot)', keys: [], world: true, run: () => W.key ? setMode('play') : toast('Open a place first.', true)},
 ];
 const CF_FIXED = [
@@ -182,7 +183,7 @@ function cfSelectLike(r){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLo
 
 // ---------------------------------------------------------------- right-click menus
 // hit: [cell, ref] under the mouse (or null); at: the world spot [x, y, z] under it (or null)
-function cfMenuAt(e, hit, at){
+function cfMenuAt(e, hit, at, locked){
   if (!cfWorldOn() || !W.key) return;
   if (W.mode === 'paths'){ peMenu(e); return; }
   const items = [], pt = {x: e.clientX, y: e.clientY};
@@ -239,6 +240,10 @@ function cfMenuAt(e, hit, at){
     }
     if (r.type === 'NPC_' || r.type === 'CREA'){ sep(); items.push({label: '💬 Dialogue', act: () => selAction('talk')}, {label: r.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character', act: () => selAction('char')}); }
     sep();
+    // (a building piece: what the game stands at this joint, most often first, laid as one change; fixhere.js)
+    if (r.arch && W.info && W.info.interior && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix here: what the game stands at this joint…', act: () => fixhereMenu(ck, r.k, pt, null)});
+    // (an outer wall of a place built from pieces: a room added through it, previewed as the kit's pieces; extend.js)
+    if (r.arch && W.info && W.info.interior && typeof extendStart === 'function') items.push({label: '➕ Add a room through this wall…', act: () => extendStart(ck, r.k, at ? [at[0], at[1], V3.on && at[2] != null ? at[2] : null] : null)});
     if (r.arch) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
     if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(r.type)) items.push({label: '🎨 Retexture…', act: () => selAction('retex')});
     items.push({label: '🔊 Add a sound…', act: () => selAction('sound')});
@@ -257,7 +262,11 @@ function cfMenuAt(e, hit, at){
     if (W.hide.size) items.push({label: `Show the ${W.hide.size} hidden again (Alt+H)`, act: () => cfRun('unhide')});
     if (W.clip && at) items.push({label: `📋 Paste ${W.clip.label} here`, act: () => { W.groupPlace = {items: W.clip.items, label: W.clip.label, yaw: 0}; placeGroupAt(at[0], at[1], V3.on ? at[2] : null); }});
     if (at) items.push({label: '▶ Play here', act: () => playHere({cell: cellKeyAt(at[0], at[1]), x: at[0], y: at[1], z: V3.on && at[2] != null ? at[2] + 60 : groundZ(at[0], at[1]) + (W.ext ? 60 : 40), rz: 0})});
-    if (W.info && W.info.interior) items.push({label: '🔧 Find gaps here', act: () => fixitOpen(W.info.key)});
+    // (a locked building piece under the mouse: Fix here on it without selecting it; else the edge nearest the spot)
+    if (W.info && W.info.interior && locked && locked[1].arch && typeof fixhereMenu === 'function') items.push({label: `🧱 Fix here: what the game stands at ${locked[1].name || locked[1].id}…`, act: () => fixhereMenu(locked[0], locked[1].k, pt, null)});
+    if (W.info && W.info.interior && locked && locked[1].arch && typeof extendStart === 'function') items.push({label: '➕ Add a room through this wall…', act: () => extendStart(locked[0], locked[1].k, at ? [at[0], at[1], V3.on && at[2] != null ? at[2] : null] : null)});
+    else if (W.info && W.info.interior && at && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix this edge: what the game stands here…', act: () => fixhereMenu(W.info.key, null, pt, [at[0], at[1], V3.on && at[2] != null ? at[2] : null])});
+    if (W.info && W.info.interior) items.push({label: '🔧 Find gaps here', act: () => fixitOpen(W.info.key)}, {label: '🩺 Check this place', act: () => placecheckOpen(W.info.key)});
     items.push({label: 'Select everything you can see', act: () => cfSelectAll()});
     if (W.sel || W.multi.size) items.push({label: 'Clear the selection', act: () => cfRun('clearsel')});
     sep(); items.push({label: '▤ Panels and layouts…', act: () => PNL.windowsMenu('world', pt)}, {label: '⌘ All commands… (Ctrl+K)', act: () => cfPalette()});
@@ -273,6 +282,8 @@ function cfMenuAt(e, hit, at){
       const nm = ri.name || 'room';
       items.push({label: ri.furnished ? `🎲 Furnish the ${nm} again (${ri.furnished} things now)` : `🪑 Furnish the ${nm} (the game's way)`, act: () => furnishRoom(rck, ri.room, null, nm)});
       items.push({label: `🪑 Furnish the ${nm} as…`, act: () => { const ms = ri.purposes.map(p => ({label: (p === ri.purpose ? '● ' : '') + p, act: () => furnishRoom(rck, ri.room, p, nm)})); setTimeout(() => pnlMenu(pt, ms), 0); }});
+      // between one piece and a whole house: every dressable piece in the room, one Undo
+      if (ri.pieces && typeof dressRoom === 'function') items.push({label: `🪄 Dress everything in the ${nm} (${ri.pieces} pieces, the game's way)`, act: () => dressRoom(rck, ri.room, nm)});
     } else {
       const p = roomProbe(rck, spot);
       if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } });

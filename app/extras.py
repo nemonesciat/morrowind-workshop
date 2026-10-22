@@ -8,7 +8,9 @@ import random
 import variantsurvey
 
 MAX_SHARE = 0.6            # (never on every piece: the game's own rooms aren't that regular)
-SKIP = ('arch', 'jamb', 'door', 'railing', 'rail_', 'stair', 'floortiles', 'ceil', 'story', 'wall')   # (doorways, railings, ceilings and walls are built elsewhere)
+SKIP = ('arch', 'jamb', 'door', 'railing', 'rail_', 'stair', 'floor', 'sheet', 'ceil', 'story', 'wall')   # (doorways, railings, floors, ceilings and walls are built elsewhere)
+# (2026-10-22: 'floor' covers the Gold Coast's Floor_01 sheet too, which the game lays under a few of its tiles
+# and which came out as a second floor in one tile of the user's house, flickering against the tile's own)
 
 
 def for_piece(db, style, piece_id, q, x, y, floor_z, rng, chance=1.0):

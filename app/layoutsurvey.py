@@ -61,13 +61,31 @@ def _canon(pattern):
     return min(''.join(kits.rotate(pattern, q)[s][0].upper() for s in kits.SIDES) for q in range(4))
 
 
+# (the same few thousand ids come up in every one of the 6,000 places: each is classified once. The
+# survey took 67 s cold, half of it in these regexes and in parsing lighting the survey never reads)
+_memo = {'recs': None, 'fam': {}, 'prefix': {}, 'canon': {}}
+
+
+def _memos(db):
+    if _memo['recs'] is not db.recs:
+        _memo.update({'recs': db.recs, 'fam': {}, 'prefix': {}, 'canon': {}})
+    return _memo
+
+
+def _family_of(db, memo, r):
+    key = (r['id'].lower(), r['type'])
+    f = memo.get(key, 0)
+    if f == 0:
+        f = memo[key] = roomsurvey.family_of(db, r['id'], r['type'])
+    return f
+
+
 def _disk(db, limit):
-    import hashlib
     import project
-    sig = hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'layoutsurvey_%s_%d_v3.json' % (sig, limit))
+    return os.path.join(folder, 'layoutsurvey_%s_%d_v3.json' % (taste.sig(db), limit))
 
 
 LIMIT = 6000                 # (every place the game has: about a minute)
@@ -122,9 +140,15 @@ def _kit_tiles(db, m):
     """The kit tiles of a place: T, {(gx, gy, lv): {id, q, pat, canon, prefix, x, y, floor, height, role}}."""
     found, T = [], None
     kp_of = {}
+    memo = _memos(db)
+    pm, cm = memo['prefix'], memo['canon']
+    all_kits = kits.kits(db)
     for r in m['refs']:
-        prefix = kits.kit_prefix(r['id'])
-        if not prefix or prefix not in kits.kits(db):
+        low = r['id'].lower()
+        prefix = pm.get(low, 0)
+        if prefix == 0:
+            prefix = pm[low] = kits.kit_prefix(r['id'])
+        if not prefix or prefix not in all_kits:
             continue
         if prefix not in kp_of:
             kp_of[prefix] = kits.kit_pieces(db, prefix)
@@ -149,7 +173,11 @@ def _kit_tiles(db, m):
         pat = kits.rotate(piece['pattern'], q)
         floor = r['p'][2] + piece['zmin']
         k = (int(round((r['p'][0] - ox) / T)), int(round((r['p'][1] - oy) / T)), int(round(floor / 64)))
-        tiles[k] = {'id': r['id'].lower(), 'q': q, 'pat': pat, 'canon': _canon(piece['pattern']), 'prefix': prefix,
+        low = r['id'].lower()
+        canon = cm.get(low)
+        if canon is None:
+            canon = cm[low] = _canon(piece['pattern'])
+        tiles[k] = {'id': low, 'q': q, 'pat': pat, 'canon': canon, 'prefix': prefix,
                     'x': r['p'][0], 'y': r['p'][1], 'floor': floor, 'height': piece['height'], 'role': role(r['id'])}
     return T, tiles, (ox, oy)
 
@@ -255,8 +283,9 @@ def _place(db, ck, m, T, tiles, origin, rooms_out, places_out, props=None):
     theme = roomsurvey.theme_of(ck)
     refs = m['refs']
     kp_ids = {p['id'].lower() for p in (kits.kit_pieces(db, style) or {}).get('pieces', [])}
+    fm = _memos(db)['fam']
     for r in refs:
-        r['_fam'] = roomsurvey.family_of(db, r['id'], r['type']) if r.get('b') and not r.get('arch') and r['type'] not in ('NPC_', 'CREA', 'DOOR', 'LEVC') else None
+        r['_fam'] = _family_of(db, fm, r) if r.get('b') and not r.get('arch') and r['type'] not in ('NPC_', 'CREA', 'DOOR', 'LEVC') else None
     doors = [r for r in refs if r['type'] == 'DOOR']
     load = [r for r in doors if r.get('to')]
     way_out = [r for r in load if not r['to'].get('cell')] or load

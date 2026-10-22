@@ -14,7 +14,27 @@ const PL_SIZES = {Bedroom: [3, 2], Kitchen: [3, 2], Hall: [2, 3], Storeroom: [2,
 const PL_COLS = ['#7a5a26', '#4c6634', '#2f5a70', '#6e3c5c', '#6b6526', '#3c4c78', '#7a4a2e', '#2f6b5e', '#6b3434', '#56607a'];
 const PL = {view: 'plan', floor: 0, sel: null, hover: null, drag: null, z: 34, ox: 0, oy: 0, yaw: 0.7, tilt: 0.55, hist: [], fut: [], res: null, resKey: null,
   spots: null, spotsKey: null};
-const plFloorName = f => (PL_FLOORS.find(x => x[0] === f) || [0, 'Floor ' + f])[1];
+// a floor's name: the one you gave it (double-click its tab, or Rename in the Floors list), else the usual
+const plFloorDefault = f => (PL_FLOORS.find(x => x[0] === f) || [0, 'Floor ' + f])[1];
+const plFloorName = f => (typeof CR !== 'undefined' && CR.plan && CR.plan.floorNames || {})[f] || plFloorDefault(f);
+// what a room is for, as Auto-furnish will read it from its name (the same words furnish.py goes by);
+// shown on the plan when the name doesn't say it ("Nemo's room" is a bedroom)
+const PL_KIND_WORDS = [['dining', 'dining room'], ['refectory', 'mess'], ['barracks', 'barracks'], ['bunk', 'barracks'], ['dormitory', 'barracks'],
+  ['sleeping quarters', 'barracks'], ['armoury', 'armoury'], ['armory', 'armoury'], ['arms room', 'armoury'], ['weapon store', 'armoury'],
+  ['training', 'training room'], ['practice', 'training room'], ['drill', 'training room'], ['sparring', 'training room'], ['mess', 'mess'], ['canteen', 'mess'],
+  ['guard', 'guard room'], ['watch room', 'guard room'], ['gatehouse', 'guard room'], ['bath', 'bath'], ['washroom', 'bath'], ['privy', 'bath'], ['lavatory', 'bath'],
+  ['bed', 'bedroom'], ['sleep', 'bedroom'], ['kitchen', 'kitchen'], ['cook', 'kitchen'], ['pantry', 'kitchen'], ['store', 'storeroom'], ['cellar', 'storeroom'],
+  ['storage', 'storeroom'], ['study', 'study'], ['library', 'study'], ['office', 'study'], ['shop', 'shop'], ['trader', 'shop'], ['shrine', 'shrine'], ['chapel', 'shrine'],
+  ['temple', 'shrine'], ['hall', 'hall'], ['corridor', 'hall'], ['landing', 'hall'], ['passage', 'hall'], ['entrance', 'hall'], ['entry', 'hall'], ['foyer', 'hall'],
+  ['vestibule', 'hall'], ['gallery', 'hall'], ['tavern', 'tavern'], ['inn', 'tavern'], ['club', 'tavern'], ['bar', 'tavern'], ['living', 'living room'], ['main', 'living room'],
+  ['common', 'living room'], ['parlor', 'living room'], ['parlour', 'living room'], ['camp', 'camp'], ['cave', 'camp'], ['mine', 'camp'], ['den', 'camp'], ['ruin', 'ruin'], ['vault', 'ruin']];
+function plKind(r){
+  const low = (r.name || '').toLowerCase();
+  for (const [w, k] of PL_KIND_WORDS) if (low.includes(w)) return k;
+  return Math.min(r.w, r.h) === 1 ? 'hall' : plTiles(r).length <= 4 ? 'bedroom' : 'living room';
+}
+// the kind worth showing beside the name: none when the name already says it ("Master bedroom")
+function plKindShown(r, name){ const k = plKind(r); return (name || r.name || '').toLowerCase().includes(k) ? '' : k; }
 let plId = 1;
 const plNewId = () => 'r' + (plId++) + Math.random().toString(36).slice(2, 5);
 
@@ -577,11 +597,13 @@ function plRender(){
   const hv = PL.hover;
   if (hv && hv.kind === 'door') s += plDoorMark(hv.e, hv.remove ? '#ff6a5a' : '#f0cd87', .55);
   if (hv && hv.kind === 'exit') s += plExitMark(hv.e, '#ff8a5c', .5);
-  // names and sizes
+  // names, what the room is for (when the name doesn't say and there's room for it), and sizes
   for (const r of here){
     const [lx, ly] = plLabelAt(r), cx = plSX(lx), cy = plSY(ly), small = r.w * z < 70;
+    const kind = !small && r.h * z >= 50 ? plKindShown(r, names[r.id]) : '';
     s += `<text x="${cx}" y="${cy + (small ? 4 : 0)}" fill="#fff8e8" font-size="${Math.min(13, Math.max(9, z / 3))}" font-weight="600" text-anchor="middle" style="paint-order:stroke" stroke="#0008" stroke-width="3">${esc(names[r.id].length > 16 ? names[r.id].slice(0, 15) + '…' : names[r.id])}</text>`;
-    if (!small) s += `<text x="${cx}" y="${cy + 14}" fill="#fff8e8aa" font-size="10" text-anchor="middle">${plSizeText(r)}</text>`;
+    if (kind) s += `<text x="${cx}" y="${cy + 13}" fill="#f0cd87dd" font-size="10" font-style="italic" text-anchor="middle" style="paint-order:stroke" stroke="#0006" stroke-width="2">${esc(kind)}</text>`;
+    if (!small && (!kind || r.h * z >= 68)) s += `<text x="${cx}" y="${cy + 14 + (kind ? 12 : 0)}" fill="#fff8e8aa" font-size="10" text-anchor="middle">${plSizeText(r)}</text>`;
   }
   // the selected room: an outline and handles to resize it
   const sr = PL.sel && plRoom(PL.sel);
@@ -644,8 +666,66 @@ function plTabs(){
   const box = $('#pl-tabs'); if (!box) return;
   const st = plStyle(), P = plData();
   const count = f => P.rooms.filter(r => r.floor === f).length;
-  box.innerHTML = PL_FLOORS.slice().reverse().map(([f, n]) => `<button data-fl="${f}" class="${f === PL.floor ? 'on' : ''}" title="${esc(n)}">${esc(n)}${count(f) ? `<span class="n">${count(f)}</span>` : ''}</button>`).join('');
-  box.querySelectorAll('[data-fl]').forEach(b => b.onclick = () => { PL.floor = +b.dataset.fl; PL.sel = null; plRender(); plSide(); });
+  box.innerHTML = PL_FLOORS.slice().reverse().map(([f]) => `<button data-fl="${f}" class="${f === PL.floor ? 'on' : ''}" title="${esc(plFloorName(f))} · double-click to rename it">${esc(plFloorName(f))}${count(f) ? `<span class="n">${count(f)}</span>` : ''}</button>`).join('');
+  box.querySelectorAll('[data-fl]').forEach(b => { b.onclick = () => { PL.floor = +b.dataset.fl; PL.sel = null; plRender(); plSide(); }; b.ondblclick = () => plRenameFloor(+b.dataset.fl); });
+}
+// ----- floors as a whole: rename one, copy one to an empty floor, mirror the plan (one Undo each)
+async function plRenameFloor(f){
+  const name = await askText(`A name for this floor (empty: back to "${plFloorDefault(f)}")`, plFloorName(f));
+  if (name == null) return;
+  plSnap(); const P = plData(); P.floorNames = P.floorNames || {};
+  if (name.trim() && name.trim() !== plFloorDefault(f)) P.floorNames[f] = name.trim().slice(0, 24); else delete P.floorNames[f];
+  plChanged();
+}
+function plDupFloor(f, g){
+  const P = plData(), src = P.rooms.filter(r => r.floor === f);
+  if (!src.length || g === f) return;
+  if (P.rooms.some(r => r.floor === g)) return toast(plFloorName(g) + ' already has rooms. Copy onto an empty floor.', true);
+  plSnap();
+  const map = {};
+  for (const r of src){
+    const c = {...r, id: plNewId(), floor: g, add: (r.add || []).map(t => t.slice()), cut: (r.cut || []).map(t => t.slice())};
+    delete c.tall;       // (a two-storey hall over its own copy would open into it)
+    map[r.id] = c.id; P.rooms.push(c);
+  }
+  for (const d of P.doors.slice()) if (map[d.a] && map[d.b]) P.doors.push({...d, a: map[d.a], b: map[d.b]});
+  P.walls = (P.walls || []).concat((P.walls || []).filter(w => map[w[0]] && map[w[1]]).map(w => [map[w[0]], map[w[1]]]));
+  PL.floor = g; PL.sel = null; PL.resKey = null; PL.spotsKey = null;
+  plChanged();
+  toast(`${plFloorName(f)} copied to ${plFloorName(g)} (${src.length} room${src.length === 1 ? '' : 's'}, with its doorways). Undo takes it back.`);
+}
+// the whole plan turned over: left-right (about a north-south line) or front-back (about an east-west one);
+// rooms, their shapes, doorways, the way out and the stairs you pinned all go with it
+function plMirror(axis){
+  const P = plData(); plSnap();
+  const lr = axis === 'x', flip = s => lr ? ({E: 'W', W: 'E'}[s] || s) : ({N: 'S', S: 'N'}[s] || s);
+  for (const r of P.rooms){
+    const t = lr ? v => [r.w - 1 - v[0], v[1]] : v => [v[0], r.h - 1 - v[1]];
+    r.add = (r.add || []).map(t); r.cut = (r.cut || []).map(t);
+    if (lr) r.x = -(r.x + r.w); else r.y = -(r.y + r.h);
+  }
+  const edge = e => { if (!e || e.x == null) return; if (lr) e.x = -e.x - 1; else e.y = -e.y - 1; e.side = flip(e.side); };
+  for (const d of P.doors) if (d.kind !== 'open') edge(d);
+  edge(P.exit);
+  for (const pin of Object.values(P.stairPins || {})){ if (lr) pin.x = -pin.x - 1; else pin.y = -pin.y - 1; pin.up = flip(pin.up); }
+  PL.resKey = null; PL.spotsKey = null;
+  plChanged(); plFit(); plRender();
+  toast(`The plan is mirrored ${lr ? 'left to right' : 'front to back'}. Undo turns it back.`);
+}
+// the Floors list in the side panel (no room selected): names, copies, mirroring
+function plFloorsHtml(){
+  const P = plData(), floors = [...new Set(P.rooms.map(r => r.floor))].sort((a, b) => b - a);
+  const empty = PL_FLOORS.map(x => x[0]).filter(f => !floors.includes(f)).sort((a, b) => b - a);
+  return `<h4 style="margin-top:14px">Floors</h4>` + floors.map(f => `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;flex:1"><b>${esc(plFloorName(f))}</b> <span style="color:var(--muted-b)">${P.rooms.filter(r => r.floor === f).length} room${P.rooms.filter(r => r.floor === f).length === 1 ? '' : 's'}</span></span>
+      <button class="btn sm" data-flren="${f}" title="Give this floor a name of your own">Rename</button>
+      ${empty.length ? `<select class="inp" data-fldup="${f}" style="width:auto;font-size:12px" title="Copy this floor's rooms and doorways onto an empty floor"><option value="">Copy to…</option>${empty.map(g => `<option value="${g}">${esc(plFloorName(g))}</option>`).join('')}</select>` : ''}</div>`).join('') +
+    `<div style="margin-top:10px"><div style="color:var(--muted-b);margin-bottom:4px">Mirror the whole plan, every floor</div>
+      <button class="btn sm" data-mirror="x" title="Turn the plan over left to right">↔ Left–right</button> <button class="btn sm" data-mirror="y" title="Turn the plan over front to back">↕ Front–back</button></div>`;
+}
+function plBindFloors(box){
+  box.querySelectorAll('[data-flren]').forEach(b => b.onclick = () => plRenameFloor(+b.dataset.flren));
+  box.querySelectorAll('[data-fldup]').forEach(s => s.onchange = () => { if (s.value !== '') plDupFloor(+s.dataset.fldup, +s.value); });
+  box.querySelectorAll('[data-mirror]').forEach(b => b.onclick = () => plMirror(b.dataset.mirror));
 }
 function plHint(){
   const h = $('#pl-hint'); if (!h) return;
@@ -732,10 +812,13 @@ function plSide(){
       Click the <b>wall between two rooms</b> for a doorway; click it again to take it out. Click an <b>outside wall</b> for the way out.<br>
       Use the <b>floor tabs</b> for a cellar or upstairs: the rooms below show faintly, and the stairs are put in for you where they fit best. <b>Drag the stairs</b> to put them where you want (the plan shades where they can stand); click them, then <b>↻</b> (or <b>R</b>) turns them.<br>
       Rooms needn't be rectangles: select one and use <b>✏ Add tiles</b> or <b>⌫ Take away</b>.<br>
+      Under <b>Floors</b>: rename a floor (or double-click its tab), copy one onto an empty floor, mirror the plan.<br>
       <b>Keys:</b> Delete, R turns, arrows move, Ctrl+D copies, Ctrl+Z undoes.</details>`;
     box.innerHTML = `<h4>Planning the rooms</h4>${howto}
       ${pairs.length ? plJoinChoice() : ''}
-      ${pairs.length ? '<h4 style="margin-top:14px">' + (PL.res && PL.res.linked ? 'Between floors' : 'Stairs') + '</h4>' + wellChoice + pairs.join('') : ''}`;
+      ${pairs.length ? '<h4 style="margin-top:14px">' + (PL.res && PL.res.linked ? 'Between floors' : 'Stairs') + '</h4>' + wellChoice + pairs.join('') : ''}
+      ${plFloorsHtml()}`;
+    plBindFloors(box);
     box.querySelectorAll('[name=pl-join]').forEach(r => r.onchange = () => { plSnap(); P.join = r.value; PL.resKey = null; plChanged(); });
     box.querySelectorAll('[data-stwell]').forEach(c => c.onchange = () => { plSnap(); P.stairwell = c.checked; PL.resKey = null; plChanged(); });
     box.querySelectorAll('[data-stturn]').forEach(b => b.onclick = () => plTurnStair(+b.dataset.stturn));
@@ -771,11 +854,11 @@ function plSide(){
   box.innerHTML = `<h4>${esc(names[r.id])}</h4>
     <div class="row"><span>Name</span><input class="inp" id="pl-name" value="${esc(r.name)}" style="flex:1"></div>
     <div class="chips">${PL_NAMES.map(n => `<button data-nm="${esc(n)}">${esc(n)}</button>`).join('')}</div>
-    <div class="tip" style="margin-bottom:6px">Auto-furnish goes by the name.</div>
+    <div class="tip" style="margin-bottom:6px">Auto-furnish goes by the name: this one is furnished as a <b>${esc(plKind(r))}</b>.</div>
     <div class="row"><span>Size</span><input class="inp" type="number" min="1" max="16" id="pl-w" value="${r.w}" style="width:58px"><span style="min-width:0">×</span><input class="inp" type="number" min="1" max="16" id="pl-h" value="${r.h}" style="width:58px"><span style="min-width:0">tiles</span></div>
     <div class="row" style="flex-wrap:wrap"><span>Shape</span><button class="btn sm${PL.paint && PL.paint.mode === 'add' ? ' primary' : ''}" id="pl-padd" title="Click or drag on tiles next to the room to make them part of it">✏ Add tiles</button><button class="btn sm${PL.paint && PL.paint.mode === 'cut' ? ' primary' : ''}" id="pl-pcut" title="Click or drag on the room's tiles to take them away">⌫ Take away</button>${plShaped(r) ? '<button class="btn sm" id="pl-prect" title="Back to its plain rectangle">▭ Rectangle again</button>' : ''}</div>
     ${PL.paint ? `<div class="tip">${PL.paint.mode === 'add' ? 'Click or drag on the tiles marked round the room to add them' : 'Click or drag on the room\'s tiles to take them away'}. <b>Esc</b> or the button again when you're done.</div>` : ''}
-    <div class="row"><span>Floor</span><select class="inp" id="pl-floor" style="flex:1">${PL_FLOORS.map(([v, l]) => `<option value="${v}" ${v === r.floor ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="row"><span>Floor</span><select class="inp" id="pl-floor" style="flex:1">${PL_FLOORS.map(([v]) => `<option value="${v}" ${v === r.floor ? 'selected' : ''}>${esc(plFloorName(v))}</option>`).join('')}</select></div>
     <label class="tip" style="display:flex;gap:6px;align-items:flex-start;margin:4px 0"><input type="checkbox" id="pl-tall" ${r.tall ? 'checked' : ''}><span><b>Two storeys tall</b>: open to the floor above wherever no room is drawn over it, the way the game builds its guild halls: a ceiling slab at the top, pillars at the opening's corners, and the rooms you draw round it upstairs become a gallery with a railing. Draw the upstairs rooms round the part you want open.</span></label>
     ${touching.length ? `<h4 style="margin-top:12px">Next door</h4>${touching.map(o => `<div class="conn"><span>${esc(names[o.id])}</span><select class="inp" data-link="${o.id}" style="max-width:130px;font-size:12px">
       <option value="door" ${link(o) === 'door' ? 'selected' : ''}>Doorway</option><option value="open" ${link(o) === 'open' ? 'selected' : ''}>Open, no wall</option><option value="wall" ${link(o) === 'wall' ? 'selected' : ''}>Wall</option></select></div>`).join('')}

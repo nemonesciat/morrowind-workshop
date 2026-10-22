@@ -16,6 +16,7 @@ import kits
 
 _cache = {}
 _threads = {}
+_running = set()         # styles whose survey is being made in this process right now
 PLACES = 8               # the game's places looked at per style
 MIN_TILES = 8            # a place must be built from at least this many of the style's pieces
 MAX_TILES = 80           # (bigger ones take minutes to look through)
@@ -23,12 +24,11 @@ KINDS = ('hole', 'gap', 'doorway', 'post', 'ceiling')
 
 
 def _disk(db, prefix):
-    import hashlib
     import project
-    sig = hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'gapsurvey_%s_%s_v1.json' % (sig, prefix.replace('/', '_')))
+    return os.path.join(folder, 'gapsurvey_%s_%s_v1.json' % (taste.sig(db), prefix.replace('/', '_')))
 
 
 def cells_for(db, prefix, limit=PLACES):
@@ -73,15 +73,23 @@ def survey(db, prefix, limit=PLACES):
         pass
     import fixit
     rows = []
-    for ck in cells_for(db, prefix, limit):
-        try:
-            res = fixit.scan(db, ck, everything=True)
-        except Exception:
-            continue
-        if not res.get('tiles'):
-            continue
-        c = Counter(i['kind'] for i in res['issues'])
-        rows.append(dict({'key': ck, 'tiles': res['tiles']}, **{k: c.get(k, 0) for k in KINDS}))
+    # (the finder run on the game's places asks for this very survey (scan -> typical -> ready): while it
+    # is being made, ready() answers None rather than starting it again. Without this, each survey process
+    # started another for the same style, and that one another: sixty processes of a gigabyte each on
+    # 2026-10-22, in the lab and in the Workshop's own survey process alike)
+    _running.add(prefix)
+    try:
+        for ck in cells_for(db, prefix, limit):
+            try:
+                res = fixit.scan(db, ck, everything=True)
+            except Exception:
+                continue
+            if not res.get('tiles'):
+                continue
+            c = Counter(i['kind'] for i in res['issues'])
+            rows.append(dict({'key': ck, 'tiles': res['tiles']}, **{k: c.get(k, 0) for k in KINDS}))
+    finally:
+        _running.discard(prefix)
     med = lambda v: sorted(v)[len(v) // 2] if v else 0.0
     out = {'places': len(rows), 'cells': rows,
            'per_tile': {k: round(med([r[k] / float(r['tiles']) for r in rows]), 3) for k in KINDS},
@@ -104,6 +112,8 @@ def ready(db, prefix, limit=PLACES):
     key = (prefix, limit)
     if key in _cache and _cache[key][0] is db.recs:
         return _cache[key][1]
+    if prefix in _running:
+        return None                      # (being made here now: see survey)
     try:
         if os.path.isfile(_disk(db, prefix)):
             return survey(db, prefix, limit)

@@ -55,7 +55,17 @@ def put(db, table, key, value):
 
 def _write(t):
     try:
-        tmp = t['path'] + '.tmp'
+        # (another process may have added to the table on disk meanwhile: the survey processes run
+        # side by side and each keeps what it learnt; what is on disk is kept, this table's entries win)
+        try:
+            with open(t['path'], encoding='utf-8') as f:
+                merged = json.load(f)
+            if isinstance(merged, dict) and len(merged) > 0:
+                merged.update(t['data'])
+                t['data'] = merged
+        except Exception:
+            pass
+        tmp = t['path'] + '.%d.tmp' % os.getpid()
         with open(tmp, 'w', encoding='utf-8') as f:
             # (compact and unchecked: a shelf table runs to ten megabytes, and this is written at the
             # end of every furnish that learnt a new model)

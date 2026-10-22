@@ -483,6 +483,90 @@ def open_folder(path):
     return {'ok': True, 'path': path}
 
 
+# ----- for the Workshop's own developer (My mod > Get ready to share, at the bottom): the Workshop's own
+# source copied into the GitHub folder, then GitHub Desktop opened for the commit. The folder is chosen
+# once and kept in workshop_settings.json under dev_github_folder.
+SRC_APP = os.path.dirname(os.path.abspath(__file__))              # (this app folder: what runs is what is synced)
+SRC_ROOT = os.path.dirname(SRC_APP)
+GITHUB_FOLDER_DEFAULT = os.path.join(os.path.expanduser('~'), 'Desktop', 'Morrowind Workshop', 'github', 'morrowind-workshop')
+PACKAGING_FILES = ('*.cs', '*.py', '*.txt', '*.manifest', '*.md')     # (never packaging\nexus, never the build output)
+
+
+def github_desktop_exe():
+    exe = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'GitHubDesktop', 'GitHubDesktop.exe')
+    return exe if os.path.isfile(exe) else None
+
+
+def github_status():
+    folder = load_settings().get('dev_github_folder') or ''
+    return {'folder': folder, 'exists': bool(folder and os.path.isdir(folder)),
+            'is_repo': bool(folder and os.path.isdir(os.path.join(folder, '.git'))),
+            'suggested': GITHUB_FOLDER_DEFAULT, 'source': SRC_ROOT,
+            'packaging': os.path.isdir(os.path.join(SRC_ROOT, 'packaging')), 'desktop': bool(github_desktop_exe())}
+
+
+def github_pick():
+    """Ask for the GitHub folder with Windows' own folder picker (starting at the one chosen before, or the usual
+    place); remember it."""
+    cur = load_settings().get('dev_github_folder') or GITHUB_FOLDER_DEFAULT
+    ps = ("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+          "$d.Description = 'Choose your GitHub folder for the Workshop (the one GitHub Desktop commits from)'; "
+          "$d.SelectedPath = %s; "
+          "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
+          "if ($d.ShowDialog($o) -eq 'OK') { $d.SelectedPath }") % ("'" + cur.replace("'", "''") + "'")
+    r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', ps], capture_output=True, text=True,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    path = (r.stdout or '').strip()
+    if not path:
+        return dict(github_status(), cancelled=True)
+    if os.path.normcase(os.path.abspath(path)) == os.path.normcase(SRC_ROOT):
+        raise editing.EditError("That is the Workshop's own folder: choose the GitHub copy, not the source.")
+    s = load_settings()
+    s['dev_github_folder'] = path
+    save_settings(s)
+    return github_status()
+
+
+def _robocopy(src, dst, args):
+    r = subprocess.run(['robocopy', src, dst] + args + ['/NFL', '/NDL', '/NJH', '/NP', '/R:2', '/W:1'],
+                       capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if r.returncode >= 8:              # (0-7 are the ways robocopy says it worked)
+        raise editing.EditError('Copying %s failed: %s' % (os.path.basename(src), (r.stdout or r.stderr or '').strip()[-400:]))
+    m = re.search(r'^\s*Files\s*:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', r.stdout or '', re.M)
+    return {'total': int(m.group(1)), 'copied': int(m.group(2)), 'removed': int(m.group(6))} if m else {}
+
+
+def github_sync(body):
+    """app\\ mirrored (less __pycache__) and packaging's source files copied into the GitHub folder, then GitHub
+    Desktop opened on it for the commit (the commit itself is the user's)."""
+    folder = load_settings().get('dev_github_folder') or ''
+    if not folder or not os.path.isdir(folder):
+        raise editing.EditError('Choose your GitHub folder first.')
+    if os.path.normcase(os.path.abspath(folder)) == os.path.normcase(SRC_ROOT):
+        raise editing.EditError("That is the Workshop's own folder: choose the GitHub copy, not the source.")
+    out = {'folder': folder, 'app': _robocopy(SRC_APP, os.path.join(folder, 'app'), ['/MIR', '/XD', '__pycache__'])}
+    pk = os.path.join(SRC_ROOT, 'packaging')
+    if os.path.isdir(pk):
+        out['packaging'] = _robocopy(pk, os.path.join(folder, 'packaging'), list(PACKAGING_FILES))    # (top level only)
+    out['opened'] = False
+    if body.get('open', True):
+        exe = github_desktop_exe()
+        try:
+            if exe:
+                # (what GitHub Desktop's own "github <path>" command does: open this repository)
+                from urllib.parse import quote
+                os.startfile('x-github-client://openLocalRepo/' + quote(folder, safe=''))
+            else:
+                os.startfile('github-windows://')
+            out['opened'] = True
+        except OSError as e:
+            out['open_error'] = str(e)
+            if exe:
+                subprocess.Popen([exe], creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+                out['opened'] = True
+    return out
+
+
 def open_project_file(path):
     """Open a mod file as the mod being worked on (and reload), as choosing it from the list does."""
     s = load_settings()
@@ -977,7 +1061,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(items.template_info(db, int(q['i'])))
             elif u.path == '/api/build/styles':
                 import styletrust
-                self._json([dict(s, trust=styletrust.rate(s['id'], s.get('uses')), kind=styletrust.kind(s['id'], s.get('uses'))) for s in builder.styles(db)])
+                # (wait=False: within the first minute the stairs are still being learnt in the survey process;
+                # the list comes at once with stairs_pending on those, and the page asks again until none are)
+                self._json([dict(s, trust=styletrust.rate(s['id'], s.get('uses')), kind=styletrust.kind(s['id'], s.get('uses'))) for s in builder.styles(db, wait=False)])
             elif u.path == '/api/build/plans':
                 # saved floor plans, and the places in your mod built from pieces (to start from one)
                 import plans
@@ -1089,13 +1175,15 @@ class Handler(BaseHTTPRequestHandler):
                             'model': ai.MODEL, 'busy': assistant.lock.locked(), 'status': assistant.status,
                             'steps': assistant.steps, 'turns': sum(1 for m in assistant.messages if m['role'] == 'user'
                                                                    and isinstance(m['content'], str))})
+            elif u.path == '/api/dev/github':
+                self._json(github_status())
             elif u.path == '/api/project':
                 p = db.project
                 parent, sizes = {}, {}
                 if p:
                     parent, _kids, _f = editing.activity(db)
                     sizes = editing.branch_sizes(db)
-                log = [{'id': e.get('id'), 't': e.get('t'), 'text': e.get('text'), 'undone': e.get('undone', False),
+                log = [{'id': e.get('id'), 't': e.get('t'), 'text': editing.note_label(p, e.get('text'), e.get('id')), 'undone': e.get('undone', False),
                         'can_undo': bool(e.get('diff')) and not e.get('undone'),
                         'parent': parent.get(e.get('id')), 'inside': sizes.get(e.get('id'), 0)}
                        for e in (p.log[-200:] if p else [])]
@@ -1216,6 +1304,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(r)
             if u.path == '/api/report':
                 return self._json(helpinfo.report(db, link, body.get('what', '')))
+            if u.path == '/api/dev/github/pick':
+                return self._json(github_pick())
+            if u.path == '/api/dev/github/sync':
+                return self._json(github_sync(body))
             if u.path == '/api/open_place':
                 where = {'projects': PROJECTS_DIR, 'backups': backups.BACKUP_DIR,
                          'reports': os.path.join(APP_DIR, 'reports'), 'app': APP_DIR,
@@ -1253,6 +1345,11 @@ class Handler(BaseHTTPRequestHandler):
                     s.pop('anthropic_api_key', None)
                 save_settings(s)
                 return self._json({'ok': True, 'configured': bool(key or os.environ.get('ANTHROPIC_API_KEY'))})
+            if u.path == '/api/clienterror':
+                # a fault in the page, written to the log so "nothing happens" can be traced
+                print('page error (%s, %s): %s' % (str(body.get('view') or '')[:40], str(body.get('where') or '')[:200],
+                                                    str(body.get('msg') or '')[:2000].replace('\n', ' | ')))
+                return self._json({'ok': True})
             if u.path == '/api/loadorder/check':
                 info = loadorder.read(db)
                 rows = {r['name'].lower(): r for r in info['enabled'] + info['available']}
@@ -1265,8 +1362,9 @@ class Handler(BaseHTTPRequestHandler):
                 except loadorder.LoadOrderError as e:
                     return self._json({'error': str(e)}, 400)
                 r['game_running'] = link.game_running()
-                db.state = 'loading'                     # read everything again in the new order
-                db.load_async()
+                # plugins ticked on at the end are just added to what is loaded; any other change
+                # reads everything again in the new order (from the record cache)
+                r.update(db.apply_order(r.pop('order')))
                 return self._json(r)
             if u.path == '/api/link/arm':
                 if body.get('id'):
@@ -1356,6 +1454,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(assistant.draft(body))
                 except ai.ToolError as e:
                     return self._json({'error': str(e)}, 400)
+            if u.path == '/api/extend/options':
+                # add a room through a wall: the proposed room and its ghost pieces (extend.py; nothing is laid)
+                import extend
+                return self._json(extend.options(db, body['cell'], body.get('ref'), body.get('at'), body.get('w', 3), body.get('h', 3),
+                                                 body.get('shift', 0), body.get('name')))
+            if u.path == '/api/fixhere/options':
+                # what the game stands at the joint pointed at (a piece, or a spot on the floor): read-only
+                import fixhere
+                return self._json(fixhere.options(db, body['cell'], body.get('ref'), body.get('at')))
+            if u.path == '/api/place/check':
+                # the health check of a place: the furnishing faults and the gap finder's findings in one
+                # list, with markers and fixes (placecheck.py). It changes nothing, so it runs OUTSIDE the
+                # editing lock: on a big house it takes a while, and while it ran under the lock every
+                # Dress this, Add one thing and furnish waited behind it (the user: "Dress doesn't seem to
+                # work anymore", with "Checking this place…" in the panel the whole time)
+                import placecheck
+                return self._json(placecheck.check(db, body['cell'], gaps=body.get('gaps', True)))
             with edit_lock:
                 if u.path == '/api/ref/relink':
                     r = doors.relink(db, body['cell'], body['ref'], body.get('target'), body.get('at'), bool(body.get('both')))
@@ -1518,6 +1633,9 @@ class Handler(BaseHTTPRequestHandler):
                         room_id = furnish.room_info(db, body['cell'], at=body['at'])['room']
                     if room_id is None:
                         return self._json({'error': 'That spot is in no room Auto-furnish can read.'}, 400)
+                    if body.get('dress'):
+                        # every dressable piece in the room dressed the game's way, as one undoable change
+                        return self._json(furnish.furnish(db, body['cell'], room=int(room_id), dress_room=True, seed=_random.randrange(1 << 30)))
                     return self._json(furnish.furnish(db, body['cell'], room=int(room_id), purpose=body.get('purpose') or None,
                                                       replace=body.get('replace', True) is not False, seed=_random.randrange(1 << 30)))
                 if u.path == '/api/furnish/piece':
@@ -1592,14 +1710,31 @@ class Handler(BaseHTTPRequestHandler):
                     import merge
                     if body.get('preview'):
                         return self._json(merge.preview(db, body.get('name') or ''))
-                    return self._json(merge.merge(db, body.get('name') or '', body.get('resolve') or {}))
+                    r = merge.merge(db, body.get('name') or '', body.get('resolve') or {})
+                    r['disabled'] = None
+                    if body.get('disable_other') and r.get('in_load_order'):
+                        # the merged-in mod comes off the game's load order, or the game shows its places twice;
+                        # then everything is read again in the new order, as Load order > Save does
+                        info = loadorder.read(db)
+                        order = [x['name'] for x in info['enabled'] if x['name'].lower() != r['plugin'].lower()]
+                        editing.flush(db)
+                        try:
+                            loadorder.save(db, order)
+                            r['disabled'] = r['plugin']
+                            r['game_running'] = link.game_running()
+                            db.state = 'loading'
+                            db.load_async()
+                        except loadorder.LoadOrderError as e:
+                            r['disable_error'] = str(e)
+                    return self._json(r)
                 if u.path == '/api/undo_entry':
                     # with everything built on it, unless asked to take back just this one
                     e = (editing.undo_entry if body.get('only') else editing.undo_branch)(db, int(body['id']))
                     return self._json({'ok': True, 'text': e['text'] if e else ''})
                 if u.path == '/api/undo':
                     undone = editing.undo(db, body.get('to'))
-                    return self._json({'ok': True, 'undone': undone, 'depth': editing.undo_depth(db)})
+                    return self._json({'ok': True, 'undone': [editing.note_label(db.project, n) for n in undone],
+                                       'depth': editing.undo_depth(db)})
                 if u.path in ('/api/project/new', '/api/project/open'):
                     _end_together()
                     editing.flush(db)       # (the mod being left is written out first)
@@ -1654,6 +1789,25 @@ class Handler(BaseHTTPRequestHandler):
                     r = fixit.apply(db, body['cell'], body.get('ops') or [], body.get('label'))
                     m = mapdata.cellmap(db, body['cell'])
                     m['changed'] = r['changed']
+                    return self._json(m)
+                if u.path == '/api/extend/apply':
+                    # the plan grows by the room and its doorway; only they are laid; the room is furnished
+                    import extend
+                    return self._json(extend.apply(db, body['cell'], body.get('ref'), body.get('at'), body.get('w', 3), body.get('h', 3),
+                                                   body.get('shift', 0), body.get('name'), body.get('furnish', True) is not False,
+                                                   body.get('level'), body.get('purpose')))
+                if u.path == '/api/fixhere/apply':
+                    # Fix here: the game's answer at one joint laid as one change, or at every joint of the
+                    # place in the same situation (fixhere.py)
+                    import fixhere
+                    import fixit
+                    if body.get('everywhere'):
+                        r = fixhere.everywhere(db, body['cell'], body['key'], body['ans'], body.get('label'))
+                    else:
+                        r = fixit.apply(db, body['cell'], body.get('ops') or [], body.get('label'))
+                    m = mapdata.cellmap(db, body['cell'])
+                    m['changed'] = r['changed']
+                    m['spots'] = r.get('spots')
                     return self._json(m)
                 if u.path == '/api/fixit/doorframes':
                     # bare doorways in a place built before the Workshop knew the style's door frame: the

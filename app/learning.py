@@ -12,6 +12,9 @@ _SURVEYS = [
     ('roomsurvey', 'ready'), ('wealthsurvey', 'ready'), ('placesurvey', 'ready'), ('arrangesurvey', 'ready'),
     ('catalogue', 'ready'), ('wallsurvey2', 'ready'), ('decorsurvey', 'ready'), ('shelfsurvey', 'interest_ready'),
     ('countersurvey', 'ready'), ('shrinesurvey', 'ready'), ('roomkindsurvey', 'ready'),
+    # (what the game stands at each kind of joint between its floor pieces: Fix here, the finder's "not what
+    # the game stands here" and the builder's closing rounds go by it; 77 kits in about 20 s, 2026-10-22)
+    ('joints', 'ready'),
 ]
 
 
@@ -52,6 +55,20 @@ def prewarm(db):
         pass
     try:
         pending(db)
+    except Exception:
+        pass
+    # (the style list's own work, every kit's pieces and the Gold Coast dressings, about 4 s: done once
+    # here in a thread of the server's, so the list comes in a fraction of a second whenever Create is opened)
+    try:
+        import threading
+        import builder
+        def warm():
+            try:
+                builder.styles(db, wait=False)
+            except Exception as e:
+                # (the game data reloaded under the walk, say: the list is simply made when next asked for)
+                print('style list warm-up stopped:', e)
+        threading.Thread(target=warm, name='styles-warm', daemon=True).start()
     except Exception:
         pass
 

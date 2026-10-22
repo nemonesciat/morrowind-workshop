@@ -19,7 +19,7 @@ NOT_LAMP = re.compile(r'sconce|candle|wall|hang|chandelier|_de_paper|torch')    
 ONE_ONLY = ('bed', 'counter', 'shrine')          # one to a room, whatever the game's average (a bunk room comes as a set piece)
 MIN_PER_9 = 0.2                                  # a kind the game stands less often than this per 3 x 3 room is left to the set pieces
 TABLE_CAP = {'bedroom': 1, 'living': 2, 'storage': 1, 'hall': 1, 'kitchen': 2, 'shop': 1, 'study': 2, 'shrine': 1,
-             'bath': 1, 'corridor': 1, 'entry': 0, 'landing': 0, 'barracks': 1, 'armoury': 1, 'training': 1, 'mess': 2, 'guardroom': 1, 'dining': 1}    # (a second table in a bedroom reads as clutter, not as lived in; five in a kitchen made "a pathetic dining room")
+             'bath': 1, 'corridor': 1, 'entry': 0, 'landing': 0, 'barracks': 1, 'armoury': 1, 'training': 1, 'mess': 1, 'guardroom': 1, 'dining': 1}    # (a second table in a bedroom reads as clutter, not as lived in; five in a kitchen made "a pathetic dining room")
 # the room-kind survey's purposes (roomkindsurvey.py): Auto-furnish's purpose -> (the survey's kind, its sub-kind)
 KIND_OF = {'bath': 'bath', 'corridor': 'hall', 'entry': 'hall', 'landing': 'hall', 'storage': 'storage', 'kitchen': 'kitchen',
            'barracks': 'guard', 'armoury': 'guard', 'training': 'guard', 'mess': 'guard', 'guardroom': 'guard'}
@@ -72,12 +72,22 @@ def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
             continue
         if fam == 'rack' and purpose not in ('armoury', 'training', 'barracks', 'guardroom'):
             continue                    # (a storeroom's racks are wine racks, the dressings' business; a weapon rack is a guard's)
-        if fam == 'target' and purpose != 'training':
-            continue
+        if fam == 'target' and purpose not in ('training', 'armoury'):
+            continue                    # (the practice dummies: a training room's, and an armoury's in a row at one wall, R11)
+        if fam == 'target' and purpose == 'armoury':
+            count = max(2.0, count)
         if fam == 'bath' and purpose != 'bath':
             continue                    # (a washtub among a storeroom's barrels is not a bathing room's)
         if purpose == 'storage' and fam in ('planter', 'screen', 'bench', 'table', 'cupboard'):
             continue                    # (a store is stores: the odd planter or bench in the game's is a back room's)
+        if purpose in ('corridor', 'landing', 'entry') and fam in ('barrel', 'crate', 'sack', 'chair', 'table', 'cupboard', 'bookshelf', 'bed', 'chest'):
+            # (the catalogue's R6: halls, galleries and corridors are lit and carpeted, not furnished: a
+            # runner down the middle, a sconce every bay, nothing on the floor but the odd bench, urn
+            # or planter; the survey's halls read the game's back passages' stores along with them.
+            # A corridor keeps its chairs against the wall: 2.2 per nine tiles, 71% at a wall, in the
+            # game's corridors, room-kind survey R2)
+            if not (purpose == 'entry' and fam == 'chest') and not (purpose == 'corridor' and fam == 'chair'):
+                continue
         if fam == 'planter' and rate < 0.5:
             continue
         if fam == 'table':
@@ -91,7 +101,16 @@ def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
             count = max(1.0, count)     # (a bathing room always has its tub)
         w = S.get('where_f', {}).get(fam, {})
         tot = float(sum(w.values()) or 1)
-        if fam == 'chair' and purpose in ('mess', 'barracks', 'guardroom'):
+        if fam == 'table' and purpose == 'mess':
+            # (a mess is one long table, two of the palette's long tables end to end as a dining room's,
+            # with a bench down each side: the game's mess scene is table+bench*2, room-kind survey R5)
+            where, count = 'long', 1
+        elif fam == 'bench' and purpose == 'mess':
+            where = 'both_sides'
+        elif fam == 'chair' and purpose == 'mess':
+            # (the game's mess chairs stand at the wall three times in five, the benches having the table)
+            where = 'wall' if w.get('wall', 0) / tot >= 0.5 else 'by_table'
+        elif fam == 'chair' and purpose in ('mess', 'barracks', 'guardroom'):
             where = 'by_table' if any(f == 'table' for f, _c, _w in out) or 'table' in S['per_9'] else 'wall'
         elif fam in ('chair', 'bench') and purpose == 'mess':
             where = 'by_table'
@@ -119,8 +138,14 @@ def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
             out.append(('cupboard', 1.0, 'wall'))
         else:
             out = [(f, max(c, 1.0) if f == 'cupboard' else c, w) for f, c, w in out]
+    if purpose == 'armoury' and not any(f == 'target' for f, _c, _w in out):
+        out.append(('target', 2.0, 'wall'))   # (Goldstone's armoury: the practice dummies in a row at one wall, R11)
+    if purpose == 'armoury':
+        # (the racks along one wall, not every wall: twelve racks in a twelve-tile armoury left no wall
+        # for the dummies; four per nine tiles at most, and the dummies take their wall first)
+        out = [(f, min(c, 4.0) if f == 'rack' else c, w) for f, c, w in out]
     # (the room's own piece first, then the big pieces, then the rest, as the other recipes)
-    first = ('fire', 'bath', 'bed', 'rack', 'target', 'table', 'cupboard')
+    first = ('fire', 'bath', 'bed', 'target', 'rack', 'table', 'cupboard')
     out.sort(key=lambda r: (r[0] not in first, first.index(r[0]) if r[0] in first else 9, r[0] in ('chair', 'chest', 'rug')))
     if purpose == 'entry':
         # (the catalogue's R1: an entrance hall is symmetrical about the door's axis: a bench either side
@@ -133,8 +158,9 @@ def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):
             out = [(f, max(c, 1.0) if f == 'bench' else c, w) for f, c, w in out]
         if 'planter' not in have:
             out.append(('planter', 0.6, 'corner'))
-        if S.get('rug_rooms', 0) >= 0.1:
-            out.append(('rug', 1, 'runner'))
+        out.append(('rug', 1, 'runner'))
+    if purpose in ('corridor', 'landing'):
+        out.append(('rug', 1, 'runner'))          # (R6: the runner down the middle, Goldstone's corridors)
     if purpose == 'barracks' and S.get('rug_rooms', 0) >= 0.1:
         out.append(('rug', 1, 'by_bed'))
     if purpose == 'mess':
@@ -227,6 +253,17 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
             out.append(('cupboard', 1, 'wall'))
         else:
             out = [(f, max(c, 1.0) if f == 'cupboard' else c, w) for f, c, w in out]
+    if purpose == 'study':
+        out.append(('chair', 1, 'wall'))      # (the reading chair at the wall: the catalogue's R5)
+    if purpose == 'tavern' and not any(f == 'fire' for f, _c, _w in out):
+        out.append(('fire', 1, 'wall'))       # (the tavern's hearth: the catalogue's R9, the Anchor's Rest)
+    if purpose == 'tavern':
+        # (the benches at the long tables, the Katariah's and the Anchor's Rest's: by the tables, not the
+        # walls, and before the chairs, so they take the long sides)
+        out = [(f, c, 'by_table' if f == 'bench' else w) for f, c, w in out]
+        if not any(f == 'bench' for f, _c, _w in out):
+            out.append(('bench', 1.0, 'by_table'))
+        out = [r for r in out if r[0] == 'bench'] + [r for r in out if r[0] != 'bench']
     if purpose == 'kitchen' and not any(f == 'fire' for f, _c, _w in out):
         # a hearth in every kitchen (the user's catalogue: a Common stone kitchen's fireplace with a pot
         # beside it). The game's kit kitchens have a free-standing one in only one room in twelve, because

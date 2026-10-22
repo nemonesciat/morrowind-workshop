@@ -8,6 +8,10 @@ from esm import iter_subrecords, zstr
 from project import ref_info
 
 CELL_SIZE = 8192
+# False in the survey process (surveyworker.py): the surveys read a place's refs and never its lighting
+# or path grid, and reading those parsed every cell's header a second time (a fifth of the builder's
+# room-shape survey over 6,000 places)
+EXTRAS = True
 
 
 def cell_info(db, cell_key):
@@ -80,7 +84,10 @@ def cellmap(db, cell_key):
     info['exists'] = True
     info['refs'] = out
     info['gone'] = gone
-    if info['interior']:
+    if not EXTRAS:
+        info['paths'] = None
+        info['lighting'] = None
+    elif info['interior']:
         import pathgrid
         import places
         info['paths'] = pathgrid.read(db, cell_key)
@@ -273,8 +280,10 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
                 continue
             counts[oid] = counts.get(oid, 0) + weight
     # (the user: "Furniture divided into three sections of their own: Furniture, Wall, and Floor")
-    groups = {'Furniture': [], 'Wall hangings': [], 'Rugs & mats': [], 'Containers': [], 'Lights': [], 'Clutter & items': [],
-              'People & creatures': []}
+    # (and "a tab for plants or gardening ... to contain planters and the decoration that goes in them":
+    # planters, pots, the plants and flowers that stand in them, whatever record kind they are)
+    groups = {'Furniture': [], 'Wall hangings': [], 'Rugs & mats': [], 'Plants & gardening': [], 'Containers': [], 'Lights': [],
+              'Clutter & items': [], 'People & creatures': []}
     for oid, n in sorted(counts.items(), key=lambda kv: -kv[1]):
         ri = db.resolve_id(oid)
         if ri is None:
@@ -283,7 +292,9 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
         b = object_bounds(db, ri)
         if is_architecture(r[0], r[1], b):
             continue
-        if r[0] in ('STAT', 'ACTI', 'DOOR'):
+        if r[0] in ('STAT', 'ACTI', 'CONT', 'MISC', 'INGR') and _PLANT_RE.search(r[1]):
+            g = 'Plants & gardening'
+        elif r[0] in ('STAT', 'ACTI', 'DOOR'):
             g = _palette_kind(r[1], b)
         elif r[0] == 'CONT':
             g = 'Containers'
@@ -303,7 +314,8 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
         else:
             continue
         if len(groups[g]) < limit:
-            groups[g].append({'id': r[1], 'name': r[2], 'type': r[0], 'here': oid in here,
+            # (mesh: the sidebar folds the records that share a model under the one used most, "20 variants")
+            groups[g].append({'id': r[1], 'name': r[2], 'type': r[0], 'here': oid in here, 'mesh': (r[5] or '').lower(),
                               'size': [round(b[3] - b[0]), round(b[4] - b[1]), round(b[5] - b[2])] if b else None})
     db.meshes.save()
     return [{'name': k, 'items': v} for k, v in groups.items() if v]
@@ -311,6 +323,10 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
 
 _WALL_RE = re.compile(r'tapestr|banner|hanger|flag|pennant|curtain|painting|picture|plaque|wallhang|wall_hang|mounted|skull_wall|antler|trophy', re.I)
 _FLOOR_RE = re.compile(r'rug|carpet|mat_|_mat\b|floormat|doormat|cushion|pillow', re.I)
+# planters and what grows in them: the game's flora_ plants (the harvestable ones are containers), planter boxes
+# and beds, potted plants, flowers, shrubs, vines, ferns, trees small enough for a room; not a flour sack or a plate
+_PLANT_RE = re.compile(r'(^|_)flora|planter|plant(er|_|s?$|s_)|flower|shrub|bush|fern|vine|ivy|tree_|_tree|garden|'
+                       r'herb|moss|mushroom|fungus|lily|rose|hackle|kelp|reed|sapling|topiary|wreath|bouquet', re.I)
 
 
 def _palette_kind(rid, b):

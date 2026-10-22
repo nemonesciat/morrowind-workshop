@@ -33,9 +33,11 @@ def game_uses(db, low):
     return sum(1 for ci in db.used_in.get(low, ()) if not (db.recs[ci][0] == 'CELL' and not game_made(db, db.recs[ci][7])))
 
 
-def measure(db, ri, tile):
-    """Wall pattern of a piece: {'N': 'wall'|'door'|'open', ...}, plus floor/ceiling, or None."""
-    key = (db.recs[ri][1].lower(), tile)
+def measure(db, ri, tile, band=None):
+    """Wall pattern of a piece: {'N': 'wall'|'door'|'open', ...}, plus floor/ceiling, or None.
+    band = (zlo, zhi), in the model's own heights: only that slice of the piece is measured (one storey
+    of a two-storey hall piece, Redoran (large)'s in_r_l_int_lcorner_01 and its kin, 764 tall)."""
+    key = (db.recs[ri][1].lower(), tile, band)
     if key in _cache:
         return _cache[key]
     shapes = _model(db, ri)
@@ -45,6 +47,11 @@ def measure(db, ri, tile):
         return None
     half = tile / 2.0
     zlo, zhi = b[2], b[5]
+    if band:
+        zlo, zhi = max(zlo, band[0]), min(zhi, band[1])
+        if zhi - zlo < 16:
+            _cache[key] = None
+            return None
     height = zhi - zlo
     # coverage grids of vertical faces near each side: [u (along the side), z]
     G = 16
@@ -66,6 +73,8 @@ def measure(db, ri, tile):
                 continue
             nz_ = abs(nz) / area
             mx, my, mz = (ax + bx + cx) / 3, (ay + by + cy) / 3, (az + bz + cz) / 3
+            if band and not (zlo - 2 <= mz <= zhi + 2):
+                continue
             if nz_ > 0.8:              # horizontal: floor or ceiling
                 if mz < zlo + height * 0.2:
                     floor += area / 2
@@ -101,6 +110,7 @@ def measure(db, ri, tile):
         low = range(1, G // 2)                       # the lower half: where you'd walk through
         cover = sum(g[i][j] for i in range(G) for j in low) / float(G * len(low))
         middle = sum(g[i][j] for i in range(G // 2 - 2, G // 2 + 2) for j in low) / float(4 * len(low))
+        whole = sum(g[i][j] for i in range(G) for j in range(G)) / float(G * G)
         out['cover'][side] = round(cover, 2)
         out['offset'][side] = round(where[side][0] / where[side][1], 1) if where[side][1] else half - 16
         out.setdefault('middle', {})[side] = round(middle, 2)
@@ -108,6 +118,8 @@ def measure(db, ri, tile):
             out[side] = 'wall'                      # (rounded corners leave the ends of a wall open)
         elif cover >= 0.25 and middle < 0.2:
             out[side] = 'door'                      # a wall with a doorway cut into it
+        elif band and whole >= 0.4 and middle < 0.2:
+            out[side] = 'door'                      # (a storey of a tall piece: a wall with a wide archway through it)
         else:
             out[side] = 'open'
     out['floor'] = floor > tile * tile * 0.3
@@ -290,7 +302,10 @@ def kit_prefix(rid):
         # (Tamriel Data's Hlaalu manor set names its room pieces LedgeWallSide, LedgeWallCorIn, NoFloor_Side...)
         # (and Tamriel Data's Imperial chapel set, whose parts are all named tile...: TileFloor, TileWall,
         # TileDoorW, TileCeil, TileCol, TileArch, TileStair, TileRail, TileStory)
-        if n >= 2 and (w in PIECE_WORDS or re.match(r'^(room|hall|corner|wall|door|center|side|ledgewall|nofloor)', w)
+        # (Redoran (large)'s two-storey hall pieces, in_r_l_int_lcorner_01 / lwall / lcenter / lentrance, 764
+        # tall, the pieces its manors are built of; the Hlaalu manor set's ledge, ledge rail and ledge post pieces)
+        if n >= 2 and (w in PIECE_WORDS or re.match(r'^(room|hall|corner|wall|door|center|side|ledge|nofloor)', w)
+                       or re.match(r'^l(corner|wall|cent|entr|column|partition)', w)
                        or re.match(r'^tile(floor|wall|door|ceil|col|arch|stair|rail|story|corni)', w)):
             return '_'.join(parts[:n])
     return None
@@ -300,6 +315,7 @@ def kits(db):
     """Building kits found in the load order: prefix -> {tile, pieces: [{id, pattern, uses, size}]}."""
     if STYLE_KITS.get('_recs') is db.recs:
         return STYLE_KITS['kits']
+    recs = db.recs            # (the list this walk is about: a reload swaps in a new one, and the walk then starts over)
     groups = {}
     for (tag, key), lst in db.by_key.items():
         if tag != 'STAT' or not lst or lst[-1] in db.dead:
@@ -341,7 +357,11 @@ def kits(db):
         tile = max(votes, key=lambda sz: (votes[sz], -sz))
         out[prefix] = {'prefix': prefix, 'tile': tile, 'ris': ris, 'sheet_kit': sheet_kit,
                        'uses': sum(game_uses(db, db.recs[ri][1].lower()) for ri in ris)}
-    STYLE_KITS.update({'_recs': db.recs, 'kits': out})
+    if db.recs is recs:
+        # (not kept when the game data was reloaded during the walk: the record indices in it would be
+        # the old list's; the next call walks the new one. The style warm-up thread met this as an
+        # IndexError in _stairs_learn on a test server whose data reloaded under it)
+        STYLE_KITS.update({'_recs': recs, 'kits': out})
     return out
 
 
@@ -352,7 +372,7 @@ def kit_pieces(db, prefix):
     if 'pieces' in k:
         return k
     tile = k['tile']
-    pieces, halves = [], []
+    pieces, halves, uppers = [], [], []
     # a set whose floor is a flat slab of its own under wall-and-ceiling pieces (Tamriel Data's Hlaalu
     # manor: Floor_01 under LedgeWallSide_01): the slab, so the floorless pieces count, with it under them
     slab = None
@@ -393,6 +413,12 @@ def kit_pieces(db, prefix):
         # bottom is a floor's thickness up)
         floorless = not pat['floor']
         if floorless and not (slab and b[2] <= slab['zmin'] + 16 and (pat.get('ceiling') or any(pat[s] == 'wall' for s in SIDES))):
+            # (kept apart as the kit's upper-storey pieces: the Hlaalu manor's NoFloor_Corner/Side/End/
+            # Center_01, walls and a ceiling with no floor, which the game stands over a two-storey hall's
+            # opening on the storey above, 128 under where a floored piece's origin would be; see 'floorless')
+            if slab and (pat.get('ceiling') or any(pat[s] == 'wall' for s in SIDES)) and b[2] > slab['zmin'] + 16 and h >= tile * 0.6:
+                uppers.append({'id': rid, 'ri': ri, 'pattern': _curved(pat, low), 'uses': game_uses(db, low), 'zmin': b[2],
+                               'height': h, 'floorless': True})
             continue
         pat = _curved(pat, low)
         item = {'id': rid, 'ri': ri, 'pattern': pat, 'uses': game_uses(db, low), 'zmin': b[2], 'height': h,
@@ -405,11 +431,40 @@ def kit_pieces(db, prefix):
             halves.append(item)
             continue
         pieces.append(item)
+    # two-storey hall pieces, a tile across and about twice as tall as the kit's ordinary pieces (Redoran
+    # (large)'s in_r_l_int_lcorner_01 / lwall_01 / lcenter_01 / lentrance_01, 764 against 380: the pieces
+    # its manors' halls are built of, 11, 8, 10 and 11 uses against the single-storey corner_01's 7), kept
+    # apart as the kit's 'tall' pieces with a wall pattern per storey, never laid as an ordinary tile
+    # (the ordinary height: the lowest cluster of heights among pieces at least half a tile tall; a flat
+    # ceiling or floor slab a tile across, 16 or 40 tall, is no storey to measure the others against)
+    base = sorted(p['height'] for p in pieces if p['height'] >= tile * 0.5)
+    base_h = None
+    if base:
+        low_ = [h for h in base if h <= base[0] * 1.5]
+        base_h = low_[len(low_) // 2]
+    tall = [p for p in pieces if base_h and p['height'] >= base_h * 1.8]
+    pieces = [p for p in pieces if p not in tall]
     # door frames that sit in a doorway between two tiles, and plain wall sections
     jambs, walls, door_walls = [], [], []
     # (the full height from the ordinarily named pieces: an "entrance" piece may be dropped below)
     heights = sorted(p['height'] for p in pieces if not _named_entrance(p['id'].lower())) or sorted(p['height'] for p in pieces) or [tile]
     full_h = heights[len(heights) // 2]
+    for p in tall:
+        # (each storey measured on its own slice of the model: a Redoran lentrance has an archway below
+        # and a doorway above on the same side, an lcorner its two walls on both storeys)
+        zl, zh = p['zmin'], p['zmin'] + p['height']
+        mid = (zl + zh) / 2.0
+        lower = measure(db, p['ri'], tile, band=(zl, mid))
+        upper = measure(db, p['ri'], tile, band=(mid, zh))
+        if not lower or not upper:
+            continue
+        lower, upper = _curved(lower, p['id'].lower()), _curved(upper, p['id'].lower())
+        for s in SIDES:
+            if lower[s] == 'door' and upper[s] == 'open':
+                upper[s] = 'door'            # (the opening carries on up: the upper doorway of an entrance piece)
+        p['lower'], p['upper'] = lower, upper
+        p['pattern'] = lower
+    tall = [p for p in tall if 'upper' in p]
     if k.get('sheet_kit'):
         # (the storey is as tall as the set's walls: the chapel's TileWall_01 is 364, its ceiling slab's top too)
         hs = []
@@ -495,6 +550,7 @@ def kit_pieces(db, prefix):
     pieces = [p for p in pieces if not p['floorless'] or p['uses'] > 1.5 * floored.get(canon(p['pattern']), -1)]
     k['pieces'] = sorted(pieces, key=lambda p: -p['uses'])
     k['slab'] = slab if any(p['floorless'] for p in pieces) else None
+    k['tall'] = sorted(tall, key=lambda p: -p['uses'])
     k['halves'] = sorted(halves, key=lambda p: -p['uses'])
     k['jambs'] = sorted(jambs, key=lambda p: -p['uses'])
     k['walls'] = sorted(walls, key=lambda p: -p['uses'])
@@ -505,6 +561,12 @@ def kit_pieces(db, prefix):
     zs = sorted(p['zmin'] for p in pieces) or [0]
     k['zmin'] = zs[len(zs) // 2]
     k['height'] = full_h
+    # the upper-storey pieces (walls and a ceiling, no floor) with how much lower than an ordinary piece
+    # each one's origin goes for its bottom to sit on the storey's floor ('zoff': the Hlaalu manor's
+    # NoFloor pieces -128, their bottom 5 above their origin against the ordinary pieces' -123)
+    for p in uppers:
+        p['zoff'] = k['zmin'] - p['zmin']
+    k['floorless'] = sorted(uppers, key=lambda p: -p['uses'])
     # a sheet kit's ceiling: the slab a tile across up at the top of the storey (TileCeil_01), laid over
     # every tile by the builder, since the floor sheets have none
     k['ceiling'] = None
@@ -532,6 +594,8 @@ def kit_pieces(db, prefix):
         k['entry_doors'] = kb['entry_doors'] or k['entry_doors']
         k['slab'] = kb['slab']
         k['zmin'] = kb['zmin']
+        k['tall'] = []
+        k['floorless'] = []
         k['roof_height'] = k['height']           # (the roof storey's own: thatch 364, for the stairs under it)
         k['height'] = kb['height']
         k['roof_kit'] = True
@@ -576,6 +640,95 @@ def family_wall(db, prefix):
             best = (score, item)
     res = best[1] if best else None
     _family_walls[key] = (db.recs, res)
+    return res
+
+
+_hearths = {}
+HEARTH_RE = re.compile(r'fireplace|hearth|stove|oven')
+
+
+def hearths(db, prefix):
+    """The built-in hearths the game stands against this kit's walls, which Auto-furnish never places
+    (statics named in_... or ex_... count as the building, not furniture): [{'id', 'n': how many stand
+    against a wall side of the kit's (or its family's) tiles, 'out': how far out from the tile's centre
+    towards that wall, 'along': how far along it, 'turn': quarter turns from facing out of the wall,
+    'bottom': how far over the floor the model's bottom sits, 'above': share with a floor tile over it}],
+    most used first. Measured 2026-10-22: the game's Common kitchens have no hearth piece of their own;
+    they stand in_nord_fireplace_01 (36 against the walls of plain, stone and rich tiles, 104 out, turned
+    a quarter, a room above it in 19 of 42) and in_imp_fireplace_grand (24, 80 out). Most kits have none."""
+    k = kit_pieces(db, prefix)
+    if not k:
+        return []
+    key = prefix.lower()
+    if key in _hearths and _hearths[key][0] is db.recs:
+        return _hearths[key][1]
+    from mapdata import ref_info
+    parts = key.split('_')
+    family = '_'.join(parts[:-1]) + '_' if len(parts) >= 3 else None
+    tiles_of = {}
+    for pre in kits(db):
+        if pre.lower() == key or (family and pre.lower().startswith(family)):
+            kp2 = kit_pieces(db, pre)
+            if kp2 and kp2['tile'] == k['tile']:
+                for p in kp2['pieces']:
+                    tiles_of.setdefault(p['id'].lower(), (p, kp2['tile'], kp2['height']))
+    T = k['tile']
+    found = {}
+    for (tag, mid), lst in db.by_key.items():
+        if tag != 'STAT' or not lst or lst[-1] in db.dead or not HEARTH_RE.search(mid) or not mid.startswith(('in_', 'ex_')):
+            continue
+        if game_uses(db, mid) < 3:
+            continue
+        fb = mapdata.object_bounds(db, lst[-1])
+        if not fb or fb[5] - fb[2] < 100:
+            continue
+        rows = []
+        for ci in list(db.used_in.get(mid, ()))[:60]:
+            r = db.recs[ci]
+            if r[0] != 'CELL' or not game_made(db, r[7]):
+                continue
+            try:
+                refs, _h = db.cell_refs(r[7])
+            except Exception:
+                continue
+            items = [(rid.lower(), pos) for rid, pos, _s, dead in (ref_info(x['subs']) for x in refs.values()) if not dead]
+            tiles = [(rid, pos) for rid, pos in items if rid in tiles_of]
+            if not tiles:
+                continue
+            for rid, pos in items:
+                if rid != mid:
+                    continue
+                best = None
+                for tid, tp in tiles:
+                    p, _T, H = tiles_of[tid]
+                    fl = tp[2] + p['zmin']
+                    if abs(pos[0] - tp[0]) <= T * 0.75 and abs(pos[1] - tp[1]) <= T * 0.75 and -64 <= (pos[2] + fb[2]) - fl <= 200:
+                        d = max(abs(pos[0] - tp[0]), abs(pos[1] - tp[1]))
+                        if best is None or d < best[0]:
+                            best = (d, tid, tp, p, H, fl)
+                if not best:
+                    continue
+                _d, tid, tp, p, H, fl = best
+                dx, dy = pos[0] - tp[0], pos[1] - tp[1]
+                side = ('E' if dx > 0 else 'W') if abs(dx) >= abs(dy) else ('N' if dy > 0 else 'S')
+                vx, vy = _VEC[side]
+                q = int(round(tp[5] / (math.pi / 2))) % 4
+                if rotate(p['pattern'], q)[side] != 'wall':
+                    continue
+                up = any(abs(t2[0] - tp[0]) < 24 and abs(t2[1] - tp[1]) < 24 and H * 0.8 < (t2[2] + tiles_of[r2][0]['zmin']) - fl < H * 2.5
+                         for r2, t2 in tiles)
+                turn = int(round(((pos[5] - _YAW[side]) % (2 * math.pi)) / (math.pi / 2))) % 4
+                rows.append((dx * vx + dy * vy, dx * vy - dy * vx, turn, (pos[2] + fb[2]) - fl, up))
+        if len(rows) >= 3:
+            med = lambda i: sorted(r_[i] for r_ in rows)[len(rows) // 2]
+            turns = {}
+            for r_ in rows:
+                turns[r_[2]] = turns.get(r_[2], 0) + 1
+            found[mid] = {'id': db.recs[lst[-1]][1], 'n': len(rows), 'out': round(med(0)), 'along': round(med(1)),
+                          'turn': max(turns, key=turns.get), 'bottom': round(med(3)),
+                          'above': round(sum(1 for r_ in rows if r_[4]) / float(len(rows)), 2), 'height': round(fb[5] - fb[2])}
+    res = sorted(found.values(), key=lambda h: -h['n'])
+    _hearths[key] = (db.recs, res)
     return res
 
 
@@ -730,36 +883,63 @@ def learn_stairs(db):
 
 
 def _stairs_path(db):
-    import hashlib
     import os
     import project
-    sig = hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'stairs_%s_v1.json' % sig)
+    # (v2: the mesh reader now ignores a model's root transform as the game does, and the two-storey hall
+    # pieces are kept apart from a kit's tiles: both change what a stair is learnt against, 2026-10-22)
+    return os.path.join(folder, 'stairs_%s_v2.json' % taste.sig(db))
 
 
 _stairs_disk_cache = {}
 
 
 def _stairs_disk(db):
-    """Every kit's learnt stairs for this load order, from disk: {prefix: res or None}."""
+    """Every kit's learnt stairs for this load order, from disk: {prefix: res or None}. Read again when
+    the file has changed since (the survey process writes it a minute after the Workshop starts: the
+    style list opened before that used to keep an empty table and learn every kit itself, 30 s)."""
     import json
-    if _stairs_disk_cache.get('recs') is db.recs:
+    import os
+    path = _stairs_path(db)
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        stamp = None
+    if _stairs_disk_cache.get('recs') is db.recs and (stamp is None or _stairs_disk_cache.get('stamp') == stamp):
         return _stairs_disk_cache['d']
     d = {}
     try:
-        with open(_stairs_path(db), encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             d = json.load(f)
     except Exception:
         d = {}
-    _stairs_disk_cache.update({'recs': db.recs, 'd': d})
+    _stairs_disk_cache.update({'recs': db.recs, 'd': d, 'stamp': stamp})
     return d
+
+
+def stairs_known(db, prefix):
+    """Whether this kit's stairs are learnt already (in memory or on disk), without learning them."""
+    if prefix in _stairs and _stairs[prefix][0] is db.recs:
+        return True
+    k = kit_pieces(db, prefix)
+    dkey = prefix.lower() + ('@roof' if k and k.get('roof_kit') else '')
+    return dkey in _stairs_disk(db)
 
 
 def _stairs_save(db, d):
     import json
     try:
+        # (what another survey process wrote meanwhile is kept: the catalogue learns a kit's stairs
+        # on the way while the stairs of every kit are learnt beside it)
+        try:
+            with open(_stairs_path(db), encoding='utf-8') as f:
+                on_disk = json.load(f)
+            for pre, res in on_disk.items():
+                d.setdefault(pre, res)
+        except Exception:
+            pass
         out = {}
         for pre, res in d.items():
             out[pre] = None if not res else dict(res, pieces=[{k_: v for k_, v in p.items() if k_ != 'ri'} for p in res['pieces']])

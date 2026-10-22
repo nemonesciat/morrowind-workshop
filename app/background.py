@@ -5,9 +5,14 @@ or a change of load order (every cache is keyed by the load order) a first Auto-
 them running at once in the server's own process: with Python's one interpreter lock the server's
 requests got a sliver of the time, a nine-room house took a quarter of an hour to build, and the 3D
 view starved and stayed black. Now a survey given as a task (module, function, args) runs in a process
-of its own (surveyworker.py, below-normal priority, one task after another), which writes its result to
-the cache folder for the server's modules to find on disk; a survey given only as a function runs in
-one worker thread here, one at a time. /api/status says what is running so the page can say so."""
+of its own (surveyworker.py, below-normal priority), which writes its result to the cache folder for
+the server's modules to find on disk; a survey given only as a function runs in one worker thread here,
+one at a time. /api/status says what is running so the page can say so.
+
+The queued tasks are shared out over up to three survey processes at once (slots(): by the machine's
+cores and free memory, each process holds the game's data, about a gigabyte), balanced by what each
+survey is known to cost, so the first furnish's twelve surveys take a third of the time they took one
+after another; a task queued while processes run starts in a fresh process as soon as a slot is free."""
 import json
 import os
 import subprocess
@@ -21,9 +26,15 @@ _queue = deque()              # [Job]
 _running = [None]
 _worker = [None]
 _done = []                    # names finished, newest last (kept short)
-_batch = []                   # the jobs handed to the survey process now (the ones after the first are still to come)
+_batch = []                   # the jobs handed to survey processes now
+_threads = []                 # one thread per survey process running
 SUBPROCESS = True             # (False: every task runs in the worker thread, as in the lab)
+PROCESSES = None              # survey processes at once; None: by the machine (slots()), 1 to 3
 project_path = [None]         # set by the server when a project is open (the surveys skip its own cells)
+# what each survey costs, in seconds on the user's machine (cold, 2026-10-22), for sharing the queue out
+COST = {'kits.learn_stairs': 60, 'layoutsurvey.survey': 40, 'catalogue.survey': 45, 'shelfsurvey.interest_survey': 50,
+        'gapsurvey.survey': 15}
+COST_OTHER = 12
 
 
 class Job:
@@ -47,11 +58,11 @@ def start(name, fn, task=None):
     in the survey process. The Job (with is_alive())."""
     job = Job(name, fn, task)
     with _lock:
-        for j in list(_queue):
-            if j.name == name:
+        for j in list(_queue) + list(_batch):
+            if j.name == name and j.is_alive():
                 return j                  # (the same survey asked for twice: once is enough)
         r = _running[0]
-        if r is not None and r.name == name:
+        if r is not None and r.name == name and r.is_alive():
             return r
         _queue.append(job)
         if _worker[0] is None or not _worker[0].is_alive():
@@ -61,58 +72,135 @@ def start(name, fn, task=None):
     return job
 
 
+def slots():
+    """How many survey processes may run at once: PROCESSES, else by the machine (one per four cores,
+    one per 2.5 GB of free memory, three at most, one at least)."""
+    if PROCESSES:
+        return max(1, int(PROCESSES))
+    n = 3
+    try:
+        n = min(n, max(1, (os.cpu_count() or 2) // 4))
+    except Exception:
+        pass
+    try:
+        if os.name == 'nt':
+            import ctypes
+
+            class MEM(ctypes.Structure):
+                _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong), ('ullTotalPhys', ctypes.c_ulonglong),
+                            ('ullAvailPhys', ctypes.c_ulonglong), ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
+                            ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong), ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+            m = MEM()
+            m.dwLength = ctypes.sizeof(MEM)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                n = min(n, max(1, int(m.ullAvailPhys / (2.5 * 1024 ** 3))))
+    except Exception:
+        pass
+    return n
+
+
+def _cost(job):
+    return COST.get('%s.%s' % (job.task[0], job.task[1]), COST_OTHER)
+
+
+def _split(jobs, n):
+    """The jobs shared out over up to n processes, balanced by cost; each part in queue order."""
+    n = max(1, min(n, len(jobs)))
+    order = {id(j): k for k, j in enumerate(jobs)}
+    bins = [[] for _ in range(n)]
+    load = [0] * n
+    for j in sorted(jobs, key=_cost, reverse=True):
+        k = load.index(min(load))
+        bins[k].append(j)
+        load[k] += _cost(j)
+    return [sorted(b, key=lambda j: order[id(j)]) for b in bins if b]
+
+
+def _refresh_running():
+    """(under the lock) the job the page shows as running: the first still running in the processes."""
+    for j in _batch:
+        if j.state == 'running':
+            _running[0] = j
+            return
+    _running[0] = None
+
+
 def _run():
     try:
         sys.setswitchinterval(0.002)      # (a survey run here hands the interpreter over more often)
     except Exception:
         pass
     while True:
-        time.sleep(0.5)                   # (the surveys a furnish asks for all arrive at once: one process for all)
+        time.sleep(0.5)                   # (the surveys a furnish asks for all arrive at once: shared out together)
         with _lock:
-            if not _queue:
+            _threads[:] = [t for t in _threads if t.is_alive()]
+            if not _queue and not _threads:
                 _running[0] = None
                 return
-            job = _queue.popleft()
-            _running[0] = job
+            if not _queue:
+                continue
+            job = _queue[0]
+            if SUBPROCESS and job.task:
+                free = slots() - len(_threads)
+                if free <= 0:
+                    continue
+                jobs = [j for j in _queue if j.task]
+                for j in jobs:
+                    _queue.remove(j)
+                for part in _split(jobs, free):
+                    for j in part:
+                        j.state = 'running'
+                        j.t0 = time.time()
+                    _batch.extend(part)
+                    t = threading.Thread(target=_process_batch, args=(part,), name='survey-process', daemon=True)
+                    _threads.append(t)
+                    t.start()
+                _refresh_running()
+                continue
+            if _threads:
+                continue                  # (a job for this thread waits for the processes: one thing at a time here)
+            _queue.popleft()
             job.state = 'running'
             job.t0 = time.time()
-        batch = [job]
-        if SUBPROCESS and job.task:
-            # (every queued survey with a task goes to the one process: it loads the game's data once)
-            with _lock:
-                more = [j for j in _queue if j.task]
-                for j in more:
-                    _queue.remove(j)
-                    j.state = 'running'
-                    j.t0 = job.t0
-                batch += more
-                _batch[:] = batch
-            finished = _in_process(batch)
-            with _lock:
-                _batch[:] = []
-            for j in batch:
-                if j in finished:
-                    continue
-                with _lock:
-                    _running[0] = j
-                    j.t0 = time.time()
-                try:                            # (the process failed it: here, then)
-                    j.fn()
-                    j.state = 'done'
-                except Exception as e:
-                    j.state = 'failed'
-                    print('background survey %s failed: %s' % (j.name, e))
-        else:
-            try:
-                job.fn()
-                job.state = 'done'
-            except Exception as e:          # (a survey that fails stays out of the way of the next)
-                job.state = 'failed'
-                print('background survey %s failed: %s' % (job.name, e))
+            _running[0] = job
+        try:
+            job.fn()
+            job.state = 'done'
+        except Exception as e:          # (a survey that fails stays out of the way of the next)
+            job.state = 'failed'
+            print('background survey %s failed: %s' % (job.name, e))
         with _lock:
-            _done.extend(j.name for j in batch if j.name not in _done)
+            if job.name not in _done:
+                _done.append(job.name)
             del _done[:-20]
+            _running[0] = None
         time.sleep(0.05)
+
+
+def _process_batch(part):
+    """One survey process for these jobs; what it leaves undone runs here, in this thread."""
+    finished = _in_process(part)
+    for j in part:
+        if j in finished:
+            continue
+        with _lock:
+            j.t0 = time.time()
+            _refresh_running()
+        try:                            # (the process failed it: here, then)
+            j.fn()
+            j.state = 'done'
+        except Exception as e:
+            j.state = 'failed'
+            print('background survey %s failed: %s' % (j.name, e))
+        with _lock:
+            if j.name not in _done:
+                _done.append(j.name)
+    with _lock:
+        for j in part:
+            if j in _batch:
+                _batch.remove(j)
+        del _done[:-20]
+        _refresh_running()
 
 
 def _in_process(jobs):
@@ -143,11 +231,12 @@ def _in_process(jobs):
                 finished.add(j)
                 with _lock:
                     j.state = 'done'
-                    _done.append(j.name)
-                    left = [k for k in jobs if k not in finished]
-                    if left:
-                        _running[0] = left[0]
-                        left[0].t0 = time.time()
+                    if j.name not in _done:
+                        _done.append(j.name)
+                    _refresh_running()
+                    for k in jobs:
+                        if k.state == 'running' and k.t0 is None:
+                            k.t0 = time.time()
     p.wait()
     if len(finished) < len(jobs):
         print('survey process left %d of %d undone:\n%s' % (len(jobs) - len(finished), len(jobs), ''.join(lines)[-2000:]))

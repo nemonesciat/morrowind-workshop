@@ -598,6 +598,37 @@ function v3GhostGroup(items){
   });
 }
 
+// a see-through preview of pieces at fixed spots in the world (Fix here: what the game would stand at a
+// joint, shown while the mouse is over the menu entry), apart from the placing ghost
+function v3GhostAt(items){
+  v3GhostClear();
+  if (!V3.scene || !items || !items.length) return;
+  const T = THREE, g = new T.Group();
+  V3.fixGhost = g; V3.scene.add(g);
+  v3EnsureModels([...new Set(items.map(it => it.id))]).then(() => {
+    if (V3.fixGhost !== g) return;
+    for (const it of items){
+      const m = V3.models[it.id.toLowerCase()], part = new T.Group();
+      const src = m && m.parts.length ? m.parts.map(p => new T.Mesh(p.geo, p.mat)) : v3Build({id: it.id, type: 'STAT', b: null}).children;
+      for (const mesh of src){
+        const mat = mesh.material.clone(); mat.transparent = true; mat.opacity = 0.6; mat.depthWrite = false;
+        if (mesh.material.map) mat.map = mesh.material.map;
+        mat.emissive = new T.Color(0x332200);
+        part.add(new T.Mesh(mesh.geometry, mat));
+      }
+      const p = it.p || [0, 0, 0, 0, 0, 0];
+      part.position.set(p[0] - V3.origin[0], p[1] - V3.origin[1], p[2] - V3.origin[2]);
+      part.rotation.set(-(p[3] || 0), -(p[4] || 0), -(p[5] || 0), 'XYZ');
+      part.scale.setScalar(it.s || 1);
+      g.add(part);
+    }
+    v3Refresh();
+  });
+}
+function v3GhostClear(){
+  if (V3.fixGhost){ if (V3.scene) V3.scene.remove(V3.fixGhost); V3.fixGhost = null; if (V3.on) v3Refresh(); }
+}
+
 function v3GhostMove(e){
   const G = V3.ghost; if (!G) return null;
   const h = v3Pick(e, true);
@@ -1298,7 +1329,10 @@ function v3Bind(el){
     // a right-click without dragging: the menu for what's under the mouse
     if (D && V3.on && D.b === 2 && !D.moved && e.target === el && typeof cfMenuAt === 'function'){
       const h = W.mode ? null : v3Pick(e, false);
-      cfMenuAt(e, h && h.obj ? [h.obj.ck, h.obj.r] : null, h && h.world);
+      // (a locked wall or building piece under the mouse: no selection, but the spot and the piece still go
+      // to the menu, for "Fix this edge" and "Fix here" on it)
+      const h2 = h && h.locked ? v3Pick(e, true) : h;
+      cfMenuAt(e, h && h.obj ? [h.obj.ck, h.obj.r] : null, h2 && h2.world, h && h.locked && h2 && h2.obj ? [h2.obj.ck, h2.obj.r] : null);
       return;
     }
     if (!D || !V3.on || D.moved || D.b !== 0 || e.target !== el) return;

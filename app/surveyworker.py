@@ -31,6 +31,11 @@ def main():
             pass
     import project
     from database import Database
+    import mapdata
+    import background
+    mapdata.EXTRAS = False           # (the surveys never read a place's lighting or path grid: not parsed here)
+    background.SUBPROCESS = False    # (a survey process never starts survey processes of its own: whatever a
+    #                                  survey asks for on the way runs in a thread here, see gapsurvey.ready)
     t0 = time.time()
     db = Database()
     if project_path and project_path != '-':

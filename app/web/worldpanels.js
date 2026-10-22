@@ -45,6 +45,13 @@ function worldPanelsInit(){
     } },
     onShow: it => PNL.spaces.world.types.fixit.render(it),
     onClose: () => { if (typeof FX !== 'undefined'){ FX.issues = []; FX.panel = null; fixitMarks(); } }});
+  PNL.define('world', 'check', {title: 'Check this place', icon: '🩺', home: 'float', w: 400, h: 560, cls: 'wside',
+    render: it => { if (typeof PC === 'undefined' || !PC.panel || !it.el.contains(PC.panel)){
+      it.el.innerHTML = `<div class="msg" style="margin:4px 0 10px">Looks over a place for what's wrong with its furnishing (chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, books leaning on nothing) and for the gaps, and marks each fault on the map.</div><button class="btn primary" id="pc-start">🩺 Check this place</button>`;
+      it.el.querySelector('#pc-start').onclick = () => { if (W.info && W.info.interior) placecheckOpen(W.info.key); else toast('Open an interior first.', true); };
+    } },
+    onShow: it => PNL.spaces.world.types.check.render(it),
+    onClose: () => { if (typeof PC !== 'undefined'){ PC.issues = []; PC.panel = null; placecheckMarks(); if (!V3.on && typeof drawMap === 'function') drawMap(); } }});
   PNL.define('world', 'keys', {title: '3D controls', icon: '⌨', home: 'float', w: 420, h: 330, cls: 'wside',
     render: it => { it.el.innerHTML = `<div class="msg" style="line-height:1.9">${$('#v3help') ? $('#v3help').innerHTML : ''}</div>`; }});
   // (the extra Objects lists draw themselves; the first one is the sidebar's own)

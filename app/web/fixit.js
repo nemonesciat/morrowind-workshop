@@ -23,6 +23,7 @@ function fixitCss(){
   .fx-kind{font-size:11px;padding:1px 6px;border-radius:9px;background:#5a2a20;color:#ffb39c}
   .fx-kind.ceiling{background:#2c3a52;color:#a9c6ff}
   .fx-kind.hole{background:#4a2a52;color:#e2b3ff}
+  .fx-kind.joint{background:#4a3a1a;color:#ffd98a}
   .fx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;max-height:56vh;overflow:auto;margin:10px 0}
   .fx-grid button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px;color:var(--text);cursor:pointer;font:inherit;text-align:center}
   .fx-grid button:hover{border-color:var(--gold, #d9b26a)}
@@ -30,7 +31,7 @@ function fixitCss(){
   document.head.appendChild(c);
 }
 
-const FX_KIND = {gap: 'Gap', doorway: 'Doorway', ceiling: 'Ceiling', post: 'Post', hole: 'See-through'};
+const FX_KIND = {gap: 'Gap', doorway: 'Doorway', ceiling: 'Ceiling', post: 'Post', hole: 'See-through', clip: 'Clips', zfight: 'Flush faces', joint: 'Not the game\'s way'};
 
 async function fixitOpen(cell){
   fixitCss();
@@ -59,8 +60,15 @@ function fixitRate(r){
   let s = `See-through spots: ${holes} in ${r.tiles} floor pieces (${per10(r.rate)} per 10).`;
   if (r.typical) s += ` The game's own ${esc(r.style || '')} places have ${per10(r.typical.per_tile.hole || 0)} per 10 (from ${r.typical.places} places)${r.hidden ? ', so this place is no worse than them' : r.rate > (r.typical.per_tile.hole || 0) ? ', so this place is gappier than they are' : ''}.`;
   else if (r.style) s += ` How gappy the game's own ${esc(r.style)} places are is being measured in the background; look again in a minute.`;
+  // (the other kinds left out because the game's own places of the style show them as often: posts wanted
+  // at a third of the tiles in the game's Gold Coast places, say; clips and z-fights only under "everything")
+  const hk = r.hidden_kinds || {}, hkn = Object.values(hk).reduce((a, b) => a + b, 0);
+  const kindName = {gap: 'gap', doorway: 'dead doorway', post: 'post wanted', ceiling: 'missing ceiling'};
+  if (hkn) s += ` Also left out: ${Object.entries(hk).map(([k, n]) => `${n} ${kindName[k] || k}${n === 1 ? '' : 's'}`).join(', ')}, no more than the game's own places have.`;
+  const lg = r.clashes_like_the_game ? Object.values(r.clashes_like_the_game).reduce((a, b) => a + b, 0) : 0;
+  if (FX.all && lg) s += ` ${lg} overlapping or flush piece pairs are the kit's own joinery, as in the game's places, and are not listed.`;
   return `<div class="msg" style="margin-bottom:6px">${s}${r.hidden ? ` <b>${r.hidden}</b> left out of the list.` : ''}
-    ${(r.hidden || FX.all) ? ` <a href="#" id="fx-everything">${FX.all ? 'Show only what\'s worse than the game\'s own' : 'Show everything'}</a>` : ''}</div>`;
+    ${(r.hidden || hkn || FX.all) ? ` <a href="#" id="fx-everything">${FX.all ? 'Show only what\'s worse than the game\'s own' : 'Show everything'}</a>` : ''}</div>`;
 }
 
 function fixitRender(){

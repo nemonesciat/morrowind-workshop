@@ -306,7 +306,9 @@ local function findOriginal(e)
   end
   local cell = getCell(e)
   if not cell then return nil end
-  local best, bestD = nil, 24
+  -- (a door: a saved game may hold it where it stood when the player saved, not where the Workshop
+  -- has it since, so a door is matched more loosely: the nearest one of its kind within the room)
+  local best, bestD = nil, e.door and 1024 or 24
   for _, o in ipairs(cell:getAll()) do
     if same(o.recordId, e.recordId) then
       local d = (o.position - e.orig[1]):length()
@@ -314,6 +316,17 @@ local function findOriginal(e)
     end
   end
   return best
+end
+
+-- Every door of this kind standing at the same spot leads where the Workshop says: a saved game can
+-- hold an older copy of a door next to the plugin's own, and whichever the player uses must work.
+local function tellTwins(obj, cell, e)
+  if not (e.door and e.target) then return end
+  for _, o in ipairs(cell:getAll()) do
+    if o.id ~= obj.id and same(o.recordId, e.recordId) and (o.position - e.target[1]):length() < 32 then
+      doorDest[o.id] = e.door
+    end
+  end
 end
 
 local function place(obj, cell, t)
@@ -387,6 +400,14 @@ local function apply(e)
     place(obj, cell, e.target)
     -- a door whose destination was changed in the Workshop leads there from now on
     doorDest[obj.id] = e.door
+    tellTwins(obj, cell, e)
+    if e.door then
+      local twins = 0
+      for _, o in ipairs(cell:getAll()) do
+        if same(o.recordId, e.recordId) and (o.position - e.target[1]):length() < 32 then twins = twins + 1 end
+      end
+      say('doortold\t%s\t%s\t%s\t%d', e.recordId, tostring(obj.id), tostring(e.door.cellName), twins)
+    end
   end
   return true
 end
@@ -474,10 +495,16 @@ end
 -- A door placed while the game runs: take whoever opens it where the Workshop says it leads.
 local function useDoor(door, actor)
   local d = doorDest[door.id]
+  say('doorused\t%s\t%s\t%s', tostring(door.recordId), tostring(door.id), d and tostring(d.cellName) or '-')
   if not d then return end                      -- an ordinary door: the game handles it
   if d.kind == 'none' then return false end     -- its link was removed in the Workshop
-  local cell = d.kind == 'int' and world.getCellByName(d.cellName) or world.getExteriorCell(d.gx, d.gy)
-  if not cell then return end
+  local okc, cell = pcall(function()
+    return d.kind == 'int' and world.getCellByName(d.cellName) or world.getExteriorCell(d.gx, d.gy)
+  end)
+  if not okc or not cell then
+    say('error\tthe door leads to "%s", which the game cannot find', tostring(d.cellName))
+    return
+  end
   pcall(function() core.sound.playSound3d(types.Door.record(door).openSound, door) end)
   actor:teleport(cell, d.pos, { rotation = util.transform.rotateZ(d.rz) })
   return false

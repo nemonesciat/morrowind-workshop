@@ -41,7 +41,7 @@ _thread = {}
 
 def _disk(db, limit):
     import taste
-    return taste.cache_file('catalogue_%s_%d_v1' % (taste.sig(db), limit))
+    return taste.cache_file('catalogue_%s_%d_v2' % (taste.sig(db), limit))     # (v2: a void is open by the real geometry, not by boxes)
 
 
 def ready(db, limit=LIMIT):
@@ -198,6 +198,14 @@ def _survey(db, limit):
         seen += 1
         T = info['tile']
         arch = [r for r in info['refs'] if r.get('b') and r.get('arch')]
+        # (the building as a ray scene: a tile is open above when nothing of the building is over it by
+        # the real geometry; a room piece with its own ceiling in the mesh has no separate ceiling
+        # piece over it, and the box test called every top-storey room a void)
+        try:
+            import seethrough
+            scene = seethrough.place_scene(db, {'refs': [r for r in arch if r.get('ri') is not None]})
+        except Exception:
+            scene = None
         style = next((k for k in keys[1:] if k in kits.kits(db)), keys[1] if len(keys) > 1 else '?')
         accs = [S[k] for k in keys]
         refs = [r for r in info['refs'] if r.get('b') and not r.get('arch') and r['type'] not in ('NPC_', 'CREA', 'DOOR', 'LEVC')]
@@ -369,8 +377,11 @@ def _survey(db, limit):
             # ---- 5. two-storey voids: a tile with no ceiling over it, and the banners hung high in such rooms
             open_above = False
             for t in rm['_tiles']:
-                over = [a for a in arch if a['p'][2] + a['b'][2] * (a.get('s') or 1) > fl + 200 and a['p'][2] + a['b'][2] * (a.get('s') or 1) < fl + 900
-                        and mapdata._rotated_contains(a, t['x'], t['y'])]
+                if scene is not None and scene.tris:
+                    over = scene.nearest((t['x'], t['y'], fl + 100), (0.0, 0.0, 1.0), 900) is not None
+                else:
+                    over = any(a['p'][2] + a['b'][2] * (a.get('s') or 1) > fl + 200 and a['p'][2] + a['b'][2] * (a.get('s') or 1) < fl + 900
+                               and mapdata._rotated_contains(a, t['x'], t['y']) for a in arch)
                 if not over:
                     open_above = True
                     break

@@ -88,6 +88,11 @@ def delete_plan(name):
     return {'ok': True}
 
 
+def _tz(t):
+    """A tile's floor height; plans from before 2.2 (and places merged in from such mods) have only x, y."""
+    return t[2] if len(t) > 2 else 0
+
+
 def built_places(db):
     """Places in your mod built from pieces, newest first: [{key, name, style, rooms, floors, tiles}]."""
     import editing
@@ -99,7 +104,7 @@ def built_places(db):
         if not plan.get('rooms'):
             continue
         rooms = plan['rooms']
-        zs = sorted({t[2] for r in rooms for t in r.get('tiles', [])})
+        zs = sorted({_tz(t) for r in rooms for t in r.get('tiles', [])})
         out.append({'key': key, 'name': editing.cell_label(db, key), 'style': plan.get('style') or '',
                     'rooms': len(rooms), 'floors': len(zs), 'tiles': sum(len(r.get('tiles', [])) for r in rooms),
                     'names': [r.get('name', '') for r in rooms][:6]})
@@ -117,14 +122,14 @@ def plan_of_cell(db, key):
     if plan.get('planner') and (plan['planner'].get('rooms') or []):
         return {'plan': plan['planner'], 'style': plan.get('style') or '', 'remembered': True}
     T = float(plan.get('tile') or 256)
-    zs = sorted({t[2] for r in plan['rooms'] for t in r.get('tiles', [])})
+    zs = sorted({_tz(t) for r in plan['rooms'] for t in r.get('tiles', [])})
     H = min((b - a for a, b in zip(zs, zs[1:])), default=256.0) or 256.0
     rooms = []
     for n, r in enumerate(plan['rooms']):
         tiles = {(int(round(t[0] / T)), int(round(t[1] / T))) for t in r.get('tiles', [])}
         if not tiles:
             continue
-        f = int(round(r['tiles'][0][2] / H))
+        f = int(round(_tz(r['tiles'][0]) / H))
         xs, ys = [t[0] for t in tiles], [t[1] for t in tiles]
         x0, y0, w, h = min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
         cut = [[x - x0, y - y0] for x in range(x0, x0 + w) for y in range(y0, y0 + h) if (x, y) not in tiles]

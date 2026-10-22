@@ -322,8 +322,12 @@ class Project:
             origin = r['origin']
             if origin == self.plugin.lower():
                 upper = 0
-            else:
+            elif origin in masters:
                 upper = masters.index(origin) + 1
+            else:
+                # a change to an object of a file that is not in the load order any more (a mod merged into
+                # this one and switched off, say): nothing to write it against; Health check lists these
+                continue
             frmr = (upper << 24) | (r['idx'] & 0xFFFFFF)
             subs = [(t, unb64(d)) for t, d in r['subs']]
             if r.get('deleted'):

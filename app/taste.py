@@ -91,9 +91,63 @@ def stamp():
     return '_t' + hashlib.md5('|'.join(p).encode('utf-8')).hexdigest()[:6]
 
 
+_sig = {}
+
+
 def sig(db):
-    """The load order's signature, as every survey's cache file name carries it."""
-    return hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    """The load order's signature, as every survey's cache file name carries it: the plugins that hold
+    interiors (CELL records with the interior flag), each with its file size. The surveys learn from the
+    game's interiors and nothing else, so a weapon, spell or script mod added to the load order changes
+    nothing they would learn and must not make them run again (every survey ran again on every change
+    of load order before, four minutes); a changed or added interior plugin still does. The mod being
+    made is left out: the surveys skip its own places, and it changes with every edit."""
+    if _sig.get('recs') is db.recs:
+        return _sig['sig']
+    plugins = db.plugins or []
+    proj = getattr(db, 'proj_pidx', None)
+    holders = set()
+    for r in db.recs:
+        if r[0] == 'CELL' and r[5] == 'interior':
+            holders.add(r[3])
+    parts = sorted('%s:%s' % (plugins[i]['name'].lower(), plugins[i].get('size') or 0)
+                   for i in holders if i != proj and i < len(plugins))
+    new = hashlib.md5('|'.join(parts).encode('utf-8')).hexdigest()[:12]
+    # (the caches this load order had under the old key, every plugin's name: renamed once, so the
+    # user's learning survives the change of key)
+    old = hashlib.md5('|'.join(sorted(p['name'].lower() for p in plugins)).encode('utf-8')).hexdigest()[:12]
+    if old != new:
+        _rekey(old, new)
+    _sig.update({'recs': db.recs, 'sig': new})
+    return new
+
+
+def interior_plugins(db):
+    """The names of the plugins that hold interiors (the ones the survey caches are keyed by)."""
+    plugins = db.plugins or []
+    proj = getattr(db, 'proj_pidx', None)
+    holders = {r[3] for r in db.recs if r[0] == 'CELL' and r[5] == 'interior'}
+    return sorted(plugins[i]['name'] for i in holders if i != proj and i < len(plugins))
+
+
+def _rekey(old, new):
+    """Rename the cache files carrying signature `old` to `new` (those not there under `new` yet)."""
+    folder = os.path.join(project.APP_DIR, 'cache')
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    have = set(names)
+    for name in names:
+        if old not in name or name.endswith('.tmp'):
+            continue
+        target = name.replace(old, new)
+        if target in have:
+            continue
+        try:
+            os.replace(os.path.join(folder, name), os.path.join(folder, target))
+            have.add(target)
+        except OSError:
+            pass
 
 
 def cache_file(name):

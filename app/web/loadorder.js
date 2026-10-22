@@ -86,11 +86,37 @@ async function loSave(){
       LO.problems.slice(0, 6).map(p => '• ' + p.plugin + ': ' + p.text).join('\n') + '\n\nSave anyway?')) return;
   try {
     const r = await post('/api/loadorder/save', {order: LO.order});
-    toast(`Load order saved (${r.count} plugins). A backup of the old one was made. Reading your game data again…` +
-          (r.game_running ? ' The game that is running now keeps the old order until it restarts.' : ''));
+    const game = r.game_running ? ' The game that is running now keeps the old order until it restarts.' : '';
     LO.dirty = false;
-    setTimeout(poll, 300);
+    if (r.mode === 'added'){
+      // only switched on at the end: read just those and add them, no loading screen
+      toast(`Load order saved (${r.count} plugins). Adding ${r.added.join(', ')}…` + game);
+      loWaitAdd();
+    } else {
+      toast(`Load order saved (${r.count} plugins). A backup of the old one was made. Reading your game data again…` + game);
+      setTimeout(poll, 300);
+    }
   } catch (e){ toast(e.message, true); }
+}
+// Plugins are being added to what is loaded (the end of the load order changed): wait for it, say
+// what was added, and refresh the counts, the Health check and this page.
+async function loWaitAdd(){
+  let s;
+  try { s = await api('/api/status'); } catch (e){ setTimeout(loWaitAdd, 800); return; }
+  if (s.state !== 'ready'){ poll(); return; }            // (it fell back to reading everything again)
+  if (s.adding){
+    const p = s.progress || {};
+    $('#stat').textContent = p.step && p.step !== 'Done' ? p.step : 'Adding ' + s.adding.join(', ') + '…';
+    setTimeout(loWaitAdd, 300); return;
+  }
+  S.summary = s;
+  $('#stat').textContent = fmtN(s.records) + ' records';
+  const a = s.last_add;
+  if (a) toast(`Added ${a.names.join(', ')} (${fmtN(a.records)} record${a.records === 1 ? '' : 's'}, ${a.seconds} s).`);
+  s.types.forEach(g => g.types.forEach(t => S.typeLabels[t.tag] = t.label));
+  loadProblemsNote(s);
+  H = null;
+  buildSide(); runSearch(); loadHealth(); loadPlugins(); renderProjectPill();
 }
 // clicks: browse a plugin, switch on/off, move
 $('#pluginwrap').addEventListener('click', e => {

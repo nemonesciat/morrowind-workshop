@@ -298,6 +298,17 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .thumb.sm{width:26px;height:26px;flex:none;aspect-ratio:auto}
 .thumb.sm.nothumb{font-size:14px}
 .ddlist div.hasthumb{display:flex;gap:8px;align-items:center}
+/* variants of one model folded under its common record (the placing search and the suggested tiles) */
+.ddlist div.vargrp,.ddlist div.varlist{padding:0;border-bottom:0;cursor:default}
+.ddlist div.vargrp:hover,.ddlist div.varlist:hover{background:none}
+.ddlist div.vartog{font-size:11.5px;color:var(--gold2);padding:3px 9px 5px 64px;border-bottom:1px solid var(--panel2-b)}
+.ddlist div.vartog .arr{display:inline-block;transition:transform .12s}
+.ddlist .vargrp.open .vartog .arr{transform:rotate(90deg)}
+.ddlist div.varlist{display:none} .ddlist .vargrp.open .varlist{display:block}
+.ddlist div.hasthumb.variant{padding-left:26px;border-left:2px solid var(--goldline)}
+.tile .vartog{position:absolute;top:3px;right:3px;font-size:10px;line-height:1;padding:3px 4px;border-radius:5px;border:1px solid var(--goldline);background:var(--bg3);color:var(--gold2);cursor:pointer}
+.tile .vartog:hover{background:var(--sel-b)}
+.tile.variant{border-style:dashed}
 .ddlist div.hasthumb > span{min-width:0;flex:1}
 .recent{display:flex;gap:5px;overflow-x:auto;padding:2px 0 6px}
 .recent .tile{width:68px;flex:none}
@@ -706,6 +717,18 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const api = async (p, opt) => { const r = await fetch(p, opt); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
 const fmtN = n => Number(n).toLocaleString();
 const post = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+// A fault in the page itself (a script error, a promise nobody caught): said on screen and written to the
+// Workshop's log, so "nothing happens" never stays silent
+const _said = {};
+function reportClientError(msg, where){
+  const key = String(msg).slice(0, 120);
+  if (_said[key]) return;
+  _said[key] = true;
+  try { toast('Something went wrong in the page: ' + key + ' (noted in the Workshop log)', true); } catch (e){}
+  try { fetch('/api/clienterror', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({msg: String(msg).slice(0, 2000), where: String(where || '').slice(0, 400), view: (document.querySelector('.view.on') || {}).id || ''})}); } catch (e){}
+}
+window.addEventListener('error', e => reportClientError(e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
+window.addEventListener('unhandledrejection', e => reportClientError((e.reason && (e.reason.stack || e.reason.message)) || e.reason, 'promise'));
 function toast(msg, err){
   const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg;
   t.title = 'Click to dismiss'; t.onclick = () => t.remove();
@@ -770,6 +793,21 @@ async function furnishWhenLearnt(body, el){
     await waitForLearning(r.waiting, el);
   }
 }
+// Plugins the load order names but the Workshop could not read, or whose masters are off: said once when the
+// load ends (a note that stays until clicked), not only on the Health check page
+let _loadProblemsSaid = '';
+function loadProblemsNote(s){
+  const probs = s.load_problems || [];
+  const key = probs.map(p => p.plugin + '|' + p.text).join('\n');
+  if (!probs.length || key === _loadProblemsSaid) return;
+  _loadProblemsSaid = key;
+  const t = document.createElement('div'); t.className = 'toast err'; t.style.whiteSpace = 'pre-line'; t.style.maxWidth = '560px';
+  t.textContent = (probs.length === 1 ? 'A plugin in your load order has a problem:\n' : probs.length + ' plugins in your load order have problems:\n') +
+    probs.slice(0, 5).map(p => '• ' + p.plugin + ': ' + p.text).join('\n') + (probs.length > 5 ? '\n…and ' + (probs.length - 5) + ' more' : '') +
+    '\n(The rest loaded. Details under Health check and Load order. Click to dismiss.)';
+  t.title = 'Click to dismiss'; t.onclick = () => t.remove();
+  document.body.appendChild(t); setTimeout(() => t.remove(), 60000);
+}
 async function poll(){
   let s;
   try { s = await api('/api/status'); } catch(e){ setTimeout(poll, 800); return; }
@@ -780,6 +818,7 @@ async function poll(){
     $('#loading').style.display = 'none';
     $('#stat').textContent = fmtN(s.records) + ' records';
     $('#stat').title = 'Loaded in ' + s.seconds + 's';
+    loadProblemsNote(s);
     s.types.forEach(g => g.types.forEach(t => S.typeLabels[t.tag] = t.label));
     buildSide(); runSearch(); loadHealth(); if (typeof loadPlugins === 'function') loadPlugins(); else addEventListener('load', () => loadPlugins()); renderProjectPill();
     if (S.reopen) reopenAfterReload();
@@ -1333,6 +1372,10 @@ function mergeModal(){
         radios(cells.conflicts, c => `<b>${esc(c.id)}</b> in ${esc(c.cell)} <span class="msg">(${esc(c.mine)} here, ${esc(c.theirs)} there)</span>`) +
         radios(pv.lua.conflicts, c => `Lua script <b>${esc(c.name)}</b>`) + '</div>';
     } else if (!pv.missing_masters.length) h += '<p class="msg" style="margin:8px 0 0">Nothing clashes: the two mods never changed the same thing differently.</p>';
+    if (pv.in_load_order){
+      h += `<div class="msg sev-warning" style="margin-top:10px"><b>"${esc(pv.name)}" is switched on in the game's load order.</b> Left on, the game would show its places twice: its own copy and the merged one.
+        <label style="display:block;margin-top:6px"><input type="checkbox" id="mg-off" checked> Switch ${esc(pv.plugin)} off in the load order when merging (the game then reads your game data again; a save made with it on will warn once that it is missing)</label></div>`;
+    }
     box.innerHTML = h;
     ok.disabled = !!pv.missing_masters.length;
   };
@@ -1342,9 +1385,13 @@ function mergeModal(){
     bg.querySelectorAll('input[type=radio]:checked').forEach(i => { resolve[i.name.slice(3)] = i.value; });
     ok.disabled = true; err.textContent = '';
     try {
-      const r = await post('/api/project/merge', {name: pick.value, resolve});
+      const off = bg.querySelector('#mg-off');
+      const r = await post('/api/project/merge', {name: pick.value, resolve, disable_other: !!(off && off.checked)});
       bg.remove();
-      toast(r.note + (r.missing_files.length ? ` (${r.missing_files.length} Library file${r.missing_files.length === 1 ? '' : 's'} it uses could not be found)` : ''), !!r.missing_files.length);
+      toast(r.note + (r.missing_files.length ? ` (${r.missing_files.length} Library file${r.missing_files.length === 1 ? '' : 's'} it uses could not be found)` : '')
+            + (r.disabled ? `. ${r.disabled} is switched off in the load order; reading your game data again…${r.game_running ? ' The game running now keeps the old order until it restarts.' : ''}` : '')
+            + (r.disable_error ? `. It could not be switched off in the load order: ${r.disable_error}` : ''), !!r.missing_files.length || !!r.disable_error);
+      if (r.disabled){ if (typeof poll === 'function') setTimeout(poll, 300); return; }
       await refreshAfterEdits();
       if ($('#mymod').classList.contains('on')) renderMyMod();
       if ($('#createv').classList.contains('on')) renderCreate();
@@ -1811,6 +1858,7 @@ function drawMap(){
     }
   }
   drawPaths();
+  if (typeof placecheckDraw === 'function') placecheckDraw(g);      // the health check's markers
   drawPlayer();
   // the selection box being dragged
   if (W.drag && W.drag.kind === 'box'){
@@ -1872,9 +1920,9 @@ function footContains(r, x, y){
 function hitTest(sx, sy){
   // 1) the smallest object whose footprint is under the cursor, 2) else the nearest marker
   const [wx, wy] = toWorld(sx, sy);
-  let best = null, ba = 1e18, near = null, nd = 1e9;
+  let best = null, ba = 1e18, near = null, nd = 1e9, locked = false;
   for (const [ck, r] of visibleRefs()){
-    if (r.arch && W.lockArch) continue;
+    if (r.arch && W.lockArch){ if (!locked && footContains(r, wx, wy)) locked = true; continue; }
     if (footContains(r, wx, wy)){
       const a = (r.b[3] - r.b[0]) * (r.b[4] - r.b[1]) * (r.s || 1) ** 2;
       if (a < ba){ ba = a; best = [ck, r]; }
@@ -1882,6 +1930,10 @@ function hitTest(sx, sy){
     const p = refPos(r), [x, y] = toScreen(p[0], p[1]), d = Math.hypot(x - sx, y - sy);
     if (d < nd && d < 12){ nd = d; near = [ck, r]; }
   }
+  // (a click that lands only on a locked wall or building piece: remembered, so the click can say why
+  // nothing was selected; a Nexus user "had trouble selecting some objects, some statics get selected
+  // fine but others don't": the others were building pieces under the lock)
+  W.lockedHit = locked && !best && !near;
   if (near && (!best || nd < 5)) return near;
   return best || near;
 }
@@ -2015,7 +2067,13 @@ window.addEventListener('mouseup', async e => {
       arriveAt(wx, wy, null, 0);
     } else if (W.mode === 'group'){
       placeGroupAt(wx, wy, null);
-    } else { W.sel = null; renderWside(); drawMap(); }
+    } else {
+      W.sel = null; renderWside(); drawMap();
+      hitTest(e.offsetX, e.offsetY);
+      if (W.lockedHit){
+        if (!W.lockedHintAt || Date.now() - W.lockedHintAt > 8000){ W.lockedHintAt = Date.now(); toast('That is a wall or building piece, and walls and buildings are locked. Untick "Lock walls & buildings" in the View panel to select it (or pick it under Objects).'); }
+      }
+    }
   }
   if (D.kind === 'pan' && D.moved && W.ext) recentre();
 });
@@ -2307,8 +2365,30 @@ W.tab = 'place';
 function thumbImg(id, type, size, cls){
   return `<img class="thumb ${cls || ''}" data-tid="${esc(id)}" data-tt="${esc(type || '')}" data-ts="${size || 96}" alt="">`;
 }
-function tileHtml(it){
-  return `<div class="tile ${W.placeId && W.placeId.toLowerCase() === it.id.toLowerCase() ? 'placing' : ''}" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-hid="${esc(it.id)}" data-hsize="${it.size ? it.size.join(' × ') : ''}">${thumbImg(it.id, it.type)}<span>${esc(it.name || it.id)}</span></div>`;
+function tileHtml(it, extra, variant){
+  return `<div class="tile ${W.placeId && W.placeId.toLowerCase() === it.id.toLowerCase() ? 'placing' : ''}${variant ? ' variant' : ''}" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-hid="${esc(it.id)}" data-hsize="${it.size ? it.size.join(' × ') : ''}">${thumbImg(it.id, it.type)}<span>${esc(it.name || it.id)}</span>${extra || ''}</div>`;
+}
+// One entry per model: records that share a mesh (the common bookshelf and its twenty variants, each a
+// record of its own) are folded under the first of them, which is the one used most since the lists
+// come most-used first. Returns [[item, item...], ...] in the order given; items without a mesh stand alone.
+function groupByMesh(items, meshOf){
+  const groups = [], byMesh = {};
+  for (const it of items){
+    const m = (meshOf(it) || '').toLowerCase(), g = m && byMesh[m];
+    if (g) g.push(it); else { const ng = [it]; groups.push(ng); if (m) byMesh[m] = ng; }
+  }
+  return groups;
+}
+const variantsText = n => `${n} variant${n === 1 ? '' : 's'}`;
+// a palette group's tiles, the variants of a model folded under its common record (+20 opens them)
+function palTilesHtml(g){
+  W.palVar = W.palVar || new Set();
+  return groupByMesh(g.items, it => it.mesh).map(gr => {
+    if (gr.length < 2) return tileHtml(gr[0]);
+    const key = g.name + '|' + (gr[0].mesh || '').toLowerCase(), open = W.palVar.has(key), n = gr.length - 1;
+    const tog = `<button class="vartog" data-vartog="${esc(key)}" title="${variantsText(n)} of this model (other records with the same mesh): click to ${open ? 'fold them away' : 'show them'}">${open ? '−' : '+'}${n}</button>`;
+    return tileHtml(gr[0], tog) + (open ? gr.slice(1).map(it => tileHtml(it, '', true)).join('') : '');
+  }).join('');
 }
 // the Paths panel: the walking paths (path grid) people and creatures follow here
 function pathsPanelHtml(i){
@@ -2354,7 +2434,7 @@ function renderWside(){
   PNL.badge('world', 'objs', fmtN(refs.length)); PNL.badge('world', 'sel', sel || W.multi.size > 1 ? '●' : '');
   // --- Place
   h += `<div class="wpane on" data-pane="place"><div id="w-placing"></div>
-    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
+    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" style="width:100%;margin-bottom:8px" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check this place…</button><div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
     <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${paletteHtml()}</div></div>`;
@@ -2556,6 +2636,7 @@ function bindWside(){
   }, true);
   const fb = $('#w-furnish'); if (fb) fb.onclick = () => furnishDialog(W.key);
   const fxb = $('#w-fixit'); if (fxb) fxb.onclick = () => fixitOpen(W.key);
+  const pcb = $('#w-check'); if (pcb) pcb.onclick = () => placecheckOpen(W.key);
   if ($('#w-taste')) renderTaste(W.key);
   if (selRef && selRef.type === 'DOOR'){
     const both = $('#w-relink-both'); if (both) both.onchange = () => { W.relinkBoth = both.checked; };
@@ -2741,7 +2822,7 @@ function paletteHtml(){
   W.palOpen = W.palOpen || {'Furniture': true, 'Clutter & items': true};
   return `<h3>Suggested for this place</h3><div class="msg" style="margin-bottom:6px">${P.style ? `A <b>${esc(P.style)}</b> place, going by ${P.similar} similar ones${P.borrowed ? ` and ${esc(P.borrowed)}` : ''}. ` : ''}<b>Drag</b> into the view, or click and then click where it goes.</div>` +
     P.groups.map(g => `<details class="pal" data-pal="${esc(g.name)}" ${W.palOpen[g.name] ? 'open' : ''}><summary>${esc(g.name)} <span class="msg">${g.items.length}</span></summary><div class="tiles">` +
-      g.items.map(tileHtml).join('') + `</div></details>`).join('');
+      palTilesHtml(g) + `</div></details>`).join('');
 }
 $('#world').addEventListener('toggle', e => {
   const d = e.target.closest && e.target.closest('[data-pal]'); if (!d) return;
@@ -2766,9 +2847,20 @@ function ddSearch(id, types, onPick, pictures){
     // twenty variants under it)
     const r = await api('/api/search?' + new URLSearchParams(pictures ? {q, types, limit: 40, sort: 'uses'} : {q, types, limit: 40}));
     if (my !== seq) return;
-    list.innerHTML = r.rows.map((x, n) => pictures
-      ? `<div data-n="${n}" class="hasthumb" draggable="true" data-pid="${esc(x.id)}" data-pname="${esc(x.name || x.id)}" data-ptype="${esc(x.type)}" data-hid="${esc(x.id)}">${thumbImg(x.id, x.type, 48, 'sm')}<span>${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></span></div>`
-      : `<div data-n="${n}">${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></div>`).join('') || '<div class="msg">No matches</div>';
+    const row = (x, n, variant) => pictures
+      ? `<div data-n="${n}" class="hasthumb${variant ? ' variant' : ''}" draggable="true" data-pid="${esc(x.id)}" data-pname="${esc(x.name || x.id)}" data-ptype="${esc(x.type)}" data-hid="${esc(x.id)}">${thumbImg(x.id, x.type, 48, 'sm')}<span>${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></span></div>`
+      : `<div data-n="${n}">${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></div>`;
+    if (pictures){
+      // (one entry per model, its variants folded under it; the fold starts open when one of them is
+      // exactly what was typed, so an id you know is never hidden)
+      const rows = r.rows.map((x, n) => ({x, n}));
+      list.innerHTML = groupByMesh(rows, it => it.x.extra).map(gr => {
+        if (gr.length < 2) return row(gr[0].x, gr[0].n);
+        const open = gr.slice(1).some(it => it.x.id.toLowerCase() === q.toLowerCase());
+        return `<div class="vargrp${open ? ' open' : ''}">${row(gr[0].x, gr[0].n)}<div class="vartog" data-vartog="1" title="Other records with the same model: click to show them">${variantsText(gr.length - 1)} <span class="arr">▸</span></div><div class="varlist">${gr.slice(1).map(it => row(it.x, it.n, true)).join('')}</div></div>`;
+      }).join('') || '<div class="msg">No matches</div>';
+      list.querySelectorAll('[data-vartog]').forEach(t => t.onclick = ev => { ev.stopPropagation(); t.parentElement.classList.toggle('open'); });
+    } else list.innerHTML = r.rows.map((x, n) => row(x, n)).join('') || '<div class="msg">No matches</div>';
     list.style.display = 'block';
     if (pictures) v3ThumbScan(list);
     list.querySelectorAll('[data-n]').forEach(d => d.onclick = ev => { ev.preventDefault(); list.style.display = 'none'; hidePreview(); inp.value = r.rows[+d.dataset.n].name || r.rows[+d.dataset.n].id; onPick(r.rows[+d.dataset.n]); });
@@ -2778,6 +2870,14 @@ function ddSearch(id, types, onPick, pictures){
 }
 $('#world').addEventListener('click', e => {
   if (e.target.closest('.ddlist')) return;
+  // +20 on a suggested tile: show or fold away the variants of that model
+  const vt = e.target.closest('[data-vartog]');
+  if (vt){
+    e.stopPropagation(); W.palVar = W.palVar || new Set();
+    W.palVar.has(vt.dataset.vartog) ? W.palVar.delete(vt.dataset.vartog) : W.palVar.add(vt.dataset.vartog);
+    const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+    return;
+  }
   const pc = e.target.closest('[data-pid]');
   if (pc){
     // click a tile to start placing it; click it again to stop
@@ -2881,6 +2981,17 @@ async function furnishRoom(ck, roomId, purpose, name){
     const m = await post('/api/furnish/room', {cell: ck, room: roomId, purpose: purpose || null, replace: true});
     W.roomInfo = {};
     toast((m.removed ? 'Took ' + m.removed + ' things out and ' : '') + 'furnished the ' + (m.name || name) + ' as a ' + m.purpose + ' (' + m.placed + ' things)');
+    await refreshAfterEdits();
+  } catch (err){ toast(err.message, true); }
+}
+// "Dress everything in the room": every dressable piece in one room gets one of the game's own dressings of
+// its model (what was on it before comes off first), as one undoable change
+async function dressRoom(ck, roomId, name){
+  if (!await needProject()) return;
+  try {
+    const m = await post('/api/furnish/room', {cell: ck, room: roomId, dress: 1});
+    W.dressable = {};
+    toast((m.removed ? 'Took ' + m.removed + ' things off and ' : '') + 'dressed ' + m.pieces + ' pieces in the ' + (m.name || name) + ' (' + m.placed + ' things)');
     await refreshAfterEdits();
   } catch (err){ toast(err.message, true); }
 }
@@ -3046,10 +3157,24 @@ async function renderCreate(){
   const card = k => { const c = CR_CARDS[k]; return `<button class="ccard ${CR.kind === k ? 'on' : ''}" data-ck="${k}"><span class="ic">${c[0]}</span>${c[3] ? `<span class="kick">${c[3]}</span>` : ''}<b>${c[1]}</b><span class="msg">${c[2]}</span></button>`; };
   let h = `<h1>Create</h1><p class="lead">Quick starts for the things you make most. Each goes into your mod as one change that one Undo takes back, and you can fine-tune it afterwards in Browse.</p>
     <div class="cgroups">${CR_GROUPS.map(([name, kinds, aside]) => `<div class="cgh">${name}${aside ? `<span class="msg">${aside}</span>` : ''}</div><div class="cgrid">${kinds.map(card).join('')}</div>`).join('')}</div>`;
-  if (CR.kind) h += `<div class="cform" id="cform">${formHtml(CR.kind)}</div>`;
+  // (a form that cannot be drawn says so in its place, with a way to start the page afresh, instead of
+  // leaving the card dead: the user's "Build from pieces doesn't even open")
+  let formErr = null;
+  if (CR.kind){
+    try { h += `<div class="cform" id="cform">${formHtml(CR.kind)}</div>`; }
+    catch (e){ formErr = e; h += `<div class="cform" id="cform"><div class="msg err">This form could not be opened: ${esc(String(e && e.message || e))}</div><p class="msg">The page's remembered draft (the plan, the last choices) may be from an older version. <button class="btn sm" id="cr-reset">Start the Create page afresh</button></p></div>`; }
+  }
   wrap.innerHTML = h;
   wrap.querySelectorAll('[data-gview]').forEach(a => a.onclick = () => showView(a.dataset.gview));
-  bindForm();
+  if (formErr){
+    reportClientError('Create form "' + CR.kind + '": ' + (formErr.stack || formErr), 'renderCreate');
+    const rb = $('#cr-reset');
+    if (rb) rb.onclick = () => { try { localStorage.removeItem('ws-plan'); } catch (e){} CR.plan = null; CR.items = []; CR.opts = null; CR.kind = null; renderCreate(); };
+    document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { CR.kind = b.dataset.ck; CR.items = []; renderCreate(); });
+    return;
+  }
+  try { bindForm(); }
+  catch (e){ reportClientError('Create form "' + CR.kind + '" (binding): ' + (e.stack || e), 'bindForm'); }
 }
 // (icon, title, what you get, and the kind of thing it is: the cards sit in one grid, new things first in the
 // order you'd make them (a place, who lives there, what they own), then the one card that changes things)
@@ -3131,7 +3256,7 @@ function formHtml(kind){
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
       <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
       <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div>
-        <label class="hint" style="display:block;cursor:pointer"><input type="checkbox" id="cr-bshowall"> Show styles no place in your game uses</label></div>
+        <label class="hint" style="display:block;cursor:pointer"><input type="checkbox" id="cr-bshowall"> Show styles no place in your game uses, or that can't build a sound house (Vivec small)</label></div>
     </div>
     <div id="pl-root" style="margin:10px 0 14px;${copy ? 'display:none' : ''}"></div>
     <div class="ccopy" id="cr-copy" style="${copy ? '' : 'display:none'}">
@@ -3240,7 +3365,11 @@ function renderItems(){
 function bindForm(){
   document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'lists'){ LV.id = null; LV.data = null; showView('lists'); return; }
     if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; }
-    if (b.dataset.ck === 'merge'){ mergeModal(); return; } CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false; renderCreate(); });
+    if (b.dataset.ck === 'merge'){ mergeModal(); return; } CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false;
+    // the click answers at once, even when the form's options are still being gathered
+    document.querySelectorAll('[data-ck]').forEach(x => x.classList.toggle('on', x === b));
+    if (!$('#cform')) b.insertAdjacentHTML('beforeend', '<span class="msg" style="display:block;margin-top:6px"><span class="spin"></span> Opening…</span>');
+    renderCreate().catch(e => reportClientError('Create "' + b.dataset.ck + '": ' + (e && (e.stack || e.message) || e), 'renderCreate')); });
   if (!CR.kind) return;
   const name = $('#cr-name'), idf = $('#cr-id');
   if (name && idf){
@@ -3457,21 +3586,37 @@ async function bindBuild(){
   // how many in-game rounds it has had and what the lab says: styletrust.py)
   const stars = s => s.trust ? '★'.repeat(s.trust.stars) + '☆'.repeat(5 - s.trust.stars) + ' ' : '';
   // houses first; the sewers, forts and chapels under their own heading; styles no place in the game uses
-  // (kind 'untaught') only when asked for (the checkbox under the hint, remembered)
+  // (kind 'untaught') or that can't build a sound house ('unsound') only when asked for (the checkbox under
+  // the hint, remembered); a two-star style says why in a few words after its name (trust.brief)
   const showAll = $('#cr-bshowall');
   let allPref = false; try { allPref = localStorage.getItem('ws-styles-all') === '1'; } catch (e){}
   if (showAll){ showAll.checked = allPref; showAll.onchange = () => { try { localStorage.setItem('ws-styles-all', showAll.checked ? '1' : '0'); } catch (e){} fill(); showHint(); }; }
   const fill = () => {
     const all = showAll ? showAll.checked : allPref, cur = CR.bstyle || 'in_hlaalu';
-    const opt = s => `<option value="${esc(s.id)}" ${s.id === cur ? 'selected' : ''}>${stars(s)}${esc(s.name)}${s.floors ? ' ⇅' : ''}</option>`;
-    const shown = CR.bstyles.filter(s => all || s.kind !== 'untaught' || s.id === cur);
+    const brief = s => s.trust && s.trust.brief ? ' — ' + s.trust.brief : '';
+    const opt = s => `<option value="${esc(s.id)}" ${s.id === cur ? 'selected' : ''}>${stars(s)}${esc(s.name)}${s.floors ? ' ⇅' : s.stairs_pending ? ' …' : ''}${esc(brief(s))}</option>`;
+    const shown = CR.bstyles.filter(s => all || !['untaught', 'unsound'].includes(s.kind) || s.id === cur);
     const houses = shown.filter(s => !['passage', 'fort', 'chapel'].includes(s.kind)), other = shown.filter(s => ['passage', 'fort', 'chapel'].includes(s.kind));
     st.innerHTML = houses.map(opt).join('') + (other.length ? `<optgroup label="Dungeons, forts and passages">${other.map(opt).join('')}</optgroup>` : '');
   };
   fill();
+  // within the first minute after the Workshop starts the kits' stairs are still being learnt: the list shows
+  // at once with those styles marked "…", and is asked for again every few seconds until the stairs are in
+  // (then the ⇅ marks, the hint and the planner's note are redrawn)
+  if (CR.bstyles.some(s => s.stairs_pending) && !CR.bstylesPoll){
+    CR.bstylesPoll = setInterval(async () => {
+      let fresh; try { fresh = await api('/api/build/styles'); } catch (e){ return; }
+      if (fresh.some(s => s.stairs_pending)) return;
+      clearInterval(CR.bstylesPoll); CR.bstylesPoll = null;
+      CR.bstyles = fresh;
+      if (!st.isConnected) return;
+      fill(); showHint();
+      if (typeof plNote === 'function') plNote();
+    }, 3000);
+  }
   const showHint = () => {
     const s = CR.bstyles.find(x => x.id === st.value); CR.bstyle = st.value; if (!s) return;
-    hint.textContent = `${s.trust ? stars(s) + s.trust.why + ' ' : ''}${s.pieces} floor pieces · tiles of ${s.tile} units (about ${(s.tile / 72).toFixed(1)} m)${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : ' · one floor only (no stair pieces)'}. Doorways are built the way the game builds them in this style.${s.uses ? '' : ' No place in your game is built in this style yet, so the Workshop can\'t learn how its doorways go together: expect rough edges.'}`;
+    hint.textContent = `${s.trust ? stars(s) + s.trust.why + ' ' : ''}${s.pieces} floor pieces · tiles of ${s.tile} units (about ${(s.tile / 72).toFixed(1)} m)${s.small_rooms ? '' : ' · rooms need to be at least 2 tiles wide'}${s.floors ? ' · has stairs, so rooms can go upstairs or in a cellar (⇅)' : s.stairs_pending ? ' · its stairs are still being learnt (a minute after the Workshop starts)' : ' · one floor only (no stair pieces)'}. Doorways are built the way the game builds them in this style.${s.uses ? '' : ' No place in your game is built in this style yet, so the Workshop can\'t learn how its doorways go together: expect rough edges.'}`;
     plStyleChanged(); bShells(); crWhat();
   };
   st.onchange = showHint; showHint();
@@ -3756,6 +3901,9 @@ poll();
 <script src="/web/brushes.js"></script>
 <script src="/web/library.js"></script>
 <script src="/web/fixit.js"></script>
+<script src="/web/fixhere.js"></script>
+<script src="/web/extend.js"></script>
+<script src="/web/placecheck.js"></script>
 <script src="/web/worldpanels.js"></script>
 <script src="/web/refprops.js"></script>
 <script src="/web/comfort.js"></script>

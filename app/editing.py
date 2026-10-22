@@ -162,6 +162,43 @@ def undo_depth(db):
     return len(getattr(db.project, 'undo_stack', [])) if db.project else 0
 
 
+# A whole furnish or build reads as one named step wherever changes are listed (My mod's activity
+# list, Undo's tooltip, the Undo toast): "Furnished Bleeding Abcess (636 things)", "Built Bleeding
+# Abcess from pieces (412 pieces)". The label is composed here from the change's own note and what
+# its diff placed; the notes furnish and the builder write stay as they are.
+_FURNISHED_RE = re.compile(r'^Auto-furnished (.+) \((\d+) things? in \d+ rooms?\)')
+_BUILT_RE = re.compile(r'^Built a new .+? (?:interior|house) "(.+?)"(?: on \d+ floors?)? \(\d+ rooms?, \d+ tiles?\)')
+_ON_TOP_RE = re.compile(r' \(and \d+ changes? made on top of it\)$')
+
+
+def note_label(p, text, entry_id=None):
+    """The note of a change as the lists show it (see above); any other note comes back as it is."""
+    if not text:
+        return text
+    for prefix in ('Undid: ', 'Redid: '):
+        if text.startswith(prefix):
+            return prefix + note_label(p, text[len(prefix):])
+    tail = _ON_TOP_RE.search(text)
+    tail = tail.group(0) if tail else ''
+    m = _FURNISHED_RE.match(text)
+    if m:
+        return 'Furnished %s (%s things)%s' % (m.group(1), m.group(2), tail)
+    m = _BUILT_RE.match(text)
+    if m:
+        n = _placed_by(p, text, entry_id)
+        return 'Built %s from pieces%s%s' % (m.group(1), ' (%d pieces)' % n if n else '', tail)
+    return text
+
+
+def _placed_by(p, text, entry_id=None):
+    """How many objects a logged change placed, from its diff (the entry by id, or the last with this note)."""
+    for e in reversed(getattr(p, 'log', None) or []):
+        if e.get('id') == entry_id if entry_id is not None else e.get('text') == text:
+            d = e.get('diff') or {}
+            return sum(1 for cd in d.get('c', {}).values() for _b, a in cd.get('refs', {}).values() if a is not None)
+    return 0
+
+
 def undo(db, to_depth=None):
     """Undo the last change, or every change back to a recorded depth."""
     _require_project(db)
@@ -561,6 +598,8 @@ def delete_ref(db, cell_key, refkey):
     rid = ref_info(ref['subs'])[0]
     if ref['origin'] == db.project.plugin.lower():
         c['refs'].pop(refkey, None)      # something you placed: just remove it
+        if ref.get('src'):               # (a copy a merge brought in: remembered, so merging that mod again doesn't bring it back)
+            c.setdefault('gone', []).append(ref['src'])
     else:
         _store(c, refkey, ref['origin'], ref['idx'], ref['subs'], deleted=True)
     _drop_empty(db, cell_key)

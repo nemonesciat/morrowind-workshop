@@ -511,12 +511,11 @@ _gate = {}
 
 
 def _gate_disk(db):
-    import hashlib
     import project
-    sig = hashlib.md5('|'.join(sorted(p['name'].lower() for p in (db.plugins or []))).encode('utf-8')).hexdigest()[:12]
+    import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'planfrom_%s_v3.json' % sig)
+    return os.path.join(folder, 'planfrom_%s_v3.json' % taste.sig(db))
 
 
 def candidates(db):

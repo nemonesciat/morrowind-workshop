@@ -40,7 +40,7 @@ def role_of(rid):
 
 def _disk(db, limit):
     import taste
-    return taste.cache_file('countersurvey_%s_%d_v2' % (taste.sig(db), limit))
+    return taste.cache_file('countersurvey_%s_%d_v3' % (taste.sig(db), limit))     # (v3: each run's room size, for small shops)
 
 
 def ready(db, limit=LIMIT):
@@ -231,7 +231,7 @@ def _survey(db, limit):
                 keeper_npc = any(abs(n_['p'][0] - mx) < (rb[2] - rb[0]) / 2 + 100 and abs(n_['p'][1] - my) < (rb[3] - rb[1]) / 2 + 100
                                  and ((n_['p'][1] < rb[1] if keeper_side == 'S' else n_['p'][1] > rb[3]) if along_x else (n_['p'][0] < rb[0] if keeper_side == 'W' else n_['p'][0] > rb[2]))
                                  for n_ in npcs if abs(n_['p'][2] - fl) < 200)
-                runs.append({'cell': ck, 'style': style, 'theme': theme, 'kind': kind, 'n': len(chain), 'shape': shape,
+                runs.append({'cell': ck, 'style': style, 'theme': theme, 'kind': kind, 'n': len(chain), 'shape': shape, 'tiles': rm['tiles'],
                              'models': [s['id'].lower() for s in chain], 'roles': roles, 'length': round(max(rb[2] - rb[0], rb[3] - rb[1])),
                              'keeper_gap': round(keeper_gap), 'at_wall_ends': at_wall_ends, 'end_pieces': end_pieces,
                              'door_d': door_d, 'door_face': door_face, 'on': dict(on), 'on_n': n_on, 'on_ids': on_ids.most_common(12),
@@ -269,9 +269,13 @@ def _fold(seen, runs, per_model):
         by['*'].append(r)
     for st, rs in by.items():
         comps = Counter((r['shape'], '-'.join(r['roles'])) for r in rs)
+        small = [r for r in rs if r.get('tiles') is not None and r['tiles'] <= SMALL_ROOM]
         out['styles'][st] = {
             'runs': len(rs), 'segments': _med([r['n'] for r in rs]), 'segments_mean': round(sum(r['n'] for r in rs) / float(len(rs)), 2),
             'shapes': dict(Counter(r['shape'] for r in rs)), 'kinds': dict(Counter(r['kind'] for r in rs).most_common()),
+            # (the runs of its small rooms, six tiles or fewer: what a small shop draws from)
+            'small': {'runs': len(small), 'segments': _med([r['n'] for r in small]), 'shapes': dict(Counter(r['shape'] for r in small)),
+                      'compositions': [[s, c, n] for (s, c), n in Counter((r['shape'], '-'.join(r['roles'])) for r in small).most_common(8)]},
             'themes': dict(Counter(r['theme'] for r in rs).most_common()),
             'keeper_gap': _med([r['keeper_gap'] for r in rs]), 'keeper_gap_dist': dict(Counter(min(int(max(0, r['keeper_gap']) // 32) * 32, 256) for r in rs)),
             'ends_at_wall': round(sum(r['at_wall_ends'] for r in rs) / float(2 * len(rs)), 2),
@@ -300,12 +304,18 @@ def make_of(model):
     return None
 
 
-def compositions(db, style, kind=None, culture=None):
+SMALL_ROOM = 6             # a room of this many tiles or fewer is a small one: its runs are the game's small shops'
+
+
+def compositions(db, style, kind=None, culture=None, tiles=None):
     """The game's counter runs of this style (its kit prefix; with fewer than three, every style's runs of
     the house's culture's make, then every run), as laid: [run rows] with 'models', 'rzs' (each segment's
     turn), 'scales', 'offsets' (from the first segment, in the world), 'open' (the direction the run faces
-    into the room), 'shape', 'n', 'keeper_gap'; runs of two or more segments, and singles only of a model
-    that stands alone in the game at least one time in three. None until surveyed."""
+    into the room), 'shape', 'n', 'keeper_gap', 'tiles' (the room's size); runs of two or more segments,
+    and singles only of a model that stands alone in the game at least one time in three. tiles: the
+    room's size, in tiles: a small room (SMALL_ROOM or fewer) draws from the runs the game lays in rooms
+    no bigger than itself plus two, when it has three or more of them (a four-tile shop takes the shapes
+    of the game's four-tile shops, not a trade hall's eleven-segment U). None until surveyed."""
     s = ready(db)
     if not s:
         return None
@@ -318,6 +328,10 @@ def compositions(db, style, kind=None, culture=None):
                 rs = own
     if kind:
         own = [r for r in rs if r['kind'] == kind]
+        if len(own) >= 3:
+            rs = own
+    if tiles is not None and tiles <= SMALL_ROOM:
+        own = [r for r in rs if r.get('tiles') is not None and r['tiles'] <= max(tiles, 2) + 2]
         if len(own) >= 3:
             rs = own
     good = []
@@ -355,6 +369,9 @@ def report(db):
             S['keeper_gap'], S['keeper_gap_dist'], S['ends_at_wall'], S['ends_with_piece'], S['door_d'], S['faces_door'], S['keeper_npc']))
         lines.append('   on the segments %s per segment (%s of runs bare): %s; behind (per run): %s' % (S['on_per_segment'], S['bare_runs'], S['on_kinds'], S['behind']))
         lines.append('   compositions: %s' % S['compositions'][:8])
+        sm = S.get('small') or {}
+        if sm.get('runs'):
+            lines.append('   small rooms (%d tiles or fewer): %d runs, segments median %s, shapes %s, compositions %s' % (SMALL_ROOM, sm['runs'], sm['segments'], sm['shapes'], sm['compositions'][:6]))
     lines.append('== models')
     for m, M in sorted(s['models'].items(), key=lambda kv: -kv[1]['n'])[:30]:
         lines.append('   %-36s n %3d %-8s alone %.0f%% bare %.0f%% on median %s rooms %s wares %s' % (m, M['n'], M['role'], 100 * M['alone'], 100 * M['bare'], M['on_med'], M['kinds'], M['wares'][:5]))
