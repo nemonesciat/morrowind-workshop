@@ -4,6 +4,7 @@ Every change goes through the same editing functions as the buttons in the app,
 so it lands in your plugin, shows up in "My mod", and can be undone."""
 import json
 import math
+import re
 import threading
 
 import editing
@@ -657,6 +658,44 @@ class Assistant:
         opts = [l.strip()[2:].strip() for l in text.splitlines() if l.strip().startswith('- ')]
         u = resp.usage
         return {'options': opts[:3] or [text.strip()],
+                'usage': {'requests': 1, 'input': u.input_tokens, 'output': u.output_tokens, 'cache_read': 0, 'cache_write': 0}}
+
+    def effect_lua(self, req):
+        """The Lua for one step of one of the user's own magic effects (Create > New magic effect), from a plain
+        description: the body of a function(ctx), run as the effect lands, each second or as it ends, with the
+        helpers myeffects.ACTOR_LUA gives it. Nothing is saved; the maker shows it for the user to keep."""
+        client = self._client()
+        phase = {'land': 'once, as the effect lands on them', 'second': 'once a second while the effect lasts',
+                 'end': 'once, as the effect ends'}.get(req.get('when'), 'once, as the effect lands on them')
+        prompt = '\n'.join([
+            'Write OpenMW Lua (OpenMW 0.51, Lua 5.1 / LuaJIT) for a custom Morrowind magic effect.',
+            'The code is the BODY of a function(ctx) in a local script attached to the actor the effect is on. It runs %s.' % phase,
+            'Effect: %s. %s' % (req.get('name') or 'a custom effect', req.get('description') or ''),
+            'What this step should do: ' + (req.get('brief') or ''),
+            'ctx has: ctx.self (openmw.self, the actor it is on), ctx.caster (GameObject or nil), ctx.magnitude (number),',
+            'ctx.dt (seconds since last call), ctx.phase ("land"|"second"|"end"), ctx.state (a table kept for this cast),',
+            'the modules ctx.core, ctx.types, ctx.util, ctx.nearby (openmw.nearby: nearby.actors, nearby.castRay),',
+            'and helpers: ctx.change(stat, amount) with stat "health"|"magicka"|"fatigue" (on the actor itself);',
+            'ctx.push(feet) away from the caster; ctx.pull(feet) towards the caster; ctx.launch(feet) up; ctx.dash(feet) forward;',
+            'ctx.scale(factor) (restored when it ends); ctx.weather(name) with name one of %s;' % ', '.join(__import__('myeffects').WEATHERS),
+            'ctx.cast(spellId) casts a spell record on them; ctx.message(text) shows the player a message;',
+            'ctx.world(kind, data) for the global script: kinds "teleport" {cell,x,y,z}, "spawn" {id}, "global" {name,value}.',
+            'To affect OTHER actors, send them an event: other:sendEvent("WS_MyEffectStat", {stat = "health", amount = -5}).',
+            'A local script may only change ITSELF; it can read others. Use only these and standard OpenMW Lua APIs; no require().',
+            'One foot is about 22 game units. Keep it short and safe (check ctx.caster for nil and :isValid()).',
+            'Answer with the code only, no explanation, no ``` fences.'])
+        import anthropic
+        try:
+            resp = client.messages.create(model=MODEL, max_tokens=1500, messages=[{'role': 'user', 'content': prompt}])
+        except anthropic.AnthropicError as e:
+            raise ToolError(self._api_error(e))
+        self.usage_add(resp)
+        code = '\n'.join(b.text for b in resp.content if b.type == 'text').strip()
+        code = re.sub(r'^```\w*\n|\n?```$', '', code).strip()
+        import lua_check
+        probs = [p for p in lua_check.check('local function f(ctx)\n%s\nend\nreturn {}' % code, 'NPC') if p['level'] == 'error']
+        u = resp.usage
+        return {'code': code, 'problems': [{'line': max(1, p['line'] - 1), 'text': p['text']} for p in probs],
                 'usage': {'requests': 1, 'input': u.input_tokens, 'output': u.output_tokens, 'cache_read': 0, 'cache_write': 0}}
 
     def _cellmap(self):

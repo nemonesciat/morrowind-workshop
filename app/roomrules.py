@@ -32,7 +32,9 @@ MIN_KIND_ROOMS = 4
 # (the survey counts the lights the game stands on the floor; Auto-furnish's standing lamps are one of
 # roomrules.floor_lamps for the nearest room kind)
 LIGHT_KIND = {'bath': 'living', 'corridor': 'empty', 'entry': 'empty', 'landing': 'empty', 'barracks': 'bedroom', 'mess': 'living', 'dining': 'living',
-              'guardroom': 'living', 'armoury': 'storage', 'training': 'storage'}
+              'guardroom': 'living', 'armoury': 'storage', 'training': 'storage',
+              # (the trades' rooms are shops to the room survey: furnish.TRADE_ROOMS)
+              'smithy': 'shop', 'alchemist': 'shop', 'enchanter': 'shop', 'bookseller': 'shop', 'clothier': 'shop', 'pawnbroker': 'shop'}
 
 
 def kind_recipe(db, purpose, fallback, culture=None, tiles=9, style=None):

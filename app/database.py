@@ -1040,4 +1040,6 @@ class Database:
                 'undo_depth': len(stack or []),
                 'plugin_pending': bool(getattr(p, 'pending_write', None)),
                 'undo_note': undo_note,
+                # a plugin opened as the mod itself (adopt.py): saved into that file; a plain .esp takes no Lua
+                'source': getattr(p, 'source', None), 'plain_esp': not p.lua_allowed(),
                 'enabled_in_cfg': p.plugin.lower() in [c.lower() for c in getattr(self, 'cfg_content_all', [])]}

@@ -14,6 +14,7 @@ MODULES = {
     'openmw.self': {'PLAYER', 'LOCAL'}, 'openmw.nearby': {'PLAYER', 'LOCAL'}, 'openmw.animation': {'PLAYER', 'LOCAL'},
     'openmw.ui': {'PLAYER', 'MENU'}, 'openmw.input': {'PLAYER', 'MENU'}, 'openmw.camera': {'PLAYER'},
     'openmw.ambient': {'PLAYER', 'MENU'}, 'openmw.postprocessing': {'PLAYER'}, 'openmw.menu': {'MENU'},
+    'openmw.content': {'LOAD'},             # (OpenMW 0.50: records made or changed as the game loads)
 }
 HANDLERS = {
     'any': {'onInit', 'onLoad', 'onSave', 'onUpdate', 'onInterfaceOverride'},
@@ -23,8 +24,9 @@ HANDLERS = {
                'onControllerButtonRelease', 'onInputAction', 'onTouchPress', 'onTouchRelease', 'onTouchMove', 'onFrame',
                'onMouseButtonPress', 'onMouseButtonRelease', 'onMouseWheel', 'onQuestUpdate', 'onConsoleCommand'},
     'MENU': {'onFrame', 'onStateChanged', 'onKeyPress', 'onKeyRelease', 'onInputAction', 'onConsoleCommand'},
+    'LOAD': {'onContentFilesLoaded'},
 }
-KIND_GROUP = {'GLOBAL': 'GLOBAL', 'PLAYER': 'PLAYER', 'MENU': 'MENU'}       # everything else runs on one object (local)
+KIND_GROUP = {'GLOBAL': 'GLOBAL', 'PLAYER': 'PLAYER', 'MENU': 'MENU', 'LOAD': 'LOAD'}       # everything else runs on one object (local)
 
 _TOK = re.compile(r'''
     (?P<ws>[ \t\r]+) | (?P<nl>\n) |
@@ -159,11 +161,12 @@ def check(text, kind='GLOBAL'):
                     allowed = MODULES[mod]
                     if allowed and group not in allowed:
                         where = ', '.join(sorted({'GLOBAL': 'global', 'PLAYER': 'player', 'LOCAL': 'object (NPC, creature, item...)',
-                                                  'MENU': 'menu'}[a] for a in allowed))
+                                                  'MENU': 'menu', 'LOAD': 'load (as the game loads)'}[a] for a in allowed))
                         out.append({'line': line, 'level': 'error',
                                     'text': '%s only works in %s scripts; this is a%s %s script.' % (
                                         mod, where, 'n' if group in ('LOCAL',) else '', {'GLOBAL': 'global', 'PLAYER': 'player',
-                                                                                          'LOCAL': 'object', 'MENU': 'menu'}[group])})
+                                                                                          'LOCAL': 'object', 'MENU': 'menu',
+                                                                                          'LOAD': 'load'}[group])})
                 elif not mod.startswith('openmw_aux.'):
                     out.append({'line': line, 'level': 'warning', 'text': 'OpenMW has no module called %s (spelling?).' % mod})
     # ---- engine handlers: names the engine calls (a typo means it never runs)

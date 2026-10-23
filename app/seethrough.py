@@ -118,7 +118,7 @@ class Scene:
             cell[k] += step[k]
             tnext[k] += tdelta[k]
 
-    def _hits(self, o, d, tmax, seen, nearest):
+    def _hits(self, o, d, tmax, seen, nearest, both=False):
         grid, tris = self.grid, self.tris
         ox, oy, oz = o
         dx, dy, dz = d
@@ -135,7 +135,7 @@ class Scene:
                 det = ax * px + ay * py + az * pz
                 if -1e-7 < det < 1e-7:
                     continue                         # (edge on)
-                if det * FRONT < 0 and not self.two[n]:
+                if det * FRONT < 0 and not self.two[n] and not both:
                     continue                         # (its back: not drawn from behind)
                 inv = 1.0 / det
                 sx, sy, sz = ox - x0, oy - y0, oz - z0
@@ -163,6 +163,29 @@ class Scene:
     def nearest(self, o, d, tmax):
         """The nearest hit of a ray: (distance, triangle) or None (for pictures and checks)."""
         return self._hits(o, d, tmax, set(), True)
+
+    def back_of(self, n, d):
+        """Whether a ray along d meets triangle n from behind (a face the game doesn't draw from there)."""
+        if self.two[n]:
+            return False
+        x0, y0, z0, ax, ay, az, bx, by, bz = self.tris[n]
+        dx, dy, dz = d
+        px, py, pz = dy * bz - dz * by, dz * bx - dx * bz, dx * by - dy * bx
+        return (ax * px + ay * py + az * pz) * FRONT < 0
+
+    def nearest_any(self, o, d, tmax):
+        """The nearest triangle a ray meets, from the front or from behind: (distance, triangle) or None."""
+        return self._hits(o, d, tmax, set(), True, both=True)
+
+    def owner(self, n):
+        """The placed object a triangle belongs to (its key), or None."""
+        if not hasattr(self, '_own'):
+            self._own = sorted((a, b, k) for k, (a, b) in self.of_ref.items())
+        import bisect
+        i = bisect.bisect_right(self._own, (n, float('inf'), '')) - 1
+        if i >= 0 and self._own[i][0] <= n < self._own[i][1]:
+            return self._own[i][2]
+        return None
 
 
 def place_scene(db, m):
@@ -461,6 +484,53 @@ def holes(db, m, tiles, neighbour, above, extra=(), walled=None, solid=(), only=
                     'x': ex + ax * uc, 'y': ey + ay * uc, 'z': (min(zs_g) + max(zs_g)) / 2, 'edge': (ex, ey, ax, ay),
                     'rays': rays})
     return out, sc
+
+
+def backs(db, sc, tiles, walled, share=0.35):
+    """Walls seen from behind (2026-10-23): a side of a tile that is meant to be walled, where what the
+    player looks at from the tile is the back of a one-sided wall, which the game doesn't draw, so the view
+    goes on into the room beyond (the user's Gold Coast "Big Ass Fail": "I can't ever find the right wall
+    piece to cover these up from the back"). The game stands its one-sided walls back to back, a face for
+    each room. [{tile, side, owner (the key of the piece whose back shows), x, y, z, share}] where at least
+    `share` of the rays to the side meet a back face near the side's line and go on past it."""
+    out = []
+    done = set()
+    for t in tiles:
+        T, H = t['T'], t['H']
+        h = T / 2.0
+        eye = (t['x'], t['y'], t['floor'] + min(H * 0.45, 128))
+        for side, (ax, ay, nx, ny) in (('N', (1, 0, 0, 1)), ('S', (1, 0, 0, -1)), ('E', (0, 1, 1, 0)), ('W', (0, 1, -1, 0))):
+            # (every side: a loose wall stood by hand on a side the tile leaves open shows its back too)
+            ex, ey = t['x'] + nx * h, t['y'] + ny * h
+            key = (round(ex / 8), round(ey / 8), round(t['floor'] / 64), side)
+            if key in done:
+                continue
+            done.add(key)
+            us = [-h + 32 + k * (T - 64) / 6.0 for k in range(7)]
+            zs = [t['floor'] + 40 + k * (H - 80) / 4.0 for k in range(5)]
+            n_all, owners = 0, {}
+            for u in us:
+                for z in zs:
+                    d, tmax = _ray(eye, (ex + ax * u, ey + ay * u, z), 48)
+                    n_all += 1
+                    got = sc.nearest_any(eye, d, tmax)
+                    if got is None or not sc.back_of(got[1], d):
+                        continue
+                    # (the back face stands at the side's line, not somewhere across the tile or beyond)
+                    if got[0] < tmax - 48 - 40:
+                        continue
+                    front = sc.nearest(eye, d, tmax + 400)
+                    if front is not None and front[0] <= got[0] + 4:
+                        continue                 # (something drawn from here covers it after all)
+                    k = sc.owner(got[1])
+                    if k is not None:
+                        owners[k] = owners.get(k, 0) + 1
+            if not owners or sum(owners.values()) < share * n_all:
+                continue
+            k = max(owners, key=owners.get)
+            out.append({'tile': t, 'side': side, 'owner': k, 'x': ex, 'y': ey, 'z': t['floor'] + H / 2.0,
+                        'share': round(sum(owners.values()) / float(n_all), 2)})
+    return out
 
 
 _side_open = {}

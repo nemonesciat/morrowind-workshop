@@ -15,6 +15,21 @@ _SURVEYS = [
     # (what the game stands at each kind of joint between its floor pieces: Fix here, the finder's "not what
     # the game stands here" and the builder's closing rounds go by it; 77 kits in about 20 s, 2026-10-22)
     ('joints', 'ready'),
+    # (which building piece the game joins to which, face by face: the Extend mode's candidates, open edges
+    # and patterns; 77 kits in about 40 s, 2026-10-22)
+    ('adjacency', 'ready'),
+    # (the Redoran manors' islands and rugs, the game's garden beds, its scenes with their kit, 2026-10-22:
+    # about 25 s, 2 min and 80 s)
+    ('redoransurvey', 'ready'), ('gardensurvey', 'ready'), ('scenesurvey', 'ready'),
+    # (how the game dresses its halls, run by run and culture by culture: the hallway round's arrangements;
+    # 900 places in about a minute, 2026-10-23)
+    ('hallsurvey', 'ready'),
+    # (the game's hearths as whole sets: a room's fire comes whole or not at all, and the check's "fire
+    # things with no hearth"; v2 reads 274 places in about 70 s, v1's 500 took 270 s in the cold start, 2026-10-23)
+    ('hearthsurvey', 'ready'),
+    # (how the game furnishes its trades' rooms: a smithy round its forge, the pieces each trade never holds,
+    # the forges' whole sets; 600 places in about 25 s once the hearth survey is to hand, 2026-10-23)
+    ('tradesurvey', 'ready'),
 ]
 
 

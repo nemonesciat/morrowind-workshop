@@ -2,6 +2,7 @@
 
 Also works out which master files the mod really needs, so players without every big mod you have
 installed can still use it."""
+import math
 import os
 import re
 import struct
@@ -154,6 +155,12 @@ def lean_masters(db, with_reasons=False):
         pl = db.plugins[i]
         size = pl['size'] or (os.path.getsize(pl['path']) if pl.get('path') else 0)
         out.append((pl['name'], size, need[i]) if with_reasons else (pl['name'], size))
+    # a plugin opened as the mod (adopt.py) keeps the masters its file listed, first and in that order, with
+    # the sizes it recorded: its objects' indices (which saved games remember) count from that list
+    fixed = getattr(p, 'masters', None) or []
+    if fixed:
+        rest = [m for m in out if m[0].lower() not in {str(f[0]).lower() for f in fixed}]
+        out = [(f[0], int(f[1] or 0), ['listed by the file itself']) if with_reasons else (f[0], int(f[1] or 0)) for f in fixed] + rest
     return out
 
 
@@ -526,7 +533,9 @@ def checks(db):
     ms = lean_masters(db, with_reasons=True)
     names = [m[0] for m in ms]
     out.append({'id': 'masters', 'sev': 'ok', 'title': 'Needs %d other file%s to work' % (len(ms), '' if len(ms) == 1 else 's'),
-                'detail': 'Only the files your mod really uses are listed as its masters. Players need these (and nothing else) installed.',
+                'detail': ('The files the plugin itself lists, in its own order (kept, so its objects keep the numbers saved games know), '
+                           'plus any your changes here need.') if getattr(p, 'masters', None) else
+                          'Only the files your mod really uses are listed as its masters. Players need these (and nothing else) installed.',
                 'items': [{'label': '%s%s' % (m[0], (' (%s)' % FRIENDLY[m[0].lower()]) if m[0].lower() in FRIENDLY else ''),
                            'why': m[2][:3]} for m in ms]})
     ident = _identical(db)
@@ -556,6 +565,34 @@ def checks(db):
                               'into your mod and do nothing in the game (a mod you merged into this one and switched off, say).' % ', '.join(files),
                     'items': [{'label': 'In %s (%s)' % (_cell_label(db, ck), f), 'cell': ck} for f, ck, rk in st[:30]],
                     'fix': {'action': 'drop_stale', 'label': 'Remove them'}})
+    nt = nameless_triggers(db)
+    if nt:
+        out.append({'id': 'triggers', 'sev': 'error',
+                    'title': '%d switch%s nobody can use in the game' % (len(nt), '' if len(nt) == 1 else 'es'),
+                    'detail': 'A sconce, lamp or other object that works a hidden door or a sliding panel, but the game never shows it in '
+                              'the crosshair: it has no name, or it is a light the game thinks nobody could carry (a wall sconce). '
+                              'The fix names it (Sconce, Candle…) and marks a light as one you could carry (its script takes the click, '
+                              'so it is never picked up); a panel it pulls stops being a dead button.',
+                    'items': [{'label': '%s "%s" (%s)' % (tag, key, {'noname': 'no name', 'nocarry': 'a light nobody could carry'}.get(why, 'a dead button'))} for tag, key, why in nt[:30]],
+                    'fix': {'action': 'name_triggers', 'label': 'Fix them'}})
+    # Project Tamriel's interior rules for a place's settings (packaging/nexus/pt-interior-guidelines.md)
+    st_ = settings_faults(db)
+    if st_['sun']:
+        out.append({'id': 'sunlight', 'sev': 'warning', 'title': '%d place%s with bright sunlight' % (len(st_['sun']), '' if len(st_['sun']) == 1 else 's'),
+                    'detail': 'Interiors keep their sunlight low (the game\'s stay under 80 of 255, Project Tamriel\'s under 25) and light the room with lamps and candles: many dim ones rather than a few bright. Set it on the Place panel under Lighting.',
+                    'items': [{'label': '%s (sunlight %d)' % (n, v), 'cell': ck} for ck, n, v in st_['sun'][:30]]})
+    if st_['sleep']:
+        out.append({'id': 'sleep', 'sev': 'warning', 'title': '%d home%s where the player may sleep' % (len(st_['sleep']), '' if len(st_['sleep']) == 1 else 's'),
+                    'detail': 'A privately owned place is marked "Players can\'t sleep here"; the game treats sleeping there as trespass.',
+                    'items': [{'label': n, 'cell': ck} for ck, n in st_['sleep'][:30]], 'fix': {'action': 'no_sleep', 'label': 'Mark them'}})
+    if st_['crowded']:
+        out.append({'id': 'refcount', 'sev': 'warning', 'title': '%d place%s near the 999-object limit' % (len(st_['crowded']), '' if len(st_['crowded']) == 1 else 's'),
+                    'detail': 'Morrowind itself allows 999 objects in a cell (OpenMW has no such limit). A place over 900 is hard to merge into a Morrowind mod; split it or thin it.',
+                    'items': [{'label': '%s (%d objects)' % (n, v), 'cell': ck} for ck, n, v in st_['crowded'][:30]]})
+    if st_['north']:
+        out.append({'id': 'northmarker', 'sev': 'warning', 'title': '%d place%s with no north marker' % (len(st_['north']), '' if len(st_['north']) == 1 else 's'),
+                    'detail': 'An interior with a door to the outside has a NorthMarker just inside that door, turned so the map inside matches the world outside.',
+                    'items': [{'label': n, 'cell': ck} for ck, n, _d in st_['north'][:30]], 'fix': {'action': 'northmarkers', 'label': 'Place them'}})
     miss = _missing_links(db)
     out.append({'id': 'links', 'sev': 'error' if miss else 'ok',
                 'title': ('%d thing%s point%s to something missing' % (len(miss), '' if len(miss) == 1 else 's', 's' if len(miss) == 1 else '')) if miss else 'Everything points to things that exist',
@@ -574,10 +611,19 @@ def checks(db):
                            (' (+%d more)' % (len(errs) - 1) if len(errs) > 1 else '')})
             if s.get('kind') == 'CUSTOM' and not s.get('attach'):
                 lp.append({'label': '%s: set to run on chosen objects, but none are chosen (it never runs)' % s['name']})
-        out.append({'id': 'lua', 'sev': 'error' if lp else 'ok',
-                    'title': ('%d Lua problem%s' % (len(lp), '' if len(lp) == 1 else 's')) if lp else '%d Lua script%s look fine' % (len(p.lua), '' if len(p.lua) == 1 else 's'),
-                    'detail': 'Open them on the Scripts page (Lua scripts) to see the details.' if lp else
-                              'They are packed with the mod, with %s listing them for the game.' % p.lua_omwscripts(), 'items': lp})
+        if not p.lua_allowed():
+            # a plain .esp opened as the mod: OpenMW-only things stay in the project, not in the file
+            out.append({'id': 'lua', 'sev': 'warning',
+                        'title': '%d Lua script%s stay%s out of %s' % (len(p.lua), '' if len(p.lua) == 1 else 's', 's' if len(p.lua) == 1 else '', p.plugin),
+                        'detail': 'Lua scripts (and the .omwscripts list, and the script that carries things on a sliding panel) are '
+                                  'OpenMW\'s own; a plain .esp has no place for them, so they are kept in this project but not written '
+                                  'out or packed. Everything else (records, places, MWScript scripts, dialogue) goes into the file.',
+                        'items': [{'label': s.get('name', '')} for s in p.lua]})
+        else:
+            out.append({'id': 'lua', 'sev': 'error' if lp else 'ok',
+                        'title': ('%d Lua problem%s' % (len(lp), '' if len(lp) == 1 else 's')) if lp else '%d Lua script%s look fine' % (len(p.lua), '' if len(p.lua) == 1 else 's'),
+                        'detail': 'Open them on the Scripts page (Lua scripts) to see the details.' if lp else
+                                  'They are packed with the mod, with %s listing them for the game.' % p.lua_omwscripts(), 'items': lp})
     try:
         import verify
         vf = [f for f in verify.findings(db) if f['sev'] != 'info']
@@ -663,7 +709,151 @@ def fix(db, action):
         db.sync_project()
         commit(db, 'Release check: removed %d change%s to objects of files not in the load order' % (len(st), '' if len(st) == 1 else 's'))
         return {'fixed': len(st)}
+    if action == 'no_sleep':
+        import places
+        st_ = settings_faults(db)
+        for ck, _n in st_['sleep']:
+            o = places.read(db, ck)
+            o['no_sleep'] = True
+            places.save(db, ck, o)                  # (one commit each: a place's settings change is its own step)
+        return {'fixed': len(st_['sleep'])}
+    if action == 'northmarkers':
+        st_ = settings_faults(db)
+        n = 0
+        for ck, _name, door in st_['north']:
+            if place_northmarker(db, ck, door):
+                n += 1
+        return {'fixed': n}
+    if action == 'name_triggers':
+        import mechanism
+        nt = nameless_triggers(db)
+        for tag, key, why in nt:
+            rec = p.records[tag + '|' + key]
+            subs = [(t, bytes(d)) for t, d in iter_subrecords(unb64(rec['data']))]
+            if why == 'noname':
+                ri = db.resolve_id(key)
+                name = mechanism._model_and_name(db, ri, subs)[1] if ri is not None else mechanism.nice_name(key)
+                subs = mechanism.named(subs, name)
+            elif why == 'button':
+                subs = [(t, d) for t, d in subs if t != 'FNAM']
+            if tag == 'LIGH' and why != 'button':
+                subs = [(t, mechanism.usable_light(d)) if t == 'LHDT' else (t, d) for t, d in subs]
+            p.set_record(tag, key, rec['flags'], b''.join(t.encode('ascii') + struct.pack('<I', len(d)) + d for t, d in subs))
+        db.sync_project()
+        commit(db, 'Release check: named %d switch%s so the game lets you use %s' % (len(nt), '' if len(nt) == 1 else 'es', 'it' if len(nt) == 1 else 'them'))
+        return {'fixed': len(nt)}
     raise EditError('Unknown fix.')
+
+
+def settings_faults(db):
+    """Project Tamriel's rules for a place's settings, over the mod's own interiors: {'sun': [(cell, name,
+    sunlight)], 'sleep': [(cell, name)] homes where sleeping is allowed, 'crowded': [(cell, name, objects)]
+    over 900 objects, 'north': [(cell, name, door ref)] with a door outside and no NorthMarker}."""
+    import places
+    import mapdata
+    import roomsurvey
+    import doors
+    p = db.project
+    out = {'sun': [], 'sleep': [], 'crowded': [], 'north': []}
+    for ck, c in p.cells.items():
+        if ck.startswith('#'):
+            continue
+        # (the mod's own places: its cell record is the mod's, or the place was built from a plan)
+        lst = db.by_key.get(('CELL', ck)) or []
+        own = bool(lst) and db.recs[lst[-1]][3] == db.proj_pidx
+        if not own and not (c.get('meta') or {}).get('plan'):
+            continue
+        info = mapdata.cell_info(db, ck)
+        if not info or not info.get('interior'):
+            continue
+        name = info.get('name') or ck
+        try:
+            o = places.read(db, ck)
+        except Exception:
+            continue
+        # (the game's own interiors keep their sunlight under 80 in nine of ten; Project Tamriel's under 25)
+        if o.get('has_lighting') and max(o['sun']) > 80:
+            out['sun'].append((ck, name, max(o['sun'])))
+        theme = roomsurvey.theme_of(name)
+        if theme in ('house', 'manor') and not o.get('no_sleep'):
+            out['sleep'].append((ck, name))
+        try:
+            m = mapdata.cellmap(db, ck)
+        except Exception:
+            continue
+        n = sum(1 for r in m['refs'])
+        if n > 900:
+            out['crowded'].append((ck, name, n))
+        if not any('northmarker' in r['id'].lower() for r in m['refs']):
+            door = next((r for r in m['refs'] if r['type'] == 'DOOR' and r.get('to') and (r['to'].get('key') or '').startswith('#')), None)
+            if door is not None:
+                out['north'].append((ck, name, door['k']))
+    return out
+
+
+def place_northmarker(db, cell_key, door_key):
+    """A NorthMarker a step inside the door to the outside, turned by the formula Project Tamriel uses:
+    ((360 - exterior door z) + (interior door z + 180)) mod 360, from the outside door that leads back
+    here. True when placed."""
+    import mapdata
+    import doors
+    import fixit
+    if db.resolve_id('NorthMarker') is None:
+        return False
+    m = mapdata.cellmap(db, cell_key)
+    door = next((r for r in m['refs'] if r['k'] == door_key), None)
+    if door is None:
+        return False
+    link = door.get('to') or {}
+    ext_key = link.get('key') or ''
+    ext_z = None
+    try:
+        em = mapdata.cellmap(db, ext_key)
+        # (the outside door that leads back here and arrives nearest this door: a prison or chargen marker
+        # leads here too, and the Census office has five such)
+        back = [r for r in em['refs'] if r['type'] == 'DOOR' and 'marker' not in r['id'].lower() and doors._leads_to(db, r.get('to'), cell_key)]
+        if back:
+            back.sort(key=lambda r: math.hypot(r['to']['x'] - door['p'][0], r['to']['y'] - door['p'][1]))
+        else:
+            back = sorted([r for r in em['refs'] if r['type'] == 'DOOR' and 'marker' not in r['id'].lower()],
+                          key=lambda r: math.hypot(r['p'][0] - link['x'], r['p'][1] - link['y']))
+            back = [r for r in back if math.hypot(r['p'][0] - link['x'], r['p'][1] - link['y']) < 300]
+        if back:
+            ext_z = math.degrees(back[0]['p'][5]) % 360
+    except Exception:
+        ext_z = None
+    if ext_z is None:
+        return False
+    int_z = math.degrees(door['p'][5]) % 360
+    rot = (((360 - ext_z) % 360) + ((int_z + 180) % 360)) % 360
+    pos = doors._in_front(m, door)
+    fixit.apply(db, cell_key, [{'op': 'place', 'id': 'NorthMarker', 'p': [round(pos[0], 2), round(pos[1], 2), round(door['p'][2], 2), 0, 0, round(math.radians(rot), 4)]}],
+                label='Placed a NorthMarker in %s (turned %.0f degrees)' % (editing.cell_label(db, cell_key), rot))
+    return True
+
+
+def nameless_triggers(db):
+    """Objects of this mod that carry a Workshop mechanism script (…_trig) but have no name, so the game
+    never lets anyone use them; and the panels they pull that still have a name (dead buttons).
+    [(tag, key, 'noname' | 'button')]"""
+    p = db.project
+    out = []
+    for k, rec in p.records.items():
+        tag, key = k.split('|', 1)
+        if tag not in ('LIGH', 'ACTI', 'MISC', 'CONT', 'DOOR', 'BOOK') or rec['flags'] & 0x20:
+            continue
+        s = {}
+        for t, d in iter_subrecords(unb64(rec['data'])):
+            s.setdefault(t, bytes(d))
+        name = zstr(s.get('FNAM', b'')).strip()
+        trig = re.search(r'_trig(_\d+)?$', key) and zstr(s.get('SCRI', b''))
+        if trig and not name:
+            out.append((tag, key, 'noname'))
+        elif trig and tag == 'LIGH' and len(s.get('LHDT', b'')) >= 24 and not struct.unpack_from('<i', s['LHDT'], 20)[0] & 0x2:
+            out.append((tag, key, 'nocarry'))
+        elif tag == 'ACTI' and re.search(r'_slide(_\d+)?$', key) and not zstr(s.get('SCRI', b'')) and name:
+            out.append((tag, key, 'button'))
+    return out
 
 
 def stale_edits(db):

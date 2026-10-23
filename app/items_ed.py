@@ -8,6 +8,7 @@ import struct
 
 import editing
 import items
+import tdeffects
 from editing import EditError, apply_changes, commit, _require_project
 from esm import ENC, iter_subrecords, zstr
 from project import join_subs, zs
@@ -43,7 +44,8 @@ def _ench(db, eid):
     et = next((struct.unpack_from('<iiii', sd) for st, sd in iter_subrecords(ed) if st == 'ENDT' and len(sd) >= 16), (1, 0, 0, 0))
     users = [{'id': rr[1], 'name': rr[2] or rr[1], 'tag': rr[0]} for rr in (db.recs[i] for i in _ench_users(db).get(er[1].lower(), ()))]
     return {'id': er[1], 'i': ei, 'type': et[0], 'cost': et[1], 'charge': et[2], 'auto': bool(et[3] & 1),
-            'effects': items.unpack_effects(ed, 'ENAM'), 'src': db.plugins[er[3]]['name'], 'used_by': users}
+            'effects': tdeffects.overlay(db, 'ENCH', er[1], items.unpack_effects(ed, 'ENAM')), 'src': db.plugins[er[3]]['name'],
+            'used_by': users}
 
 
 _users = {}
@@ -92,7 +94,7 @@ def read(db, rid):
     subs = [(t, bytes(d)) for t, d in iter_subrecords(data)]
     o['script'] = next((zstr(d) for t, d in subs if t == 'SCRI'), '')
     if tag in ('ALCH', 'SPEL', 'ENCH'):
-        o['effects'] = items.unpack_effects(data, 'ENAM')
+        o['effects'] = tdeffects.overlay(db, tag, r[1], items.unpack_effects(data, 'ENAM'))
     if tag == 'BOOK':
         o['text'] = next((d.rstrip(b'\0').decode(ENC, 'replace') for t, d in subs if t == 'TEXT'), '')
     if tag in CAN_ENCHANT:
@@ -118,7 +120,10 @@ def _set_sub(subs, tag, value, after):
 
 def _effects_changed(old, new):
     keys = ('effect', 'skill', 'attribute', 'range', 'area', 'duration', 'min', 'max')
-    norm = lambda l: [tuple(int(e.get(k, -1 if k in ('skill', 'attribute') else 0) or 0) for k in keys) for e in l]
+    # (an effect of Tamriel Data's goes by its id, "T_...": tdeffects.py)
+    val = lambda e, k: e[k] if k == 'effect' and items._named(e.get(k)) else \
+        int(e.get(k, -1 if k in ('skill', 'attribute') else 0) or 0)
+    norm = lambda l: [tuple(val(e, k) for k in keys) for e in l]
     return norm(old) != norm(new)
 
 
@@ -129,6 +134,7 @@ def _save_ench(db, eid, ench, create):
         raise EditError('Unknown kind of enchantment.')
     effs = ench.get('effects') or []
     packed = items._pack_effects(db, effs)
+    tdeffects.remember(db, 'ENCH', eid, effs)
     if et == 3 and any(int(e.get('range', 0)) != 0 for e in effs):
         raise EditError('Constant effects only work on the wearer: set every effect\'s range to Self.')
     auto = bool(ench.get('auto'))
@@ -223,6 +229,7 @@ def save(db, rid, o):
     if tag in ('ALCH', 'SPEL', 'ENCH') and o.get('effects') is not None and _effects_changed(cur['effects'], o['effects']):
         after = {'ALCH': ('NAME', 'MODL', 'TEXT', 'FNAM', 'SCRI', 'ALDT'), 'SPEL': ('NAME', 'FNAM', 'SPDT'), 'ENCH': ('NAME', 'ENDT')}[tag]
         subs = items._replace(subs, 'ENAM', items._pack_effects(db, o['effects']), after=after)
+        tdeffects.remember(db, tag, r[1], o['effects'])
     # ---- a spell's kind, cost and flags
     if tag == 'SPEL' and o.get('spell'):
         sp = o['spell']

@@ -68,7 +68,7 @@ function placecheckRender(){
           <div class="pc-room">${i.room ? esc(i.room) + ' · ' : ''}<span style="word-break:break-all">${esc(i.id)}</span></div>
           <div class="pc-acts"><button class="btn sm" data-pcshow="${i.n}" title="Select it and look at the spot">⌖ Show me</button>
             ${(i.fixes || []).map((f, k) => `<button class="btn sm ${k === 0 ? 'primary' : ''}" data-pcfix="${i.n}:${k}">${esc(f.label)}</button>`).join('')}
-            ${i.kind === 'gap' || i.kind === 'doorway' || i.kind === 'ceiling' || i.kind === 'post' || i.kind === 'hole' || i.kind === 'joint' ? '<button class="btn sm" data-pcgaps="1" title="Open Find gaps, where these are fixed one by one or all at once">🔧 In Find gaps</button>' : ''}</div></div>`).join('')}</details>`).join('')}
+            ${i.kind === 'gap' || i.kind === 'doorway' || i.kind === 'ceiling' || i.kind === 'post' || i.kind === 'jambend' || i.kind === 'hole' || i.kind === 'joint' || i.kind === 'stairend' || i.kind === 'sunk' || i.kind === 'backwall' ? '<button class="btn sm" data-pcgaps="1" title="Open Find gaps, where these are fixed one by one or all at once">🔧 In Find gaps</button>' : ''}</div></div>`).join('')}</details>`).join('')}
     </div>`;
   $('#pc-x').onclick = placecheckClose;
   $('#pc-again').onclick = () => placecheckOpen(PC.cell);

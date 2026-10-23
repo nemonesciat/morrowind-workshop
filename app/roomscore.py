@@ -72,7 +72,7 @@ UNKNOWN_BLEND = 0.1             # a met edge whose two textures the game never p
 FAULT_COST = {'wall': 1.5, 'floating': 1.0, 'chair': 0.8, 'nowall': 1.0, 'light': 1.0, 'water': 1.0, 'planter': 0.3,
               'rider': 0.6, 'floor': 0.6, 'window': 0.8, 'lonepot': 0.5, 'tall': 1.5, 'counter': 0.8, 'book': 0.3,
               'gap': 2.0, 'doorway': 1.5, 'ceiling': 2.0, 'post': 0.4, 'joint': 0.5, 'hole': 1.0, 'clip': 0.3, 'zfight': 0.3,
-              'naked': 0.8}
+              'naked': 0.8, 'hallblock': 1.5}     # (a hall one can't walk through: as bad as a thing through a wall)
 FLOOR = 0.05                    # the least any one outcome counts for (e^-3): one awful thing never zeroes a room
 EPS = 1e-6
 LINK = 200                      # two floor pieces this close keep company (arrangesurvey.LINK)

@@ -48,8 +48,18 @@ NO_DUR = ('Cure', 'Dispel', 'Mark', 'Recall', 'Divine Intervention', 'Almsivi In
 _effects = None
 
 
-def effects(db):
-    """Every magic effect: [{index, name, school, cost, skill, attribute, magnitude, duration}]."""
+def effects(db, vanilla_only=False):
+    """Every magic effect: [{index, name, school, cost, skill, attribute, magnitude, duration}]; with Tamriel
+    Data in the load order its own effects too (index "T_...", td True: see tdeffects.py)."""
+    if not vanilla_only:
+        try:
+            import tdeffects
+            td = tdeffects.effects(db)
+        except Exception as e:
+            print('Tamriel Data effects:', e)
+            td = []
+        if td:
+            return sorted(effects(db, True) + td, key=lambda e: (e['school'], e['name']))
     global _effects
     if _effects is not None and _effects[0] is db.recs:
         return _effects[1]
@@ -74,6 +84,11 @@ def effects(db):
     return out
 
 
+def _named(v):
+    """An effect named by its id (Tamriel Data's "T_...", or the mod's own: tdeffects.py), not the engine's number."""
+    return isinstance(v, str) and not v.strip().lstrip('-').isdigit()
+
+
 def _pack_effects(db, effs):
     known = {e['index']: e for e in effects(db)}
     if not effs:
@@ -82,10 +97,19 @@ def _pack_effects(db, effs):
         raise EditError('At most 8 effects.')
     out = []
     for e in effs:
-        idx = int(e['effect'])
+        idx = e['effect'] if _named(e['effect']) else int(e['effect'])
         info = known.get(idx)
         if not info:
             raise EditError('Unknown magic effect %s.' % idx)
+        if info.get('td'):
+            # (Tamriel Data's effect: the record carries its template's, and the mod's load script puts the
+            # real one in as the game loads: tdeffects.remember, called by whoever writes the record)
+            if db.project and not db.project.lua_allowed():
+                raise EditError('%s is put in by an OpenMW script as the game loads, and a plain .esp like %s can\'t carry '
+                                'scripts, so the game would show its stand-in (%s) instead. Use Save as… on My mod to make the '
+                                'mod an .omwaddon (it keeps everything), or pick one of the game\'s own effects.' % (
+                                    info['name'], db.project.plugin, known.get(info['template'], {}).get('name', 'another effect')))
+            idx = info['template']
         skill = int(e.get('skill', -1)) if info['skill'] else -1
         attr = int(e.get('attribute', -1)) if info['attribute'] else -1
         if info['skill'] and skill < 0:
@@ -128,7 +152,8 @@ def spell_cost(db, effs, constant=False):
     const_dur = _gmst_f(db, 'fEnchantmentConstantDurationMult', 100.0)
     total = 0.0
     for e in effs:
-        info = known.get(int(e['effect']))
+        v = e['effect']
+        info = known.get(v if _named(v) else int(v))
         if not info:
             continue
         lo = max(1, int(e.get('min', 1) or 1)) if info['magnitude'] else 1
@@ -191,8 +216,9 @@ def template_info(db, i):
         elif f['label'] in wanted and f.get('edit') and f['edit'].get('opts'):
             stats.append({'label': f['label'], 'value': f['edit'].get('raw', 0), 'opts': f['edit']['opts']})
     _t, _f, data = db.files[r[3]].record_at(r[4])
+    import tdeffects
     out = {'tag': tag, 'id': r[1], 'name': r[2], 'stats': stats, 'can_enchant': tag in ('WEAP', 'ARMO', 'CLOT', 'BOOK'),
-           'effects': unpack_effects(data, 'ENAM') if tag == 'ALCH' else []}
+           'effects': tdeffects.overlay(db, 'ALCH', r[1], unpack_effects(data, 'ENAM')) if tag == 'ALCH' else []}
     ench = next((zstr(sd) for st, sd in iter_subrecords(data) if st == 'ENAM' and tag != 'ALCH'), '')
     if ench:
         ei = db.resolve_id(ench)
@@ -201,7 +227,7 @@ def template_info(db, i):
             _t2, _f2, ed = db.files[er[3]].record_at(er[4])
             et = next((struct.unpack_from('<iiii', sd) for st, sd in iter_subrecords(ed) if st == 'ENDT' and len(sd) >= 16), None)
             out['enchant'] = {'id': er[1], 'type': et[0] if et else 1, 'charge': et[2] if et else 100,
-                              'effects': unpack_effects(ed, 'ENAM')}
+                              'effects': tdeffects.overlay(db, 'ENCH', er[1], unpack_effects(ed, 'ENAM'))}
     return out
 
 
@@ -239,8 +265,10 @@ def create_item(db, d):
     subs = _replace(subs, 'FNAM', [zs(name[:31])])
     if not d.get('keep_script'):
         subs = [(t, v) for t, v in subs if t != 'SCRI']
+    import tdeffects
     if tag == 'ALCH' and d.get('effects') is not None:
         subs = _replace(subs, 'ENAM', _pack_effects(db, d['effects']), after=('NAME', 'FNAM', 'MODL', 'TEXT', 'SCRI', 'ALDT'))
+        tdeffects.remember(db, 'ALCH', new_id, d['effects'])
     made = [new_id]
     ench = d.get('enchant')
     if ench and tag in ('WEAP', 'ARMO', 'CLOT', 'BOOK'):
@@ -257,6 +285,7 @@ def create_item(db, d):
             edata = join_subs([('NAME', zs(eid)), ('ENDT', struct.pack('<iiii', et, cost, charge, 0))] +
                               [('ENAM', p) for p in packed])
             db.project.set_record('ENCH', eid.lower(), 0, edata, created=True)
+            tdeffects.remember(db, 'ENCH', eid, ench['effects'])
             subs = _replace(subs, 'ENAM', [zs(eid)], after=('NAME', 'MODL', 'FNAM', 'SCRI', 'ITEX'))
             made.append(eid)
         else:
@@ -283,6 +312,8 @@ def create_spell(db, d):
     data = join_subs([('NAME', zs(new_id)), ('FNAM', zs(name[:31])), ('SPDT', struct.pack('<iii', stype, cost, flg))] +
                      [('ENAM', p) for p in packed])
     db.project.set_record('SPEL', new_id.lower(), 0, data, created=True)
+    import tdeffects
+    tdeffects.remember(db, 'SPEL', new_id, effs)
     gave = _give(db, d.get('give_to'), new_id, 'spell')
     commit(db, 'Created %s "%s" (%s, %d magicka)%s' % (SPELL_TYPES[stype].lower() if 0 <= stype < 6 else 'spell', name,
                                                        new_id, cost, (' and gave it to ' + gave) if gave else ''))

@@ -67,7 +67,7 @@ async function owOpen(cell, k, quiet){
 function owClose(){
   if (!OW.el) return;
   if (OW.picking) owPickCancel();
-  OW.el.remove(); OW.el = null; OW.cell = OW.k = null; OW.rec = OW.props = OW.door = null;
+  OW.el.remove(); OW.el = null; OW.cell = OW.k = null; OW.rec = OW.props = OW.door = OW.cont = null;
 }
 function owMake(){
   if (OW.el && OW.el.isConnected) return;
@@ -133,6 +133,11 @@ async function owLoad(){
   OW.rec = rec; OW.props = props && !props.error ? props : null; OW.propsErr = props && props.error;
   OW.propsOrig = OW.props ? JSON.stringify(owPropsData()) : '';
   OW.door = r.type === 'DOOR' ? {target: undefined, label: '', at: null, changed: false} : null;
+  OW.cont = null;
+  if (r.type === 'CONT' && rec && rec.fields){
+    const items = rec.fields.filter(f => f.label === 'Carries').map(f => ({id: f.value, name: '', count: Math.abs(f.count) || 1, restock: f.count < 0}));
+    OW.cont = {items, orig: JSON.stringify(items)};
+  }
   OW.cellObj = W.cells[cell];
   OW.shown = {p: r.p.slice(), s: r.s};       // (what the boxes show: edits are judged against it, not the live spot)
   owDraw();
@@ -170,9 +175,46 @@ function owRecHtml(){
   const statCell = f => `<div><span>${esc(f.label)}</span>${E && f.edit ? `<input class="inp" data-fi="${fi(f)}" value="${esc(f.value)}">` : `<span>${esc(f.value)}</span>`}</div>`;
   if (stats.length) h += `<details><summary>Attributes</summary><div class="statgrid">${stats.map(statCell).join('')}</div></details>`;
   if (skills.length) h += `<details><summary>Skills</summary><div class="statgrid">${skills.map(statCell).join('')}</div></details>`;
-  if (carries.length) h += `<details><summary>Carries ${carries.length} kinds of thing</summary><div class="msg">${carries.map(f => `${Math.abs(f.count)} × ${esc(f.value)}`).join('<br>')}</div></details>`;
+  if (OW.cont) h += '<div id="ow-cont"></div>';
+  else if (carries.length) h += `<details><summary>Carries ${carries.length} kinds of thing</summary><div class="msg">${carries.map(f => `${Math.abs(f.count)} × ${esc(f.value)}`).join('<br>')}</div></details>`;
   h += `<div class="msg" style="margin-top:8px;font-size:11.5px">Every placed ${esc(r.name || r.id)} shares this record. <span class="lnk" data-ow="browse">Open it on the Browse page</span>${r.type === 'NPC_' || r.type === 'CREA' ? ` · <span class="lnk" data-ow="char">${r.type === 'CREA' ? 'Creature editor' : 'Character editor'}</span>` : ''}</div>`;
-  return h;
+  return h + owActHtml();
+}
+// what can be done with this kind of thing, as it can elsewhere in the Workshop (the editors open as
+// windows over the view: viewwin.js)
+const OW_ITEMS = ['WEAP', 'ARMO', 'CLOT', 'ALCH', 'INGR', 'MISC', 'LIGH', 'LOCK', 'PROB', 'REPA', 'APPA', 'BOOK'];
+function owActHtml(){
+  const r = owRef(), t = r.type, out = [];
+  const b = (a, label, title) => `<button class="btn sm" data-ow="${a}" title="${esc(title || '')}">${label}</button>`;
+  if (t === 'NPC_' || t === 'CREA') out.push(b('dlg', '💬 Dialogue', 'Their greetings, topics and lines, in a window'), b('inv', '🎒 Inventory & spells', 'What they carry, sell and know'),
+    b('ai', '🧭 AI & behaviour', 'Where they wander, who they follow, how they fight and greet'), b('char', t === 'CREA' ? '🐾 Creature editor' : '👤 Character editor', 'Everything about them: looks, stats, services, travel'),
+    b('setup', '🧪 Test setup…', 'What you start with when you Play here: items, spells, quest stages'));
+  if (OW_ITEMS.includes(t)) out.push(b('itemed', ['WEAP', 'ARMO', 'CLOT', 'BOOK'].includes(t) ? '✨ Stats & enchantment…' : t === 'ALCH' || t === 'INGR' ? '✨ Stats & effects…' : '✎ Item editor…', 'The item editor in a window: stats, looks, script, effects and enchantment'));
+  if (t === 'DOOR' && r.to) out.push(b('goto', '→ Go there', 'Open the place it leads to'));
+  if (t === 'LEVC' || t === 'LEVI') out.push(b('lev', '🎲 Edit the list…', 'The leveled list editor, in a window'));
+  if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(t)) out.push(b('retex', '🎨 Retexture…', 'This model with other textures, as a new record'));
+  if (r.arch) out.push(b('variants', '↻ Other pieces that fit', 'Pieces the game uses in the same spot'));
+  if (r.ri != null) out.push(b('dupnew', '⧉ Make this one a record of its own…', 'Copy the record under a new ID and make this placed one the copy, so it can be changed without changing the others'));
+  out.push(b('uses', '🔎 Every placement', 'Where it is placed, who carries it, which scripts and lines name it'), b('brush', '🖌 Add to brush', 'Paint it about with a brush'));
+  return `<h4>Do with it</h4><div class="actions" style="margin-top:0;flex-wrap:wrap;gap:5px">${out.join('')}</div>`;
+}
+// a container's contents: kept in the window until Save
+function owContDraw(){
+  const box = $('#ow-cont'), K = OW.cont; if (!box || !K) return;
+  const E = OW.rec && OW.rec.winner && OW.rec.can_edit;
+  box.innerHTML = `<h4>🧰 Contents <span class="msg">(${K.items.length} kind${K.items.length === 1 ? '' : 's'})</span></h4>` +
+    (K.items.map((it, n) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:3px"><input class="inp num" type="number" min="1" style="width:70px" data-owcn="${n}" value="${it.count}" ${E ? '' : 'disabled'}>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(it.id)}">${esc(it.name || it.id)}${it.name ? ` <small style="color:var(--faint)">${esc(it.id)}</small>` : ''}</span>
+      ${it.restock ? '<small class="msg" title="Comes back after it is taken (merchants\' chests)">restocks</small>' : ''}${E ? `<button class="btn sm" data-owcrm="${n}" title="Take it out">✕</button>` : ''}</div>`).join('') || '<div class="msg">Empty.</div>') +
+    (E ? `<div class="dd" style="margin-top:5px"><input class="inp" id="ow-cadd" placeholder="Add… (e.g. gold, moon sugar, iron dagger, random_loot)" autocomplete="off"><div class="ddlist" id="ow-cadd-l"></div></div>` : '');
+  if (!E) return;
+  ddSearch('ow-cadd', 'MISC,WEAP,ARMO,CLOT,BOOK,ALCH,INGR,APPA,LOCK,PROB,REPA,LIGH,LEVI', x => {
+    const i = K.items.find(y => y.id.toLowerCase() === x.id.toLowerCase());
+    if (i) i.count += 1; else K.items.push({id: x.id, name: x.name || '', count: x.id.toLowerCase().startsWith('gold') ? 50 : 1});
+    owContDraw(); owMsg(); setTimeout(() => { const f = $('#ow-cadd'); if (f) f.focus(); }, 0);
+  });
+  box.oninput = e => { const n = e.target.dataset.owcn; if (n != null){ K.items[+n].count = Math.max(1, +e.target.value || 1); owMsg(); } };
+  box.onclick = e => { const x = e.target.closest('[data-owcrm]'); if (x){ K.items.splice(+x.dataset.owcrm, 1); owContDraw(); owMsg(); } };
 }
 
 // the placed object's side: the Selected panel's spot, turn and scale; Ownership & lock's fields; a door's link
@@ -226,6 +268,7 @@ function owDraw(){
     const inp = sf >= 0 && rec.querySelector(`[data-fi="${sf}"]`);
     if (inp && $('#ow-script-l')){ inp.id = 'ow-script'; ddSearch('ow-script', 'SCPT', x => { inp.value = x.id; owMsg(); }); }
   }
+  owContDraw();
   owDrawRef(false);
 }
 // the placed-object side (on its own after an ownership pick or a door change, keeping what's typed in
@@ -283,7 +326,8 @@ function owChanges(){
   out.bad = sp && sp.bad;
   out.props = !!OW.props && JSON.stringify(owPropsData()) !== OW.propsOrig;
   out.door = !!(OW.door && OW.door.changed);
-  out.any = out.rec.length > 0 || !!out.spot || out.props || out.door;
+  out.cont = !!(OW.cont && JSON.stringify(OW.cont.items.map(x => ({id: x.id, name: '', count: x.count, restock: x.restock}))) !== OW.cont.orig);
+  out.any = out.rec.length > 0 || !!out.spot || out.props || out.door || out.cont;
   return out;
 }
 function owDirty(){ const c = owChanges(); return !!(c && c.any); }
@@ -295,6 +339,7 @@ function owMsg(){
   if (c.spot) parts.push('the spot');
   if (c.props) parts.push('ownership');
   if (c.door) parts.push('where it leads');
+  if (c.cont) parts.push('the contents');
   m.className = 'msg' + (parts.length ? ' dirty' : '');
   m.textContent = c.bad ? 'Numbers only in the spot boxes.' : parts.length ? 'Changed: ' + parts.join(', ') + ' · Save keeps it all as one Undo step' : 'Nothing changed yet.';
 }
@@ -303,7 +348,25 @@ function owMsg(){
 async function owAction(a){
   const r = owRef(); if (!r) return;
   if (a === 'browse'){ if (r.ri != null){ showView('browse'); openRecord(r.ri, true); } return; }
-  if (a === 'char'){ if (typeof cOpen === 'function') cOpen(r.id); return; }
+  // (the editors come up as windows over the view: viewwin.js)
+  const inWin = (v, fn) => typeof vwRun === 'function' ? vwRun(v, fn) : fn();
+  if (a === 'char' || a === 'inv' || a === 'ai'){
+    if (typeof cOpen !== 'function') return;
+    if (a !== 'char') C.tab = a === 'inv' ? 'items' : 'ai';
+    return inWin('chars', () => cOpen(r.id, a !== 'char'));
+  }
+  if (a === 'dlg') return inWin('dialog', () => openCharacterDialogue(r.id));
+  if (a === 'itemed') return inWin('itemed', () => ieShow(r.id));
+  if (a === 'lev') return inWin('lists', () => lvOpen(r.id));
+  if (a === 'setup') return qolSetups();
+  if (a === 'uses') return qolUses(r.id);
+  if (a === 'brush') return brAddTo(r.id, r.name).catch(e => toast(e.message, true));
+  if (a === 'goto') return qolThrough(OW.cell, r);
+  if (a === 'retex' || a === 'variants'){
+    if (!(W.sel && W.sel.cell === OW.cell && W.sel.k === OW.k)) selectRef(OW.cell, OW.k, true);
+    return selAction(a);
+  }
+  if (a === 'dupnew') return owOwnRecord();
   if (a === 'unlink'){ OW.door = {target: null, label: '', at: null, changed: true}; owDrawRef(); return; }
   if (a === 'arrive'){
     const target = OW.door && OW.door.target !== undefined ? OW.door.target : (r.to && r.to.key);
@@ -314,6 +377,27 @@ async function owAction(a){
     try { await worldOpen(target); } finally { OW.picking.opening = false; }
     if (OW.picking) setMode('arrive');
   }
+}
+// a record of its own for this placed one (the Construction Set's "new ID, create a new object?"): the
+// record copied under a new ID and this one swapped for the copy, one Undo step; the others keep the original
+async function owOwnRecord(){
+  const r = owRef(); if (!r || !OW.rec || OW.rec.error || OW.rec.i == null) return;
+  if (owDirty()) return toast('Save or Cancel the edits in the window first.', true);
+  if (!await needProject()) return;
+  let sug = '';
+  try { sug = (await api('/api/create/suggest_id?name=' + encodeURIComponent(r.name || r.id))).id; } catch (e){}
+  const id = ((await askText(`A record of its own for this ${r.name || r.id}: every other one placed keeps the record it has now, and this one becomes a copy you can change on its own.\n\nThe copy's ID:`, sug || r.id + '_2')) || '').trim();
+  if (!id) return;
+  const cell = OW.cell, k = OW.k;
+  try { await post('/api/duplicate', {i: OW.rec.i, id}); }
+  catch (e){ return toast(e.message, true); }
+  try {
+    await post('/api/ref/swap', {cell, ref: k, id});
+    try { await post('/api/fold', {n: 2, note: `Made this ${r.name || r.id} a record of its own (${id})`}); } catch (e){}
+  } catch (e){ toast('Made the copy ' + id + ', but could not swap this one for it: ' + e.message, true); }
+  try { if (W.cells[cell] && W.cells[cell].exists) await worldReloadCell(cell); await afterChange(); if (typeof V3 !== 'undefined' && V3.on) v3Refresh(); } catch (e){}
+  toast(`This ${r.name || r.id} is now ${id}, a record of its own. One Undo takes it back.`);
+  if (OW.el && OW.cell === cell && OW.k === k){ OW.ref = findRef(cell, k) || OW.ref; OW.cellObj = W.cells[cell]; await owLoad(); }
 }
 // the arrival spot picked on the map comes back to the window instead of being saved at once
 async function owArrived(x, y, z, rz){
@@ -346,7 +430,9 @@ async function owSave(){
   const d0 = await depth(), done = [];
   let failed = null;
   try {
-    if (c.rec.length){ await post('/api/edit', {i: OW.rec.i, changes: c.rec}); done.push('the record'); }
+    let ri = OW.rec && OW.rec.i;
+    if (c.rec.length){ ri = (await post('/api/edit', {i: OW.rec.i, changes: c.rec})).i; done.push('the record'); }
+    if (c.cont){ await post('/api/contents', {i: ri, items: OW.cont.items.map(x => ({id: x.id, count: x.count, restock: !!x.restock}))}); done.push('the contents'); }
     if (c.spot){ await post('/api/ref/move', {cell, ref: k, p: c.spot.p, s: c.spot.s}); done.push('the spot'); }
     if (c.props){ await post('/api/ref/props', {cell, ref: k, data: owPropsData()}); done.push('ownership'); }
     if (c.door){ await post('/api/ref/relink', {cell, ref: k, target: OW.door.target, at: OW.door.at, both: W.relinkBoth !== false}); done.push('where it leads'); }

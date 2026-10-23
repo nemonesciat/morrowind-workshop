@@ -210,7 +210,9 @@ async function sdSlide(ck, r){
     const m = await post('/api/secret/slide', body);
     sdApply(ck, m, r.k);
     const d = m.made, bad = d.check && d.check.errors;
-    toast(name + ' now slides ' + way + ' ' + Math.round(d.distance) + ' units' + (d.trigger ? ' when ' + d.trigger.was + ' is used' : ' when used') + '. Script ' + d.script + (bad ? ' has ' + bad + ' problem(s): see the Scripts editor.' : ' is attached and checked.'), !!bad);
+    const nr = (d.riders || []).length;
+    const ride = nr ? ' The ' + nr + ' thing' + (nr === 1 ? '' : 's') + ' on it ride along' : ' Things put on it ride along';
+    toast(name + ' now slides ' + way + ' ' + Math.round(d.distance) + ' units' + (d.trigger ? ' when ' + d.trigger.was + ' is used' : ' when used') + '. Script ' + d.script + (bad ? ' has ' + bad + ' problem(s): see the Scripts editor.' : ' is attached and checked.') + ride + ' (the Lua script ' + (d.riders_script || 'wsriders') + ' in your mod\'s Scripts).', !!bad);
     if (typeof sOpen === 'function') sOpen(d.script);
   }, bg => {
     const way = bg.querySelector('#sd-way'), dist = bg.querySelector('#sd-dist');

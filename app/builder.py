@@ -21,10 +21,12 @@ OPPOSITE = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
 LEFT_OF = {'N': 'W', 'W': 'S', 'S': 'E', 'E': 'N'}
 YAW = {'N': 0.0, 'E': math.pi / 2, 'S': math.pi, 'W': 3 * math.pi / 2}   # clockwise from north
 LIGHTING = {   # ambient, sunlight, fog colour
-    'dark': ((25, 22, 20), (40, 36, 30), (0, 0, 0)),
-    'dim': ((45, 40, 35), (70, 62, 52), (0, 0, 0)),
-    'normal': ((70, 64, 55), (105, 95, 80), (0, 0, 0)),
-    'bright': ((110, 104, 95), (150, 140, 125), (0, 0, 0)),
+    # (sunlight as the game's own interiors keep it: their median 65, nine in ten under 80; the lamps and
+    # candles do the lighting. Project Tamriel's reviewers want 10 to 25.)
+    'dark': ((25, 22, 20), (28, 25, 21), (0, 0, 0)),
+    'dim': ((45, 40, 35), (45, 40, 34), (0, 0, 0)),
+    'normal': ((70, 64, 55), (64, 58, 49), (0, 0, 0)),
+    'bright': ((110, 104, 95), (80, 75, 67), (0, 0, 0)),
 }
 
 
@@ -624,11 +626,26 @@ def _tall_wall(db, kp):
     return best
 
 
-def _loose_wall_ref(db, wall, cx, cy, s, floor_z, T):
-    """A loose wall on side s of the tile centred (cx, cy), its finished side into the room: the same
-    placing as build_interior's loose walls."""
-    import seethrough
+def _wall_offset(db, kp, wall, T, edge=False):
+    """How far out from a tile's middle a loose wall stands: flush inside the tile's edge, or, on an
+    edge with nothing beyond it (`edge`), where the game's own places stand this wall when they agree
+    (kits.loose_wall_offset: Hlaalu's in_hlaalu_wall centred on the edge, its face 15 in from the room
+    pieces' own wall faces rather than 48, so no jog and no post left inside it). Never further in
+    than flush, nor so far out that it stands in the next tile."""
     off = T / 2 - wall['thick'] / 2 - 2
+    if edge and kp:
+        got = kits.loose_wall_offset(db, kp.get('prefix'), wall)
+        if got and got[1] >= 10 and off < got[0] <= T / 2 + 2:
+            off = got[0]
+    return off
+
+
+def _loose_wall_ref(db, wall, cx, cy, s, floor_z, T, kp=None, edge=False):
+    """A loose wall on side s of the tile centred (cx, cy), its finished side into the room: the same
+    placing as build_interior's loose walls (on an edge with nothing beyond, where the game stands it:
+    see _wall_offset)."""
+    import seethrough
+    off = _wall_offset(db, kp, wall, T, edge)
     wx, wy = cx + STEP[s][0] * off, cy + STEP[s][1] * off
     rot = 0 if (s in 'EW') == wall['thin_x'] else math.pi / 2
     rot = seethrough.facing(db, wall['ri'], (-STEP[s][0], -STEP[s][1]), rot)
@@ -1408,8 +1425,73 @@ def _alcove(grid, used, piece, shape, s0, up, f, g):
                     setn(n_, OPPOSITE[s], 'door')
         if off and t in grid:
             walled.append(t)
+    # the way out of the stairwell on each floor: the game's Hlaalu well is a closed box of hall corners
+    # round the stair with one doorway out of it (room_door2 or a 3way beside the stair's open side); the
+    # template only says what stands at the spots the game mostly agrees on, and the doorway stands at
+    # a different spot in every place, so nothing above put one in. The user's "Hlaalu Hernia": the cellar
+    # landing was a closet of a hall corner and a hall_end with no door, and the hall upstairs was cut in
+    # two by the corners' walls (2026-10-23). So: the landing on each floor (the stair's end tile and the
+    # block tiles it opens into) must reach the rest of its floor through a side that is not a wall, and
+    # every part of a room the block's walls cut off must reach the landing. Where it doesn't, one of the
+    # block's wall sides becomes a doorway (`ways`: build_interior stands the kit's door frame there, or
+    # a door piece), the end tile's side straight on from the stair first
+    ways = []
+    for end in (lo, hi):
+        lv = end[2]
+        R = room_of(end)
+        if R is None:
+            continue
+
+        def passable(t, s):
+            n_ = nb(t, s)
+            if n_[:2] == sxy or n_ in carve:
+                return False
+            v = needs.get(t, {}).get(s)
+            if v is None:
+                v = 'open' if (room_of(n_) == room_of(t) and (n_ in grid or n_ in landing)) else 'wall'
+            return v != 'wall' and (n_ in grid or n_ in landing)
+        # the landing: what the end tile reaches without passing a wall, within the block
+        cluster, todo = set(), [end]
+        while todo:
+            t = todo.pop()
+            if t in cluster:
+                continue
+            cluster.add(t)
+            todo += [nb(t, s) for s in STEP if nb(t, s) in block and passable(t, s)]
+        # the room's other tiles on this floor, and which of them the landing reaches
+        room_tiles = {t for t in grid if t[2] == lv and grid[t] == R and t not in carve} | {t for t in landing if t[2] == lv and landing[t] == R}
+        reach, todo = set(cluster), list(cluster)
+        while todo:
+            t = todo.pop()
+            for s in STEP:
+                n_ = nb(t, s)
+                if n_ in room_tiles and n_ not in reach and passable(t, s):
+                    reach.add(n_)
+                    todo.append(n_)
+        # (the landing opens somewhere beyond the block already, and no part of the room is cut off)
+        if room_tiles <= reach and any(t not in block for t in reach):
+            continue
+        cut_off = room_tiles - reach
+        if not cut_off:
+            # (a landing of its own, no room tile beyond the block: the other rooms beside it, if any)
+            cut_off = {nb(t, s) for t in cluster for s in STEP if nb(t, s) in grid and nb(t, s) not in carve and nb(t, s)[:2] != sxy}
+        ahead = OPPOSITE[up] if end == lo else up          # (straight on from the stair)
+        cands = []
+        for t in cluster:
+            for s in STEP:
+                n_ = nb(t, s)
+                if n_ in cut_off and n_ not in cluster:
+                    cands.append(((t != end), (s != ahead), (room_of(n_) != R), t, s))
+        if not cands:
+            return None                                     # (no way out of the well here: not this spot)
+        _a, _b, _c, t, s = min(cands)
+        setn(t, s, 'open')
+        setn(nb(t, s), OPPOSITE[s], 'open')
+        ways.append((t, s))
+        if t in walled:
+            walled.remove(t)
     return {'carve': carve, 'land': land, 'lo': lo, 'hi': hi, 'needs': needs, 'vcarve': carve + walled,
-            'cuts': cuts, 'open': rot_open, 'block': set(block)}
+            'cuts': cuts, 'open': rot_open, 'block': set(block), 'ways': ways}
 
 
 def _carve_ctx(grid, doors_):
@@ -1485,6 +1567,44 @@ def _stair_cost(info, piece, want, n_carve, n_land, rooms_lo, rooms_hi, bx, by, 
     return cost
 
 
+def _near_cost(want, bx, by, up):
+    """Where the planner last showed these stairs (`near`, when nobody put them by hand): staying there
+    is cheapest, so a change somewhere else in the plan doesn't send them jumping round the house (the
+    user's "without them all randomly jumping around"); they move when that spot gets much worse."""
+    nr = want.get('near')
+    if not nr:
+        return 0
+    try:
+        return 1.5 * (abs(bx - int(nr['x'])) + abs(by - int(nr['y']))) + (2 if str(nr.get('up') or '').upper() != up else 0)
+    except (KeyError, TypeError, ValueError):
+        return 0
+
+
+def _round_path(grid, blocked, st, up, f):
+    """Stacked flights facing the same way: on floor f you step off the head of the flight below (the
+    tile past these stairs' top) and walk round the stairwell to these stairs' foot. The way round on
+    either side, as tiles of floor f (head, its neighbour, the tiles beside the flight, the foot's
+    neighbour, the foot), and the room boundaries it crosses as (tile, side) doorways: the side whose
+    walk crosses fewest rooms, or None when neither side is floor all the way (the user's Bigus Dicus
+    Tower: the foot of each flight came out walled off from the head of the one below)."""
+    down = OPPOSITE[up]
+    head = nb((st[-1][0], st[-1][1], f), up)
+    foot = nb((st[0][0], st[0][1], f), down)
+    best = None
+    for side in (LEFT_OF[up], OPPOSITE[LEFT_OF[up]]):
+        path = [head, nb(head, side)] + [nb((s[0], s[1], f), side) for s in reversed(st)] + [nb(foot, side), foot]
+        if any(t not in grid or t in blocked for t in path):
+            continue
+        ways = []
+        for a, b in zip(path, path[1:]):
+            if grid[a] != grid[b]:
+                s_ = next(s for s in STEP if nb(a, s) == b)
+                ways.append((a, s_))
+        if best is None or len(ways) < len(best):
+            best = ways
+    return best
+
+
 def _pin_of(want):
     """Where the stairs were put by hand, as (x, y, up), or None."""
     at = want.get('at')
@@ -1513,7 +1633,16 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
     starts, allow = [], set()
     if stack:
         bt = below['tiles']
-        starts = [(OPPOSITE[below['up']], (bt[-1][0], bt[-1][1])), (below['up'], (bt[0][0], bt[0][1]))]
+        if (want or {}).get('stack') == 'line':
+            # in a line: this flight climbs on from the landing at the head of the one below, the same
+            # way, so the stairs run up the building in one long ascent with a way off at every floor
+            starts = [(below['up'], nb(below['hi'], below['up'])[:2])]
+        else:
+            # over the one below and facing the same way, as the game's stacked stairwells stand (the
+            # user's Imperial manor): off the top of one flight, round the stairwell on the floor, and
+            # up the next from over the first one's foot. Turned back on it, each flight's foot stood
+            # at the head of the one below and the two got in each other's way
+            starts = [(below['up'], (bt[0][0], bt[0][1]))]
         allow = {(s[0], s[1]) for s in bt} | {below['lo'][:2], below['hi'][:2]}
     cands = []
     whole = [p for p in info['pieces'] if abs(p['rise'] - H) < 8 and p.get('len', 1) == 1]
@@ -1599,6 +1728,18 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
                     nooks = _carve_check(grid, carve, doors_, (lo, hi), ctx)
                     if nooks is None:
                         continue
+                    round_cost = 0
+                    if stack and (want or {}).get('stack') != 'line':
+                        # (over the flight below, the same way up: floor all the way round the stairwell
+                        # from its head to this foot, a doorway wherever the walk crosses into a room)
+                        rp = _round_path(grid, set(carve), st, up, f)
+                        if rp is None:
+                            continue
+                        round_cost = 3 * len(rp)
+                    if stack and piece['id'] != below['piece']['id']:
+                        # (the flight below's own piece: Gold Coast's Stair_05 below and Stair_01 above
+                        # are open on opposite sides, so the stairwell changed sides half way up)
+                        round_cost += 8
                     rooms_lo = grid[lo] if lo in grid and lo not in carve else land[0][1]
                     rooms_hi = grid[hi] if hi in grid and hi not in carve else land[-1][1]
                     # stairs open on one side leave a gap where they meet the next wall: a last resort
@@ -1609,8 +1750,7 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
                                  if nb((s[0], s[1], lv), sd) in grid and nb((s[0], s[1], lv), sd) not in carve)
                     cost = len(carve) * 2 + len(land) * 6 + ((3 if piece['post'] else 10) if piece['open'] else 0) + nooks * 25 + side_n * 1.5 + wedge
                     cost += _stair_cost(info, piece, want, len(carve), len(land), rooms_lo, rooms_hi, bx, by, xs, ys)
-                    if stack and up == starts[1][0]:
-                        cost += 4                   # (the same way up: round the stairwell to the next flight)
+                    cost += _near_cost(want, bx, by, up) + round_cost
                     cands.append((cost, len(cands), piece, up, st, lo, hi, carve, land, rot_open, None, wedge > 0))
                 # the same spot, but the stair with the game's own pieces round it (see _alcove):
                 # Indoril's closed-in corners at its ends, Hlaalu's stairwell of hall corners.
@@ -1637,6 +1777,7 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
                                          if nb((bx, by, lv), sd) in grid and nb((bx, by, lv), sd) not in carve)
                             cost = len(carve) * 2 + len(land) * 6 + side_n * 1.5 + alc['cuts'] * 3 - 3
                             cost += _stair_cost(info, piece, want, len(carve), len(land), rooms_lo, rooms_hi, bx, by, xs, ys)
+                            cost += _near_cost(want, bx, by, up)
                             cands.append((cost, len(cands), piece, up, [s0], lo, hi, carve, land, alc['open'], alc, False))
     # the cheapest spot where the floor round the stairs can still be built from the style's pieces
     for c in sorted(cands)[:400]:
@@ -1678,6 +1819,7 @@ def stair_spots(db, style, rooms, stairs=None, doors=None, budget=2.5):
         t0 = time.time()
         want = dict(wanted.get(f) or {})
         want.pop('at', None)
+        want.pop('near', None)            # (every spot shaded at its own cost, not by where they were)
         if want.get('stack') and any(x['floor'] == f - 1 for x in placed):
             out.append({'floor': f, 'spots': [], 'stacked': True})
             continue
@@ -1968,7 +2110,7 @@ def _scratch_holes(db, style, rooms, doors, exit_, stairs):
         db.sync_project()
 
 
-def _place_stairs(db, style, kp, grid, rooms, wanted=None, doors_=((), ()), wells=None):
+def _place_stairs(db, style, kp, grid, rooms, wanted=None, doors_=((), ()), wells=None, _lined=False):
     """Join each floor to the one above with a staircase from the style's own stair pieces.
     Changes grid in place (a landing tile may be added to a room, or a tile given up for the
     stairwell). Where the style's stair survey shows how the game stands the stair in an alcove (see
@@ -1987,6 +2129,39 @@ def _place_stairs(db, style, kp, grid, rooms, wanted=None, doors_=((), ()), well
         if f not in floors or f + 1 not in floors:
             raise EditError('There is a floor with no rooms between the %s and the %s.' % (
                 FLOOR_NAMES.get(floors[0]), FLOOR_NAMES.get(floors[-1])))
+    low_want = (wanted or {}).get(floors[0]) or {}
+    if not _lined and low_want.get('stack') == 'line' and not _pin_of(low_want) and len(floors) > 2 and not wells:
+        # in a line, nobody put the first flight: of its cheapest spots, the first from which the whole
+        # run carries on up every floor (the cheapest alone ran the climb across a narrow plan, and the
+        # top flight had to go elsewhere)
+        _b, cands = _stair_candidates(db, style, kp, info, dict(grid), set(), floors[0], low_want, doors_, None, None)
+        tried, trials = set(), 0
+        for c in sorted(cands):
+            spot = (c[4][0][0], c[4][0][1], c[3])
+            if spot in tried:
+                continue
+            tried.add(spot)
+            # (cheap first: every flight of the run and the landing at its head over floor of the plan;
+            # a full trial of each spot took Hlaalu 30 s)
+            span = len(c[4])
+            over = all((t[0], t[1], fl if i < span else fl + 1) in grid
+                       for k, fl in enumerate(floors[:-1]) for i in range(span + 1)
+                       for t in [nb((spot[0], spot[1], fl), spot[2], k * (span + 1) + i)])
+            if not over:
+                continue
+            trials += 1
+            if trials > 4 or len(tried) > 60:
+                break
+            w2 = {k: dict(v) for k, v in wanted.items()}
+            w2[floors[0]]['at'] = {'x': spot[0], 'y': spot[1], 'up': spot[2]}
+            try:
+                pl2, n2 = _place_stairs(db, style, kp, dict(grid), rooms, w2, doors_, wells, _lined=True)
+            except EditError:
+                continue
+            if all(x.get('stacked') for x in pl2[1:]):
+                pl2, n2 = _place_stairs(db, style, kp, grid, rooms, w2, doors_, wells, _lined=True)
+                pl2[0]['pinned'] = False                  # (the Workshop's choice, not a pin of yours)
+                return pl2, n2
     placed, notes, used = [], [], set()
     for f in floors[:-1]:
         g = f + 1
@@ -1995,10 +2170,10 @@ def _place_stairs(db, style, kp, grid, rooms, wanted=None, doors_=((), ()), well
         at = _pin_of(want)
         if at:
             ax, ay, aup = at
-        # one stairwell: this flight over the one below, turned back on it (a tower's switchback: up
-        # one flight, round the landing, up the next over the first), or failing that climbing the same
-        # way; the flight below's own tiles may be used again. A pin on this floor stands aside. When
-        # nothing fits over the flight below, these stairs go wherever they fit, as usual
+        # one stairwell: this flight over the one below, climbing the same way (off the top of one,
+        # round the floor, up the next over the first), or 'line': on from the head of the one below;
+        # the flight below's own tiles may be used again. A pin on this floor stands aside. When
+        # nothing fits there, these stairs go wherever they fit, as usual
         stack_wanted = bool(want.get('stack')) and bool(placed) and placed[-1]['floor'] == f - 1
         whole_pieces = [p for p in info['pieces'] if abs(p['rise'] - H) < 8 and p.get('len', 1) == 1]
         # a two-storey hall of the kit's own tall pieces on this floor: the stairs inside it, with the
@@ -2021,8 +2196,10 @@ def _place_stairs(db, style, kp, grid, rooms, wanted=None, doors_=((), ()), well
         stack = stack_wanted
         best, cands = _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at, placed[-1] if stack else None)
         if not best and stack:
-            notes.append('The stairs from the %s could not stand over the ones below (no room for them to come '
-                         'out on the %s there), so they were put where they fit.' % (FLOOR_NAMES.get(f), FLOOR_NAMES.get(g)))
+            notes.append('The stairs from the %s could not %s (no room for them to come out on the %s there), so '
+                         'they were put where they fit.' % (FLOOR_NAMES.get(f), 'carry on from the top of the ones below'
+                                                             if want.get('stack') == 'line' else 'stand over the ones below',
+                                                             FLOOR_NAMES.get(g)))
             stack = False
             best, cands = _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at, None)
         if not best and at:
@@ -2077,10 +2254,16 @@ def _place_stairs(db, style, kp, grid, rooms, wanted=None, doors_=((), ()), well
                        'stacked': stack, 'cost': cost, 'pair': bool(pair), 'moved': moved,
                        # an alcove: the needs of the tiles round the stair, and its side open only upstairs
                        'alcove': alc['needs'] if alc else None, 'block': alc['block'] if alc else set(),
+                       # the doorways out of the stairwell's landings (see _alcove): built as doors
+                       'ways': list(alc.get('ways') or []) if alc else [],
                        # (a stairwell piece taller than a storey and a half is a closed hall below and open
                        # over a railing only upstairs: the room beside it keeps its wall downstairs)
                        'open_low': [] if alc or (STAIR_OPEN_LOW is False) or
                        (STAIR_OPEN_LOW is None and piece.get('height', 0) > H * 1.5) else rot_open})
+        if stack and want.get('stack') != 'line':
+            # the walk round the stairwell from the head of the flight below to this foot: a doorway
+            # wherever it crosses from one room into another (built like the stair block's ways out)
+            placed[-1]['ways'] += _round_path(grid, set(), st, up, f) or []
         if land:
             notes.append('The stairs from the %s needed %s.' % (FLOOR_NAMES.get(f), 'a small landing' if len(land) == 1 else
                                                                  'two small landings' if len(land) == 2 else 'small landings'))
@@ -2188,8 +2371,11 @@ def _wanted_stairs(rooms, names, stairs):
             w['at'] = s['at']
         if s.get('outside'):
             w['outside'] = True
+        if s.get('near') and not s.get('at'):
+            w['near'] = s['near']         # (where the planner showed them last: see _near_cost)
         if s.get('stack'):
-            w['stack'] = True             # (one stairwell: over the stairs of the floor below)
+            # (one stairwell: over the stairs of the floor below, the same way up; 'line': on from their head)
+            w['stack'] = 'line' if s['stack'] == 'line' else True
         wanted.setdefault(fa, {}).update(w)
     return wanted
 
@@ -2436,9 +2622,13 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
     frames = []          # (tile, side) where a full-width door frame goes between two tiles
     gaps = []            # doorways that could only be left as open gaps
     # ---- doorways between rooms (rooms joined with no wall at all first: doorways go around them)
-    for d in sorted(doors or [], key=lambda d: d.get('kind') != 'open'):
+    # (and the way out of each stairwell landing the stair block closes in, see _alcove: a doorway on
+    # the side the block opened, between whichever rooms' tiles are there, built like any other)
+    well_doors = [{'rooms': [grid[t], grid[nb(t, s)]], 'well': (t, s)} for x in stair_list for t, s in x.get('ways') or []
+                  if t in grid and nb(t, s) in grid]
+    for d in sorted(list(doors or []) + well_doors, key=lambda d: d.get('kind') != 'open'):
         a, b = room_index(d['rooms'][0]), room_index(d['rooms'][1])
-        e = boundary(a, b)
+        e = [d['well']] if d.get('well') else boundary(a, b)
         if not e:
             raise EditError('Rooms "%s" and "%s" don\'t touch, so there is no wall to put a door in.' % (rooms[a].get('name'), rooms[b].get('name')))
         # (not through the closed-in corners of a stair's alcove, when there is wall elsewhere)
@@ -2656,6 +2846,20 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             if wpat.get('ceiling'):
                 covered.add(level)
             refs.append((cap[0], (ox_, oy_, cz, 0, 0, crot), []))
+            # a cap wall between the stairwell and a room tile shows the room its back, which the game
+            # doesn't draw (the user's Big Ass Fail: "I can't ever find the right wall piece to cover these
+            # up from the back"): the same wall turned round and mirrored across the edge, back to back,
+            # as the game stands every wall between two spaces
+            c_, s_ = math.cos(crot), math.sin(crot)
+            lx, ly = (cb[0] + cb[3]) / 2.0, (cb[1] + cb[4]) / 2.0
+            wcx, wcy = ox_ + lx * c_ + ly * s_, oy_ - lx * s_ + ly * c_
+            for d in (walls_ if len(walls_) == 1 and not wpat.get('ceiling') else []):     # (a lone wall: not a room piece)
+                if nb(spot, d) not in grid:
+                    continue
+                ex_, ey_ = centre(spot)[0] + STEP[d][0] * T / 2.0, centre(spot)[1] + STEP[d][1] * T / 2.0
+                mx = 2 * ex_ - wcx if d in 'EW' else wcx
+                my = 2 * ey_ - wcy if d in 'NS' else wcy
+                refs.append((cap[0], (mx + (wcx - ox_), my + (wcy - oy_), cz, 0, 0, (crot + math.pi) % (2 * math.pi)), []))
         # the game caps this stairwell, but none of its caps can stand here (their walls would cross the
         # rooms round the stairwell: the Indoril chapel's Hall_3way_nf1 over Room_Stair_H1, with the stair
         # in the middle of a room): the kit's floorless piece that covers the stairwell with the fewest
@@ -2760,7 +2964,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                 continue
             cx_, cy_ = centre(o_)
             fz = z0 + zf(o_)
-            refs.append(_loose_wall_ref(db, edge_wall, cx_, cy_, s, fz, T))
+            refs.append(_loose_wall_ref(db, edge_wall, cx_, cy_, s, fz, T, kp, edge=True))
             if sp.get('post'):
                 ax_, ay_ = STEP[s]
                 for along in (-1, 1):
@@ -3000,7 +3204,9 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                     if pick <= 0:
                         break
                 windowed.add((t, s))
-            off = T / 2 - wall['thick'] / 2 - 2
+            # (on an outside edge with nothing beyond, not even a stair, where the game's places stand this
+            # wall: see _wall_offset; beside a stair it stays inside the tile, clear of the stair piece)
+            off = _wall_offset(db, kp, wall, T, edge=nb(t, s) not in grid and nb(t, s)[:2] not in stair_xy and (t, s) not in windowed)
             wx, wy = cx + STEP[s][0] * off, cy + STEP[s][1] * off
             along_y = s in 'EW'                       # an east/west wall runs north-south
             rot = 0 if along_y == wall['thin_x'] else math.pi / 2

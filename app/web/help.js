@@ -10,6 +10,7 @@ $('#helpmenu').addEventListener('click', e => {
   const a = b.dataset.help;
   if (a === 'guide' || a === 'settings') showView(a);
   else if (a === 'report') reportModal();
+  else if (a === 'messages') recentMessages();
   else if (a === 'about') aboutModal();
 });
 const HELP_KEY = s => `<kbd>${s}</kbd>`;
@@ -46,7 +47,8 @@ function renderGuide(){
     <tr><td><b>Dialogue</b></td><td>Greetings, topics and quests with their journal stages. Lines can depend on quest stages, items and more.</td></tr>
     <tr><td><b>Scripts</b></td><td>Morrowind scripts and OpenMW Lua scripts, checked as you type.</td></tr>
     <tr><td><b>Rules</b></td><td>Factions, classes, races, birthsigns, skills, regions and weather, sounds (and the sounds creatures make), magic effects, global variables and game settings.</td></tr>
-    <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip. <b>Merge another mod into this one</b> folds another of your mods into this one as one change.</td></tr>
+    <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip. <b>Merge another mod into this one</b> folds another of your mods into this one as one change.
+      As in the Construction Set, your mod is the <b>active file</b>: <b>Open an .esp as your mod</b> (also in a plugin's ⋯ menu on the Load order page) makes an existing .esp or .omwaddon the active file, saved straight back into; its placed objects keep their numbers, so saved games still work. <b>Save as…</b> puts everything into a new .esp or .omwaddon, which is the active file from then on.</td></tr>
     <tr><td><b>Health check</b></td><td>Problems in your load order, like missing masters, models or textures, and <b>Check my mod</b>: every record of your mod checked the way the game's editor checks them.</td></tr>
     <tr><td><b>Load order</b></td><td>Switch plugins on or off and change their order (saved to OpenMW's settings, with a backup).</td></tr>
   </table>

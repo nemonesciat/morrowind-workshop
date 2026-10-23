@@ -12,18 +12,20 @@ from project import b64, unb64
 F_INTERIOR, F_WATER, F_NOSLEEP, F_LIKE_EXT = 0x01, 0x02, 0x04, 0x80
 
 # moods to start from: ambient, sunlight, fog colours and fog density
+# (sunlight kept where the game's own interiors keep it, under 80 of 255 in nine of ten; the lamps and
+# candles light the room. Project Tamriel's reviewers want 10 to 25.)
 PRESETS = [
-    ('Cosy house', [92, 74, 52], [214, 168, 112], [60, 48, 36], 0.6),
-    ('Shop or guild hall', [110, 100, 86], [235, 215, 170], [90, 80, 66], 0.4),
-    ('Tavern at night', [70, 52, 36], [200, 140, 80], [40, 30, 22], 0.7),
-    ('Cave', [38, 34, 30], [80, 72, 64], [18, 16, 14], 0.85),
-    ('Ancestral tomb', [40, 36, 46], [96, 88, 120], [22, 20, 28], 0.9),
-    ('Dwemer ruin', [70, 56, 40], [190, 140, 80], [56, 40, 26], 0.75),
-    ('Daedric shrine', [62, 28, 24], [170, 60, 40], [40, 12, 10], 0.85),
-    ('Mine (glowing ebony)', [36, 40, 44], [90, 120, 140], [16, 20, 24], 0.85),
-    ('Sewers', [40, 46, 36], [90, 110, 80], [22, 28, 20], 0.9),
-    ('Telvanni tower', [70, 66, 78], [170, 160, 200], [44, 40, 52], 0.6),
-    ('Bright and plain', [140, 140, 140], [255, 255, 255], [120, 120, 120], 0.2),
+    ('Cosy house', [92, 74, 52], [76, 60, 40], [60, 48, 36], 0.6),
+    ('Shop or guild hall', [110, 100, 86], [80, 73, 58], [90, 80, 66], 0.4),
+    ('Tavern at night', [70, 52, 36], [70, 49, 28], [40, 30, 22], 0.7),
+    ('Cave', [38, 34, 30], [40, 36, 32], [18, 16, 14], 0.85),
+    ('Ancestral tomb', [40, 36, 46], [48, 44, 60], [22, 20, 28], 0.9),
+    ('Dwemer ruin', [70, 56, 40], [76, 56, 32], [56, 40, 26], 0.75),
+    ('Daedric shrine', [62, 28, 24], [68, 24, 16], [40, 12, 10], 0.85),
+    ('Mine (glowing ebony)', [36, 40, 44], [45, 60, 70], [16, 20, 24], 0.85),
+    ('Sewers', [40, 46, 36], [45, 55, 40], [22, 28, 20], 0.9),
+    ('Telvanni tower', [70, 66, 78], [68, 64, 80], [44, 40, 52], 0.6),
+    ('Bright and plain', [140, 140, 140], [80, 80, 80], [120, 120, 120], 0.2),
 ]
 
 

@@ -1,6 +1,7 @@
 """Help menu things: the Workshop's version, what it's built from (third-party notices), a
 problem report to send when something goes wrong, and the Settings page."""
 import importlib.metadata as md
+import json
 import os
 import platform
 import re
@@ -196,6 +197,7 @@ def get_settings(db):
             'ai_ack': bool(s.get('ai_ack')),
             'backup_keep': keep, 'backup_minutes': minutes, 'backups_folder': backups.BACKUP_DIR,
             'guide_on_start': s.get('guide_on_start', False), 'guide_seen': bool(s.get('guide_seen')),
+            'theme': s.get('theme') if isinstance(s.get('theme'), dict) else None,
             'projects_folder': PROJECTS_DIR, 'app_folder': APP_DIR, 'version': version()}
 
 
@@ -210,5 +212,8 @@ def set_settings(body):
             s[k] = bool(body[k])
     if body.get('openmw_reset'):
         s.pop('openmw_install', None)
+    # the look chosen in Settings → Appearance (theme.js), your own theme with it; small, so kept as it comes
+    if isinstance(body.get('theme'), dict) and len(json.dumps(body['theme'])) < 8000:
+        s['theme'] = body['theme']
     save_settings(s)
     return {'ok': True}

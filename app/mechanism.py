@@ -87,9 +87,12 @@ def _script_slot(subs):
     return next((n for n, (t, _d) in enumerate(subs) if t in ('NPCO', 'NPCS', 'AIDT', 'AI_W', 'DODT', 'INDX', 'XSCL')), len(subs))
 
 
-def _new_record(db, src_ri, new_id, tag, script=None, model=None, sounds=None):
+def _new_record(db, src_ri, new_id, tag, script=None, model=None, sounds=None, mute=False):
     """A record of kind `tag` made from another: same model and name. When the kind stays the same
-    everything else comes along too (a lamp keeps its light, a book its text)."""
+    everything else comes along too (a lamp keeps its light, a book its text). With a script the record
+    always gets a name: the game only lets you use (and only runs OnActivate for) things with one, and
+    a sconce or a wall lamp has none. `mute` leaves the name out instead: a panel another object pulls
+    is not to be a button in the game's crosshair."""
     r, flags, subs = _record(db, src_ri)
     if tag == r[0]:
         out = [(t, d) for t, d in subs if t != 'SCRI']
@@ -103,15 +106,36 @@ def _new_record(db, src_ri, new_id, tag, script=None, model=None, sounds=None):
                     out.append((sub, zs(sid)))
     if model and tag == r[0]:
         out = [(t, zs(model) if t == 'MODL' else d) for t, d in out]
+    if mute:
+        out = [(t, d) for t, d in out if t != 'FNAM']
     if script:
+        out = named(out, _model_and_name(db, src_ri, subs)[1])
         out.insert(_script_slot(out), ('SCRI', zs(script)))
         if tag == 'LIGH':
-            # a candle that works a mechanism is not for picking up (the script stops that anyway)
-            out = [(t, bytes(d[:20]) + struct.pack('<i', struct.unpack_from('<i', d, 20)[0] & ~0x2) + bytes(d[24:]) if t == 'LHDT' and len(d) >= 24 else d)
-                   for t, d in out]
+            out = [(t, usable_light(d)) if t == 'LHDT' else (t, d) for t, d in out]
     db.project.set_record(tag, new_id.lower(), 0 if tag != r[0] else (flags & ~0x20), join_subs(out), created=True)
     db.sync_project()
     return db.resolve_id(new_id)
+
+
+def usable_light(d):
+    """A light's LHDT with the "can carry" flag on and no weight or value: the game shows a light in
+    the crosshair (and so lets you use it) only when it could be carried; a sconce or wall lamp is
+    never shown, name or no name. The script's OnActivate takes the click, so nothing is picked up."""
+    if len(d) < 24:
+        return d
+    return struct.pack('<fi', 0.0, 0) + bytes(d[8:20]) + struct.pack('<i', struct.unpack_from('<i', d, 20)[0] | 0x2) + bytes(d[24:])
+
+
+def named(subs, name):
+    """The subrecords with a (non-empty) FNAM right after the model, so the game shows the thing in
+    the crosshair and lets you use it; the game's sconces and wall lamps have no name at all."""
+    if any(t == 'FNAM' and zstr(d).strip() for t, d in subs):
+        return list(subs)
+    out = [(t, d) for t, d in subs if t != 'FNAM']
+    at = next((n + 1 for n, (t, _d) in enumerate(out) if t == 'MODL'), 1)
+    out.insert(at, ('FNAM', zs((name or 'Switch').strip()[:31])))
+    return out
 
 
 def _reuse(db, stem, tag):
@@ -374,9 +398,12 @@ def make_plain(db, cell_key, refkey):
         new_id = _free_id(db, stem)
         _new_record(db, ri, new_id, 'STAT')
     _swap(c, ref, refkey, new_id, link=False)
-    # (an object the Workshop's own script moved: its script record stays, harmless, for Undo)
+    # (an object the Workshop's own script moved: its script record stays, harmless, for Undo; the riders
+    # script stops watching it, and goes when it was the last panel)
+    import riders
+    unwatched = riders.unregister(db, rid)
     editing.commit(db, 'Made "%s" an ordinary object ("%s") in %s' % (rid, new_id, editing.cell_label(db, cell_key)))
-    return {'id': new_id, 'was': rid, 'far': far, 'to': to}
+    return {'id': new_id, 'was': rid, 'far': far, 'to': to, 'riders_off': unwatched}
 
 
 # ------------------------------------------------------------------ 3. a rotating panel
@@ -565,7 +592,7 @@ def make_slide(db, cell_key, refkey, way='back', distance=None, sound=None, trig
             raise EditError('A %s can\'t carry a script. Pick a lever, a candle, a book, a button or any scenery.' % tr[0])
         text = slide_script(sid, name or rid, way, distance, axis, sign, snd, panel_id)
         mwscript.save(db, sid, text, create=True, save=False)
-        _new_record(db, ri, panel_id, 'ACTI')
+        _new_record(db, ri, panel_id, 'ACTI', mute=True)   # (not a button: the trigger is)
         tid = _free_id(db, _base_id(trid)[:31 - 5] + '_trig')
         _new_record(db, tri, tid, ttag, script=sid)
         _swap(tc, tref, trigger['ref'], tid, link=False)
@@ -576,10 +603,15 @@ def make_slide(db, cell_key, refkey, way='back', distance=None, sound=None, trig
         _new_record(db, ri, panel_id, 'ACTI', script=sid)
     _swap(c, ref, refkey, panel_id, link=False)
     chk = mwscript.check(db, text, sid)
+    # whatever stands on the panel slides with it: the mod's riders Lua script watches this panel (riders.py)
+    import riders
+    riders.register(db, panel_id, b)
+    db.sync_project()
+    aboard = riders.aboard(db, cell_key, refkey)
     editing.commit(db, 'Made "%s" a sliding panel ("%s", %s %g units%s) in %s' % (
         rid, panel_id, WAY_WORDS.get(way, way), distance, ' pulled by ' + trig['id'] if trig else '', editing.cell_label(db, cell_key)))
     return {'id': panel_id, 'was': rid, 'script': sid, 'trigger': trig, 'axis': axis, 'sign': sign, 'distance': distance,
-            'sound': snd, 'check': chk}
+            'sound': snd, 'check': chk, 'riders': aboard, 'riders_script': riders.SCRIPT}
 
 
 def mwscript_free(db, stem):

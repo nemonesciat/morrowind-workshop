@@ -97,10 +97,12 @@ def _skin(raw, blocks, nodes, shape, skel, verts):
         dtyp, q = blocks[data_ref]
         if dtyp != b'NiSkinData':
             return None
-        oR = [list(struct.unpack_from('<3f', raw, q + k * 12)) for k in range(3)]
-        q += 36
-        ot = list(struct.unpack_from('<3f', raw, q)); q += 12
-        os_ = struct.unpack_from('<f', raw, q)[0]; q += 4
+        # The skin's own "overall" transform (36 + 12 + 4 bytes) is skipped: the game never applies it
+        # (OpenMW's NifLoader takes only each bone's bind transform, and the bone's pose on the skeleton).
+        # The game's own skins files carry an identity there, but Tamriel Rebuilt's Blender exports carry a
+        # real turn and offset, and applying it on top of the bone offsets threw gauntlets to chest height
+        # and lifted cuirasses above the head (Old Ebonheart's marines, 2026-10-22).
+        q += 36 + 12 + 4
         nbones = struct.unpack_from('<I', raw, q)[0]; q += 4
         q += 4                                        # skin partition ref
         if nbones != nb:
@@ -125,8 +127,7 @@ def _skin(raw, blocks, nodes, shape, skel, verts):
                 if vi >= nv:
                     continue
                 v = verts[vi * 3:vi * 3 + 3]
-                v = _xf(oR, ot, os_, v)               # mesh -> skin space
-                v = _xf(bR, bt, bs, v)                # skin -> this bone's space
+                v = _xf(bR, bt, bs, v)                # mesh (in the skeleton root's space) -> this bone's space
                 v = _xf(pose[0], pose[1], pose[2], v)  # bone -> where the bone stands now
                 a = acc[vi]
                 a[0] += w * v[0]; a[1] += w * v[1]; a[2] += w * v[2]

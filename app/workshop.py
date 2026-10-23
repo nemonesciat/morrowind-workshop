@@ -740,6 +740,13 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/surveys':
                 import background
                 self._json(background.status())
+            elif u.path == '/api/mods':
+                # your mods and where their files are (My mod > Your mods)
+                import modfiles
+                self._json({'mods': modfiles.mods(db)})
+            elif u.path == '/api/busy':
+                # what is holding things up (the dialogs ask when an answer is slow in coming)
+                self._json({'busy': busy()})
             elif u.path == '/api/launch':
                 self._json(launch_settings())
             elif u.path == '/api/openmw':
@@ -815,6 +822,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(regions.read(db, q.get('id', '')))
             elif u.path == '/api/lev':
                 self._json(levlists.read(db, q.get('id', '')))
+            elif u.path == '/api/myeffects':
+                # your own magic effects (Create > New magic effect), the game's effects to start from
+                import myeffects
+                self._json(myeffects.read(db))
             elif u.path == '/api/ref/props':
                 # who owns a placed object, its lock, key, trap, uses left, soul
                 import refprops
@@ -913,6 +924,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(link.status())
             elif u.path == '/api/loadorder':
                 self._json(loadorder.read(db))
+            elif u.path == '/api/adopt/candidates':
+                # plugins that could be opened as the mod itself (adopt.py)
+                import adopt
+                self._json(adopt.candidates(db))
             elif u.path == '/api/test':
                 # quest testing: the mod's quests, watched globals and items, and what the game says about them
                 sig = (id(db.project), hash(getattr(db.project, 'last_state', None) or ''))   # (changes on every edit)
@@ -1295,6 +1310,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(save_launch(body))
             if u.path == '/api/openmw/pick':
                 return self._json(pick_openmw())
+            if u.path == '/api/adopt/pick':
+                import adopt
+                return self._json(adopt.pick_file(db))
             # help menu and settings (these work while the game data loads, too)
             if u.path == '/api/settings':
                 r = helpinfo.set_settings(body)
@@ -1454,11 +1472,39 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(assistant.draft(body))
                 except ai.ToolError as e:
                     return self._json({'error': str(e)}, 400)
+            if u.path == '/api/ai/effectlua':
+                # the Lua for a step of one of your own magic effects, from a description (nothing saved)
+                try:
+                    return self._json(assistant.effect_lua(body))
+                except ai.ToolError as e:
+                    return self._json({'error': str(e)}, 400)
             if u.path == '/api/extend/options':
                 # add a room through a wall: the proposed room and its ghost pieces (extend.py; nothing is laid)
                 import extend
                 return self._json(extend.options(db, body['cell'], body.get('ref'), body.get('at'), body.get('w', 3), body.get('h', 3),
                                                  body.get('shift', 0), body.get('name')))
+            if u.path == '/api/extend/sketch':
+                # the furniture the furnish would lay in the ghost room, big pieces only (a scratch place, thrown away)
+                import extend
+                return self._json(extend.sketch(db, body['cell'], body.get('ref'), body.get('at'), body.get('w', 3), body.get('h', 3),
+                                                body.get('shift', 0), body.get('name'), body.get('kind'), body.get('level')))
+            if u.path == '/api/extend/removable':
+                import extend
+                return self._json(extend.removable(db, body['cell'], body.get('room')))
+            if u.path == '/api/extend/edges':
+                # Extend mode: every open face of every building piece of the place (adjacency.py; nothing is laid)
+                import extend
+                return self._json(extend.edges(db, body['cell']))
+            if u.path == '/api/extend/candidates':
+                # Extend mode: what the game joins to this face of this piece, with ghosts and patterns
+                import extend
+                return self._json(extend.candidates(db, body['cell'], body['ref'], body['side']))
+            if u.path == '/api/extend/run':
+                import extend
+                return self._json(extend.run_ghost(db, body['cell'], body['ref'], body['rel'], body.get('n', 3)))
+            if u.path == '/api/extend/close' and body.get('preview', True):
+                import extend
+                return self._json(extend.close(db, body['cell'], body.get('refs') or [], preview=True))
             if u.path == '/api/fixhere/options':
                 # what the game stands at the joint pointed at (a piece, or a spot on the floor): read-only
                 import fixhere
@@ -1471,6 +1517,12 @@ class Handler(BaseHTTPRequestHandler):
                 # work anymore", with "Checking this place…" in the panel the whole time)
                 import placecheck
                 return self._json(placecheck.check(db, body['cell'], gaps=body.get('gaps', True)))
+            if u.path == '/api/room/score':
+                # how much each room of a place looks like one the game made: a number from 0 to 100 and the
+                # terms behind it (roomscore.py). Read-only, so outside the editing lock like the health check;
+                # fast (no mesh rays) unless asked otherwise; gaps only with fast off
+                import roomscore
+                return self._json(roomscore.score_place(db, body['cell'], fast=body.get('fast', True), gaps=body.get('gaps', False)))
             with edit_lock:
                 if u.path == '/api/ref/relink':
                     r = doors.relink(db, body['cell'], body['ref'], body.get('target'), body.get('at'), bool(body.get('both')))
@@ -1491,6 +1543,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(regions.assign(db, body.get('id') or '', body.get('cells') or []))
                 if u.path == '/api/lev/save':
                     return self._json(levlists.save(db, body.get('id'), body.get('data') or {}, bool(body.get('create'))))
+                if u.path == '/api/myeffects/save':
+                    import myeffects
+                    return self._json(myeffects.save(db, body.get('effect') or {}, body.get('old_id')))
+                if u.path == '/api/myeffects/delete':
+                    import myeffects
+                    return self._json(myeffects.delete(db, body.get('id') or ''))
                 if u.path == '/api/ref/props':
                     import refprops
                     r = refprops.save(db, body['cell'], body['ref'], body.get('data') or {})
@@ -1731,13 +1789,40 @@ class Handler(BaseHTTPRequestHandler):
                     # with everything built on it, unless asked to take back just this one
                     e = (editing.undo_entry if body.get('only') else editing.undo_branch)(db, int(body['id']))
                     return self._json({'ok': True, 'text': e['text'] if e else ''})
+                if u.path == '/api/fold':
+                    # the last n changes become one named Undo step (the object window's Save: the record,
+                    # the spot and the ownership go through their own routes, then fold into one)
+                    e = editing.fold(db, int(body.get('n', 0)), body.get('note') or 'Edited an object')
+                    return self._json({'ok': True, 'depth': editing.undo_depth(db), 'note': e['text'] if e else None})
                 if u.path == '/api/undo':
                     undone = editing.undo(db, body.get('to'))
                     return self._json({'ok': True, 'undone': [editing.note_label(db.project, n) for n in undone],
                                        'depth': editing.undo_depth(db)})
-                if u.path in ('/api/project/new', '/api/project/open'):
+                if u.path in ('/api/project/new', '/api/project/open', '/api/project/adopt'):
                     _end_together()
                     editing.flush(db)       # (the mod being left is written out first)
+                if u.path == '/api/project/saveas':
+                    # the Construction Set's Save As: the changes go into a new .esp or .omwaddon, the active file from now on
+                    import adopt
+                    r = adopt.save_as(db, body.get('name') or '', body.get('ext') or '.esp', bool(body.get('overwrite')))
+                    db.state = 'loading'
+                    db.load_async()         # (the new file is shown from the project; the old name is gone from the content list)
+                    return self._json(r)
+                if u.path == '/api/project/adopt':
+                    # an existing .esp or .omwaddon becomes the mod itself, saved into from now on (adopt.py)
+                    import adopt
+                    r = adopt.adopt(db, body.get('path') or '')
+                    p = r.pop('project')
+                    s = load_settings()
+                    s['project'] = os.path.relpath(p.path, APP_DIR)
+                    save_settings(s)
+                    db.project = p
+                    import background
+                    background.project_path[0] = p.path
+                    db.state = 'loading'
+                    db.load_async()         # (the file comes off the load order and is shown from the project instead)
+                    r['reload'] = True
+                    return self._json(r)
                 if u.path == '/api/project/new':
                     p = Project.create(body.get('name', 'MyMod'), body.get('author', ''), body.get('description', ''))
                     s = load_settings()
@@ -1758,6 +1843,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'ok': True, 'reload': True})
                 if u.path == '/api/project/enable':
                     return self._json(enable_in_cfg())
+                if u.path == '/api/mods/show':
+                    # Explorer at a mod's plugin file (My mod > Show folder, and each row of Your mods)
+                    import modfiles
+                    return self._json(modfiles.show(db, body.get('name')))
+                if u.path == '/api/mods/delete':
+                    # a mod you no longer want: to the Recycle Bin, and out of the load order
+                    import modfiles
+                    return self._json(modfiles.delete(db, body.get('name') or '', bool(body.get('plugin_too', True))))
                 if u.path == '/api/play':
                     editing.flush(db)
                     return self._json(play(body))
@@ -1765,6 +1858,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'i': editing.edit_record(db, int(body['i']), body['changes'])})
                 if u.path == '/api/duplicate':
                     return self._json({'i': editing.duplicate_record(db, int(body['i']), body['id'])})
+                if u.path == '/api/contents':
+                    # a container's contents, edited in its window over the 3D view (objwin.js)
+                    return self._json({'i': editing.set_contents(db, int(body['i']), body.get('items') or [])})
                 if u.path == '/api/revert':
                     return self._json({'i': editing.revert_record(db, int(body['i']))})
                 if u.path == '/api/ref/move':
@@ -1796,6 +1892,20 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(extend.apply(db, body['cell'], body.get('ref'), body.get('at'), body.get('w', 3), body.get('h', 3),
                                                    body.get('shift', 0), body.get('name'), body.get('furnish', True) is not False,
                                                    body.get('level'), body.get('purpose')))
+                if u.path == '/api/extend/remove':
+                    # a room of the plan taken out: its pieces and things go, the wall closes again, one change
+                    import extend
+                    return self._json(extend.remove(db, body['cell'], body.get('room')))
+                if u.path == '/api/extend/lay':
+                    # Extend mode: pieces laid as one undo step (each click one step; Esc folds them)
+                    import extend
+                    return self._json(extend.lay(db, body['cell'], body.get('items') or [], body.get('label')))
+                if u.path == '/api/extend/fold':
+                    import extend
+                    return self._json(extend.fold(db, body.get('n', 0), body.get('note') or 'Extended the place'))
+                if u.path == '/api/extend/close':
+                    import extend
+                    return self._json(extend.close(db, body['cell'], body.get('refs') or [], preview=False))
                 if u.path == '/api/fixhere/apply':
                     # Fix here: the game's answer at one joint laid as one change, or at every joint of the
                     # place in the same situation (fixhere.py)
@@ -1959,6 +2069,61 @@ def free_port(preferred=8763):
 RUNNING_FILE = os.path.join(APP_DIR, 'workshop_running.json')
 SERVER = None
 
+# ---- requests that take long: what the Workshop was doing, written down (2026-10-23: the user's Workshop
+# stopped answering for two minutes, the clicks made meanwhile all ran at once when it caught up, and the log
+# said nothing). Every request is timed; one still running after STALL_S seconds gets every thread's stack
+# written to stalls.log beside the Workshop, once, and the pages ask /api/busy what is holding things up.
+STALL_S = 20
+INFLIGHT = {}                       # thread id -> (what, when it started)
+STALLS_FILE = os.path.join(APP_DIR, 'stalls.log')
+
+
+def _timed(fn):
+    def run(self):
+        k = threading.get_ident()
+        INFLIGHT[k] = ('%s %s' % (self.command, self.path.split('?')[0]), time.time())
+        try:
+            return fn(self)
+        finally:
+            INFLIGHT.pop(k, None)
+    return run
+
+
+Handler.do_GET = _timed(Handler.do_GET)
+Handler.do_POST = _timed(Handler.do_POST)
+
+
+def busy():
+    """What the Workshop is in the middle of: [{what, seconds}] of requests running over 2 s, longest first."""
+    now = time.time()
+    return sorted(({'what': w, 'seconds': round(now - t)} for w, t in list(INFLIGHT.values())
+                   if now - t > 2 and not w.endswith('/api/busy')), key=lambda x: -x['seconds'])
+
+
+def _stall_watch():
+    import faulthandler
+    told = set()
+    while True:
+        time.sleep(5)
+        now = time.time()
+        for k, (what, t0) in list(INFLIGHT.items()):
+            if now - t0 < STALL_S or (k, t0) in told:
+                continue
+            told.add((k, t0))
+            try:
+                if os.path.isfile(STALLS_FILE) and os.path.getsize(STALLS_FILE) > 2_000_000:
+                    os.replace(STALLS_FILE, STALLS_FILE + '.old')
+                with open(STALLS_FILE, 'a', encoding='utf-8') as f:
+                    f.write('\n==== %s: %s still running after %d s (%d requests in flight: %s)\n' % (
+                        time.strftime('%Y-%m-%d %H:%M:%S'), what, now - t0, len(INFLIGHT),
+                        '; '.join('%s %ds' % (w, now - s) for w, s in list(INFLIGHT.values()))))
+                    f.flush()
+                    faulthandler.dump_traceback(file=f, all_threads=True)
+                print('A request is taking long (%s, %d s): what the Workshop was doing is in stalls.log' % (what, now - t0))
+            except Exception as e:
+                print('stall watch:', e)
+        told = {x for x in told if x[0] in INFLIGHT}
+
 
 def _forget_running():
     try:
@@ -1983,6 +2148,7 @@ def main():
     global SERVER
     port = free_port()
     server = SERVER = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    threading.Thread(target=_stall_watch, name='stall-watch', daemon=True).start()
     url = 'http://127.0.0.1:%d/' % port
     # so the launcher can find a Workshop that is already running instead of starting another
     try:

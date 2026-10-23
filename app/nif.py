@@ -13,7 +13,7 @@ NODE_TYPES = {b'NiNode', b'NiBSAnimationNode', b'NiBSParticleNode', b'NiBillboar
 GEOM_TYPES = {b'NiTriShape', b'NiTriStrips'}
 SKIP_SUBTREES = {b'RootCollisionNode', b'AvoidNode'}
 
-CACHE_VERSION = 3      # 3: the root node's transform ignored, as the game does
+CACHE_VERSION = 4      # 3: the root node's transform ignored, as the game does; 4: a type name as extra-data text
 _IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 
@@ -33,7 +33,16 @@ def _blocks(data):
         if len(name) != L or not name.isalpha():
             continue
         if p == last_end:
-            continue          # this is the object's own name right after its type, not a new block
+            # Usually this is the object's own name right after its type, not a new block. But a
+            # NiStringExtraData whose text is itself a type name ("NiTriShape", in Tamriel Rebuilt's
+            # tr_a_histcuirass.nif) is followed by the real block: then the earlier match was that text
+            # (an extra data's string sits after its next-ref and a "bytes remaining" of 4 + its length).
+            prev_start = found[-1][2]
+            if (len(found) >= 2 and found[-2][0] == b'NiStringExtraData' and found[-2][1] + 8 == prev_start
+                    and struct.unpack_from('<I', data, prev_start - 4)[0] == 4 + data[prev_start]):
+                found[-1] = (name, p + 4 + L, p)
+                last_end = p + 4 + L
+            continue
         found.append((name, p + 4 + L, p))
         last_end = p + 4 + L
     if len(found) != n or found[0][2] != pos:

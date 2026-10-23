@@ -36,7 +36,8 @@ TRADE_HINTS = (
     (r'fighter|guard|warrior|legion|soldier|knight|mercenar|champion|redoran', {'band': 'modest', 'extras': ('rack',), 'theme': 'guild'}),
     (r'thie|thieves|rogue|agent|assassin|morag|camonna|smuggler', {'band': 'modest', 'extras': (), 'theme': 'house'}),
     (r'noble|lord|lady|councilor|councillor|hlaalu|telvanni|king|duke|patrician', {'band': 'exquisite', 'extras': ('bookshelf',), 'theme': 'manor'}),
-    (r'scholar|scribe|bookseller|savant|archivist|librarian', {'band': 'comfortable', 'extras': ('bookshelf',), 'theme': 'house'}),
+    (r'painter|artist|sculptor|illuminator', {'band': 'comfortable', 'extras': ('easel',), 'theme': 'house'}),     # (the painter's corner, laid whole: scenesurvey)
+    (r'scholar|scribe|bookseller|savant|archivist|librarian|clerk|notary', {'band': 'comfortable', 'extras': ('bookshelf', 'desk'), 'theme': 'house'}),
     (r'trader|merchant|pawn|clothier|outfitter|publican|innkeep|shopkeep|caravan', {'band': 'comfortable', 'extras': ('counter',), 'theme': 'shop'}),
     (r'farmer|miner|labou?rer|fisher|hunter|herder|slave|pauper|beggar|commoner|servant|drillmaster|shipmaster|sailor', {'band': 'poor', 'extras': (), 'theme': 'house'}),
     (r'ashland|wise woman|gulakhan|nomad', {'band': 'poor', 'extras': ('shrine',), 'theme': 'house'}),
@@ -64,6 +65,66 @@ def set_tier(rid):
         if t in TIER_TOKEN:
             return TIER_TOKEN[t]
     return None
+
+
+# ------------------------------------------------------------------ Project Tamriel's interior rules
+# (packaging/nexus/pt-interior-guidelines.md): the makes are never mixed in a room (Dunmer with Imperial,
+# poor with rich), a province's containers stay in their province, and tableware says the household's class
+CULTURE_PREFIX = (('dunmer', ('furn_de_', 't_de_furn', 'furn_banner', 'furn_tapestry')),
+                  ('imperial', ('furn_com_', 'furn_c_', 'furn_imp', 't_imp_furn', 't_com_furn')),
+                  ('nordic', ('furn_nord', 't_nor_furn', 't_sky_furn')))
+PROVINCE_PREFIX = (('Morrowind', 't_mw_'), ('Cyrodiil', 't_cyr_'), ('Skyrim', 't_sky_'), ('High Rock', 't_bre_'), ('Hammerfell', 't_rga_'))
+# tableware: the thing's class from its ID, first match wins (0 lower, 1 middle, 2 upper, 3 very rich,
+# 4 never without leave); the Morrowind sets by name, the other provinces' by their materials
+TABLEWARE = re.compile(r'bowl|plate|platter|cup(?!board)|goblet|tankard|pitcher|mug|tray|dish|jug|fork|knife|spoon|ware')
+WARE_CLASS = ((4, re.compile(r'ebony|adamant|lustre')),
+              (3, re.compile(r'(^|_)lw_|limeware|purple|fineglass|glass_fine|gold|amber|ancra|gilded')),
+              (2, re.compile(r'blue|silver|lacquer|redwood|marble|ivory|finewood|ironwood|porcelain|onyx|jade')),
+              # (goblets: upper class by Project Tamriel's table, but the game's own poor homes hold them in
+              # one place in seven, so they count as middle here)
+              (1, re.compile(r'goblet|green|yellow|peach|plate|bronze|carved|pewter|copper|black|glass|ceramic|decor')),
+              (0, re.compile(r'wood|clay|stone|redware|orange|tankard|terracotta|earthen|cord|basket|palm|drake')))
+BAND_RANK = {'poor': 0, 'modest': 0, 'comfortable': 1, 'rich': 2, 'exquisite': 3}
+
+
+def culture_of(rid):
+    """'dunmer', 'imperial' or 'nordic' for a piece of a furniture set, from its ID; None otherwise."""
+    low = rid.lower()
+    for cul, prefixes in CULTURE_PREFIX:
+        if low.startswith(prefixes):
+            return cul
+    return None
+
+
+def province_of(rid):
+    """The province a Tamriel Data thing belongs to, by its ID prefix; None for the game's own."""
+    low = rid.lower()
+    for prov, pre in PROVINCE_PREFIX:
+        if low.startswith(pre):
+            return prov
+    return None
+
+
+def ware_class(rid):
+    """The class of a piece of tableware (0 lower … 3 very rich, 4 never without leave), or None when
+    the ID is not tableware or says nothing of its make."""
+    low = rid.lower()
+    if not TABLEWARE.search(low):
+        return None
+    for rank, rx in WARE_CLASS:
+        if rx.search(low):
+            return rank
+    return None
+
+
+def ware_over(band, rank):
+    """How many classes above the band's this tableware is (0 when it suits; a lower-class piece in a
+    rich house is never faulted: a poor house may hold a piece or two of better, a rich one plain)."""
+    if rank is None:
+        return 0
+    if rank >= 4:
+        return 9
+    return max(0, rank - (BAND_RANK.get(band, 1) + 1))
 
 
 def set_name(rid):

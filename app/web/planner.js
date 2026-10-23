@@ -167,9 +167,9 @@ function plFix(){
   P.stairs = (P.stairs || []).filter(s => { const a = plRoom(s.lo), b = plRoom(s.hi); return a && b && b.floor === a.floor + 1; });
   // stairs put by hand, and "beside the rooms": only between two floors that both have rooms
   const has = f => P.rooms.some(r => r.floor === f);
-  for (const k of ['stairPins', 'stairOut']){ P[k] = P[k] || {}; for (const f of Object.keys(P[k])) if (!has(+f) || !has(+f + 1)) delete P[k][f]; }
+  for (const k of ['stairPins', 'stairOut', 'stairWas']){ P[k] = P[k] || {}; for (const f of Object.keys(P[k])) if (!has(+f) || !has(+f + 1)) delete P[k][f]; }
   // one stairwell: a single spot for every floor's stairs, kept as the pin of the lowest pair of floors
-  // (the flights above stand over it, each turned back on the one below)
+  // (the flights above stand over it facing the same way, or carry on from its head in a line)
   if (P.stairwell){
     const low = plStairLow();
     if (low != null){
@@ -208,10 +208,14 @@ function plStairsOut(N){
   for (const s of P.stairs || []){ const a = plRoom(s.lo); if (a) at(a.floor).rooms = [N[s.lo], N[s.hi]]; }
   for (const [f, p] of Object.entries(P.stairPins || {})) at(+f).at = {x: p.x, y: p.y, up: p.up};
   for (const [f, v] of Object.entries(P.stairOut || {})) if (v) at(+f).outside = true;
+  // (stairs nobody put by hand stay near where the plan showed them last, rather than jumping about
+  // whenever a room changes)
+  for (const [f, p] of Object.entries(P.stairWas || {})) if (!(P.stairPins || {})[f]) at(+f).near = {x: p.x, y: p.y, up: p.up};
   if (P.stairwell){
-    // one stairwell: every flight stands over the one below (the Workshop stacks them)
+    // one stairwell: every flight stands over the one below, the same way up (the Workshop stacks them),
+    // or "in a line": each flight carries on from the head of the one below
     const has = f => P.rooms.some(r => r.floor === f);
-    for (const f of new Set(P.rooms.map(r => r.floor))) if (has(f + 1)) at(f).stack = true;
+    for (const f of new Set(P.rooms.map(r => r.floor))) if (has(f + 1)) at(f).stack = P.stairRun ? 'line' : true;
   }
   return Object.values(by);
 }
@@ -248,8 +252,14 @@ function plStairsShown(){
   if (live != null){
     const p = PL.placing ? PL.placing : P.stairPins[live];
     if (p && p.x != null){
-      const fl = well ? [...floors].filter(f => floors.has(f + 1)) : [live];
-      for (const f of fl) out.push({floor: f, tiles: plPinTiles(p, PL.stLen[f] || PL.stLen[live] || 2), up: p.up, pinned: true, ghost: true});
+      const fl = well ? [...floors].filter(f => floors.has(f + 1)).sort((a, b) => a - b) : [live];
+      // (in a line: each floor's flight starts a tile past the head of the one below)
+      let q = {x: p.x, y: p.y, up: p.up};
+      for (const f of fl){
+        const len = PL.stLen[f] || PL.stLen[live] || 2;
+        out.push({floor: f, tiles: plPinTiles(q, len), up: p.up, pinned: true, ghost: true});
+        if (well && P.stairRun){ const d = PL_STEP[p.up]; q = {x: q.x + d[0] * (len + 1), y: q.y + d[1] * (len + 1), up: p.up}; }
+      }
     }
   }
   return out;
@@ -275,6 +285,10 @@ function plAsk(){
     // choice, so the stairs jumped away after every drop); the Workshop's spot is kept as a suggestion,
     // drawn faintly, with a button in the panel to take it
     const P = plData(); PL.suggest = {};
+    // (where the Workshop has the stairs nobody put by hand: they stay about there next time)
+    if (PL.res && PL.res.stairs) P.stairWas = {};
+    for (const s of (PL.res && PL.res.stairs) || []) if (!(P.stairPins || {})[s.floor] && !s.stacked && s.tiles.length)
+      P.stairWas[s.floor] = {x: s.tiles[0][0], y: s.tiles[0][1], up: s.up};
     for (const s of (PL.res && PL.res.stairs) || []) if (s.moved && P.stairPins && P.stairPins[s.floor]){
       PL.suggest[s.floor] = {tiles: s.tiles.map(t => [t[0], t[1]]), up: s.up, note: s.note || ''};
     }
@@ -794,18 +808,20 @@ function plSide(){
       if (well && f !== low){
         pairs.push(`<div style="${picked ? 'border:1px solid var(--goldline);border-radius:8px;padding:6px;margin:6px -6px;background:#f0cd870d' : ''}">
           <div class="row"><span style="min-width:100%">Stairs from the ${esc(plFloorName(f).toLowerCase())} up</span></div>
-          <div class="tip">⇅ Over the stairs below, in the same stairwell, turned back on them. Drag any flight to move them all; ↻ turns them all.</div></div>`);
+          <div class="tip">${P.stairRun ? '⇈ On from the top of the stairs below, in one long run.' : '⇅ Over the stairs below, in the same stairwell, facing the same way.'} Drag any flight to move them all; ↻ turns them all.</div></div>`);
         continue;
       }
       pairs.push(`<div style="${picked ? 'border:1px solid var(--goldline);border-radius:8px;padding:6px;margin:6px -6px;background:#f0cd870d' : ''}">
         <div class="row" style="flex-wrap:wrap"><span style="min-width:100%">${linked ? (f < 0 ? 'Trapdoor down to the ' + esc(plFloorName(f).toLowerCase()) : 'Door up from the ' + esc(plFloorName(f).toLowerCase())) : 'Stairs from the ' + esc(plFloorName(f).toLowerCase()) + ' up' + (well ? ' (and the stairwell above)' : '')}</span></div>
-        ${linked ? '' : pin ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">📌 Where you put them. Drag to move, <b>R</b> turns.</span><button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R)">↻ Turn</button><button class="btn sm" data-stfree="${f}" title="Let the Workshop choose where they go again (Delete)">Unpin</button></div>${PL.suggest && PL.suggest[f] ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">They don't quite fit there; the faint outline on the plan is where they would. Built as they are, the Workshop stands them at that spot.</span><button class="btn sm" data-stsuggest="${f}" title="Move the stairs to the spot the Workshop found">↪ Use that spot</button></div>` : ''}`
-          : `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">Where they fit best. Drag to move, <b>R</b> turns.</span>${shown ? `<button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R); they then stay where they are">↻ Turn</button>` : ''}</div>`}
+        ${linked ? '' : pin ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">📌 Where you put them. Drag to move, <b>R</b> turns.</span><button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R)">↻ Turn</button><button class="btn sm" data-stfree="${f}" title="Forget where you put them: the Workshop finds the best spot again, and may move them (Delete)">Let the Workshop choose</button></div>${PL.suggest && PL.suggest[f] ? `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">They don't quite fit there; the faint outline on the plan is where they would. Built as they are, the Workshop stands them at that spot.</span><button class="btn sm" data-stsuggest="${f}" title="Move the stairs to the spot the Workshop found">↪ Use that spot</button></div>` : ''}`
+          : `<div class="row" style="flex-wrap:wrap"><span style="min-width:0;color:var(--muted-b)">Where they fit best; they stay about there while you change the rooms. Drag to move, <b>R</b> turns.</span>${shown ? `<button class="btn sm" data-stturn="${f}" title="A quarter turn, about the bottom step (R); they then stay where they are">↻ Turn</button><button class="btn sm" data-stkeep="${f}" title="Pin them where they are now, so nothing you change moves them">📌 Keep here</button>` : ''}<button class="btn sm" data-stplace="${f}" title="The stairs follow the mouse; click where the bottom step goes (R turns them first)">✥ Place by hand</button></div>`}
       </div>`);
     }
     // three floors or more: one stairwell carrying through, or stairs wherever they fit on each floor
     const wellChoice = floors.filter(f => floors.includes(f + 1)).length >= 2 && !(PL.res && PL.res.linked)
-      ? `<label class="tip" style="display:flex;gap:6px;align-items:flex-start;margin:6px 0 2px"><input type="checkbox" data-stwell ${P.stairwell ? 'checked' : ''}><span><b>One stairwell</b>: every floor's stairs in the same spot, each flight over the one below and turned back on it, like a tower's. Drag any flight to move them all.</span></label>` : '';
+      ? `<label class="tip" style="display:flex;gap:6px;align-items:flex-start;margin:6px 0 2px"><input type="checkbox" data-stwell ${P.stairwell ? 'checked' : ''}><span><b>One stairwell</b>: every floor's stairs together. Drag any flight to move them all.</span></label>${P.stairwell ? `
+        <label class="tip" style="display:flex;gap:6px;align-items:flex-start;margin:2px 0 2px 22px"><input type="radio" name="pl-strun" value="stack" ${P.stairRun ? '' : 'checked'}><span><b>Stacked</b>: each flight over the one below, all facing the same way; you walk round the landing to the next.</span></label>
+        <label class="tip" style="display:flex;gap:6px;align-items:flex-start;margin:2px 0 4px 22px"><input type="radio" name="pl-strun" value="line" ${P.stairRun ? 'checked' : ''}><span><b>In a line</b>: one long climb, each flight starting just past the top of the last, with a way off at every floor. The rooms need to reach along the whole run.</span></label>` : ''}` : '';
     // (the how-to folds away once the plan has rooms; it stays a click away)
     const howto = `<details class="tip" ${P.rooms.length > 1 ? '' : 'open'} style="margin-bottom:6px"><summary style="cursor:pointer;color:var(--text-b)">How the planner works</summary>
       <b>Drag</b> a room to move it, its <b>corners or side tabs</b> to resize it.<br>
@@ -821,6 +837,7 @@ function plSide(){
     plBindFloors(box);
     box.querySelectorAll('[name=pl-join]').forEach(r => r.onchange = () => { plSnap(); P.join = r.value; PL.resKey = null; plChanged(); });
     box.querySelectorAll('[data-stwell]').forEach(c => c.onchange = () => { plSnap(); P.stairwell = c.checked; PL.resKey = null; plChanged(); });
+    box.querySelectorAll('[name=pl-strun]').forEach(r => r.onchange = () => { plSnap(); P.stairRun = r.value === 'line'; PL.resKey = null; plChanged(); });
     box.querySelectorAll('[data-stturn]').forEach(b => b.onclick = () => plTurnStair(+b.dataset.stturn));
     box.querySelectorAll('[data-stair]').forEach(s => s.onchange = () => {
       plSnap(); const f = +s.dataset.stair;
@@ -830,7 +847,11 @@ function plSide(){
       if (s.value && s.value !== 'out'){ const [lo, hi] = s.value.split('|'); P.stairs.push({lo, hi}); }
       plChanged();
     });
-    box.querySelectorAll('[data-stfree]').forEach(b => b.onclick = () => { plSnap(); delete P.stairPins[plPinFloor(+b.dataset.stfree)]; plChanged(); });
+    box.querySelectorAll('[data-stfree]').forEach(b => b.onclick = () => {
+      // (forgotten too: where they were last, so the Workshop looks afresh rather than leaving them there)
+      const f = plPinFloor(+b.dataset.stfree); plSnap(); delete P.stairPins[f]; if (P.stairWas) delete P.stairWas[f]; plChanged();
+      toast('The Workshop is choosing where the stairs go; if they stay put, that spot was already its best.');
+    });
     box.querySelectorAll('[data-stsuggest]').forEach(b => b.onclick = () => {
       const f = +b.dataset.stsuggest, sg = PL.suggest && PL.suggest[f]; if (!sg) return;
       plSnap(); P.stairPins[f] = {x: sg.tiles[0][0], y: sg.tiles[0][1], up: sg.up}; P.stairSrc = f; PL.selStair = f; plChanged();
@@ -1179,7 +1200,7 @@ function plBind(){
         P.stairPins[f] = {...pin, x: pin.x + (k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0), y: pin.y + (k === 'ArrowUp' ? 1 : k === 'ArrowDown' ? -1 : 0)};
         P.stairSrc = f; plChanged(); return;
       }
-      if ((k === 'Delete' || k === 'Backspace') && P.stairPins[f]){ e.preventDefault(); plSnap(); delete P.stairPins[f]; plChanged(); return; }
+      if ((k === 'Delete' || k === 'Backspace') && P.stairPins[f]){ e.preventDefault(); plSnap(); delete P.stairPins[f]; if (P.stairWas) delete P.stairWas[f]; plChanged(); return; }
       if (k === 'Escape'){ PL.selStair = null; plRender(); plSide(); return; }
     }
     if (!r) return;

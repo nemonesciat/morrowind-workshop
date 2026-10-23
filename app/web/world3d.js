@@ -150,7 +150,7 @@ function v3Reset(){
     V3.hemi.intensity = 0.8; V3.sun.intensity = 0.75; V3.amb.intensity = 0.15;
   } else {
     V3.origin = [W.cam.x, W.cam.y, 0];
-    V3.scene.background = new T.Color(0x0d0c0a);
+    V3.scene.background = new T.Color(typeof thView3d === 'function' ? thView3d() : 0x0d0c0a);
     V3.scene.fog = null;
     V3.hemi.intensity = 0.75; V3.sun.intensity = 0.35; V3.amb.intensity = 0.45;
   }
@@ -244,7 +244,7 @@ function v3ApplyLighting(){
   if (!W.ext && V3.fall){ V3.scene.remove(V3.fall); V3.fall = null; }      // no rain indoors
   if (W.ext || !L || !game){
     // outdoors, or bright editing light: what the view always used
-    if (!W.ext){ V3.scene.background = new T.Color(0x0d0c0a); V3.scene.fog = null; V3.hemi.intensity = 0.75; V3.sun.intensity = 0.35; V3.amb.intensity = 0.45;
+    if (!W.ext){ V3.scene.background = new T.Color(typeof thView3d === 'function' ? thView3d() : 0x0d0c0a); V3.scene.fog = null; V3.hemi.intensity = 0.75; V3.sun.intensity = 0.35; V3.amb.intensity = 0.45;
       V3.amb.color.set(0xffffff); V3.sun.color.set(0xfff0d8); V3.hemi.color.set(0xfff4e0); }
     v3PointLights(W.ext && game ? 0.6 : 0);
     if (W.ext) v3ApplyWeather();
@@ -1350,7 +1350,12 @@ function v3Bind(el){
     }
     V3.pos.addScaledVector(v3Dir(), (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 600 : 160));
   }, {passive: false});
-  el.addEventListener('dblclick', () => { if (W.sel){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); } });
+  // double-click an object: its window (objwin.js); on nothing: look at what's selected
+  el.addEventListener('dblclick', e => {
+    const h = W.mode ? null : v3Pick(e, false);
+    if (h && h.obj && typeof owOpen === 'function'){ owOpen(h.obj.ck, h.obj.k); return; }
+    if (W.sel){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); }
+  });
   el.addEventListener('mousemove', e => v3Hover(e));
   el.addEventListener('mouseleave', () => { $('#maptip').style.display = 'none'; });
   // dropping things from the sidebar
@@ -1372,7 +1377,7 @@ function v3Bind(el){
   });
   window.addEventListener('keydown', e => {
     if (!V3.on || !$('#world').classList.contains('on') || v3Typing(e)) return;
-    const k = e.key.toLowerCase(), mv = v3MoveKey(e);
+    const k = (e.key || '').toLowerCase(), mv = v3MoveKey(e);
     if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){ V3.keys[mv] = true; e.preventDefault(); }
     if (e.key === 'Shift') V3.keys.shift = true;
     if (e.key === 'Escape') V3.keys = {};
@@ -1385,7 +1390,7 @@ function v3Bind(el){
   // letting go of a key always stops it (heard first, before anything else can swallow it)
   window.addEventListener('keyup', e => {
     const mv = v3MoveKey(e); if (mv) V3.keys[mv] = false;
-    const k = e.key.toLowerCase(); if (k.length === 1 && V3.keys[k]) V3.keys[k] = false;
+    const k = (e.key || '').toLowerCase(); if (k.length === 1 && V3.keys[k]) V3.keys[k] = false;     // (a key event with no name: a controller's)
     if (e.key === 'Shift') V3.keys.shift = false;
     if (e.key === 'Meta' || e.key === 'OS') V3.keys = {};   // (the Windows key: the Start menu eats the rest)
   }, true);
@@ -1428,6 +1433,8 @@ function v3Pick(e, any, skipKey){
 }
 
 function v3Click(e){
+  // (Extend mode: a click on an open edge's strip picks it; fixhere/extend.js)
+  if (typeof extendPick3D === 'function' && extendPick3D(e, true)) return;
   if (W.mode === 'arrive'){
     const h = v3Pick(e, true);
     if (!h || !h.world) return toast('Click on the floor or ground where the player should arrive.', true);
@@ -1508,6 +1515,7 @@ function v3Hover(e){
     v3BrushRing(v3Brush(e)); $('#maptip').style.display = 'none'; return;
   }
   const now = performance.now(); if (now - (V3.hoverT || 0) < 60) return; V3.hoverT = now;
+  if (typeof extendPick3D === 'function' && extendPick3D(e, false)) return;
   const h = v3Pick(e, true), tip = $('#maptip');
   if (h && h.obj){
     const r = h.obj.r, b = $('#v3wrap').getBoundingClientRect();
@@ -1673,7 +1681,8 @@ function v3Tools(){
     <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt</label>
     <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label>
     <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button></div>
-    <div class="v3grp" data-grp="look">${grip}${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
+    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new in a window over the view: a place, a person, a container, an item, a note, a spell, a list (right-click a spot for Create here)">✚ Create</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
+    ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Extend: build out piece by piece from the open edges of the place, with what the game joins there">⬚ Extend</button>` : ''}
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Showing light as in game (lamps, candles, fog). Click for bright, even light for editing.' : 'Showing bright, even light for editing. Click to see it as in game.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
     <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, cell borders, wireframe, what to show, and how far you can see">👁 View ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
@@ -1696,6 +1705,7 @@ function v3Tools(){
     if (a === 'translate' || a === 'rotate'){ V3.mode = a; v3ApplyMode(); v3Tools(); }
     else if (a === 'floor') v3DropToFloor();
     else if (a === 'land') v3LandToggle(!V3.landOpen);
+    else if (a === 'extend' && typeof extendMode === 'function') extendMode(!EXM.on, W.key);
     else if (a === 'light'){ V3.lightMode = v3LightMode() === 'game' ? 'bright' : 'game'; try { localStorage.setItem('ws-light', V3.lightMode); } catch (e) {} v3ApplyLighting(); v3Tools(); }
     else if (a === 'home') v3Home();
     else if (a === 'help') $('#v3help').style.display = $('#v3help').style.display === 'none' ? 'block' : 'none';

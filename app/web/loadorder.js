@@ -54,15 +54,15 @@ function loRender(){
         ${r.masters && r.masters.length ? `<div style="font-size:11.5px;color:var(--faint)">needs: ${r.masters.map(esc).join(', ')}</div>` : ''}</td>
       <td style="color:var(--muted);font-size:12.5px;max-width:380px">${esc(desc).slice(0, 260)}</td>
       <td class="num">${st && !lua ? fmtN(st.new) : ''}</td><td class="num">${st && !lua ? fmtN(st.overrides) : ''}</td>
-      <td style="white-space:nowrap"><button class="btn sm" data-lomove="${n},-1" ${n ? '' : 'disabled'} title="Load earlier">↑</button><button class="btn sm" data-lomove="${n},1" ${n < LO.order.length - 1 ? '' : 'disabled'} title="Load later">↓</button></td></tr>`;
+      <td style="white-space:nowrap"><button class="btn sm" data-lomove="${n},-1" ${n ? '' : 'disabled'} title="Load earlier">↑</button><button class="btn sm" data-lomove="${n},1" ${n < LO.order.length - 1 ? '' : 'disabled'} title="Load later">↓</button>${loMenuBtn(r, pi)}</td></tr>`;
   });
   h += `</table>`;
   if (LO.off.length){
     h += `<h3 style="margin-top:22px">Installed but switched off</h3><div class="msg" style="margin-bottom:6px">In your data folders, but not in the load order. Tick one to add it at the bottom.</div>
       <table class="t lot">${LO.off.map(name => {
         const r = loRow(name);
-        return `<tr><td style="width:30px"><input type="checkbox" data-lotoggle="${esc(name)}" title="Switch on"></td><td>${esc(r.name)}${r.kind === 'omwscripts' ? ' <span class="chip">Lua scripts</span>' : ''}
-          ${r.masters && r.masters.length ? `<div style="font-size:11.5px;color:var(--faint)">needs: ${r.masters.map(esc).join(', ')}</div>` : ''}</td><td class="msg" style="font-size:12px">${esc(r.folder || '')}</td></tr>`;
+        return `<tr><td style="width:30px"><input type="checkbox" data-lotoggle="${esc(name)}" title="Switch on"></td><td>${esc(r.name)}${r.kind === 'omwscripts' ? ' <span class="chip">Lua scripts</span>' : ''}${r.mine ? ' <span class="chip" style="color:var(--gold2)">your mod</span>' : ''}
+          ${r.masters && r.masters.length ? `<div style="font-size:11.5px;color:var(--faint)">needs: ${r.masters.map(esc).join(', ')}</div>` : ''}</td><td class="msg" style="font-size:12px">${esc(r.folder || '')}</td><td style="width:40px;text-align:right">${loMenuBtn(r, -1)}</td></tr>`;
       }).join('')}</table>`;
   }
   box.innerHTML = h;
@@ -73,6 +73,26 @@ function loRender(){
     LO.order = r.sorted; loChanged();
   };
 }
+// the ⋯ menu of a plugin row: open the file as your mod (a .esp or .omwaddon that isn't your mod already;
+// adopt.py), browse what it adds
+function loMenuBtn(r, pi){
+  if (!r.found || !['esp', 'omwaddon'].includes(r.kind) || r.mine) return '';
+  const path = (r.folder || '') + '\\' + r.name;
+  return `<span style="position:relative;display:inline-block"><button class="btn sm" data-lomenu="${esc(r.name)}" title="More…">⋯</button>
+    <div class="omwmenu lomenu" data-lomenu-for="${esc(r.name)}">
+      <button data-loadopt="${esc(path)}"><b>Set as active file (open this ${esc(r.kind === 'esp' ? '.esp' : '.omwaddon')} as your mod)…</b><small>As in the Construction Set: the file itself becomes the mod you work on, and every change is saved back into it.</small></button>
+      ${pi >= 0 ? `<button data-plug="${pi}"><b>Browse what it adds or changes</b></button>` : ''}
+    </div></span>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-lomenu]');
+  document.querySelectorAll('.lomenu').forEach(m => { if (!b || m.dataset.lomenuFor !== b.dataset.lomenu) m.style.display = 'none'; });
+  if (b){
+    const m = document.querySelector(`.lomenu[data-lomenu-for="${CSS.escape(b.dataset.lomenu)}"]`);
+    if (m) m.style.display = m.style.display === 'block' ? 'none' : 'block';
+    e.stopPropagation();
+  }
+});
 function loChanged(){
   LO.dirty = true;
   loRender();
@@ -120,6 +140,8 @@ async function loWaitAdd(){
 }
 // clicks: browse a plugin, switch on/off, move
 $('#pluginwrap').addEventListener('click', e => {
+  const ad = e.target.closest('[data-loadopt]');
+  if (ad){ document.querySelectorAll('.lomenu').forEach(m => m.style.display = 'none'); adoptModal(ad.dataset.loadopt); return; }
   const p = e.target.closest('[data-plug]');
   if (p){ S.plugin = p.dataset.plug; S.types = []; buildSide(); showView('browse'); runSearch(); return; }
   const m = e.target.closest('[data-lomove]');

@@ -6,7 +6,9 @@ async function luMine(){
   const box = $('#s-lua'); if (!box) return;
   if (!S.summary || !S.summary.project){ box.innerHTML = '<div class="msg" style="padding:4px 2px">Start a mod to write Lua scripts.</div>'; return; }
   try { LU.list = await api('/api/lua'); } catch (e){ box.innerHTML = `<div class="msg">${esc(e.message)}</div>`; return; }
-  box.innerHTML = (LU.list.scripts.length ? LU.list.scripts.map(s => `<div class="drow ${LU.name === s.name ? 'on' : ''}" data-luopen="${esc(s.name)}"><span>🌙 ${esc(s.name)}</span>
+  const esp = S.summary.project.plain_esp;        // (a .esp opened as the mod: OpenMW-only things stay out of the file)
+  box.innerHTML = (esp ? `<div class="msg sev-warning" style="padding:4px 2px;line-height:1.5">Your mod is a plain <b>${esc(S.summary.project.plugin)}</b>: Lua scripts (and the script that carries things on a sliding panel) are OpenMW's own and have no place in it. Any you write are kept in the project but not written out or packed.</div>` : '') +
+    (LU.list.scripts.length ? LU.list.scripts.map(s => `<div class="drow ${LU.name === s.name ? 'on' : ''}" data-luopen="${esc(s.name)}"><span>🌙 ${esc(s.name)}</span>
       <small>${s.errors ? `<span style="color:var(--red)">${s.errors} problem${s.errors === 1 ? '' : 's'}</span>` : esc((LU.list.kinds.find(k => k[0] === s.kind) || [0, s.kind])[1])}</small></div>`).join('')
     : '<div class="msg" style="padding:4px 2px">OpenMW Lua scripts can do what MWScript can\'t: new menus, keys, timers, changing the world as you play.</div>') +
     '<button class="btn sm" id="lu-new" style="margin-top:6px">+ New Lua script</button>';

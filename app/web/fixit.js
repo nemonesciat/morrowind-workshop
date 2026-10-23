@@ -31,7 +31,7 @@ function fixitCss(){
   document.head.appendChild(c);
 }
 
-const FX_KIND = {gap: 'Gap', doorway: 'Doorway', ceiling: 'Ceiling', post: 'Post', hole: 'See-through', clip: 'Clips', zfight: 'Flush faces', joint: 'Not the game\'s way'};
+const FX_KIND = {gap: 'Gap', doorway: 'Doorway', ceiling: 'Ceiling', post: 'Post', hole: 'See-through', clip: 'Clips', zfight: 'Flush faces', joint: 'Not the game\'s way', stairend: 'Stair end', sunk: 'Post in a wall', backwall: 'Wall seen from behind'};
 
 async function fixitOpen(cell){
   fixitCss();

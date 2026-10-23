@@ -54,17 +54,49 @@ def maybe_backup(project, force=False, why=''):
     return dst
 
 
+def backup_plugin(project, path, force=False, why=''):
+    """A copy of the plugin file a mod saves straight into (a .esp opened as the mod, adopt.py), taken before
+    the file is written over: at the same cadence as the project backups, into the same folder, the newest
+    `keep` of them kept. Returns the copy's path, or None when it was not time."""
+    keep, minutes = settings()
+    now = time.time()
+    key = 'plugin:' + os.path.normcase(path)
+    if not force and now - _last.get(key, 0) < minutes * 60:
+        return None
+    if not os.path.isfile(path):
+        return None
+    d = _dir_for(project)
+    os.makedirs(d, exist_ok=True)
+    name = time.strftime('%Y-%m-%d %H-%M-%S', time.localtime(now)) + (' ' + why if why else '') + ' ' + os.path.basename(path) + '.bak'
+    dst = os.path.join(d, name)
+    try:
+        shutil.copy2(path, dst)
+    except OSError:
+        return None
+    _last[key] = now
+    files = sorted(f for f in os.listdir(d) if f.endswith('.bak'))
+    for f in files[:-keep]:
+        try:
+            os.remove(os.path.join(d, f))
+        except OSError:
+            pass
+    return dst
+
+
 def listing(project):
     d = _dir_for(project)
-    out = []
+    out, plugins = [], []
     if os.path.isdir(d):
         for f in sorted(os.listdir(d), reverse=True):
-            if not f.endswith('.json'):
-                continue
             p = os.path.join(d, f)
-            out.append({'file': f, 'size': os.path.getsize(p), 'time': os.path.getmtime(p),
-                        'why': f[20:-5].strip()})
-    return {'folder': d, 'backups': out}
+            if f.endswith('.json'):
+                out.append({'file': f, 'size': os.path.getsize(p), 'time': os.path.getmtime(p),
+                            'why': f[20:-5].strip()})
+            elif f.endswith('.bak'):
+                # copies of the plugin file itself (a mod that is a .esp opened as the mod): put one back by hand
+                plugins.append({'file': f, 'size': os.path.getsize(p), 'time': os.path.getmtime(p), 'why': f[20:-4].strip()})
+    return {'folder': d, 'backups': out, 'plugin_backups': plugins,
+            'plugin_backup': getattr(project, 'plugin_backup', None)}
 
 
 def restore(project, file):

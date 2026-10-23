@@ -16,6 +16,7 @@ KINDS = [
     ('CONTAINER', 'Every container', 'Runs on chests, barrels, sacks...'),
     ('DOOR', 'Every door', 'Runs on doors.'),
     ('MENU', 'Main menu', 'Runs in the main menu (settings pages), even before a game is loaded.'),
+    ('LOAD', 'As the game loads', 'Runs once while the game loads its content (OpenMW 0.50 or newer): makes or changes records, such as new magic effects.'),
 ]
 KIND_IDS = [k[0] for k in KINDS]
 

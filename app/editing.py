@@ -21,6 +21,8 @@ class EditError(Exception):
 
 
 def plugin_path(db):
+    if getattr(db.project, 'source', None):
+        return db.project.source          # a plugin opened as the mod: saved straight into that file (adopt.py)
     d = os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or os.path.join(db.config['userdir'], 'data')
     return os.path.join(d, db.project.plugin)
 
@@ -47,7 +49,7 @@ def grass_file(db):
 def lua_content(db):
     """The mod's .omwscripts file name, when it has Lua scripts (it goes in the load order too)."""
     p = db.project
-    if not p or not getattr(p, 'lua', None):
+    if not p or not getattr(p, 'lua', None) or not p.lua_allowed():
         return None
     return p.lua_omwscripts()
 
@@ -241,6 +243,31 @@ def undo(db, to_depth=None):
     return undone
 
 
+def fold(db, n, note):
+    """The last n undo steps become one, named note (Extend mode's pieces laid one by one become "Extended
+    the Hall by 7 pieces"; a room added and furnished becomes one step). The log keeps one entry for the
+    whole, with the diff from before the first to after the last."""
+    _require_project(db)
+    p = db.project
+    stack = getattr(p, 'undo_stack', [])
+    n = min(int(n), len(stack))
+    if n <= 0:
+        return None
+    items = stack[-n:]
+    del stack[-n:]
+    before = items[0][0]
+    ids = {it[2] for it in items if len(it) > 2 and it[2]}
+    p.log[:] = [e for e in p.log if e.get('id') not in ids]
+    after = p.state()
+    entry = p.note(note, state_diff(before, after))
+    stack.append((before, note, entry['id']))
+    p.last_state = after
+    db.sync_project()
+    _write_soon(db)
+    _notify(db)
+    return entry
+
+
 def _set_active(p, entry_id, active, depth=0):
     """Mark a logged change as in effect or undone. An "Undid ..." entry being
     in effect means the changes it reverted are not, and the other way round."""
@@ -359,14 +386,15 @@ def _revert_diff(p, d):
         c = p.cells.get(ck)
         if c is None:
             c = p.cells[ck] = {'flags': cd['meta']['flags'], 'header': cd['meta']['header'], 'refs': {}}
-            if cd['meta'].get('plan'):
-                c['plan'] = cd['meta']['plan']
+            for k in ('plan', 'props'):
+                if k in cd['meta']:
+                    c[k] = cd['meta'][k]
         for rk, (b, _a) in cd['refs'].items():
             if b is None:
                 c['refs'].pop(rk, None)
             else:
                 c['refs'][rk] = b
-        if not c['refs']:
+        if not c['refs'] and not c.get('props'):
             p.cells.pop(ck, None)
 
 
@@ -540,6 +568,37 @@ def duplicate_record(db, i, new_id):
     db.project.set_record(tag, new_id.lower(), flags & ~0x20, join_subs(subs), created=True)
     commit(db, 'Created %s "%s" from template "%s"' % (tag, new_id, r[1]))
     return db.overlay[(tag, new_id.lower())]
+
+
+def set_contents(db, i, items):
+    """A container's contents (its NPCO list), as [{id, count, restock}], in place of what it holds now."""
+    _require_project(db)
+    r = db.recs[i]
+    tag, key, flags = r[0], r[7], r[6]
+    if tag != 'CONT':
+        raise EditError('Only containers keep their contents this way.')
+    _t, _f, data = db.files[r[3]].record_at(r[4])
+    subs, at = [], None
+    for t, d in iter_subrecords(data):
+        if t == 'NPCO':
+            if at is None:
+                at = len(subs)
+            continue
+        subs.append((t, bytes(d)))
+    new = []
+    for it in (items or [])[:200]:
+        iid = (it.get('id') or '').strip()
+        if not iid:
+            continue
+        if db.resolve_id(iid) is None:
+            raise EditError('No item called "%s".' % iid)
+        n = max(1, min(2 ** 31 - 1, int(it.get('count') or 1)))
+        new.append(('NPCO', struct.pack('<i', -n if it.get('restock') else n) + iid.encode(ENC, 'replace')[:31].ljust(32, b'\0')))
+    at = len(subs) if at is None else at
+    subs[at:at] = new
+    db.project.set_record(tag, key, flags, join_subs(subs))
+    commit(db, 'Changed what %s holds (%d kinds of things)' % (r[2] or r[1], len(new)))
+    return db.overlay[(tag, key)]
 
 
 def revert_record(db, i):

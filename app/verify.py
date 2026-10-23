@@ -4,6 +4,7 @@ Only your mod's own records and placed objects are checked (the game's own files
 nothing can be done about them here). Each finding says what is wrong and opens the record. Things
 that point to IDs that don't exist, scripts that won't compile and missing files are checked by
 release.py already; this adds what the CS verifier looks at inside each record."""
+import re
 import struct
 
 from esm import ENC, iter_subrecords, zstr
@@ -11,6 +12,30 @@ from project import ref_info, unb64
 
 NAMED = {'ACTI', 'ALCH', 'APPA', 'ARMO', 'BOOK', 'CLOT', 'CONT', 'CREA', 'DOOR', 'INGR', 'LOCK', 'MISC', 'NPC_',
          'PROB', 'REPA', 'WEAP', 'CLAS', 'FACT', 'RACE', 'BSGN', 'REGN', 'SPEL'}
+
+
+def _mute_panel(key, s):
+    """A sliding panel another object pulls (mechanism.make_slide): it has no script of its own and no
+    name on purpose, so it is not a button in the game's crosshair."""
+    import re
+    return bool(re.search(r'_slide(_\d+)?$', key)) and not zstr(s.get('SCRI', b''))
+
+
+PICKABLE = {'MISC', 'BOOK', 'INGR', 'ALCH', 'WEAP', 'ARMO', 'CLOT', 'APPA', 'LOCK', 'PROB', 'REPA'}
+
+
+def _carried(db, ri):
+    """A light the player can carry (its Carry flag)."""
+    try:
+        _t, _f, data = db.files[db.recs[ri][3]].record_at(db.recs[ri][4])
+        for t, d in iter_subrecords(data):
+            if t == 'LHDT' and len(d) >= 24:
+                return bool(struct.unpack_from('<i', d, 20)[0] & 2)
+    except Exception:
+        pass
+    return False
+
+
 MODELLED = {'ACTI', 'ALCH', 'APPA', 'ARMO', 'BOOK', 'CLOT', 'CONT', 'CREA', 'DOOR', 'INGR', 'LOCK', 'MISC', 'PROB',
             'REPA', 'STAT', 'WEAP', 'BODY'}
 ICONED = {'ALCH', 'APPA', 'ARMO', 'BOOK', 'CLOT', 'INGR', 'LOCK', 'MISC', 'PROB', 'REPA', 'WEAP'}
@@ -60,7 +85,7 @@ def findings(db):
             s.setdefault(t, d)
         label = _label(db, tag, key, subs)
         name = zstr(s.get('FNAM', b''))
-        if tag in NAMED and not name:
+        if tag in NAMED and not name and not (tag == 'ACTI' and _mute_panel(key, s)):
             add('warning' if tag in ('ACTI', 'CONT', 'DOOR', 'STAT') else 'error', tag, key,
                 '%s has no name: it shows up blank in the game.' % label)
         if tag in MODELLED and not zstr(s.get('MODL', b'')):
@@ -197,6 +222,21 @@ def findings(db):
             where = (where['name'] or where['region'] or ck) if where else ck
             if not 0.5 <= scale <= 2.0:
                 add('warning', 'CELL', ck, '"%s" in %s is scaled by %g: the game only allows 0.5 to 2.' % (rid, where, scale), cell=ck)
+            elif abs(scale - 1.0) > 0.001:
+                # Project Tamriel's scaling rules (packaging/nexus/pt-interior-guidelines.md)
+                ri = db.resolve_id(rid)
+                rtag = db.recs[ri][0] if ri is not None else ''
+                low = rid.lower()
+                if rtag in PICKABLE or (rtag == 'LIGH' and _carried(db, ri)):
+                    add('warning', 'CELL', ck, '"%s" in %s is scaled by %g, but can be picked up: the game sets it back to 1 when it is put down.' % (rid, where, scale), cell=ck)
+                elif re.search(r'crate|barrel|vase|chest', low) and rtag in ('CONT', 'STAT', 'ACTI'):
+                    add('info', 'CELL', ck, '"%s" in %s is scaled by %g: crates, barrels, vases and chests come in one size.' % (rid, where, scale), cell=ck)
+                elif 'sack' in low and scale < 0.75:
+                    add('info', 'CELL', ck, '"%s" in %s is scaled by %g: a sack no smaller than 0.75 (there are small sacks).' % (rid, where, scale), cell=ck)
+                elif re.search(r'basket|urn', low) and not 0.9 <= scale <= 1.1 and not (abs(scale - 0.5) < 0.01 and 'urn' in low):
+                    add('info', 'CELL', ck, '"%s" in %s is scaled by %g: baskets and urns between 0.9 and 1.1 (an urn on a tomb altar 0.5).' % (rid, where, scale), cell=ck)
+                elif 'furn' in low and scale < 0.9 and not re.search(r'rug|carpet|planter|plant|flora|tree', low):
+                    add('info', 'CELL', ck, '"%s" in %s is scaled by %g: furniture no smaller than 0.9.' % (rid, where, scale), cell=ck)
             if 'FLTV' in s and len(s['FLTV']) >= 4 and struct.unpack_from('<i', s['FLTV'])[0] > 100:
                 add('warning', 'CELL', ck, '"%s" in %s has a lock over 100, which no lockpick or spell can open.' % (rid, where), cell=ck)
             if 'INDX' in s and 'CNAM' not in s:

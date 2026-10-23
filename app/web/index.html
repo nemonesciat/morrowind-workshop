@@ -363,7 +363,7 @@ details.pal summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:3
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line2);border-top-color:var(--gold);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 /* dialogue */
-#dialog,#chars,#scripts,#lists,#rules{grid-template-columns:290px minmax(0,1fr)}
+#dialog,#chars,#scripts,#lists,#rules,#myeff{grid-template-columns:290px minmax(0,1fr)}
 /* characters */
 .cwrap{max-width:1100px;margin:0 auto}
 .chead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:10px}
@@ -635,6 +635,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
         <button data-help="guide"><b>Getting started</b><small>What the Workshop does and how to make your first mod.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
+        <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶ OpenMW ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶ Undo</button><button class="btn primary" id="aibtn">✦ Assistant</button><span id="projpill" class="proj none">Start a mod</span><span id="stat"></span><button class="btn" id="reload" title="Re-read your openmw.cfg and all plugins">↻ Reload</button></div>
 </header>
 <main>
@@ -664,7 +665,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
         <kbd>Right-drag</kbd> look around · <kbd>W A S D</kbd> fly · <kbd>Q</kbd>/<kbd>E</kbd> down/up · <kbd>Shift</kbd> faster · <kbd>Esc</kbd> stop<br>
         <kbd>Wheel</kbd> forward/back · <kbd>Middle-drag</kbd> slide · <kbd>Alt+drag</kbd> circle the selection<br>
         <kbd>Click</kbd> select · drag the arrows to move, the rings to turn · <kbd>G</kbd> move · <kbd>R</kbd> turn<br>
-        <kbd>F</kbd> or double-click: look at it · <kbd>End</kbd> drop it onto what's below · <kbd>Del</kbd> remove · <kbd>Esc</kbd> deselect<br>
+        <kbd>F</kbd> look at it · double-click: its window (record and placement) · <kbd>End</kbd> drop it onto what's below · <kbd>Del</kbd> remove · <kbd>Esc</kbd> deselect<br>
         <kbd>Drag</kbd> on empty space: select with a box (<kbd>Shift</kbd> adds) · <kbd>Right-click</kbd> a menu · <kbd>H</kbd> hide · <kbd>F1</kbd> where it's used · <kbd>Ctrl+K</kbd> every command<br>
         Drag things from the Place panel into the view to place them where you drop them.<br>
         <b>Snap pieces</b> lines up the edges of walls, floors and other pieces as you move them.<br>
@@ -685,6 +686,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   <div class="view" id="lists"><aside class="dside" id="lside"></aside><main class="dmain" id="lmain"></main></div>
   <div class="view" id="rules"><aside class="dside" id="rside"></aside><main class="dmain" id="rmain"></main></div>
   <div class="view" id="itemed"></div>
+  <div class="view" id="myeff"></div>
   <div class="view" id="scripts"><aside class="dside" id="sside"></aside><main class="dmain" id="smain"></main></div>
   <div class="view" id="mymod"><div class="wrap" id="mymodwrap"></div></div>
   <div class="view" id="release"><div class="wrap" id="relwrap" style="max-width:980px"></div></div>
@@ -729,10 +731,30 @@ function reportClientError(msg, where){
 }
 window.addEventListener('error', e => reportClientError(e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
 window.addEventListener('unhandledrejection', e => reportClientError((e.reason && (e.reason.stack || e.reason.message)) || e.reason, 'promise'));
+// (every message is kept, the last 60, for Help > Recent messages: the user's "I see occasional error messages
+// at the bottom ... but it's too long for me to read in time". A message stays while the mouse is over it,
+// and a problem stays 15 s)
+const TOASTS = [];
 function toast(msg, err){
+  TOASTS.push({t: new Date().toLocaleTimeString(), msg: String(msg), err: !!err}); if (TOASTS.length > 60) TOASTS.shift();
   const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg;
-  t.title = 'Click to dismiss'; t.onclick = () => t.remove();
-  document.body.appendChild(t); setTimeout(() => t.remove(), err ? 6000 : 3200);
+  t.title = 'Click to dismiss · Help > Recent messages keeps it'; t.onclick = () => t.remove();
+  document.body.appendChild(t);
+  let left = err ? 15000 : 4000, hover = false;
+  t.onmouseenter = () => { hover = true; }; t.onmouseleave = () => { hover = false; left = Math.max(left, 1500); };
+  const tick = () => { if (!t.isConnected) return; if (!hover) left -= 250; if (left <= 0) t.remove(); else setTimeout(tick, 250); };
+  setTimeout(tick, 250);
+}
+function recentMessages(){
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(760px,96vw)"><h2>Recent messages</h2>
+    <p class="msg">The messages shown at the bottom since the Workshop's page opened, newest first. Problems in red; they are noted in the Workshop's log too (the tray icon's Show log).</p>
+    <div class="alist" style="max-height:min(60vh,600px);overflow:auto">${TOASTS.slice().reverse().map(x => `<div class="arow" style="padding:6px 8px;gap:10px"><span class="msg at">${esc(x.t)}</span><span class="atext ${x.err ? 'sev-error' : ''}" style="white-space:pre-wrap;user-select:text">${esc(x.msg)}</span></div>`).join('') || '<div class="arow msg">None yet.</div>'}</div>
+    <div class="foot"><button class="btn" id="rm-copy">Copy them</button><button class="btn primary" id="rm-close">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#rm-close').onclick = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+  bg.querySelector('#rm-copy').onclick = () => { try { navigator.clipboard.writeText(TOASTS.map(x => `${x.t} ${x.err ? '[problem] ' : ''}${x.msg}`).join('\n')); toast('Copied.'); } catch (e){} };
 }
 // A box asking for a line of text, in place of window.prompt(): Edge in app mode (the Workshop's own
 // window) never shows prompt(), it just answers null, so "Save plan…" and every "name this" did nothing
@@ -1105,9 +1127,10 @@ function fieldInput(f, idx){
   if (['text', 'html', 'code'].includes(f.kind)) return `<textarea class="inp ${f.kind === 'code' ? 'code' : ''}" data-fi="${idx}">${esc(f.value)}</textarea>`;
   return `<input class="inp" data-fi="${idx}" value="${esc(f.value)}">`;
 }
-function collectEdits(d){
+function collectEdits(d, root){
+  // (root: the Browse page's detail by default; the object window over the map passes itself)
   const ch = [];
-  document.querySelectorAll('#detail [data-fi]').forEach(el => {
+  (root || $('#detail')).querySelectorAll('[data-fi]').forEach(el => {
     const f = d.fields[+el.dataset.fi], e = f.edit;
     let v;
     if (el.dataset.bits){
@@ -1119,7 +1142,7 @@ function collectEdits(d){
     else { v = el.value; if (v === f.value) return; }
     ch.push(Object.assign({}, e, {value: v}));
   });
-  const ta = $('#scriptedit');
+  const ta = (root || $('#detail')).querySelector('#scriptedit');
   if (ta && d.script_edit && ta.value !== d.script) ch.push(Object.assign({}, d.script_edit, {value: ta.value}));
   return ch;
 }
@@ -1199,6 +1222,7 @@ function showView(v){
   if (v === 'scripts') renderScripts();
   if (v === 'release') renderRelease();
   if (v === 'lists') renderLists();
+  if (v === 'myeff') renderMyEffects();
   if (v === 'rules') renderRules();
   if (v === 'itemed'){ renderItemEd(); document.querySelector('nav [data-view="createv"]').classList.add('on'); }
   if (v === 'release') document.querySelector('nav [data-view="mymod"]').classList.add('on');
@@ -1288,31 +1312,78 @@ function renderProjectPill(){
   else { el.className = 'proj'; el.innerHTML = `✎ <b>${esc(p.plugin)}</b> · ${fmtN(p.changes)} change${p.changes === 1 ? '' : 's'}`; el.title = 'Open "My mod"'; }
 }
 $('#projpill').onclick = () => { if (S.summary && S.summary.project) showView('mymod'); else projectModal(); };
+// While a dialog waits for the Workshop: its button off (no second click to queue a second time), its
+// label saying what's happening, and after a few seconds, in the dialog, what the Workshop is busy with.
+// The user's Workshop stopped answering for two minutes and every click made meanwhile ran at once when
+// it caught up (a switch, file pickers in Explorer). Returns the function that puts the button back.
+const BUSY_WHAT = [[/\/api\/build/, 'building a place'], [/\/api\/furnish/, 'furnishing'], [/\/api\/play|\/api\/link/, 'getting the game ready'],
+  [/\/api\/fixit|\/api\/gaps/, 'finding or fixing gaps'], [/\/api\/project/, 'switching mods'], [/\/api\/adopt/, 'looking through your plugins'],
+  [/\/api\/merge/, 'merging a mod'], [/\/api\/check|placecheck/, 'checking a place']];
+function slowWait(btn, note, label){
+  const was = btn ? btn.textContent : '';
+  if (btn){ btn.disabled = true; if (label) btn.textContent = label; }
+  let stop = false;
+  const tick = async () => {
+    if (stop) return;
+    let what = '';
+    try {
+      const ctl = new AbortController(); setTimeout(() => ctl.abort(), 2500);
+      const r = await (await fetch('/api/busy', {signal: ctl.signal})).json();
+      const b = (r.busy || [])[0];
+      if (b){ const m = BUSY_WHAT.find(([re]) => re.test(b.what)); what = `${m ? m[1] : b.what.replace(/^(GET|POST) \/api\//, '')} (${b.seconds} s so far)`; }
+    } catch (e){}
+    if (stop) return;
+    if (note){
+      note.className = 'msg';
+      note.textContent = 'Still waiting for the Workshop' + (what ? ': it is busy ' + what : '') + '. Your click is in and happens as soon as it is free; no need to click again.';
+    }
+    setTimeout(tick, 4000);
+  };
+  setTimeout(tick, 3000);
+  return () => { stop = true; if (btn){ btn.disabled = false; btn.textContent = was; } if (note && /^Still waiting/.test(note.textContent)) note.textContent = ''; };
+}
 function projectModal(){
   const projects = (S.summary && S.summary.projects) || [];
-  const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal"><h2>Start a mod</h2>
+  // (one at a time, and every field and button looked up in this dialog only: with two open, the buttons on
+  // top read the empty one underneath, so "Create mod" did nothing and its error showed where nobody could
+  // see it: the user's "I'm not able to switch back to an existing mod, make a new one, or anything")
+  document.querySelectorAll('.modal-bg[data-pm]').forEach(x => x.remove());
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.pm = '1';
+  const $ = s => bg.querySelector(s);
+  const cur = S.summary && S.summary.project ? S.summary.project.name : '';
+  bg.innerHTML = `<div class="modal"><h2>${projects.length ? 'Switch to a mod, or start one' : 'Start a mod'}</h2>
+    ${cur ? `<p class="msg">You are working on <b>${esc(cur)}</b>. It is saved already; switching keeps everything in it.</p>` : ''}
+    ${projects.length ? `<label>Open one of your mods</label><select class="inp" id="pm-open"><option value="">(choose)</option>${projects.filter(p => p !== cur).map(p => `<option>${esc(p)}</option>`).join('')}</select>
+      <div class="msg" style="margin:14px 0 4px;color:var(--text-b)">…or start a new one:</div>` : ''}
     <p class="msg">Everything you create or change is saved into your own plugin file, so the original game files are never touched. You can test it in game any time with the Play buttons on the World map.</p>
     <label>Mod name</label><input class="inp" id="pm-name" placeholder="e.g. Hlaalu Manor Expansion" maxlength="60">
     <label>Author (optional)</label><input class="inp" id="pm-author" maxlength="31">
     <label>Short description (optional)</label><input class="inp" id="pm-desc" maxlength="255">
-    ${projects.length ? `<label>…or continue an earlier mod</label><select class="inp" id="pm-open"><option value="">(choose)</option>${projects.map(p => `<option>${esc(p)}</option>`).join('')}</select>` : ''}
+    <p class="msg" style="margin-top:10px">…or, as in the Construction Set, make an existing plugin the active file: <button class="btn sm" id="pm-adopt">📂 Set an .esp as the active file…</button></p>
     <div class="msg err" id="pm-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="pm-cancel">Cancel</button><button class="btn primary" id="pm-ok">Create mod</button></div></div>`;
   document.body.appendChild(bg);
   $('#pm-name').focus();
   $('#pm-cancel').onclick = () => bg.remove();
+  $('#pm-adopt').onclick = () => { bg.remove(); adoptModal(); };
   $('#pm-ok').onclick = async () => {
     const open = $('#pm-open') && $('#pm-open').value;
     const name = $('#pm-name').value.trim();
     if (!open && !name){ $('#pm-err').textContent = 'Give your mod a name.'; return; }
     rememberSelection();
+    const done = slowWait($('#pm-ok'), $('#pm-err'), open ? 'Switching…' : 'Making it…');
+    $('#pm-adopt').disabled = true;
     try {
       if (open) await post('/api/project/open', {name: open});
       else await post('/api/project/new', {name, author: $('#pm-author').value, description: $('#pm-desc').value});
-      bg.remove(); toast('Mod ready. Reloading your data…'); setTimeout(poll, 300);
-    } catch (err){ $('#pm-err').textContent = err.message; }
+      done(); bg.remove(); toast((open ? 'Switched to ' + open : 'Made ' + name) + '. Reading your data…'); setTimeout(poll, 300);
+    } catch (err){ done(); $('#pm-adopt').disabled = false; $('#pm-err').className = 'msg err'; $('#pm-err').textContent = err.message; }
   };
+  // (picking an earlier mod makes the button say what it does; typing a new name picks none)
+  const pick = $('#pm-open');
+  const label = () => { $('#pm-ok').textContent = pick && pick.value ? 'Switch to ' + pick.value : 'Create mod'; };
+  if (pick){ pick.onchange = () => { if (pick.value) $('#pm-name').value = ''; label(); }; pick.focus(); }
+  $('#pm-name').oninput = () => { if (pick && $('#pm-name').value.trim()) pick.value = ''; label(); };
 }
 // Merge another mod into this one: pick one of your other mods, see what would come over and settle
 // each clash (a record, a placed game object or a script both mods changed differently), then merge
@@ -1398,6 +1469,157 @@ function mergeModal(){
     } catch (e){ err.textContent = e.message; ok.disabled = false; }
   };
 }
+// Open an existing plugin (.esp or .omwaddon) as the mod itself: the file's records and places become the
+// project, with its objects' indices as they are, and the Workshop saves straight back into that file (a
+// dated copy is made beside it first; later copies go under Backups). POST /api/project/adopt {path} (adopt.py).
+async function adoptModal(preset){
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(680px,94vw)"><h2>Set a plugin as the active file</h2>
+    <p class="msg">As in the Construction Set: one plugin is the <b>active file</b>, and every change is saved into it. A mod someone made in the Construction Set (or an earlier mod of yours) becomes the mod you work on: its records, places and placed objects, with its masters, author and description kept.
+      From then on <b>every change is saved straight into that file</b>. Nothing it holds is lost: placed objects keep their numbers, so saved games made with the file still work. The other plugins in your load order stay as they are (changes to their things go into the active file, which then lists them as masters).</p>
+    <p class="msg">A dated copy of the file is made beside it first; later copies go under <b>Backups</b> every few minutes. Master files (.esm) can't be opened this way.</p>
+    <div id="ad-list" style="max-height:min(42vh,420px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking in your data folders…</div>
+    <div class="actions" style="margin-top:8px"><button class="btn sm" id="ad-browse">📂 Choose another file…</button><span class="msg" id="ad-picked"></span></div>
+    <div class="msg err" id="ad-err" style="margin-top:8px"></div>
+    <div class="foot"><button class="btn" id="ad-cancel">Cancel</button><button class="btn primary" id="ad-ok" disabled>Set as active file</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = s => bg.querySelector(s);
+  let chosen = null, chosenName = '';
+  const choose = (path, name) => { chosen = path; chosenName = name; q('#ad-ok').disabled = !path; q('#ad-picked').textContent = path ? name + '  ·  ' + path : ''; };
+  q('#ad-cancel').onclick = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+  try {
+    const listing = slowWait(null, q('#ad-err'));
+    let c;
+    try { c = await api('/api/adopt/candidates'); } finally { listing(); }
+    const rows = c.plugins;
+    const row = p => `<label class="arow" style="padding:5px 8px;gap:10px;align-items:center;cursor:pointer"><input type="radio" name="ad-pick" value="${esc(p.path)}" data-name="${esc(p.name)}" ${p.clash ? 'disabled' : ''}>
+        <span class="atext"><b>${esc(p.name)}</b> <span class="msg">${(p.size / 1024).toFixed(0)} KB · ${p.enabled ? 'in your load order' : 'switched off'}${p.adopted ? ' · <span style="color:var(--gold2)">opened here before</span>' : ''}${p.clash ? ' · <span class="sev-warning">a mod of this name already exists here</span>' : ''}</span>
+        <div class="msg" style="font-size:11.5px">${esc(p.folder)}${p.masters.length ? ' · needs ' + p.masters.map(esc).join(', ') : ''}</div></span></label>`;
+    q('#ad-list').innerHTML = rows.length ? `<div class="alist">${rows.map(row).join('')}</div>` : '<div class="msg">No .esp or .omwaddon files in your data folders besides your own mod. Choose a file below.</div>';
+    bg.querySelectorAll('[name=ad-pick]').forEach(r => r.onchange = () => choose(r.value, r.dataset.name));
+    if (preset){
+      const r = [...bg.querySelectorAll('[name=ad-pick]')].find(x => x.value.toLowerCase() === preset.toLowerCase());
+      if (r && !r.disabled){ r.checked = true; choose(r.value, r.dataset.name); }
+    }
+  } catch (e){ q('#ad-list').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+  q('#ad-browse').onclick = async () => {
+    q('#ad-err').textContent = '';
+    // (one file picker at a time: clicks made while the Workshop was busy each opened one when it caught up)
+    const done = slowWait(q('#ad-browse'), q('#ad-err'), 'Opening a file picker…');
+    try {
+      const r = await post('/api/adopt/pick', {});
+      done();
+      if (r.cancelled) return;
+      bg.querySelectorAll('[name=ad-pick]').forEach(x => x.checked = false);
+      choose(r.path, r.name);
+      if (!r.in_data) q('#ad-err').textContent = 'That folder is not one of OpenMW\'s data folders: the game won\'t see the file until the folder is added in the OpenMW Launcher (Data Files > Directories).';
+    } catch (e){ done(); q('#ad-err').className = 'msg err'; q('#ad-err').textContent = e.message; }
+  };
+  q('#ad-ok').onclick = async () => {
+    if (!chosen) return;
+    if (!confirm(`Open ${chosenName} as your mod?\n\nFrom now on every change you make is saved into this file. A dated copy of it is made beside it first.`)) return;
+    q('#ad-ok').disabled = true; q('#ad-err').textContent = '';
+    rememberSelection();
+    const done = slowWait(q('#ad-ok'), q('#ad-err'), 'Opening it…');
+    try {
+      const r = await post('/api/project/adopt', {path: chosen});
+      done(); bg.remove();
+      const bits = [`${fmtN(r.records)} record${r.records === 1 ? '' : 's'}`, `${fmtN(r.places)} place${r.places === 1 ? '' : 's'}`, `${fmtN(r.objects)} object${r.objects === 1 ? '' : 's'} of its own`];
+      if (r.master_objects) bits.push(`${fmtN(r.master_objects)} changed object${r.master_objects === 1 ? '' : 's'} of its masters`);
+      let msg = `Opened ${r.plugin} as your mod: ${bits.join(', ')}. A copy was kept as ${r.backup.split(/[\\/]/).pop()}.`;
+      if (r.missing_masters.length) msg += ` It needs ${r.missing_masters.join(', ')}, which is not in your load order.`;
+      if (r.plain_esp && r.lua_kept) msg += ` Its ${r.lua_kept} Lua script${r.lua_kept === 1 ? ' stays' : 's stay'} out of a plain .esp.`;
+      if (r.problems.length) msg += ` Odd in the file: ${r.problems.slice(0, 3).join('; ')}.`;
+      toast(msg + ' Reading your data…', !!(r.missing_masters.length || r.problems.length));
+      setTimeout(poll, 300);
+    } catch (e){ done(); q('#ad-err').className = 'msg err'; q('#ad-err').textContent = e.message; q('#ad-ok').disabled = false; }
+  };
+}
+// The Construction Set's Save As: the mod's changes go into a new .esp or .omwaddon in your mods folder, the
+// active file from then on. POST /api/project/saveas {name, ext, overwrite} (adopt.save_as).
+function saveAsModal(){
+  const p = S.summary && S.summary.project;
+  if (!p){ projectModal(); return; }
+  const base = p.plugin.replace(/\.[^.]+$/, '');
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Save as a new file</h2>
+    <p class="msg">Everything this mod holds goes into a new plugin file in your mods folder, which becomes the <b>active file</b>: every change from then on is saved into it. Your placed objects keep their numbers.
+      ${p.source ? `The file open now (${esc(p.plugin)}) is left as it is on disk, and your load order follows the new name (the old file is switched off, or the game would show everything twice).` : `The old ${esc(p.plugin)} is removed and your load order follows the new name.`}</p>
+    <label>File name</label><div class="crow" style="align-items:center;gap:8px"><input class="inp" id="sa-name" value="${esc(base)}" maxlength="60" style="flex:1">
+      <select class="inp" id="sa-ext" style="max-width:150px"><option value=".esp">.esp</option><option value=".omwaddon" ${p.plugin.toLowerCase().endsWith('.omwaddon') ? 'selected' : ''}>.omwaddon</option></select></div>
+    <p class="msg" id="sa-note" style="margin-top:6px"></p>
+    <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="sa-over"> Write over a file of that name if there is one (a dated copy of it is kept beside it)</label>
+    <p class="msg sev-warning">Saving as a new file starts the Undo history afresh (a backup of the project is kept under Backups first).</p>
+    <div class="msg err" id="sa-err" style="margin-top:8px"></div>
+    <div class="foot"><button class="btn" id="sa-cancel">Cancel</button><button class="btn primary" id="sa-ok">Save as</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = s => bg.querySelector(s);
+  const note = () => { q('#sa-note').textContent = q('#sa-ext').value === '.esp'
+    ? 'A plain .esp works in OpenMW and in the original Morrowind engine, but holds no Lua scripts (any you wrote stay in the project).'
+    : 'An .omwaddon is OpenMW\'s own plugin format: Lua scripts travel with it.'; };
+  q('#sa-ext').onchange = note; note();
+  q('#sa-cancel').onclick = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+  q('#sa-name').focus();
+  q('#sa-ok').onclick = async () => {
+    q('#sa-ok').disabled = true; q('#sa-err').textContent = '';
+    rememberSelection();
+    const done = slowWait(q('#sa-ok'), q('#sa-err'), 'Saving…');
+    try {
+      const r = await post('/api/project/saveas', {name: q('#sa-name').value, ext: q('#sa-ext').value, overwrite: q('#sa-over').checked});
+      done(); bg.remove();
+      toast(`Saved as ${r.plugin}: it is the active file now${r.old_removed ? ` (${r.was} removed` : ` (${r.was} left as it was`}${r.cfg_changed ? ', your load order follows the new name' : ''}).`
+            + (r.plain_esp && r.lua_kept ? ` ${r.lua_kept} Lua script${r.lua_kept === 1 ? ' stays' : 's stay'} out of a plain .esp.` : '') + ' Reading your data…');
+      setTimeout(poll, 300);
+    } catch (e){ done(); q('#sa-err').className = 'msg err'; q('#sa-err').textContent = e.message; q('#sa-ok').disabled = false; }
+  };
+}
+// Your mods: each one's plugin file, Show folder, Switch, and Delete (to the Recycle Bin, out of the load order:
+// modfiles.py). The user's "deleting excessive test mods is something I need to do too".
+async function modsModal(){
+  document.querySelectorAll('.modal-bg[data-mods]').forEach(x => x.remove());
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.mods = '1';
+  bg.innerHTML = `<div class="modal" style="width:min(820px,96vw)"><h2>Your mods</h2>
+    <p class="msg">Every mod you made or opened here, newest first. <b>Delete</b> sends the mod to the Windows Recycle Bin (its project, its plugin, its scripts and grass files), where it can be restored, and takes it out of your OpenMW load order. The mod open now can't be deleted: switch to another first.</p>
+    <div id="mx-list" style="max-height:min(56vh,560px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking…</div>
+    <div class="msg err" id="mx-err" style="margin-top:8px"></div>
+    <div class="foot"><button class="btn" id="mx-close">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = s => bg.querySelector(s);
+  q('#mx-close').onclick = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+  const draw = async () => {
+    let r;
+    try { r = await api('/api/mods'); } catch (e){ q('#mx-list').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+    q('#mx-list').innerHTML = `<div class="alist">${r.mods.map(m => `<div class="arow" style="padding:6px 8px;gap:10px;align-items:center">
+        <span class="atext"><b>${esc(m.name)}</b>${m.current ? ' <span class="sev-ok">· open now</span>' : ''}
+          <div class="msg" style="font-size:11.5px">${esc(m.plugin)}${m.exists ? ' · ' + kb(m.size) : ' · <span class="sev-warning">no plugin file yet</span>'} · ${esc(m.modified)}${m.in_load_order ? ' · in your load order' : ''}${m.adopted ? ' · opened from an existing file' : ''}</div></span>
+        <button class="btn sm" data-mxshow="${esc(m.name)}" title="${esc(m.file)}">📁 Show folder</button>
+        ${m.current ? '' : `<button class="btn sm" data-mxopen="${esc(m.name)}">Switch to it</button><button class="btn sm danger" data-mxdel="${esc(m.name)}" data-adopted="${m.adopted ? 1 : ''}" data-plugin="${esc(m.plugin)}">Delete…</button>`}</div>`).join('')}</div>`;
+    bg.querySelectorAll('[data-mxshow]').forEach(b => b.onclick = async () => { try { await post('/api/mods/show', {name: b.dataset.mxshow}); } catch (e){ q('#mx-err').textContent = e.message; } });
+    bg.querySelectorAll('[data-mxopen]').forEach(b => b.onclick = async () => {
+      const done = slowWait(b, q('#mx-err'), 'Switching…');
+      try { await post('/api/project/open', {name: b.dataset.mxopen}); done(); bg.remove(); toast('Switched to ' + b.dataset.mxopen + '. Reading your data…'); setTimeout(poll, 300); }
+      catch (e){ done(); q('#mx-err').className = 'msg err'; q('#mx-err').textContent = e.message; }
+    });
+    bg.querySelectorAll('[data-mxdel]').forEach(b => b.onclick = async () => {
+      const name = b.dataset.mxdel, adopted = !!b.dataset.adopted;
+      let pluginToo = true;
+      if (adopted) pluginToo = confirm(`"${name}" was opened from an existing file, ${b.dataset.plugin}.\n\nOK: send that file to the Recycle Bin too.\nCancel: keep the file, only forget the mod here.`);
+      else if (!confirm(`Delete "${name}"?\n\nIts project and ${b.dataset.plugin} (with its scripts and grass files) go to the Windows Recycle Bin, where you can restore them, and it is taken out of your OpenMW load order.`)) return;
+      const done = slowWait(b, q('#mx-err'), 'Deleting…');
+      try {
+        const r = await post('/api/mods/delete', {name, plugin_too: pluginToo});
+        done();
+        toast(`Deleted ${name}: ${r.recycled.join(', ')} in the Recycle Bin${r.kept_plugin ? ' (' + r.kept_plugin + ' kept)' : ''}${r.load_order_lines ? ', out of your load order' : ''}.`);
+        await afterChange(); draw();
+      } catch (e){ done(); q('#mx-err').className = 'msg err'; q('#mx-err').textContent = e.message; }
+    });
+  };
+  draw();
+}
 function rememberSelection(){
   if (S.cur) S.reopen = {type: S.cur.type, id: S.cur.id};
 }
@@ -1412,7 +1634,8 @@ async function reopenAfterReload(){
 async function renderMyMod(){
   const wrap = $('#mymodwrap');
   if (!S.summary || !S.summary.project){
-    wrap.innerHTML = `<h1>My mod</h1><p class="lead">You haven't started a mod yet. A mod is your own plugin file: every edit, new item and moved object goes into it, and your original game files are never touched.</p><button class="btn primary" onclick="projectModal()">＋ Start a mod</button>`;
+    wrap.innerHTML = `<h1>My mod</h1><p class="lead">You haven't started a mod yet. A mod is your own plugin file: every edit, new item and moved object goes into it, and your original game files are never touched.</p>
+      <div class="actions"><button class="btn primary" onclick="projectModal()">＋ Start a mod</button><button class="btn" onclick="adoptModal()" title="An existing .esp or .omwaddon becomes the mod you work on, saved back into that file">📂 Open an .esp as your mod…</button></div>`;
     return;
   }
   const P = await api('/api/project');
@@ -1421,6 +1644,8 @@ async function renderMyMod(){
   P.changes.forEach(c => (byType[c.type] = byType[c.type] || []).push(c));
   let h = `<h1>${esc(p.name)}</h1>
     <p class="lead">Saved automatically after every change to <span class="path">${esc(P.path)}</span></p>
+    ${p.source ? `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): this mod <b>is</b> that file, opened as your mod. Its objects keep the numbers the file gave them, its masters stay as the file listed them, and a dated copy of the file as it was is kept beside it (later copies under Backups).${p.plain_esp ? ' A plain .esp holds no Lua scripts: any you write stay in the project and are not written out.' : ''}</p>`
+               : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
     <div class="cards">
       <div class="card"><div class="big">${fmtN(p.changes)}</div><div class="lab">changes in this mod</div></div>
       <div class="card"><div class="big ${p.enabled_in_cfg ? 'sev-ok' : 'sev-warning'}">${p.enabled_in_cfg ? 'On' : 'Off'}</div><div class="lab">${p.enabled_in_cfg ? 'Enabled in your normal OpenMW load order' : 'Not in your normal load order yet. Play buttons still load it for testing.'}</div></div>
@@ -1429,8 +1654,12 @@ async function renderMyMod(){
     <div class="actions" style="margin-bottom:22px">
       <button class="btn primary" id="mm-release" title="Check the mod, write a readme and pack a zip to share">📦 Get ready to share</button>
       ${p.enabled_in_cfg ? '' : `<button class="btn" id="mm-enable">Add to my OpenMW load order</button>`}
+      <button class="btn" id="mm-folder" title="Open the folder with ${esc(p.plugin)} in Explorer, the file picked out">📁 Show folder</button>
       <button class="btn" id="mm-switch">Switch or start another mod</button>
+      <button class="btn" id="mm-mods" title="All your mods, where their files are, and deleting the ones you no longer want">🗂 Your mods…</button>
       <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>
+      <button class="btn" id="mm-adopt" title="An existing .esp or .omwaddon becomes the active file: the mod you work on, saved back into that file">📂 Open an .esp as your mod…</button>
+      <button class="btn" id="mm-saveas" title="Save everything into a new .esp or .omwaddon, which becomes the active file (the Construction Set's Save As)">💾 Save as…</button>
     </div>`;
   if (!P.changes.length) h += `<div class="card">No changes yet. Open anything in <b>Browse</b> and press <b>✎ Edit</b> or <b>⧉ Use as template</b>, or move things around on the <b>World map</b>.</div>`;
   for (const [t, list] of Object.entries(byType)){
@@ -1476,7 +1705,11 @@ async function renderMyMod(){
     catch (err){ toast(err.message, true); }
   };
   $('#mm-switch').onclick = projectModal;
+  $('#mm-folder').onclick = async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } };
+  $('#mm-mods').onclick = modsModal;
   $('#mm-merge').onclick = mergeModal;
+  $('#mm-adopt').onclick = () => adoptModal();
+  $('#mm-saveas').onclick = saveAsModal;
   $('#mm-release').onclick = () => showView('release');
   const la = $('#mm-logall'); if (la) la.onclick = () => { S.logAll = true; renderMyMod(); };
   const su = $('#mm-undone'); if (su) su.onchange = () => { S.showUndone = su.checked; renderMyMod(); };
@@ -1859,6 +2092,7 @@ function drawMap(){
   }
   drawPaths();
   if (typeof placecheckDraw === 'function') placecheckDraw(g);      // the health check's markers
+  if (typeof extendDraw === 'function') extendDraw(g);              // Extend mode's open edges (extend.js)
   drawPlayer();
   // the selection box being dragged
   if (W.drag && W.drag.kind === 'box'){
@@ -1987,6 +2221,7 @@ cv.addEventListener('wheel', e => {
 cv.addEventListener('mousedown', e => {
   if (!W.key || e.button !== 0) return;
   if (W.mode === 'region'){ regDown(e); return; }
+  if (typeof extendMapClick === 'function' && extendMapClick(e)) return;      // Extend mode: a strip picked
   const hit = W.mode ? null : hitTest(e.offsetX, e.offsetY);
   if (hit && e.shiftKey){ toggleMulti(hit[0], hit[1].k); return; }
   if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)){
@@ -2434,6 +2669,7 @@ function renderWside(){
   PNL.badge('world', 'objs', fmtN(refs.length)); PNL.badge('world', 'sel', sel || W.multi.size > 1 ? '●' : '');
   // --- Place
   h += `<div class="wpane on" data-pane="place"><div id="w-placing"></div>
+    <button class="btn sm" id="w-create" style="width:100%;margin-bottom:8px" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
     ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" style="width:100%;margin-bottom:8px" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check this place…</button><div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
@@ -2704,10 +2940,12 @@ const PURPOSE_LABEL = {bedroom: 'Bedroom', living: 'Living room', kitchen: 'Kitc
 // "Furnish like…" takes one of them as the model for a place's rooms.
 let TASTE = null;
 async function renderTaste(key){
-  const box = $('#w-taste'); if (!box) return;
+  if (!$('#w-taste')) return;
   let t;
   try { t = await api('/api/taste?key=' + encodeURIComponent(key)); } catch (e){ return; }
-  if (!$('#w-taste') || W.key !== key) return;
+  // (the side panel may have been drawn afresh while it asked: the box is looked up again)
+  const box = $('#w-taste');
+  if (!box || W.key !== key) return;
   TASTE = t.places;
   const me = t.this || {};
   if (!me.game_made){
@@ -3133,6 +3371,8 @@ const ROLE_INFO = {
 };
 function placeOptions(required, noneLabel){
   const opts = [];
+  // (the form opened in a window over the 3D view from a right-click: the spot clicked comes first; viewwin.js)
+  if (CR.at && typeof vwHosting === 'function' && vwHosting('createv')) opts.push(['click', 'At the spot you clicked (' + esc(crAtName()) + ')']);
   if (!required) opts.push(['none', noneLabel || "Don't place it yet (place it from the map or in game with Shift+J)"]);
   if (W.key) opts.push(['map', 'In the middle of the World map view (' + esc(W.info ? (W.info.name || W.info.region || W.info.id) : W.key) + ')']);
   if (LINK.connected && LINK.player) opts.push(['player', 'Where my character is standing in game']);
@@ -3141,6 +3381,7 @@ function placeOptions(required, noneLabel){
 }
 function placeValue(){
   const v = ($('#cr-place') || {}).value;
+  if (v === 'click' && CR.at) return Object.assign({}, CR.at);
   if (v === 'map') return {cell: cellKeyAt(W.cam.x, W.cam.y), x: W.cam.x, y: W.cam.y, z: null, rz: 0, cut: W.ext ? null : W.cut};
   if (v === 'player' && LINK.player) return {cell: LINK.player.cell, x: LINK.player.x, y: LINK.player.y, z: null, rz: LINK.player.yaw};
   return null;
@@ -3151,7 +3392,9 @@ async function renderCreate(){
     wrap.innerHTML = `<h1>Create</h1><p class="lead">Start a mod first, so new things have somewhere to be saved.</p><button class="btn primary" onclick="projectModal()">＋ Start a mod</button>`;
     return;
   }
-  if (!CR.opts) { wrap.innerHTML = '<h1>Create</h1><p class="lead"><span class="spin"></span>Gathering races, classes, factions and room styles…</p>'; CR.opts = await api('/api/create/options'); }
+  // (the item editor may have started CR.opts with only its magic lists: the Create page's own options are still
+  // to fetch, else the book form failed on its missing book_kinds, "Create form book: ... reading 'map'")
+  if (!CR.opts || !CR.opts.book_kinds){ wrap.innerHTML = '<h1>Create</h1><p class="lead"><span class="spin"></span>Gathering races, classes, factions and room styles…</p>'; CR.opts = Object.assign({}, CR.opts || {}, await api('/api/create/options')); }
   if (!CR.opts.magic) CR.opts.magic = await api('/api/items/options');
   if (CR.kind === 'interior') CR.kind = 'build';       // (the old "New interior + door" lives inside Build from pieces now)
   const card = k => { const c = CR_CARDS[k]; return `<button class="ccard ${CR.kind === k ? 'on' : ''}" data-ck="${k}"><span class="ic">${c[0]}</span>${c[3] ? `<span class="kick">${c[3]}</span>` : ''}<b>${c[1]}</b><span class="msg">${c[2]}</span></button>`; };
@@ -3186,17 +3429,23 @@ const CR_CARDS = {
   book: ['📜', 'Note, letter or book', 'Something to read in game, in your own words, placed somewhere or given to someone.', 'A thing'],
   spell: ['✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone, or to the player.', 'Magic'],
   lists: ['🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.', 'A list'],
+  effect: ['🌀', 'New magic effect', 'An effect of your own for spells, enchantments and potions: it looks like one of the game\'s and does what you pick (OpenMW 0.50 or newer).', 'Magic'],
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
   merge: ['⊕', 'Merge another mod into this one', 'Everything another of your mods holds (its places, objects, records and scripts) added to this mod. The other mod is left as it is; this mod\'s Undo history starts afresh (a backup is kept).', 'A change'],
 };
-const CR_GROUPS = [['Make something new', ['build', 'npc', 'container', 'item', 'book', 'spell', 'lists'],
+const CR_GROUPS = [['Make something new', ['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
                    ['Change something that exists', ['itemed', 'merge']]];
 // the rest of a form, folded away under a line
 function moreHtml(label, inner){ return `<details class="cmore"><summary>${esc(label)}</summary><div class="frow">${inner}</div></details>`; }
 function chk(id, label, on, title){ return `<label class="msg" style="display:flex;gap:6px;align-items:center" ${title ? `title="${esc(title)}"` : ''}><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`; }
+function crAtName(){
+  const c = CR.at && W.cells[CR.at.cell];
+  return (c && (c.name || c.region)) || (W.info && CR.at && CR.at.cell === W.key ? (W.info.name || W.info.region || W.key) : (CR.at ? CR.at.cell : ''));
+}
 function placeText(){
   const s = $('#cr-place'); if (!s || s.value === 'none') return '';
+  if (s.value === 'click') return 'at the spot you clicked (' + esc(crAtName()) + ')';
   return s.value === 'player' ? 'where your character stands in game' : 'in the middle of the World map view (' + esc(W.info ? (W.info.name || W.info.region || W.info.id) : W.key) + ')';
 }
 // the line under the button: what pressing it does, from what the form says right now
@@ -3364,6 +3613,7 @@ function renderItems(){
 }
 function bindForm(){
   document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'lists'){ LV.id = null; LV.data = null; showView('lists'); return; }
+    if (b.dataset.ck === 'effect'){ MX.form = null; showView('myeff'); return; }
     if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; }
     if (b.dataset.ck === 'merge'){ mergeModal(); return; } CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false;
     // the click answers at once, even when the form's options are still being gathered
@@ -3487,7 +3737,7 @@ function effectsEditor(boxId, list, onChange){
     box.innerHTML = list.map((e, n) => {
       const info = byIdx[e.effect] || {};
       return `<div class="effrow" data-e="${n}">
-        <select class="inp" data-ef="effect">${schools.map(s => `<optgroup label="${esc(s || 'Other')}">${M.effects.filter(x => x.school === s).map(x => `<option value="${x.index}" ${x.index === e.effect ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select>
+        <select class="inp" data-ef="effect">${schools.map(s => `<optgroup label="${esc(s || 'Other')}">${M.effects.filter(x => x.school === s).map(x => `<option value="${x.index}" ${x.index === e.effect ? 'selected' : ''} ${x.td ? `title="${x.mine ? 'Your own effect (Create &gt; New magic effect)' : 'Tamriel Data\'s effect'}: put in by the mod\'s load script in OpenMW 0.50 or newer"` : ''}>${esc(x.name)}${x.mine ? ' (yours)' : x.td ? ' (Tamriel Data)' : ''}</option>`).join('')}</optgroup>`).join('')}</select>
         ${info.skill ? `<select class="inp" data-ef="skill">${M.skills.map((s, i) => `<option value="${i}" ${i === e.skill ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>` : ''}
         ${info.attribute ? `<select class="inp" data-ef="attribute">${M.attributes.map((s, i) => `<option value="${i}" ${i === e.attribute ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>` : ''}
         <select class="inp" data-ef="range" title="Range">${M.ranges.map((r, i) => `<option value="${i}" ${i === e.range ? 'selected' : ''}>${r}</option>`).join('')}</select>
@@ -3498,7 +3748,8 @@ function effectsEditor(boxId, list, onChange){
     }).join('') + `<button class="btn sm" data-eadd>+ Effect</button>`;
     box.querySelectorAll('[data-ef]').forEach(el => el.onchange = el.oninput = () => {
       const e = list[+el.closest('[data-e]').dataset.e], f = el.dataset.ef;
-      e[f] = +el.value;
+      // (an effect of Tamriel Data's goes by its id, "T_...", not a number)
+      e[f] = f === 'effect' && !/^-?\d+$/.test(el.value) ? el.value : +el.value;
       if (f === 'effect'){ const inf = byIdx[e.effect]; if (inf.skill && e.skill < 0) e.skill = 0; if (inf.attribute && e.attribute < 0) e.attribute = 0; draw(); }
       if (onChange) onChange();
     });
@@ -3717,7 +3968,12 @@ async function createGo(){
         keep_script: $('#it-script').checked, give_to: val('it-give')});
       label = val('cr-name');
       const pv = placeValue();
-      if (pv) { await post('/api/ref/place', {cell: pv.cell, id: r.id, p: [pv.x, pv.y, pv.z, 0, 0, pv.rz || 0], cut: pv.cut}); r.placed = {cell: pv.cell, ref: null}; }
+      if (pv){
+        const m = await post('/api/ref/place', {cell: pv.cell, id: r.id, p: [pv.x, pv.y, pv.z, 0, 0, pv.rz || 0], cut: pv.cut, surface: !!pv.surface});
+        r.placed = {cell: pv.cell, ref: m.placed};
+        // (made and placed: one Undo takes both back, as the other kinds already do)
+        try { await post('/api/fold', {n: 2, note: `Created and placed ${label || r.id}`}); } catch (e){}
+      }
     } else if (CR.kind === 'spell'){
       r = await post('/api/spells/create', {id: val('cr-id'), name: val('cr-name'), type: +val('sp-type'), effects: CR.spEffects,
         cost: val('sp-cost') || null, player_starts: $('#sp-start').checked, always_succeeds: $('#sp-always').checked, give_to: val('sp-give')});
@@ -3736,6 +3992,8 @@ async function createGo(){
     }
     await afterChange();
     CR.idEdited = false; CR.items = [];
+    // (made from a window over the 3D view: what was made opens there, the view stays; viewwin.js)
+    if (typeof vwHosting === 'function' && vwHosting('createv')){ go.disabled = false; msg.textContent = ''; await vwCreated(CR.kind, r, label); return; }
     if (CR.kind === 'spell'){
       toast(`Created ${label} (${r.cost} magicka)` + (r.given ? `, known by ${r.given}` : '') + '.');
       openRecord(r.i, true); showView('browse');
@@ -3906,6 +4164,7 @@ poll();
 <script src="/web/placecheck.js"></script>
 <script src="/web/worldpanels.js"></script>
 <script src="/web/refprops.js"></script>
+<script src="/web/objwin.js"></script>
 <script src="/web/comfort.js"></script>
 <script src="/web/secretdoor.js"></script>
 <script src="/web/qol.js"></script>
@@ -3913,6 +4172,8 @@ poll();
 <script src="/web/toolbar.js"></script>
 <script src="/web/setups.js"></script>
 <script src="/web/pagepanels.js"></script>
+<script src="/web/viewwin.js"></script>
+<script src="/web/effects.js"></script>
 <script src="/web/together.js"></script>
 <script src="/web/loadorder.js"></script>
 <script src="/web/help.js"></script>

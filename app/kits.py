@@ -643,6 +643,57 @@ def family_wall(db, prefix):
     return res
 
 
+_wall_offsets = {}
+
+
+def loose_wall_offset(db, prefix, wall, limit=60):
+    """How far from a tile's middle the game stands this loose wall, along its thin axis: the distance
+    its own places use most (to 8 units), with how many walls it was seen on, or None. Hlaalu's
+    in_hlaalu_wall (62 thick) stands centred on the tile's edge, 128 out, in 52 of 83 (2026-10-23);
+    the builder used to stand it 95 out, flush inside the tile, a 48-unit jog in from the faces of the
+    room pieces' own walls, with the corner post left half inside it."""
+    k = kit_pieces(db, prefix)
+    if not k or not wall:
+        return None
+    key = (prefix.lower(), wall['id'].lower())
+    if key in _wall_offsets and _wall_offsets[key][0] is db.recs:
+        return _wall_offsets[key][1]
+    import fixit
+    T = k['tile']
+    low = wall['id'].lower()
+    cells = sorted({db.recs[ci][7] for ci in db.used_in.get(low, ()) if db.recs[ci][0] == 'CELL' and game_made(db, db.recs[ci][7])})
+    offs = {}
+    for ck in cells[:limit]:
+        try:
+            m = mapdata.cellmap(db, ck)
+            tiles, _p = fixit._tiles(db, m)
+        except Exception:
+            continue
+        for r in m['refs']:
+            if r['id'].lower() != low or abs(r['p'][3]) > 0.05 or abs(r['p'][4]) > 0.05:
+                continue
+            q = int(round(r['p'][5] / (math.pi / 2))) % 4
+            best = None
+            for t in tiles:
+                if abs(t['floor'] - (r['p'][2] + wall['zmin'])) > 40:
+                    continue
+                # (the wall's thin axis: x when its model is thin in x and it stands unturned)
+                thin_x = wall['thin_x'] == (q % 2 == 0)
+                d = (r['p'][0] - t['x']) if thin_x else (r['p'][1] - t['y'])
+                o = (r['p'][1] - t['y']) if thin_x else (r['p'][0] - t['x'])
+                if abs(o) < 40 and abs(d) <= T and (best is None or abs(d) < abs(best)):
+                    best = d
+            if best is not None:
+                b = int(round(abs(best) / 8.0) * 8)
+                offs[b] = offs.get(b, 0) + 1
+    res = None
+    if offs:
+        off = max(offs, key=offs.get)
+        res = (off, offs[off])
+    _wall_offsets[key] = (db.recs, res)
+    return res
+
+
 _hearths = {}
 HEARTH_RE = re.compile(r'fireplace|hearth|stove|oven')
 

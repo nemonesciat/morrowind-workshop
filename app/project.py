@@ -152,6 +152,15 @@ class Project:
         self.lua = d.get('lua', [])             # Lua scripts: [{name, kind, attach: [ids], text}]
         self.lua_files = d.get('lua_files', [])  # the Lua files last written, so old ones can be cleared
         self.grass = d.get('grass', {})         # groundcover: cell key -> [[id, x, y, z, rz, scale]] (own plugin)
+        # a plugin opened as the mod itself (adopt.py): the file it is saved into, the masters its header
+        # listed (names and sizes, kept in that order so its objects' indices stay what saved games know),
+        # its header's format version, and the dated copy made of it beside it when it was opened
+        self.source = d.get('source')
+        self.order = d.get('order') or []        # the file's record keys in its own order (new records go after)
+        self.masters = [list(m) for m in d.get('masters') or []]
+        self.tes3_version = d.get('tes3_version') or 1.3
+        self.hedr_raw = d.get('hedr')
+        self.plugin_backup = d.get('plugin_backup')
         self.undo_stack = []
         self.last_state = self.state()
         self.pending_write = None
@@ -188,11 +197,15 @@ class Project:
 
     def save(self):
         tmp = self.path + '.tmp'
+        d = {'name': self.name, 'plugin': self.plugin, 'author': self.author,
+             'description': self.description, 'records': self.records, 'cells': self.cells,
+             'next_ref': self.next_ref, 'log': self._log_to_keep(), 'release': self.release,
+             'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass}
+        if self.source:
+            d.update({'source': self.source, 'masters': self.masters, 'tes3_version': self.tes3_version,
+                      'plugin_backup': self.plugin_backup, 'order': self.order, 'hedr': self.hedr_raw})
         with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump({'name': self.name, 'plugin': self.plugin, 'author': self.author,
-                       'description': self.description, 'records': self.records, 'cells': self.cells,
-                       'next_ref': self.next_ref, 'log': self._log_to_keep(), 'release': self.release,
-                       'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass}, f)
+            json.dump(d, f)
         os.replace(tmp, self.path)
         try:
             import backups
@@ -211,6 +224,12 @@ class Project:
         self.grass = d.get('grass', {})
 
     # ----- Lua scripts (OpenMW): files next to the plugin, listed in a .omwscripts file -----
+    def lua_allowed(self):
+        """Lua scripts (and their .omwscripts list) belong to OpenMW's own plugin format. A mod that is a plain
+        .esp (one opened from an existing file, say) keeps its scripts in the project, but they are not
+        written out: the Scripts page and Get ready to share say so."""
+        return os.path.splitext(self.plugin)[1].lower() not in ('.esp', '.esm')
+
     def lua_slug(self):
         return re.sub(r'[^a-z0-9_]+', '_', os.path.splitext(self.plugin)[0].lower()).strip('_') or 'mymod'
 
@@ -222,7 +241,7 @@ class Project:
 
     def lua_outputs(self):
         """{relative path: text} of every file the Lua scripts need, including the .omwscripts list."""
-        if not self.lua:
+        if not self.lua or not self.lua_allowed():
             return {}
         out, lines, attach = {}, [], {}
         for s in self.lua:
@@ -316,9 +335,8 @@ class Project:
     def cell_bytes(self, c, masters):
         """Build CELL record data. masters: list of lowercase master names."""
         out = [join_subs([(t, unb64(d)) for t, d in c['header']])]
-        new_refs = sum(1 for k in c['refs'] if k.startswith(self.plugin.lower() + '|'))
-        out.append(sub('NAM0', struct.pack('<I', new_refs)))
-        for k, r in sorted(c['refs'].items(), key=lambda kv: (kv[1]['origin'] == self.plugin.lower(), kv[1]['idx'])):
+
+        def chunk(r):
             origin = r['origin']
             if origin == self.plugin.lower():
                 upper = 0
@@ -327,13 +345,61 @@ class Project:
             else:
                 # a change to an object of a file that is not in the load order any more (a mod merged into
                 # this one and switched off, say): nothing to write it against; Health check lists these
-                continue
+                return None
             frmr = (upper << 24) | (r['idx'] & 0xFFFFFF)
             subs = [(t, unb64(d)) for t, d in r['subs']]
-            if r.get('deleted'):
+            if r.get('deleted') and not any(t == 'DELE' for t, _d in subs):
                 subs = [(t, d) for t, d in subs if t == 'NAME'] + [('DELE', b'\0\0\0\0')]
-            out.append(sub('FRMR', struct.pack('<I', frmr)) + join_subs(subs))
+            b = sub('FRMR', struct.pack('<I', frmr)) + join_subs(subs)
+            if r.get('mvrf'):
+                # an object moved to this cell from another (outdoors): the marker the file had stays with it
+                b = join_subs([(t, unb64(d)) for t, d in r['mvrf']]) + b
+            return b
+
+        refs = sorted(c['refs'].values(), key=lambda r: (r['origin'] == self.plugin.lower(), r['idx']))
+        if self.source:
+            # a plugin opened as the mod, written the Construction Set's way: the objects it keeps track of
+            # (doors, people: "persistent", read before NAM0) first, then NAM0 with the count of the rest and
+            # the rest; no NAM0 when there is no rest. Anything placed here counts among the rest.
+            pers = [b for b in (chunk(r) for r in refs if r.get('pers')) if b is not None]
+            rest = [b for b in (chunk(r) for r in refs if not r.get('pers')) if b is not None]
+            out += pers
+            if rest:
+                out.append(sub('NAM0', struct.pack('<I', len(rest))))
+                out += rest
+            return b''.join(out)
+        new_refs = sum(1 for k in c['refs'] if k.startswith(self.plugin.lower() + '|'))
+        out.append(sub('NAM0', struct.pack('<I', new_refs)))
+        out += [b for b in (chunk(r) for r in refs) if b is not None]
         return b''.join(out)
+
+    def _emit_order(self, recs):
+        """The records as they go into the file. A mod made here: game settings first, then by type and id,
+        dialogue topics (each with its lines) last. A plugin opened as the mod: in the order the file had
+        them (new records at the end), each topic's lines right after it."""
+        if not self.source:
+            out = [r for r in sorted(recs, key=lambda r: (r['tag'] != 'GMST', r['tag'], r['key'])) if r['tag'] not in ('DIAL', 'INFO')]
+            for d in sorted((r for r in recs if r['tag'] == 'DIAL'), key=lambda r: r['key']):
+                out.append(d)
+                out += _chain_order([r for r in recs if r['tag'] == 'INFO' and r['key'].split('|', 1)[0] == d['key']])
+            return out
+        # (the order is kept apart from the records: Undo and Redo put records back in another order)
+        by_key = {r['tag'] + '|' + r['key']: r for r in recs}
+        first = [by_key[k] for k in self.order if k in by_key]
+        seen = set(self.order)
+        recs = first + [r for k, r in by_key.items() if k not in seen]
+        infos = {}
+        for r in recs:
+            if r['tag'] == 'INFO':
+                infos.setdefault(r['key'].split('|', 1)[0], []).append(r)
+        out = []
+        for r in recs:
+            if r['tag'] == 'INFO':
+                continue
+            out.append(r)
+            if r['tag'] == 'DIAL':
+                out += _chain_order(infos.pop(r['key'], []))
+        return out
 
     def build(self, masters_with_sizes, out_path):
         """Write the .omwaddon. masters_with_sizes: [(name, size)] in load order."""
@@ -344,26 +410,58 @@ class Project:
             data = unb64(r['data'])
             body.append(r['tag'].encode('ascii') + struct.pack('<III', len(data), 0, r['flags']) + data)
 
-        recs = list(self.records.values())
-        for r in sorted(recs, key=lambda r: (r['tag'] != 'GMST', r['tag'], r['key'])):
-            if r['tag'] not in ('DIAL', 'INFO'):
-                emit(r)
-                count += 1
-        # dialogue lines must directly follow their topic
-        for d in sorted((r for r in recs if r['tag'] == 'DIAL'), key=lambda r: r['key']):
-            emit(d)
-            count += 1
-            for r in _chain_order([r for r in recs if r['tag'] == 'INFO' and r['key'].split('|', 1)[0] == d['key']]):
-                emit(r)
-                count += 1
-        for key, c in self.cells.items():
-            if not c['refs'] and not c.get('props'):
-                continue
+        cells = [(key, c) for key, c in self.cells.items() if c['refs'] or c.get('props')]
+        if self.source and not self.records and not cells:
+            # a plugin opened as the mod, with nothing in it (its opening was undone): the file is left as it
+            # is rather than written over with an empty plugin; Redo puts everything back
+            return 0
+
+        def emit_cell(key, c):
             data = self.cell_bytes(c, masters)
             body.append(b'CELL' + struct.pack('<III', len(data), 0, c.get('flags', 0)) + data)
-            count += 1
-        hedr = struct.pack('<fI', 1.3, 0) + self.author.encode(ENC, 'replace')[:31].ljust(32, b'\0') + \
+
+        recs = self._emit_order(list(self.records.values()))
+        if self.source:
+            # a plugin opened as the mod: records and places in the order the file had them (places sit
+            # among the records there), whatever is new at the end
+            at = {k: n for n, k in enumerate(self.order)}
+            items = [(at.get(r['tag'] + '|' + r['key'], len(at) + n), 0, n, r) for n, r in enumerate(recs)]
+            items += [(at.get('CELL|' + k, len(at) + len(recs) + n), 1, n, (k, c)) for n, (k, c) in enumerate(cells)]
+            # (a topic's lines stay right after it: they take the topic's position)
+            last = None
+            fixed = []
+            for pos, kind, n, x in items:
+                if kind == 0 and x['tag'] == 'INFO' and last is not None:
+                    pos = last
+                elif kind == 0 and x['tag'] == 'DIAL':
+                    last = pos
+                fixed.append((pos, kind, n, x))
+            for _pos, kind, _n, x in sorted(fixed, key=lambda it: (it[0], it[1], it[2])):
+                if kind == 0:
+                    emit(x)
+                else:
+                    emit_cell(*x)
+                count += 1
+        else:
+            for r in recs:
+                emit(r)
+                count += 1
+            for key, c in cells:
+                emit_cell(key, c)
+                count += 1
+        hedr = struct.pack('<fI', self.tes3_version or 1.3, 0) + self.author.encode(ENC, 'replace')[:31].ljust(32, b'\0') + \
             self.description.encode(ENC, 'replace')[:255].ljust(256, b'\0') + struct.pack('<I', count)
+        if self.source and self.hedr_raw:
+            # the file's own header bytes (the Construction Set leaves old text after the terminators),
+            # the author and description put in only where they were changed here
+            raw = bytearray(unb64(self.hedr_raw))
+            if len(raw) >= 300:
+                if zstr(raw[8:40]) != self.author:
+                    raw[8:40] = hedr[8:40]
+                if zstr(raw[40:296]) != self.description:
+                    raw[40:296] = hedr[40:296]
+                struct.pack_into('<I', raw, 296, count)
+                hedr = bytes(raw)
         head = [sub('HEDR', hedr)]
         for name, size in masters_with_sizes:
             head.append(sub('MAST', zs(name)))
@@ -375,6 +473,20 @@ class Project:
             self.write_lua(os.path.dirname(out_path))
         except OSError:
             pass                                  # (a script file in use: written next time)
+        if self.source:
+            try:
+                with open(out_path, 'rb') as f:
+                    same = f.read() == blob
+            except OSError:
+                same = False
+            if same:
+                self.pending_write = None
+                return count                      # (nothing changed in the file: no write, no backup)
+            try:
+                import backups
+                backups.backup_plugin(self, out_path)     # (a copy of the file as it was, every few minutes)
+            except Exception as e:
+                print('plugin backup failed:', e)
         tmp = out_path + '.tmp'
         with open(tmp, 'wb') as f:
             f.write(blob)
@@ -408,6 +520,8 @@ def state_diff(before, after):
                 meta['new'] = True                  # this change made the place (or first touched it)
             if (ac or bc).get('plan'):
                 meta['plan'] = (ac or bc)['plan']
+            if (ac or bc).get('props'):             # (the place's own settings were changed: kept without objects)
+                meta['props'] = (ac or bc)['props']
             cells[ck] = {'meta': meta, 'refs': refs}
     if not recs and not cells:
         return None

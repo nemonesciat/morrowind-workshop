@@ -149,6 +149,7 @@ def _bounds_of(db, cache, rid):
 
 
 PLANTER = re.compile(r'planter|flowerbox|plantpot|plant_pot|gardenbed|garden_bed')
+WINERACK = re.compile(r'winerack|wine_rack|bottlerack')
 # what the game grows in its planters, whatever its size: plants, shrubs, small trees, rocks, ferns, moss
 GARDEN = re.compile(r'flora_|_plant|fern|shrub|bush|tree|vine|mushroom|flower|ivy|rock|stone|grass|moss|kelp|reed|weed')
 
@@ -1015,7 +1016,8 @@ def everyday_pool(db, purpose, rid=None):
     return out
 
 
-def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=None, cap=None, rate_k=1.0, max_value=None):
+def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=None, cap=None, rate_k=1.0, max_value=None,
+             band=None, budget=None):
     """A dressing for a new piece of this furniture, from what the game puts on it: one of the game's own
     dressings (picked at random, so the common patterns come up most; from rooms of this purpose when the
     game has dressed it in a few of those; one not used in this house yet, when `used` is the house's set
@@ -1027,7 +1029,10 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     the furniture's frame, or None when the game never dresses this model (the caller then does what it
     did before). cap: nothing interesting dearer than this (None: the theme's own cap); rate_k: the
     game's rate of interesting things, times this; max_value: nothing at all dearer than this, everyday
-    things included (a dear dish swapped for a plain one of its size, else dropped)."""
+    things included (a dear dish swapped for a plain one of its size, else dropped). band: the household's
+    (Project Tamriel's tableware classes: nothing finer than a class above the band's, beyond a piece or two,
+    and no ebonyware); budget: the home's book allowance, {'left', 'titles', 'stems'}, shared over the house
+    (one to three common books outside the study, no second copy, no series)."""
     s = survey(db, rid)
     if not s['dressings']:
         return None
@@ -1071,6 +1076,25 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
         full = [d for d in pool if len(d['objects']) >= 4]
         if len(full) >= 2:
             pool = full
+    # (a wine rack is stocked the way the game stocks it: bottles lying in the lattice, as many as the
+    # game's median rack holds; a dressing that is only a bottle or two stood on the rack's top is one of
+    # the game's bare racks, and was the user's "two bottles, upright" in 2.3.3)
+    rack = bool(WINERACK.search(rid.lower()))
+    if rack:
+        fri_ = db.resolve_id(rid)
+        fb_ = mapdata.object_bounds(db, fri_) if fri_ is not None else None
+        top_ = fb_[5] if fb_ else None
+        racked = lambda d: [o for o in d['objects'] if top_ is None or o['level'] < top_ - 12]
+        # (the game racks scrolls in the same lattice in its clerks' offices; a wine rack takes bottles)
+        bottles = lambda d: sum(1 for o in racked(d) if o['kind'] != 'BOOK') >= 0.6 * len(racked(d))
+        sizes_ = sorted(len(racked(d)) for d in s['dressings'] if racked(d))
+        gmed_ = sizes_[len(sizes_) // 2] if sizes_ else 0
+        full = [d for d in pool if len(racked(d)) >= max(3, gmed_) and bottles(d)]
+        if len(full) < 2:
+            full = [d for d in s['dressings'] if len(racked(d)) >= max(3, gmed_) and bottles(d)]
+        if len(full) >= 2:
+            pool = full
+            tall = True
     draws = 3 if tall else 2
     picks = [rng.choice(pool) for _ in range(draws)]
     chosen = max(picks, key=lambda d: len(d['objects'])) if rng.random() < (0.67 if tall else 0.5) else picks[0]
@@ -1130,6 +1154,9 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     pool_e = []
     same_e = {}
 
+    import wealthsurvey as _ws
+    ware_ok = (lambda e: _ws.ware_over(band, _ws.ware_class(e)) == 0) if band else (lambda e: True)
+
     def swap_everyday(o, fam, dear=False, limit=None):
         """o swapped for another everyday thing of its family and size (its value about the same, or
         anything plain when the old one was too dear for the place; never over `limit`): True when done."""
@@ -1146,6 +1173,7 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
                           and (lambda bb: bb and _same_size(bb, b0, 3.0) and _axes(bb) == _axes(b0))(_bounds_of(db, bounds, e)[0])
                           and (dear or max(v0, value_of(db, e)[1]) <= 15 or 0.4 <= (value_of(db, e)[1] or 1) / float(v0 or 1) <= 2.5)
                           and (limit is None or value_of(db, e)[1] <= limit)
+                          and ware_ok(e)
                           and plain(db, e, min_uses)]
         if not same_e[ck]:
             return False
@@ -1185,6 +1213,44 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
                 fam = family(db, o['id'])
                 if not (fam and swap_everyday(o, fam, dear=True, limit=hard)):
                     objs.remove(o)
+    # tableware above the household's station (Project Tamriel's classes): a piece or two of finer ware
+    # may stay in a plain house, the rest become plain ones of their size, or go; ebonyware always goes
+    if band:
+        fine_kept = 0
+        for o in list(objs):
+            over = _ws.ware_over(band, _ws.ware_class(o['id'])) if o['kind'] == 'MISC' else 0
+            if not over:
+                continue
+            if over < 9 and fine_kept < 1 and rng.random() < 0.5:
+                fine_kept += 1
+                continue
+            fam = family(db, o['id'])
+            if not (fam and swap_everyday(o, fam, dear=True, limit=max_value)):
+                objs.remove(o)
+    # the home's book allowance: outside the study and the shop, one to three common books in the house,
+    # never a second copy of a title nor another volume of a series already about (books are content)
+    if budget is not None and purpose not in ('study', 'shop'):
+        for o in list(objs):
+            if o['kind'] != 'BOOK':
+                continue
+            key = o['id'].lower()
+            stem = _stem(key)
+            if budget['left'] <= 0 or key in budget['titles'] or (stem and stem in budget['stems']):
+                b0, _t = _bounds_of(db, bounds, o['id'])
+                fresh = [bk for bk in bpool if bk.lower() not in budget['titles'] and bk.lower() not in titles and b0
+                         and not (_stem(bk.lower()) and _stem(bk.lower()) in budget['stems'])
+                         and (lambda bb: bb and _same_size(bb, b0) and _axes(bb) == _axes(b0))(_bounds_of(db, bounds, bk)[0])]
+                if budget['left'] > 0 and fresh:
+                    o['id'] = rng.choice(fresh)
+                    _relevel(db, bounds, o)
+                    key, stem = o['id'].lower(), _stem(o['id'].lower())
+                else:
+                    objs.remove(o)
+                    continue
+            budget['left'] -= 1
+            budget['titles'].add(key)
+            if stem:
+                budget['stems'].add(stem)
     for o in objs:
         if o['kind'] not in ('MISC', 'INGR', 'ALCH') or interesting(db, o['id']):
             continue
@@ -1284,6 +1350,15 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     if fb:
         shelf_sense(db, bounds, fb, s['levels'], objs, ax)
     return [{k: o[k] for k in ('id', 'x', 'y', 'z', 'rx', 'ry', 'rz', 's')} for o in objs]
+
+
+_SERIES = re.compile(r'^(.*?)[ _]?(\d+|i{1,3}|iv|v)$')
+
+
+def _stem(low):
+    """A book's series stem (bk_briefhistoryempire1 → bk_briefhistoryempire), or None."""
+    m = _SERIES.match(low)
+    return m.group(1) if m and len(m.group(1)) >= 6 else None
 
 
 BOOKEND = re.compile(r'bookend')

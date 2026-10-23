@@ -171,6 +171,114 @@ def _add_frames(V, m, tiles):
                     v.setdefault('frames', set()).add(d)
 
 
+def _add_walls(V, m, tiles):
+    """The kit's loose walls standing on a tile edge (a stairwell's edge wall, a wall the piece lacked):
+    the corners at their two ends get a wall edge running toward the wall, as a piece's own wall would.
+    Without this a loose wall was no wall to the post rules: the corner where the user's cellar landing
+    (a hall_end) met the stairwell's edge wall read as a wall's bare end, and the style's post went on
+    it, inside the loose wall (the "half column", 2026-10-23)."""
+    if not tiles:
+        return
+    T = tiles[0]['T']
+    ids = {w['id'].lower() for t in tiles for w in t['kit'].get('walls', [])}
+    for r in m['refs']:
+        low = r['id'].lower()
+        if low not in ids and not (re.search(r'(^|_)wall(_|$)', low) and kits.kit_prefix(r['id'])):
+            continue
+        bx = _world_box(r)
+        if not bx:
+            continue
+        w, d = bx[3] - bx[0], bx[4] - bx[1]
+        if min(w, d) > T * 0.35 or not T * 0.8 <= max(w, d) <= T * 1.15:
+            continue
+        cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
+        along_x = w >= d
+        ends = (((cx - T / 2, cy), 'E'), ((cx + T / 2, cy), 'W')) if along_x else (((cx, cy - T / 2), 'N'), ((cx, cy + T / 2), 'S'))
+        for (ex, ey), dd in ends:
+            for v in V.values():
+                if abs(v['x'] - ex) < 40 and abs(v['y'] - ey) < 40 and bx[2] < v['floor'] + 60 and bx[5] > v['floor'] + 60:
+                    v['walls'].add(dd)
+
+
+def _in_wall(bx, walls, share=0.5, show=8):
+    """Whether a post stands more than `share` inside a wall (a loose wall or a door frame) and shows
+    into the room by less than `show`: across the wall's thickness, more than that share of the post's
+    width lies within it, where the post's footprint meets the wall's at all, and on the wall's room
+    side (the side a floor tile stands on; either side when both or neither do) the post is all but
+    hidden. The game's own Hlaalu places stand a room_post centred on the end of an in_hlaalu_wall (86
+    wide on a 62-thick wall: 72% inside, 12 showing on both faces, 20 in 50 places), which is their
+    look and passes; the user's post at the end of a stairwell's edge wall (67% inside, 4 showing on
+    the room's side) is the half column (2026-10-23). walls: [(box, room side: -1, 0 or +1 along the
+    wall's thin axis)]."""
+    for wb, inner in walls:
+        if wb[2] > bx[5] - 40 or wb[5] < bx[2] + 40:
+            continue
+        ox = min(bx[3], wb[3]) - max(bx[0], wb[0])
+        oy = min(bx[4], wb[4]) - max(bx[1], wb[1])
+        if ox <= 0 or oy <= 0:
+            continue
+        thin_x = (wb[3] - wb[0]) < (wb[4] - wb[1])
+        if thin_x:
+            across = ox / max(1.0, bx[3] - bx[0])
+            lo, hi = wb[0] - bx[0], bx[3] - wb[3]           # (how far the post shows past each face of the wall)
+        else:
+            across = oy / max(1.0, bx[4] - bx[1])
+            lo, hi = wb[1] - bx[1], bx[4] - wb[4]
+        out = hi if inner > 0 else lo if inner < 0 else min(lo, hi)
+        if across > share and out < show:
+            return True
+    return False
+
+
+def _wall_boxes(db, m, T, skip=(), tiles=()):
+    """The world boxes of the place's narrow building pieces a post could stand inside: a kit's loose
+    walls and door frames (a tile's own box covers the whole tile, so tiles are left out; a furniture
+    screen named for a wall is no kit's). [(box, room side)]: which side of the wall, along its thin
+    axis, a floor tile stands on (+1, -1, or 0 for both or neither)."""
+    out = []
+    known = kits.kits(db)
+    ids = {}
+    for r in m['refs']:
+        if r['k'] in skip or r['type'] != 'STAT':
+            continue
+        pre = kits.kit_prefix(r['id'])
+        if not pre or pre not in known:
+            continue
+        low = r['id'].lower()
+        if pre not in ids:
+            kp = kits.kit_pieces(db, pre) or {}
+            # (the kit's own loose walls and door frames, and its family's loose wall: not the thin panels
+            # the Gold Coast lays on its wall faces, which its pilasters stand through by design)
+            fam = kits.family_wall(db, pre)
+            ids[pre] = {w['id'].lower() for w in kp.get('walls', [])} | {j['id'].lower() for j in kp.get('jambs', [])} | \
+                ({fam['id'].lower()} if fam else set())
+        if low not in ids[pre]:
+            continue
+        bx = _world_box(r)
+        if not bx:
+            continue
+        w, d = bx[3] - bx[0], bx[4] - bx[1]
+        if min(w, d) <= T * 0.35 and max(w, d) >= T * 0.5:
+            cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
+            thin_x = w < d
+            # (the tiles the wall bounds; with none right beside it, a stairwell's edge wall at the stair
+            # tile, the nearest tile round it says which side the building is on)
+            sides, near = set(), []
+            for t in tiles:
+                if abs(t['floor'] - bx[2]) > 64:
+                    continue
+                d_ = (t['x'] - cx) if thin_x else (t['y'] - cy)
+                o_ = (t['y'] - cy) if thin_x else (t['x'] - cx)
+                if abs(o_) < T * 0.6 and 16 < abs(d_) < T:
+                    sides.add(1 if d_ > 0 else -1)
+                elif abs(o_) < T * 1.6 and 16 < abs(d_) < T * 1.6:
+                    near.append((abs(d_) + abs(o_), 1 if d_ > 0 else -1))
+            if not sides and near:
+                sides.add(min(near)[1])
+            out.append((bx, next(iter(sides)) if len(sides) == 1 else 0))
+    return out
+
+
 def _shape(v):
     """How the walls meet at a corner, the same whichever way it's turned: (tiles round it, pattern of
     edges: 0 nothing, 1 a door frame, 2 a wall)."""
@@ -236,6 +344,7 @@ def post_rules(db, prefix):
         objs = _narrow_tall(m, tiles[0]['H'], {t['ref'] for t in tiles})
         V = _vertices(tiles)
         _add_frames(V, m, tiles)
+        _add_walls(V, m, tiles)
         for v in V.values():
             st = stats.setdefault(_shape(v), {'n': 0, 'with': 0, 'ids': {}, 'dz': []})
             st['n'] += 1
@@ -359,6 +468,7 @@ def missing_posts(db, m, tiles, only_frames=False):
         return []
     import builder
     out = []
+    wall_boxes = _wall_boxes(db, m, tiles[0]['T'], {t['ref'] for t in tiles}, tiles)
 
     def at(rid, v, z, why):
         # stand the middle of the model on the corner (some posts' models sit well off their origin)
@@ -370,12 +480,18 @@ def missing_posts(db, m, tiles, only_frames=False):
                       [(t['x'], t['y']) for t in tiles if abs(t['floor'] - v['floor']) < 32])
         if g:
             x, y, rot = g[0]
+        # (never one standing more than half inside a loose wall or a door frame: it would show as half
+        # a column poking out of the wall, the user's cellar landing, 2026-10-23)
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if b and _in_wall(_world_box({'b': b, 's': 1.0, 'p': (x, y, z, 0, 0, rot)}), wall_boxes):
+            return
         out.append({'x': x, 'y': y, 'z': z, 'id': rid, 'floor': v['floor'], 'why': why, 'vx': v['x'], 'vy': v['y'],
                     'prefix': v['kit'].get('prefix'), 'rot': rot})
 
     objs = _narrow_tall(m, tiles[0]['H'], {t['ref'] for t in tiles})
     V = _vertices(tiles)
     _add_frames(V, m, tiles)
+    _add_walls(V, m, tiles)
     for v in V.values():
         if not v['walls'] and not v.get('frames'):
             continue
@@ -410,7 +526,7 @@ def closing_pieces(db, cell_key):
     # and where walls meet. Measured 2026-10-22 on the user's Gold Coast house: 137 posts wanted and 19 of
     # 21 door jambs with bare ends while the gate held the builder back. Returns [(id, pos, scale, kind)])
     res = scan(db, cell_key, gate=())
-    res['issues'] = [i for i in res['issues'] if i['kind'] in ('post', 'hole') and i['fixes']
+    res['issues'] = [i for i in res['issues'] if i['kind'] in ('post', 'jambend', 'hole') and i['fixes']
                      and all(o.get('op') == 'place' for o in i['fixes'][0]['ops'])]
     if res['issues']:
         first = min(_rank(i) for i in res['issues'])       # (posts first; the builder looks again after)
@@ -875,7 +991,8 @@ def _wall_fix(db, t, sides):
     wall = builder.plain_wall(kp, db)
     ops = []
     for s in sides:
-        off = t['T'] / 2 - wall['thick'] / 2 - 2
+        # (a side onto nothing: where the game's places stand this wall on such an edge, see builder._wall_offset)
+        off = builder._wall_offset(db, kp, wall, t['T'], edge=True)
         wx, wy = t['x'] + STEP[s][0] * off, t['y'] + STEP[s][1] * off
         rot = 0 if (s in 'EW') == wall['thin_x'] else math.pi / 2
         import seethrough
@@ -1295,10 +1412,334 @@ def _opening_issues(db, m, tiles, floors):
                     fixes = [_wall_fix(db, t_, [s])] if _wall_fix(db, t_, [s]) else []
                 else:
                     import builder
-                    rid_, pos_, _e = builder._loose_wall_ref(db, wall, ox, oy, s, upper, T)
+                    rid_, pos_, _e = builder._loose_wall_ref(db, wall, ox, oy, s, upper, T, kp, edge=True)
                     fixes = [{'label': 'Add a wall piece (%s)' % rid_, 'ops': [{'op': 'place', 'id': rid_, 'p': list(pos_)}]}]
             out.append({'kind': 'hole', 'side': s, 'ref': r['k'], 'id': r['id'], 'x': ex, 'y': ey, 'z': upper + H / 2,
                         'text': 'The stairwell\'s opening looks out onto nothing here: the void shows through', 'fixes': fixes})
+    return out
+
+
+def _stair_ends(db, r):
+    """A kit stair's two ends: [(x, y, floor z, the side of that tile towards the stair, 'foot'|'head')]
+    for the tile at its foot and the one at its head, or None for a stair the kits don't know, a run of
+    several pieces or one placed by its middle."""
+    pre = kits.kit_prefix(r['id'])
+    info = kits.stairs(db, pre) if pre and pre in kits.kits(db) else None
+    sp = next((p for p in (info or {}).get('pieces', []) if p['id'].lower() == r['id'].lower()), None)
+    if not sp or sp.get('len', 1) > 1 or 'cx' in sp or abs(r['p'][3]) > 0.05 or abs(r['p'][4]) > 0.05:
+        return None
+    kp = kits.kit_pieces(db, pre)
+    T = kp['tile']
+    q = int(round(r['p'][5] / (math.pi / 2))) % 4
+    if abs(r['p'][5] - q * math.pi / 2) > 0.1 and abs(r['p'][5] - q * math.pi / 2 - 2 * math.pi) > 0.1:
+        return None
+    down = kits.SIDES[(kits.SIDES.index(sp['low']) + q) % 4]
+    up = OPPOSITE[down]
+    lower = r['p'][2] + sp['z_low'] + kp['zmin']
+    ox, oy = r['p'][0], r['p'][1]
+    return [(ox + STEP[down][0] * T, oy + STEP[down][1] * T, lower, up, 'foot'),
+            (ox + STEP[up][0] * T, oy + STEP[up][1] * T, lower + sp['rise'], down, 'head')], kp
+
+
+def _landing_issues(db, m, tiles, floors, door_spots):
+    """The faults of a staircase's ends and of what they lead to (the user's Hlaalu house, 2026-10-23).
+    A closed end ('stairend'): the tile at the stair's foot or head has a wall across the stair, or there
+    is no floor there at all (the flight comes out against a wall, or onto nothing). A part of the
+    building no doorway leads to ('doorway'): the tiles are joined into parts by their open sides, the
+    doors standing in walls and the stairs (foot to head); a part with no door at all (no way out, nothing
+    to anywhere else) can't be reached: a stairwell landing boxed in by Hlaalu's hall corners and a
+    hall_end (why 'landing', with the stair's end tile named), or a whole wing cut off by the stair
+    block's walls (why 'cutoff'). The fix stands the end tile open towards the stair, or opens one side
+    of the part as a doorway into a part that has a door (the kit's door frame between two open sides, or
+    a door piece), the stair's end tile straight on from the stair first."""
+    import builder
+    out = []
+    if not tiles:
+        return out
+    T = tiles[0]['T']
+    x0_, y0_, f0_ = tiles[0]['x'], tiles[0]['y'], tiles[0]['floor']
+    # (keyed from the first tile: the game's places stand their tiles on half-tile offsets, where
+    # rounding x / T alone put two tiles on one key)
+    at = {}
+    for t in tiles:
+        at.setdefault((round((t['x'] - x0_) / T), round((t['y'] - y0_) / T), round((t['floor'] - f0_) / 64)), t)
+    pat = lambda t: t.get('spot') or t['pat']
+    by_ref = {t['ref']: t for t in tiles}
+
+    def tile_at(x, y, z):
+        return at.get((round((x - x0_) / T), round((y - y0_) / T), round((z - f0_) / 64)))
+
+    # the doors (and the activators that work as doors): where each stands and whether it leads to
+    # another place (a load door)
+    doors = [((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, bx[2], bool(r.get('to'))) for r in m['refs']
+             if r['type'] == 'DOOR' or (r['type'] == 'ACTI' and 'door' in r['id'].lower()) for bx in [_world_box(r)] if bx]
+
+    def door_on(t, s, leads_out=False):
+        x0, y0, x1, y1 = _edge(t, s)
+        ex, ey = (x0 + x1) / 2, (y0 + y1) / 2
+        return any(math.hypot(d[0] - ex, d[1] - ey) < max(96, T * 0.35) and abs(d[2] - t['floor']) < 160 and (d[3] or not leads_out)
+                   for d in doors)
+
+    def door_in(t):
+        """A door to another place standing on the tile or just beside it (a trapdoor in its floor, a
+        ladder, a load door on a landing of its own next to the tile)."""
+        return any(d[3] and abs(d[0] - t['x']) <= T * 1.25 and abs(d[1] - t['y']) <= T * 1.25 and -160 < d[2] - t['floor'] < t['H']
+                   for d in doors)
+
+    # the kit stairs: their end tiles (foot to head is a way), and closed ends
+    stairs = [r for r in m['refs'] if r.get('ri') is not None and r['type'] == 'STAT' and re.search(r'stair|ramp', r['id'].lower())]
+    known = set()
+    links = []                     # (foot tile ref, head tile ref)
+    ends = {}                      # end tile ref -> (which, side towards the stair)
+    found = {}                     # stair ref -> its end tiles' refs
+    loose = {}                     # stair ref -> the end spots with no tile (the next flight of a pair stands there)
+    for r in stairs:
+        got = _stair_ends(db, r)
+        if not got:
+            continue
+        known.add(r['k'])
+        pair = []
+        for (ex, ey, ez, side, which) in got[0]:
+            t = tile_at(ex, ey, ez)
+            if t is None:
+                # (a landing of another kind, a platform or the next flight: the game's places have many
+                # such ends, so an end with no tile is left alone)
+                pair.append(None)
+                loose.setdefault(r['k'], []).append((ex, ey, ez))
+                continue
+            pair.append(t['ref'])
+            found.setdefault(r['k'], []).append(t['ref'])
+            ends.setdefault(t['ref'], (which, side))
+            if pat(t)[side] == 'wall':
+                want = {s: pat(t)[s] for s in kits.SIDES}
+                want[side] = 'open'
+                piece, q, missing, _p = builder._pick(t['kit'], want)
+                fixes = []
+                if piece and not missing:
+                    fixes = [{'label': 'Swap for %s (open towards the stairs)' % piece['id'],
+                              'ops': [{'op': 'swap', 'ref': t['ref'], 'id': piece['id'], 'rz': q * math.pi / 2}] +
+                              [{'op': 'delete', 'ref': k} for k in t.get('mates', [])]}]
+                x0, y0, x1, y1 = _edge(t, side)
+                out.append({'kind': 'stairend', 'ref': t['ref'], 'id': t['id'], 'x': (x0 + x1) / 2, 'y': (y0 + y1) / 2, 'z': t['floor'] + 110,
+                            'side': side, 'text': 'The %s of the stairs meets a wall: this piece is walled on the side the stairs come out on' % which,
+                            'fixes': fixes})
+        if pair[0] and pair[1]:
+            links.append((pair[0], pair[1]))
+    # two half-storey flights in line (Hlaalu's hall_stairs, Common's stair_short): the lower one's head
+    # and the upper one's foot are each other's piece, not a tile, so the flights are chained: the end
+    # tiles of a flight whose loose end stands on another flight are joined to that flight's
+    by_k = {r['k']: r for r in stairs}
+    leads_off = set()              # end tile refs of a flight whose other end stands on something that is no tile
+    for k, spots in loose.items():
+        for (ex, ey, ez) in spots:
+            chained = False
+            for k2 in found:
+                if k2 == k or k2 not in by_k:
+                    continue
+                r2 = by_k[k2]
+                bx = _world_box(r2)
+                if bx and bx[0] - 8 <= ex <= bx[3] + 8 and bx[1] - 8 <= ey <= bx[4] + 8 and bx[2] - 32 <= ez <= bx[5] + 32:
+                    chained = True
+                    for a in found.get(k, []):
+                        for b in found[k2]:
+                            links.append((a, b))
+            # (onto a platform, a floor sheet, a stair of another kind, or straight to a door to another
+            # place: the flight leads off to somewhere the tiles don't show, so its other end counts as
+            # reached)
+            if not chained and (any(bx[0] <= ex <= bx[3] and bx[1] <= ey <= bx[4] and bx[2] <= ez + 64 and bx[5] >= ez - 16 for bx in floors)
+                                or any(d[3] and abs(d[0] - ex) <= T * 1.5 and abs(d[1] - ey) <= T * 1.5 and abs(d[2] - ez) < 300 for d in doors)):
+                leads_off.update(found.get(k, []))
+    # other floored pieces (another kit's room, a stair the kits don't know): a side open onto one leads somewhere
+    other = [bx for r in m['refs'] if r['k'] not in by_ref and r['k'] not in known and (r.get('arch') or r['type'] in ('STAT', 'ACTI'))
+             for bx in [_world_box(r)] if bx and (bx[3] - bx[0]) * (bx[4] - bx[1]) >= 128 * 96 and bx[5] - bx[2] > 24]
+
+    def onto_other(t, s):
+        dx, dy = STEP[s]
+        px, py = t['x'] + dx * T * 0.75, t['y'] + dy * T * 0.75
+        return any(bx[0] <= px <= bx[3] and bx[1] <= py <= bx[4] and bx[2] <= t['floor'] + 64 and bx[5] >= t['floor'] - 16 for bx in other)
+
+    # the parts of the building: tiles joined through sides that aren't walls (both ways), doors in walls,
+    # and the stairs; a part is reached when a door on it leads to another place, a door stands on a side
+    # of it with nothing beyond (the way out), or it opens onto another kind of floor piece
+    part = {}
+    reached = {}
+    n_parts = 0
+    for t in tiles:
+        if t['ref'] in part:
+            continue
+        n_parts += 1
+        todo, got = [t], False
+        while todo:
+            c = todo.pop()
+            if c['ref'] in part:
+                continue
+            part[c['ref']] = n_parts
+            if door_in(c) or c['ref'] in leads_off:
+                got = True
+            for s in kits.SIDES:
+                o = tile_at(c['x'] + STEP[s][0] * T, c['y'] + STEP[s][1] * T, c['floor'])
+                if door_on(c, s, leads_out=True) or (o is None and door_on(c, s)):
+                    got = True
+                if pat(c)[s] == 'wall':
+                    if o and door_on(c, s):
+                        todo.append(o)
+                    continue
+                if o is None:
+                    if onto_other(c, s):
+                        got = True
+                elif pat(o)[OPPOSITE[s]] != 'wall' or door_on(c, s):
+                    todo.append(o)
+            for a, b in links:
+                if c['ref'] == a and b in by_ref:
+                    todo.append(by_ref[b])
+                elif c['ref'] == b and a in by_ref:
+                    todo.append(by_ref[a])
+        reached[n_parts] = got
+    # (parts joined by stairs: the links above walk them, so both ends share a number; a part reached
+    # through any of its tiles is reached as a whole)
+    if all(reached.values()):
+        return out
+    members = {}
+    for ref, n in part.items():
+        members.setdefault(n, []).append(by_ref[ref])
+    for n, lst in members.items():
+        if reached[n]:
+            continue
+        end_tiles = [t for t in lst if t['ref'] in ends]
+        # (only a part a staircase leads into: the game's own places have shells of pieces stacked over
+        # a tall room, mezzanines reached by ladders and the like, which no door of theirs leads to)
+        if not end_tiles:
+            continue
+        here = end_tiles[0]
+        which, side = ends.get(here['ref'], (None, None))
+        # one side to open: a wall side with a tile of a reached part past it (any other part failing
+        # that), a stair's end tile straight on from the stair first
+        cands = []
+        for c in lst:
+            for s in kits.SIDES:
+                if pat(c)[s] != 'wall':
+                    continue
+                o = tile_at(c['x'] + STEP[s][0] * T, c['y'] + STEP[s][1] * T, c['floor'])
+                if o and part.get(o['ref']) != n:
+                    e_ = ends.get(c['ref'])
+                    cands.append((not reached.get(part.get(o['ref'])), c['ref'] not in ends, bool(e_) and s != OPPOSITE[e_[1]], c['ref'], s, c, o))
+        fixes = []
+        x0, y0, x1, y1 = _edge(here, OPPOSITE[side]) if side else (here['x'] - 1, here['y'] - 1, here['x'] + 1, here['y'] + 1)
+        if cands:
+            _a, _b, _c, _r, s, c, o = min(cands, key=lambda k: k[:5])
+            x0, y0, x1, y1 = _edge(c, s)
+            ops = []
+            kp_ = c['kit']
+            fr = door_frame(kp_) if kp_.get('frame_doors') or not kp_.get('entry_doors') else None
+            ok = True
+            for tile, sd in ((c, s), (o, OPPOSITE[s])):
+                want = {k: pat(tile)[k] for k in kits.SIDES}
+                got = None
+                if not fr:
+                    want[sd] = 'door'
+                    v = _variant(tile['kit'], want)
+                    got = (v[0], v[1]) if v else None
+                if not got:
+                    want[sd] = 'open'
+                    piece, q, missing, _p = builder._pick(tile['kit'], want)
+                    got = (piece, q) if piece and not missing else None
+                if not got:
+                    ok = False
+                    break
+                if got[0]['id'].lower() != tile['id'].lower() or got[1] != tile['q']:
+                    ops.append({'op': 'swap', 'ref': tile['ref'], 'id': got[0]['id'], 'rz': got[1] * math.pi / 2})
+                    ops += [{'op': 'delete', 'ref': k} for k in tile.get('mates', [])]
+            if ok and fr:
+                mx, my = c['x'] + STEP[s][0] * T / 2, c['y'] + STEP[s][1] * T / 2
+                rot = 0 if (s in 'EW') == fr['thin_x'] else math.pi / 2
+                px, py = builder._centred(db, fr['ri'], mx, my, rot)
+                ops.append({'op': 'place', 'id': fr['id'], 'p': [round(px, 2), round(py, 2), round(c['floor'] - fr['zmin'], 2), 0, 0, rot]})
+            if ok and ops:
+                fixes = [{'label': 'Open a doorway into it%s' % ((' (%s)' % fr['id']) if fr else ''), 'ops': ops}]
+        if which:
+            text = 'The landing at the %s of the stairs is boxed in: no doorway leads out of it (%d tile%s)' % (
+                which, len(lst), '' if len(lst) == 1 else 's') if len(lst) <= 6 else \
+                'No doorway leads to the part of the building the %s of the stairs comes out in (%d tiles)' % (which, len(lst))
+        else:
+            text = 'No doorway leads to this part of the building (%d tile%s): it can\'t be reached from the way out' % (
+                len(lst), '' if len(lst) == 1 else 's')
+        out.append({'kind': 'doorway', 'why': 'landing' if which else 'cutoff', 'ref': here['ref'], 'id': here['id'],
+                    'x': (x0 + x1) / 2, 'y': (y0 + y1) / 2, 'z': here['floor'] + 110, 'side': OPPOSITE[side] if side else None,
+                    'text': text, 'fixes': fixes})
+    return out
+
+
+_end_rates = {}
+
+
+def end_rates(db, prefix, limit=20):
+    """How often the game's own places of a kit show a post inside a wall ('sunk', per post) and a
+    stair's end against a wall ('stairend', per kit stair): what the finder lists those kinds against
+    (a place shows them only beyond twice the kit's rate). Measured 2026-10-23 on 20 to 50 places:
+    Hlaalu 0 and 0, Common plain 0 and 0, Gold Coast 0.5% of posts and 1 end in 10 places (its pillars
+    stand in its wall lines by design), Indoril a third of its columns. {'sunk': rate, 'stairend': rate,
+    'places': n} (rates None when the kit has fewer than 3 game places)."""
+    if prefix in _end_rates and _end_rates[prefix][0] is db.recs:
+        return _end_rates[prefix][1]
+    res = {'sunk': None, 'stairend': None, 'places': 0}
+    kp = kits.kit_pieces(db, prefix) if prefix else None
+    if kp:
+        cells = set()
+        for p in kp['pieces'][:8]:
+            cells |= {db.recs[ci][7] for ci in db.used_in.get(p['id'].lower(), ()) if db.recs[ci][0] == 'CELL'
+                      and kits.game_made(db, db.recs[ci][7]) and not db.recs[ci][7].startswith('#')}
+        posts = sunk = stairs = bad_ends = 0
+        n = 0
+        for ck in sorted(cells)[:limit]:
+            try:
+                m = mapdata.cellmap(db, ck)
+                tiles, _p = _tiles(db, m)
+            except Exception:
+                continue
+            if len(tiles) < 4:
+                continue
+            n += 1
+            tile_refs = {t['ref'] for t in tiles}
+            floors = [bx for r in m['refs'] if r['k'] not in tile_refs and (r.get('arch') or r['type'] in ('STAT', 'ACTI'))
+                      for bx in [_world_box(r)] if bx and (bx[3] - bx[0]) * (bx[4] - bx[1]) >= 128 * 96]
+            posts += sum(1 for r in m['refs'] if r['type'] == 'STAT' and COLUMN_WORDS.search(r['id'].lower()) and kits.kit_prefix(r['id']) == prefix)
+            sunk += len(_sunk_posts(db, m, tiles))
+            st = [r for r in m['refs'] if r['type'] == 'STAT' and kits.kit_prefix(r['id']) == prefix and re.search(r'stair|ramp', r['id'].lower())]
+            stairs += len(st)
+            bad_ends += sum(1 for i in _landing_issues(db, m, tiles, floors, []) if i['kind'] == 'stairend')
+        res = {'sunk': (sunk / float(posts)) if n >= 3 and posts else None,
+               'stairend': (bad_ends / float(stairs)) if n >= 3 and stairs else None, 'places': n}
+    _end_rates[prefix] = (db.recs, res)
+    return res
+
+
+def _sunk_posts(db, m, tiles):
+    """Posts and columns standing more than half inside a loose wall or a door frame ('sunk'): the
+    user's half column at the cellar landing, 2026-10-23. The fix takes the post out."""
+    out = []
+    if not tiles:
+        return out
+    T = tiles[0]['T']
+    walls = _wall_boxes(db, m, T, {t['ref'] for t in tiles}, tiles)
+    if not walls:
+        return out
+    known = kits.kits(db)
+    for r in m['refs']:
+        low = r['id'].lower()
+        # (a kit's whole post or column: not furniture named for a post, nor a half pillar made to stand
+        # flat against a wall)
+        if r['type'] != 'STAT' or not COLUMN_WORDS.search(low) or re.search(r'half|pilaster', low):
+            continue
+        pre = kits.kit_prefix(r['id'])
+        if not pre or pre not in known:
+            continue
+        bx = _world_box(r)
+        if not bx or bx[3] - bx[0] > 160 or bx[4] - bx[1] > 160:
+            continue
+        if _in_wall(bx, walls):
+            out.append({'kind': 'sunk', 'ref': r['k'], 'id': r['id'], 'x': (bx[0] + bx[3]) / 2, 'y': (bx[1] + bx[4]) / 2, 'z': bx[2] + 110,
+                        'text': 'A post standing more than half inside a wall piece (half a column pokes out of it)',
+                        'fixes': [{'label': 'Take out the post', 'ops': [{'op': 'delete', 'ref': r['k']}]}]})
     return out
 
 
@@ -1577,7 +2018,7 @@ def _hole_issues(db, m, tiles, floors, issues, cell_key):
         seen.update(t.get('mates', []))
         spots.append(t)
     # (what the other fixes would add counts as there already: no hole is reported twice)
-    known = [(op['id'], op['p']) for i in issues if i['kind'] == 'post' for op in i['fixes'][0]['ops']]
+    known = [(op['id'], op['p']) for i in issues if i['kind'] in ('post', 'jambend') for op in i['fixes'][0]['ops']]
     gap_sides = {(i['ref'], i.get('side')) for i in issues if i['kind'] in ('gap', 'doorway')}
     ceilings = {i['ref'] for i in issues if i['kind'] == 'ceiling'}
     frames = [bx for r in m['refs'] if re.search(r'jamb|frame|doorway|arch|_dj(_|\d|$)', r['id'].lower())
@@ -1630,6 +2071,57 @@ def _hole_issues(db, m, tiles, floors, issues, cell_key):
                     'text': ('Pieces don\'t meet here: the void shows through' if hole['void'] else
                              'Pieces don\'t meet here: a slit into the next room'),
                     'fixes': fixes})
+    try:
+        out += _back_issues(db, m, spots, sc, walled, {(i['ref'], i.get('side')) for i in out} | gap_sides)
+    except Exception as e:
+        print('walls seen from behind:', e)
+    return out
+
+
+def _back_issues(db, m, tiles, sc, walled, known=()):
+    """Walls seen from behind (seethrough.backs): the one-sided wall the player looks at from a tile shows
+    its back, which the game doesn't draw (the user's Gold Coast "Big Ass Fail"). The fix stands a wall
+    back to back with it, facing this tile, as the game builds every wall between two rooms: a loose wall
+    the same piece turned round and mirrored across the tile's edge; a wall that is part of the next tile's
+    piece the style's plain loose wall, on this tile's side."""
+    import seethrough
+    import builder
+    by_key = {r['k']: r for r in m['refs']}
+    tile_keys = {t['ref'] for t in tiles}
+    out = []
+    for b in seethrough.backs(db, sc, tiles, walled):
+        t, s = b['tile'], b['side']
+        if (t['ref'], s) in known:
+            continue
+        r = by_key.get(b['owner'])
+        if r is None or r['type'] == 'DOOR':
+            continue                          # (a door's back is the other room's door: the game's own load doors)
+        nx, ny = STEP[s]
+        ex, ey = t['x'] + nx * t['T'] / 2.0, t['y'] + ny * t['T'] / 2.0
+        ops = []
+        if r['k'] not in tile_keys and r.get('arch') and r.get('b'):
+            # (the same wall turned round: its box's middle mirrored across the edge, so its face comes out
+            # where the back is, a hand's breadth into this tile)
+            wb = _world_box(r)
+            cx, cy = (wb[0] + wb[3]) / 2.0, (wb[1] + wb[4]) / 2.0
+            mx = 2 * ex - cx if s in 'EW' else cx
+            my = 2 * ey - cy if s in 'NS' else cy
+            ox, oy = mx + (cx - r['p'][0]), my + (cy - r['p'][1])
+            p = [round(ox, 2), round(oy, 2), r['p'][2], r['p'][3], r['p'][4], round((r['p'][5] + math.pi) % (2 * math.pi), 4)]
+            ops.append({'op': 'place', 'id': r['id'], 'p': p, 's': r.get('s') or 1.0})
+            label = 'Stand %s back to back with it' % r['id']
+        else:
+            prefix = kits.kit_prefix(t['id'])
+            kp = kits.kit_pieces(db, prefix) if prefix else None
+            if not kp or not kp['walls']:
+                continue
+            w = builder.plain_wall(kp, db)
+            rid, pos, _x = builder._loose_wall_ref(db, w, t['x'], t['y'], s, t['floor'], t['T'], kp)
+            ops.append({'op': 'place', 'id': rid, 'p': [round(v, 4) for v in pos]})
+            label = 'Add %s facing this room' % rid
+        out.append({'kind': 'backwall', 'side': s, 'ref': t['ref'], 'id': t['id'], 'x': ex, 'y': ey, 'z': b['z'],
+                    'text': 'You see the back of %s here: the game doesn\'t draw a wall from behind, so the next room shows through' % r['id'],
+                    'fixes': [{'label': label, 'ops': ops}]})
     return out
 
 
@@ -1644,7 +2136,7 @@ def scan(db, cell_key, everything=False, clashes=False, gate=('gap', 'doorway', 
     not a fault; the slack CLASH_BASELINE gives clips). The default list is what is worse than the game's
     own places; everything=True lists every line the finder has, and the clips and z-fights above twice
     the game's rate (clashes=True adds those to the default list too). Measured on the user's houses
-    2026-10-22 (packaging/nexus/builder-learning-round.md): 45 posts wanted on a Gold Coast house → 0
+    2026-10-22 (packaging/nexus/builder-learning-round.md): 45 posts wanted on a Gold Coast house â†’ 0
     by default, 12 on a Common plain house stay (the game's Common plain places want none)."""
     res = _scan(db, cell_key)
     if clashes or everything:
@@ -1694,10 +2186,28 @@ def scan(db, cell_key, everything=False, clashes=False, gate=('gap', 'doorway', 
             res['issues'] = [i for i in res['issues'] if i['kind'] != 'hole']
             res['hidden'] = len(holes)
         for kind in gate:
-            n = sum(1 for i in res['issues'] if i['kind'] == kind)
+            # (a boxed stairwell landing is never left to the game's rate of dead doorways)
+            n = sum(1 for i in res['issues'] if i['kind'] == kind and i.get('why') != 'landing')
             if n and n / float(tiles) <= 2 * per.get(kind, 0):
-                res['issues'] = [i for i in res['issues'] if i['kind'] != kind]
+                res['issues'] = [i for i in res['issues'] if i['kind'] != kind or i.get('why') == 'landing']
                 res['hidden_kinds'][kind] = n
+    # (posts inside walls and stair ends against walls: the game's own Gold Coast and Indoril places have
+    # them by design, so each shows only beyond twice the kit's own rate, per post and per stair)
+    if not everything:
+        try:
+            rates = end_rates(db, res['prefix'])
+            m_ = mapdata.cellmap(db, cell_key)
+            n_posts = sum(1 for r in m_['refs'] if r['type'] == 'STAT' and COLUMN_WORDS.search(r['id'].lower()))
+            n_stairs = sum(1 for r in m_['refs'] if r['type'] == 'STAT' and re.search(r'stair|ramp', r['id'].lower()))
+            for kind, base, rate in (('sunk', n_posts, rates.get('sunk')), ('stairend', n_stairs, rates.get('stairend'))):
+                n = sum(1 for i in res['issues'] if i['kind'] == kind)
+                if n and rate is not None and base and n / float(base) <= 2 * rate:
+                    res['issues'] = [i for i in res['issues'] if i['kind'] != kind]
+                    res['hidden_kinds'][kind] = n
+            for n, i in enumerate(res['issues']):
+                i['n'] = n
+        except Exception as e:
+            print('end rates:', e)
         for n, i in enumerate(res['issues']):
             i['n'] = n
     return res
@@ -1813,9 +2323,14 @@ def _scan(db, cell_key):
             issues.append({'kind': 'ceiling', 'ref': t['ref'], 'id': t['id'], 'x': t['x'], 'y': t['y'],
                            'z': t['floor'] + t['H'] - 20, 'text': 'No ceiling over this spot', 'fixes': fixes})
     # corners where walls meet and the style always stands a post or column, but this place hasn't
+    # (a door frame's bare end is its own kind, 'jambend': the join of the jamb and the wall shows, the game
+    # covers it with a post at most of its door frames, and it is never left to the game's rate the way the
+    # corner posts are: the user's "missing beams on both sides of the doorway" in a room added through a
+    # wall, 2026-10-22)
     for p in missing_posts(db, m, tiles):
-        issues.append({'kind': 'post', 'ref': None, 'id': p['id'], 'x': p['vx'], 'y': p['vy'], 'z': p['floor'] + 110,
-                       'text': ('Where a door frame meets the wall: a post covers the join' if p['why'] == 'frame' else
+        frame = p['why'] == 'frame'
+        issues.append({'kind': 'jambend' if frame else 'post', 'ref': None, 'id': p['id'], 'x': p['vx'], 'y': p['vy'], 'z': p['floor'] + 110,
+                       'text': ('A door frame\'s bare end: where it meets the wall the style covers the join with a post' if frame else
                                 'A gap where walls meet: the style stands a post here'),
                        'fixes': [{'label': 'Add %s' % p['id'], 'ops': [{'op': 'place', 'id': p['id'], 'p': [p['x'], p['y'], p['z'], 0, 0, p.get('rot', 0.0)]}]}]})
     # half-length pieces where a whole one should be
@@ -1824,6 +2339,10 @@ def _scan(db, cell_key):
     issues += _hole_issues(db, m, tiles, floors, issues, cell_key)
     # a stairwell opening's own edge on the floor above, with nothing beyond it
     issues += _opening_issues(db, m, tiles, floors)
+    # a stair's end against a wall or onto nothing, and a landing boxed in with no doorway out of it
+    issues += _landing_issues(db, m, tiles, floors, door_spots)
+    # a post more than half inside a loose wall or a door frame
+    issues += _sunk_posts(db, m, tiles)
     # edges where what stands is not what the game stands in that situation (joints.py: the joint survey)
     try:
         import joints
@@ -1986,7 +2505,7 @@ def _rank(i):
     """Which fixes go first: posts and columns, then the pieces a place is missing (a half-length
     piece's other half, a wall, a ceiling), then backing pieces and door swaps."""
     label = i['fixes'][0]['label']
-    if i['kind'] == 'post' or (label.startswith('Add ') and 'wall' not in label) or label.startswith('Swap the wall'):
+    if i['kind'] in ('post', 'jambend') or (label.startswith('Add ') and 'wall' not in label) or label.startswith('Swap the wall'):
         return 0
     if 'half-length' in i['text']:
         return 1                  # (before walling anything: the side it leaves open is then open no more)
@@ -2001,7 +2520,7 @@ def _fix_ops(res, placed=()):
     for i in res['issues']:
         if not i['fixes']:
             continue
-        key = ((round(i['x']), round(i['y']), round(i['z'])) if i['kind'] in ('post', 'hole') or not i['ref'] else i['ref'],
+        key = ((round(i['x']), round(i['y']), round(i['z'])) if i['kind'] in ('post', 'jambend', 'hole') or not i['ref'] else i['ref'],
                i['fixes'][0]['label'])
         if key in seen:
             continue                 # (one fix per tile: its sides were all fixed together)

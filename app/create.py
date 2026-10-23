@@ -605,9 +605,14 @@ def _maybe_place(db, rec_id, place, commit_note, extra_subs=None):
         editing.commit(db, commit_note)
         return None
     db.sync_project()           # the new record must exist before it can be placed
+    z = None if place.get('z') is None else float(place['z'])
+    if z is not None and place.get('surface'):
+        # a spot clicked in the 3D view: the thing's bottom rests on it (as a drop from the palette does)
+        import mapdata
+        b = mapdata.object_bounds(db, db.resolve_id(rec_id))
+        z -= b[2] if b else 0.0
     rk = editing.place_ref(db, place['cell'], rec_id,
-                           [float(place['x']), float(place['y']),
-                            None if place.get('z') is None else float(place['z']), 0, 0,
+                           [float(place['x']), float(place['y']), z, 0, 0,
                             float(place.get('rz') or 0)], 1.0, place.get('cut'), extra_subs=extra_subs,
                            note=commit_note)
     return {'cell': place['cell'], 'ref': rk}
