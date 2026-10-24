@@ -76,6 +76,7 @@ NOT = {'table': ('tablet',), 'bed': ('bedroll',), 'shelf': ('bookshelf', 'bookca
 # furniture in a house, whatever family a name puts it in: the user's "white stone block" by a tapestry)
 BARE_STONE = re.compile(r'(altar|shrine)[^a-z]*(base|block|slab|plinth|pedestal|step|platform)|pedestal|plinth|podium|_slab|stoneblock|stone_block|marbleblock')
 HANGING_KINDS = ('shelf',)      # the only furniture put up on a wall (at the height the game hangs it)
+BED_OFF_THE_WAY = True          # a bed in a small room never across the line from its doorway to its middle (for the lab: off to compare)
 WINERACK = re.compile(r'winerack|wine_rack|bottlerack')
 COUNTER_PART = re.compile(r'_end|_cnr|corner|_curve|_short|_half')      # the end and corner pieces of a counter run
 KEEPER_GAP = 96                 # a counter stands this far off the wall: the keeper's side (the game's traders stand 71 behind it)
@@ -2377,6 +2378,19 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 if pw_ < 80 and (max(b[3] - b[0], b[4] - b[1]) * scale > kw_ * pw_ or (b[5] - b[2]) * scale > kh_ * ph_ + 20):
                     last_trace.append((room, 'planter', rid, 'too big a plant for the pot: left out'))
                     return None
+                # (a pot up on a table or a shelf: a flower or two that stays low, rooted inside the pot, not
+                # a floor pot's tall stem; the user's "too big a pot for a table" was a 93-tall bugloss in it.
+                # The game's plants in pots on furniture: median 52 tall, p90 78, p95 92 (203 in 100 places);
+                # 85 turns away 7% of them. Rooted outside the pot: 3.4% of the game's.)
+                fl_r = next((r_['floor'] for r_ in info['rooms'] if r_['name'] == room), None)
+                if fl_r is not None and base_['p'][2] + base_['b'][2] * bs_ > fl_r + 30:
+                    if (b[5] - b[2]) * scale > 85.0:
+                        last_trace.append((room, 'planter', rid, 'too tall a plant for a pot on a table: left out'))
+                        return None
+                    bfp_ = _footprint([v * bs_ for v in base_['b']], base_['p'][5], base_['p'][0], base_['p'][1])
+                    if not (bfp_[0] - 4 <= x <= bfp_[2] + 4 and bfp_[1] - 4 <= y <= bfp_[3] + 4):
+                        last_trace.append((room, 'planter', rid, 'a plant beside a pot on a table, not in it: left out'))
+                        return None
                 # (floating over the rim is the fault; sunk deep is the game's own way of showing less of a
                 # plant, its base hidden in the floor: a pod plant 71 under the rim of a 33-tall pot in the
                 # game's gardens of that pot. Its top must still show above the rim.)
@@ -2867,15 +2881,23 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         if piece_rec is None:
             raise EditError('That thing is not here any more.')
     piece_out = None
+    piece_room = None
+    if piece is not None:
+        # (one piece: the room it stands in, whatever that room is for. Of the rooms under it, the one whose
+        # floor is nearest below its bottom: a house's storeys have rooms of the same outline, and the ground
+        # floor's room also "held" a bookshelf upstairs, 262 over its floor; every book on the shelf then came
+        # out through that room's ceiling and Dress this said none of 80 dressings fit. The user's Test Home)
+        pb_ = piece_rec['p'][2] + piece_rec['b'][2] * (piece_rec.get('s') or 1.0)
+        under_ = [rm for rm in info['rooms'] if rm['x_min'] <= piece_rec['p'][0] <= rm['x_max'] and rm['y_min'] <= piece_rec['p'][1] <= rm['y_max']
+                  and -60 <= pb_ - rm['floor'] < 300]             # (a wall shelf hangs well above the floor)
+        if under_:
+            piece_room = min(under_, key=lambda rm: (pb_ - rm['floor'] < -60, abs(pb_ - rm['floor']) if pb_ >= rm['floor'] - 60 else 1e9))['id']
     for room in info['rooms']:
         purpose = wanted.get(room['id'], room['purpose']) if plan is not None else room['purpose']
         if plan is not None and room['id'] not in wanted and piece is None:
             continue
         if piece is not None:
-            # (one piece: only the room it stands in, whatever that room is for)
-            pb_ = piece_rec['p'][2] + piece_rec['b'][2] * (piece_rec.get('s') or 1.0)
-            if not (room['x_min'] <= piece_rec['p'][0] <= room['x_max'] and room['y_min'] <= piece_rec['p'][1] <= room['y_max']
-                    and -60 <= pb_ - room['floor'] < 300):      # (a wall shelf hangs well above the floor)
+            if room['id'] != piece_room:
                 continue
             if not purpose or purpose == 'none' or purpose not in RECIPES:
                 purpose = 'living'
@@ -3164,6 +3186,21 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     return None                      # (all four up on something that isn't the ledge)
             return None
 
+        def across_way_in(box):
+            """In a small room, a box standing across the way in: on the line from a doorway to the room's
+            middle. The game's beds in rooms of up to nine tiles are 3.7% of the time (7 of 187); the user's
+            bed in the tiny home stood in the way."""
+            if room['tiles'] > 9 or not doors_here:
+                return False
+            mx, my = (room['x_min'] + room['x_max']) / 2, (room['y_min'] + room['y_max']) / 2
+            for d in doors_here:
+                for i in range(41):
+                    t = i / 40.0
+                    px, py = d['p'][0] + (mx - d['p'][0]) * t, d['p'][1] + (my - d['p'][1]) * t
+                    if box[0] + 10 <= px <= box[2] - 10 and box[1] + 10 <= py <= box[3] - 10:
+                        return True
+            return False
+
         def wall_spot(b, front, where, pp=None, kind=None, gap=2, near=None, side=None, align=None, columns_first=False, within=None):
             """A free spot for this thing with its back to a wall (a corner first when where is
             'corner'): ((x, y, rot, box), direction into the room), or (None, None). The slot is used up.
@@ -3217,6 +3254,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         continue
                     x, y, box = st
                 if want_twin and entry_mirror(b, front, x, y, rot, kind) is None:
+                    continue
+                if kind == 'bed' and BED_OFF_THE_WAY and across_way_in(box):
                     continue
                 if fits(box):
                     (col_slots if sl.get('column') else slots).remove(sl)
@@ -4158,7 +4197,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     if not tb:
                         continue
                     rooted = pfp_[0] - 4 <= wx <= pfp_[2] + 4 and pfp_[1] - 4 <= wy <= pfp_[3] + 4     # (rooted in the planter: its fronds may brush the wall)
-                    if not rooted and not inside(_footprint([v * t.get('s', 1.0) for v in tb], (rot_ + t['rz']) % (2 * math.pi), wx, wy), loose=True):
+                    # (the loose flowers the game strews round a bed on the floor; never round a pot up on a
+                    # table, where they lay beside it at its rim's height: the user's "flowers outside pots")
+                    raised_ = prec['p'][2] + prec['b'][2] * (prec.get('s') or 1.0) > fl + 30
+                    if not rooted and (raised_ or not inside(_footprint([v * t.get('s', 1.0) for v in tb], (rot_ + t['rz']) % (2 * math.pi), wx, wy), loose=True)):
                         continue
                     if room_top and prec['p'][2] + t['z'] + tb[5] * t.get('s', 1.0) > fl + room_top - 4:
                         continue              # (a tree through a low ceiling; a flower's tip just under the ceiling line is the game's own)
@@ -4294,7 +4336,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 # did: a bookshelf stood 223 units out in a study from a mid-room example; a shrine too:
                 # the game's stand at a median 90 from the wall, and the user's saint shrine stood "in
                 # the middle of a Common stone cellar room, beside a bench, nothing round it")
-                done, face = wall_spot(b, front, 'corner' if where == 'corner' else 'wall')
+                done, face = wall_spot(b, front, 'corner' if where == 'corner' else 'wall', kind='bed' if a['fam'] == 'bed' else None)
             else:
                 rot = _turn_to_face(front, (0, -1)) if front else 0.0
                 for dx, dy in ((0, 0), (64, 0), (-64, 0), (0, 64), (0, -64)):
@@ -5350,7 +5392,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if n_s:
                 # (the pots the game stands on tables and shelves in places of this style, the small pot of
                 # the floor as often as not; the tabletop class of every style when the style has none)
-                pots_ = [i for i in (S.get('surface_models') or {}) if db.resolve_id(i) is not None and _gsv2.classify(db, i) not in ('bed', 'urn', 'hanging')] \
+                # (only the pots the game keeps on furniture at least two times in five: Imperial
+                # t_imp_furn_planter_03 is on a table 19 times in 128, a floor pot, too big for a table top)
+                GM_ = (_gsv2.ready(db) or {}).get('models') or {}
+                pots_ = [i for i, n_ in (S.get('surface_models') or {}).items() if db.resolve_id(i) is not None
+                         and _gsv2.classify(db, i) not in ('bed', 'urn', 'hanging')
+                         and n_ >= 0.4 * max(1, (GM_.get(i.lower()) or {}).get('n') or n_)] \
                     or _gsv2.floor_models(db, 'tabletop', style, cell_style)[:6]
                 hosts_ = [p for p in placed if p.get('room') == room['name'] and not p.get('arch') and p['type'] in ('STAT', 'ACTI', 'CONT')
                           and roomsurvey.family_of(db, p['id'], p['type']) in ('table', 'counter', 'shelf', 'cupboard', 'chest', 'bookshelf')]

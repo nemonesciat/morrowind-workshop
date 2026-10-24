@@ -98,6 +98,37 @@ def _stairs_learning():
 
 _styles = {}
 import threading as _threading  # noqa: E402
+
+
+def _hugging_jamb(db, style, way):
+    """For a learned front door in a narrow frame (a "dframe" well under a tile wide, stood against the wall):
+    a jamb the game's own places of this style stand the same door in (kits.door_fits), with where it stands
+    from the door in the door's own frame. {'frame', 'jamb', 'rel', 'dz', 'rz', 'scale', 'jscale'} or None."""
+    frame = next((p[0].lower() for p in way.get('parts') or [] if 'dframe' in p[0].lower()), None)
+    if not frame or not way.get('door'):
+        return None
+    fb = mapdata.object_bounds(db, db.resolve_id(frame)) if db.resolve_id(frame) is not None else None
+    if not fb or max(fb[3] - fb[0], fb[4] - fb[1]) >= 200:
+        return None
+    try:
+        fits = kits.door_fits(db, style)
+    except Exception:
+        return None
+    best = None
+    for v in fits.values():
+        if (v.get('door') or '').lower() != way['door'].lower():
+            continue
+        for ex in v.get('extra') or []:
+            if 'jamb' not in ex[0].lower() or db.resolve_id(ex[0]) is None:
+                continue
+            c, s = math.cos(v['rz']), math.sin(v['rz'])
+            dx, dy = ex[1] - v['x'], ex[2] - v['y']
+            cand = {'frame': frame, 'jamb': ex[0], 'rel': (dx * c - dy * s, dx * s + dy * c), 'dz': ex[3] - v['z'],
+                    'rz': (ex[4] - v['rz']) % (2 * math.pi), 'scale': v.get('scale') or 1.0, 'jscale': ex[5] if len(ex) > 5 else 1.0,
+                    'uses': v.get('uses') or 1}
+            if best is None or cand['uses'] > best['uses']:
+                best = cand
+    return best
 _styles_lock = _threading.Lock()
 # Sets the game never builds a house from, so there is nothing to learn its rooms from: Vivec (large)
 # is a single-hall accent in ancestral tombs and canalworks (185 places, never more than six tiles,
@@ -3284,16 +3315,24 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
     along_y = exit_side in 'EW'
     jamb_scale = door_scale = 1.0
     learned_door = None
+    hug = None
     if exit_how == 'learned':
-        # the frame and the door exactly as the game puts them on a front door's edge in this style
-        refs.extend(edge_parts(exit_tile, exit_side, exit_way, skip_door=True))
+        # the frame and the door exactly as the game puts them on a front door's edge in this style; but a
+        # narrow frame stood flat against a wall leaves the dark wall showing round the door (the user's Test
+        # Home: Gold Coast Door_i01 in DFrame_01). Where the game also stands this door in a jamb that hugs
+        # it (Door_i01 in DJambRich_02, at 1.02), that jamb instead, placed as the game places it
+        hug = _hugging_jamb(db, style, exit_way)
+        parts_ = edge_parts(exit_tile, exit_side, exit_way, skip_door=True)
+        if hug:
+            parts_ = [p for p in parts_ if p[0].lower() != hug['frame']]
+        refs.extend(parts_)
         learned_door = next(p for p in edge_parts(exit_tile, exit_side, exit_way) if p[0] == exit_way['door'])
         door_id = exit_way['door']
         db_door = db.resolve_id(door_id)
         if db_door is None:
             raise EditError('Could not find a door to use for the way out.')
         dx, dy = cx + sx * T / 2, cy + sy * T / 2
-        door_scale = learned_door[3]
+        door_scale = hug['scale'] if hug else learned_door[3]
     elif exit_how == 'frame':
         jx, jy = cx + sx * T / 2, cy + sy * T / 2
         rot = 0 if along_y == load_jamb['thin_x'] else math.pi / 2
@@ -3440,6 +3479,12 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
     else:
         pdx, pdy = _centred(db, db_door, dx, dy, drot, door_scale)  # the door panel itself in the opening
     refs.append((door_id, (pdx, pdy, dz, 0, 0, drot), door_extra, door_scale))
+    if hug:
+        # the jamb where the game stands it from this door: its offset in the door's own frame
+        c_, s_ = math.cos(drot), math.sin(drot)
+        lx_, ly_ = hug['rel']
+        refs.append((hug['jamb'], (pdx + lx_ * c_ + ly_ * s_, pdy - lx_ * s_ + ly_ * c_, dz + hug['dz'], 0, 0,
+                                   (drot + hug['rz']) % (2 * math.pi)), [], hug['jscale']))
     # ---- columns standing free in big rooms, and windows on outside walls, the way the game's own
     # places of this style have them (layoutsurvey.py: a survey of all of them; nothing until it has run)
     # (a doorway: a side that was asked for one, a frame, a learned edge, the way out; not every arched

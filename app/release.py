@@ -356,6 +356,19 @@ def _asset_refs(db):
             elif t == 'TEXT' and tag == 'BOOK':
                 for m in re.finditer(r'(?i)<img[^>]*src="([^"]+)"', bytes(d).decode(ENC, 'replace')):
                     out.append(('bookart/' + m.group(1), 'book "%s"' % rec['key']))
+    # your own magic effects' icons live in their script, not in a record; and a magic effect's icon has a
+    # large twin the game looks for beside it, "b_" in front of its name
+    try:
+        import myeffects
+        own = [(e.get('icon') or '').strip() for e in myeffects.effects_raw(db)]
+    except Exception:
+        own = []
+    effect_icons = [s for s in own if s] + [s for (rel, what) in out if what.startswith('MGEF') for s in [rel[len('icons/'):]]]
+    for s in dict.fromkeys(effect_icons):
+        d, f = os.path.split(s.replace('\\', '/'))
+        if s in own:
+            out.append(('icons/' + s, 'your magic effect\'s icon'))
+        out.append(('icons/' + (d + '/' if d else '') + 'b_' + f, 'the large icon of "%s"' % s))
     return out
 
 

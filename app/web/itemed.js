@@ -41,6 +41,11 @@ function ieField(f, n){
   const v = f.value;
   if (f.kind === 'opts') return cField(f.label, `<select class="inp" data-ief="${n}">${f.opts.map((o, i) => `<option value="${i}" ${i === +v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`);
   if (f.kind === 'bits') return `<label class="cfield"><span>${esc(f.label)}</span><div class="cchecks">${f.bits.map(([bit, name]) => `<label><input type="checkbox" data-iebit="${n}" data-bit="${bit}" ${(+v & bit) ? 'checked' : ''}> ${esc(name)}</label>`).join('')}</div></label>`;
+  // (an Icon or Model box: one from a picture of yours, or a model from the Library; iconpick.js)
+  if (f.kind === 'str' && (f.label === 'Icon' || f.label === 'Model'))
+    return cField(f.label, `<div style="display:flex;gap:6px"><input class="inp" data-ief="${n}" value="${esc(v)}">
+      ${f.label === 'Icon' ? `<button class="btn sm" data-ieicon="${n}" title="Make an inventory icon from a picture of yours (from the Library or your PC)" style="white-space:nowrap">🖼 From a picture…</button>`
+        : `<button class="btn sm" data-iemodel="${n}" title="One of your Library's models" style="white-space:nowrap">📦 From the Library…</button>`}</div>`);
   if (f.kind === 'str') return cField(f.label, `<input class="inp" data-ief="${n}" value="${esc(v)}" ${f.label === 'Name' ? 'maxlength="31"' : ''}>`);
   return cField(f.label, `<input class="inp num" type="number" step="${f.float ? 'any' : '1'}" data-ief="${n}" value="${f.float ? Math.round(v * 1000) / 1000 : v}">`);
 }
@@ -107,6 +112,9 @@ function ieBind(){
   box.querySelectorAll('[data-ief]').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
     const f = d.fields[+el.dataset.ief]; f.value = f.kind === 'str' ? el.value : (el.value === '' ? 0 : +el.value); ieDirty();
   }));
+  const setField = (n, v) => { const f = d.fields[n]; f.value = v; const inp = box.querySelector(`[data-ief="${n}"]`); if (inp) inp.value = v; ieDirty(); };
+  box.querySelectorAll('[data-ieicon]').forEach(b => b.onclick = () => icPick('item', {name: d.name || d.id, onDone: p => setField(+b.dataset.ieicon, p)}));
+  box.querySelectorAll('[data-iemodel]').forEach(b => b.onclick = () => icModelPick(p => { setField(+b.dataset.iemodel, p); if ($('#ie-view')) ieRender(); }));
   box.querySelectorAll('[data-iebit]').forEach(el => el.onchange = () => {
     const f = d.fields[+el.dataset.iebit], bit = +el.dataset.bit; f.value = el.checked ? (+f.value | bit) : (+f.value & ~bit); ieDirty();
   });

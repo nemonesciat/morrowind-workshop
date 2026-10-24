@@ -51,6 +51,25 @@ def pending(db):
     return names or before or ['the game\'s places']
 
 
+# the surveys Populate goes by (kept apart from a furnish's: a first furnish doesn't wait for them)
+_POPULATE = [('castsurvey', 'ready'), ('roomsurvey', 'ready')]
+
+
+def populate_pending(db):
+    """Like pending(), for Populate: [] when who the game's people are (and where they stand) is to hand."""
+    before = _names()
+    missing = 0
+    for mod, fn in _POPULATE:
+        try:
+            if getattr(__import__(mod), fn)(db) is None:
+                missing += 1
+        except Exception:
+            missing += 1
+    if not missing:
+        return []
+    return _names() or before or ["the game's people"]
+
+
 _warmed = {}
 
 
@@ -70,6 +89,12 @@ def prewarm(db):
         pass
     try:
         pending(db)
+    except Exception:
+        pass
+    # (who the game's people are, for Populate: queued after everything a furnish needs, so it never holds
+    # one up; every place's people in about 30 s, 2026-10-23)
+    try:
+        populate_pending(db)
     except Exception:
         pass
     # (the style list's own work, every kit's pieces and the Gold Coast dressings, about 4 s: done once

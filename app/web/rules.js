@@ -20,7 +20,7 @@ const RU_HELP = {
   gmst: 'The game\'s own rules: prices, jump height, bounties, how fast skills rise… Change them carefully: they affect the whole game.',
   skill: 'The 27 skills: which attribute governs each, whether it counts as combat, magic or stealth, and how much it rises with each use. None can be added.',
   sound: 'Every sound the game can play: its file, how loud it is and how far it carries. Regions, doors, lights, magic effects and scripts play them by their ID. Make a new one from any sound file in your game or your Library.',
-  effect: 'The magic effects spells, enchantments and potions are made of: their school, base cost, colour, and the pictures and sounds for casting, flying, hitting and spreading. None can be added: the effects themselves are built into the engine.'};
+  effect: 'The magic effects spells, enchantments and potions are made of: their school, base cost, colour, and the pictures and sounds for casting, flying, hitting and spreading. The game\'s own are built into the engine; your own (made with OpenMW\'s Lua) are listed first.'};
 const RU_MOMENT_HINT = ['', '', '', '', 'when hurt', 'when it attacks', 'when it dies', 'when it lands from a jump or fall'];
 
 async function ruOpts(){ if (!RU.opts) RU.opts = await api('/api/org/options'); return RU.opts; }
@@ -68,6 +68,28 @@ async function ruList(){
     ${list ? `<div class="rugrid">${list.map(x => `<button class="drow" data-ruo="${esc(x.id)}"><span>${esc(x.name)}</span><small>${esc(x.id !== x.name ? x.id : '')}</small></button>`).join('')}</div>`
       : '<div class="msg">Find one on the left, or make a new one.</div>'}</div>`;
   $('#rmain').querySelectorAll('[data-ruo]').forEach(b => b.onclick = () => ruOpen(b.dataset.ruo));
+  if (RU.tab === 'effect') ruMyEffects();
+}
+// (your own effects, made in Create > New magic effect: listed here too, each opening the effect maker)
+async function ruMyEffects(){
+  const lead = $('#rmain .lead'); if (!lead) return;
+  const box = document.createElement('div'); box.className = 'card'; box.style.margin = '0 0 14px';
+  lead.after(box);
+  const has = S.summary && S.summary.project;
+  let mine = [];
+  if (has){ try { MX.data = await api('/api/myeffects'); mine = MX.data.effects || []; } catch (e){ /* (listed without them) */ } }
+  if (RU.tab !== 'effect') return;
+  box.innerHTML = `<h3 style="margin:0 0 6px">Your own effects</h3>
+    ${mine.length ? `<div class="rugrid">${mine.map(e => `<button class="drow" data-myeff="${esc(e.id)}"><span>${esc(e.name || e.id)}</span><small>${esc(e.id)}</small></button>`).join('')}</div>`
+      : `<div class="msg">${has ? 'None yet.' : 'Start a mod first.'}</div>`}
+    <div class="actions" style="margin-top:8px"><button class="btn sm" id="ru-neweff">＋ New magic effect</button>
+      <span class="msg">Your spells, enchantments and potions are listed in <a href="#" id="ru-mymod">My mod</a>.</span></div>`;
+  box.querySelectorAll('[data-myeff]').forEach(b => b.onclick = () => {
+    const e = mine.find(x => x.id === b.dataset.myeff);
+    MX.sel = e.id; MX.form = JSON.parse(JSON.stringify(e)); showView('myeff');
+  });
+  $('#ru-neweff').onclick = () => { MX.form = null; showView('myeff'); };
+  $('#ru-mymod').onclick = e => { e.preventDefault(); showView('mymod'); };
 }
 async function ruOpen(id){
   if (RU.data && JSON.stringify(RU.data) !== RU.orig && !confirm('Leave your unsaved changes?')) return;

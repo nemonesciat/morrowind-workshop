@@ -28,6 +28,7 @@ enchantment and potion editors offer the effects (tdeffects.effects lists them w
 record using one carries its template meanwhile, put right as the game loads by the "td_effects" script."""
 import json
 import re
+import struct
 
 from editing import EditError, commit, _require_project
 from esm import iter_subrecords, zstr
@@ -104,18 +105,67 @@ def _vanilla(db):
         if tag != 'MGEF' or not lst or lst[-1] in db.dead or not key.lstrip('-').isdigit():
             continue
         r = db.recs[lst[-1]]
+        if int(key) not in out:
+            continue
+        look = {}
         for st, sd in iter_subrecords(db.files[r[3]].record_at(r[4])[2]):
-            if st == 'ITEX' and int(key) in out:
+            sd = bytes(sd)
+            if st == 'ITEX':
                 out[int(key)]['icon'] = zstr(sd)
+            elif st in LOOK_SUBS:
+                look[LOOK_SUBS[st]] = zstr(sd)
+            elif st == 'MEDT' and len(sd) >= 36:
+                _school, _cost, _flags, red, green, blue, speed, _size, _cap = struct.unpack_from('<ifiiiifff', sd)
+                look['color'] = [red, green, blue]
+                look['speed'] = round(speed, 3)
+        # (a sound left blank is its school's: "destruction cast", "destruction bolt"... as the game plays it)
+        school = (out[int(key)].get('school') or '').lower()
+        for k, part in (('castSound', 'cast'), ('boltSound', 'bolt'), ('hitSound', 'hit'), ('areaSound', 'area')):
+            if not look.get(k) and school and db.resolve_id('%s %s' % (school, part)) is not None:
+                look[k] = db.recs[db.resolve_id('%s %s' % (school, part))][1]
+        out[int(key)]['look'] = look
     _vcache.update(recs=db.recs, out=out)
     return out
+
+
+# the parts of an effect's look: its record's subrecord, and the field OpenMW's Lua gives it
+LOOK_SUBS = {'CVFX': 'castStatic', 'BVFX': 'bolt', 'HVFX': 'hitStatic', 'AVFX': 'areaStatic', 'CSND': 'castSound', 'BSND': 'boltSound',
+             'HSND': 'hitSound', 'ASND': 'areaSound', 'PTEX': 'particle'}
+LOOK_STATICS = ('castStatic', 'bolt', 'hitStatic', 'areaStatic')
+LOOK_SOUNDS = ('castSound', 'boltSound', 'hitSound', 'areaSound')
 
 
 def templates(db):
     """The game's effects to start from, for the maker: [{index, name, school, cost, icon, magnitude, duration}]."""
     v = _vanilla(db)
-    return sorted(({k: e[k] for k in ('index', 'name', 'school', 'cost', 'icon', 'magnitude', 'duration')} for e in v.values()),
-                  key=lambda e: (e['school'], e['name']))
+    return sorted(({k: e.get(k, {} if k == 'look' else None) for k in ('index', 'name', 'school', 'cost', 'icon', 'magnitude', 'duration', 'look')}
+                   for e in v.values()), key=lambda e: (e['school'], e['name']))
+
+
+def _look(db, look):
+    """An effect's own look (the parts that differ from the one it looks like): the game's visuals and
+    sounds by their IDs, a particle texture, a colour, a bolt speed. Unknown visuals or sounds are refused."""
+    out = {}
+    for k in LOOK_STATICS + LOOK_SOUNDS:
+        v = ((look or {}).get(k) or '').strip()
+        if not v:
+            continue
+        ri = db.resolve_id(v)
+        # (a bolt is a projectile, which the game keeps as a weapon record; the other visuals are statics)
+        want = ('WEAP', 'STAT') if k == 'bolt' else ('STAT',) if k in LOOK_STATICS else ('SOUN',)
+        if ri is None or db.recs[ri][0] not in want:
+            raise EditError('There is no %s called "%s".' % ('sound' if want == ('SOUN',) else 'visual effect', v))
+        out[k] = db.recs[ri][1]
+    p = ((look or {}).get('particle') or '').strip()
+    if p:
+        out['particle'] = p[:200]
+    c = (look or {}).get('color')
+    if isinstance(c, (list, tuple)) and len(c) == 3:
+        out['color'] = [max(0, min(255, int(x))) for x in c]
+    s = (look or {}).get('speed')
+    if s not in (None, ''):
+        out['speed'] = max(0.0, min(10.0, float(s)))
+    return out
 
 
 def effects(db):
@@ -264,6 +314,9 @@ def _clean(db, e):
     return {'id': eid, 'name': name, 'template': t, 'cost': round(cost, 3), 'icon': (e.get('icon') or '').strip() or v[t]['icon'],
             'description': (e.get('description') or '').strip()[:600],
             'magnitude': bool(e.get('magnitude', v[t]['magnitude'])), 'duration': bool(e.get('duration', v[t]['duration'])),
+            'look': _look(db, e.get('look')),
+            # (which of the game's effects each part was taken from, for the maker's menus: several share a part)
+            'look_from': {k: int(x) for k, x in (e.get('look_from') or {}).items() if str(x).lstrip('-').isdigit()},
             'does': does}
 
 
@@ -362,20 +415,32 @@ def _write(db, lst):
     defs = []
     for e in lst:
         t = v[e['template']]
-        defs.append('  { id = %s, template = %s, name = %s, baseCost = %s, icon = %s, description = %s, hasMagnitude = %s, hasDuration = %s },'
+        look = dict(e.get('look') or {})
+        if look.get('particle'):
+            look['particle'] = look['particle'].replace('\\', '/')
+        defs.append('  { id = %s, template = %s, name = %s, baseCost = %s, icon = %s, description = %s, hasMagnitude = %s, hasDuration = %s, look = %s },'
                     % (_lua(e['id']), _lua(t['key']), _lua(e['name']), _lua(e['cost']), _lua(e['icon'].replace('\\', '/')),
-                       _lua(e['description']), _lua(e['magnitude']), _lua(e['duration'])))
+                       _lua(e['description']), _lua(e['magnitude']), _lua(e['duration']), _lua(look)))
     load = ('-- Made by Morrowind Workshop: your own magic effects (Create > New magic effect).\n'
             '-- Each is made as the game loads, from one of the game\'s effects for its looks; what it does is in %s.lua.\n'
             '-- Needs OpenMW 0.50 or newer.\n%s\n%s\n%s\n\n'
-            'local content = require(\'openmw.content\')\n\nlocal EFFECTS = {\n%s\n}\n\n'
+            'local content = require(\'openmw.content\')\nlocal hasUtil, util = pcall(require, \'openmw.util\')\n\nlocal EFFECTS = {\n%s\n}\n\n'
             'return {\n  engineHandlers = {\n    onContentFilesLoaded = function()\n'
             '      local records = content.magicEffects.records\n'
             '      for _, e in ipairs(EFFECTS) do\n'
             '        local ok, err = pcall(function()\n'
-            '          records[e.id] = { template = records[e.template], name = e.name, baseCost = e.baseCost, icon = e.icon,\n'
-            '                            description = e.description, hasMagnitude = e.hasMagnitude, hasDuration = e.hasDuration,\n'
-            '                            allowsSpellmaking = true, allowsEnchanting = true }\n'
+            '          local params = { template = records[e.template], name = e.name, baseCost = e.baseCost, icon = e.icon,\n'
+            '                           description = e.description, hasMagnitude = e.hasMagnitude, hasDuration = e.hasDuration,\n'
+            '                           allowsSpellmaking = true, allowsEnchanting = true }\n'
+            '          -- its own look, part by part (the rest is the template\'s): visuals and sounds by the game\'s IDs\n'
+            '          for k, v in pairs(e.look or {}) do\n'
+            '            if k == \'color\' then\n'
+            '              if hasUtil then params.color = util.color.rgb(v[1] / 255, v[2] / 255, v[3] / 255) end\n'
+            '            else\n'
+            '              params[k] = v\n'
+            '            end\n'
+            '          end\n'
+            '          records[e.id] = params\n'
             '        end)\n'
             '        if not ok then print(\'[Workshop] magic effect \' .. e.id .. \': \' .. tostring(err)) end\n'
             '      end\n    end,\n  },\n}\n') % (ACTOR, BEGIN, json.dumps(lst, indent=1).replace(']]', ']\\u005d'), END, '\n'.join(defs))

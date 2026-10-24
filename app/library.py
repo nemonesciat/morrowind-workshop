@@ -1382,6 +1382,48 @@ def save_icon(db, entry_id, raw):
     return {'icon': icon, 'file': 'icons/%s/%s' % (SUB, name)}
 
 
+ICON_SIZES = {'effect': (32, 64), 'item': (64,)}     # (twice the game's own 16/32 and 32: OpenMW scales an icon to its place, so they stay sharp)
+
+
+def make_icon(db, name, kind, pictures, source=''):
+    """Icons the game's way from a picture (made into PNGs of the right sizes by the page): for a magic
+    effect a small icon and its large twin, named with "b_" in front as the game looks for it; for an
+    item one inventory icon. Kept in icons\\wslib and in the Library. Returns the path an Icon field takes
+    (wslib\\name.png: the small one, for an effect)."""
+    if kind not in ICON_SIZES:
+        raise EditError('Unknown kind of icon.')
+    raws = []
+    for p in pictures or []:
+        b = p.split(',', 1)[1] if isinstance(p, str) and p.startswith('data:') else p
+        try:
+            raw = base64.b64decode(b)
+        except Exception:
+            raw = b''
+        if not raw.startswith(b'\x89PNG'):
+            raise EditError('The icon picture could not be made.')
+        raws.append(raw)
+    if len(raws) != len(ICON_SIZES[kind]):
+        raise EditError('The icon needs %d picture%s.' % (len(ICON_SIZES[kind]), '' if len(ICON_SIZES[kind]) == 1 else 's'))
+    folder = os.path.join(data_dir(db), 'icons', SUB)
+    os.makedirs(folder, exist_ok=True)
+    stem = _slug(name or source or 'icon')
+    stem = _free_name(folder, stem, '.png')
+    while kind == 'effect' and os.path.exists(os.path.join(folder, 'b_' + stem + '.png')):
+        stem = _free_name(folder, stem + '_1', '.png')
+    files = [stem + '.png'] + (['b_' + stem + '.png'] if kind == 'effect' else [])
+    for fn, raw in zip(files, raws):
+        full = os.path.join(folder, fn)
+        with open(full, 'wb') as f:
+            f.write(raw)
+        _register(db, 'icons/%s/%s' % (SUB, fn), full)
+    items = _index()
+    items.append({'id': 'icon_' + stem, 'name': (name or stem) + (' (effect icon)' if kind == 'effect' else ' (icon)'), 'type': 'icon',
+                  'file': 'icons/%s/%s' % (SUB, files[0]), 'files': ['icons/%s/%s' % (SUB, f) for f in files],
+                  'icon_kind': kind, 'from': source, 'added': time.time()})
+    _save_index(items)
+    return {'icon': '%s\\%s' % (SUB, files[0]), 'files': ['icons/%s/%s' % (SUB, f) for f in files]}
+
+
 def entry_for_record(rid, db=None):
     """The Library entry a record was made from (by its id, or by the Library model it uses), or None."""
     low = (rid or '').lower()

@@ -24,6 +24,70 @@ function mxOpen(id){
   MX.sel = id; MX.form = JSON.parse(JSON.stringify(e)); mxDraw();
 }
 function mxTpl(){ return MX.data.templates.find(x => x.index === +MX.form.template) || {}; }
+
+// ----- how it looks, part by part: each part as one of the game's effects has it (the rest is the template's)
+const MX_PARTS = [['Casting', 'castStatic', 'castSound', 'the glow round the caster as the spell goes off'],
+                  ['The bolt', 'bolt', 'boltSound', 'what flies, for a spell cast at a target'],
+                  ['Hitting', 'hitStatic', 'hitSound', 'what shows on the one it lands on'],
+                  ['An area', 'areaStatic', 'areaSound', 'the burst, for a spell with an area']];
+(function(){
+  const st = document.createElement('style');
+  st.textContent = `.mxlook{margin-top:16px;border:1px solid var(--line);border-radius:9px;padding:8px 12px;background:var(--panel)}
+    .mxlook > summary{cursor:pointer;list-style:none} .mxlook > summary::-webkit-details-marker{display:none}
+    .mxgrid{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr);gap:6px 10px;align-items:center;font-size:13px}
+    .mxgrid .inp{padding:3px 6px;font-size:12.5px}`;
+  document.head.appendChild(st);
+})();
+const mxHex = c => '#' + (c || [255, 255, 255]).map(v => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('');
+function mxLookFrom(key, value){
+  // which of the game's effects has this part (the first that does), for the menus
+  if (!value) return '';
+  const e = MX.data.templates.find(x => (x.look || {})[key] && x.look[key].toLowerCase() === String(value).toLowerCase());
+  return e ? String(e.index) : '';
+}
+function mxLookSel(key, f, t){
+  const L = f.look || {}, F = f.look_from || {};
+  const cur = !L[key] ? '' : F[key] != null && MX.data.templates.some(x => x.index === F[key] && (x.look || {})[key] === L[key]) ? String(F[key]) : mxLookFrom(key, L[key]);
+  const schools = [...new Set(MX.data.templates.map(x => x.school))];
+  return `<select class="inp" data-mxlook="${key}" style="max-width:220px">
+    <option value="">as ${esc(t.name || 'the one it looks like')}${t.look && t.look[key] ? '' : ' (the school\'s own)'}</option>
+    ${schools.map(s => `<optgroup label="${esc(s || 'Other')}">${MX.data.templates.filter(x => x.school === s && x.look && x.look[key]).map(x =>
+      `<option value="${x.index}" ${String(x.index) === cur ? 'selected' : ''}>${esc(x.name)}'s</option>`).join('')}</optgroup>`).join('')}
+    ${L[key] && !cur ? `<option value="keep" selected>${esc(L[key])}</option>` : ''}</select>`;
+}
+function mxLookHtml(f, t){
+  const L = f.look || {}, tl = t.look || {};
+  const changed = Object.keys(L).length;
+  return `<details class="mxlook" ${changed ? 'open' : ''}><summary><h3 style="display:inline;margin:0">How it looks</h3>
+      <span class="msg"> ${changed ? changed + ' part' + (changed === 1 ? '' : 's') + ' of its own' : '· as ' + esc(t.name || 'the one it looks like') + ', or mix it part by part'}</span></summary>
+    <div class="msg" style="margin:6px 0 8px">Each part as one of the game's effects has it. What you leave as it is comes from ${esc(t.name || 'the one it looks like')}. New looks show in the game after restarting it.</div>
+    <div class="mxgrid">
+      <span></span><span class="msg">what you see</span><span class="msg">what you hear</span>
+      ${MX_PARTS.map(([label, vis, snd, what]) => `<span title="${esc(what)}">${label}</span>${mxLookSel(vis, f, t)}${mxLookSel(snd, f, t)}`).join('')}
+      <span title="The texture the casting and hitting sparkles are made of">Sparkles</span>${mxLookSel('particle', f, t)}<span></span>
+      <span title="The colour of the light the bolt gives off">Colour</span>
+      <span style="display:flex;gap:6px;align-items:center"><input type="color" id="mx-color" value="${mxHex(L.color || tl.color)}" style="width:48px;height:26px;padding:0;border:0;background:none">
+        ${L.color ? '<span class="lnk" id="mx-colorx">as it looks like</span>' : `<span class="msg">as ${esc(t.name || '…')}</span>`}</span><span></span>
+      <span title="How fast the bolt flies; ${esc(t.name || 'the one it looks like')}'s is ${tl.speed != null ? tl.speed : 1}">Bolt speed</span>
+      <input class="inp" type="number" step="0.1" min="0" max="10" id="mx-speed" value="${L.speed != null ? L.speed : ''}" placeholder="${tl.speed != null ? tl.speed : 1}" style="max-width:100px"><span></span>
+    </div></details>`;
+}
+function mxLookBind(f){
+  if (!document.querySelector('.mxlook')) return;
+  f.look = f.look || {};
+  document.querySelectorAll('[data-mxlook]').forEach(s => s.onchange = () => {
+    const k = s.dataset.mxlook;
+    if (s.value === 'keep') return;
+    const e = MX.data.templates.find(x => String(x.index) === s.value);
+    f.look_from = f.look_from || {};
+    if (e && e.look && e.look[k]){ f.look[k] = e.look[k]; f.look_from[k] = e.index; } else { delete f.look[k]; delete f.look_from[k]; }
+    mxDraw();
+  });
+  $('#mx-color').oninput = e => { const h = e.target.value; f.look.color = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); };
+  $('#mx-color').onchange = () => mxDraw();
+  const cx = $('#mx-colorx'); if (cx) cx.onclick = () => { delete f.look.color; mxDraw(); };
+  $('#mx-speed').oninput = e => { if (e.target.value === '') delete f.look.speed; else f.look.speed = +e.target.value; };
+}
 const MX_WHEN = {land: 'as it lands', second: 'each second', end: 'as it ends'};
 const MX_ONLY = {any: 'on anyone', npc: 'only on people', creature: 'only on creatures', undead: 'only on undead', daedra: 'only on Daedra', player: 'only on the player', notplayer: 'on anyone but the player'};
 const MX_STATS = {health: 'health', magicka: 'magicka', fatigue: 'fatigue'};
@@ -101,12 +165,14 @@ function mxDraw(){
         <label>ID</label><div><input class="inp" id="mx-id" maxlength="31" value="${esc(f.id || '')}" placeholder="filled in from the name: WS_StormCall" style="max-width:280px"><div class="hint">Its handle in scripts. Changing it later changes it in your spells too.</div></div>
         <label>Looks like</label><div><select class="inp" id="mx-tpl">${schools.map(s => `<optgroup label="${esc(s || 'Other')}">${D.templates.filter(x => x.school === s).map(x => `<option value="${x.index}" ${x.index === +f.template ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select>
           <div class="hint">Its school, colours, the sounds and pictures of casting, flying and hitting come from this one. What it does doesn't: that's below.</div></div>
-        <label>Icon</label><div><input class="inp" id="mx-icon" value="${esc(f.icon || '')}" placeholder="${esc(t.icon || '')} (the one it looks like)">
-          <div class="hint">An icon file under Icons\\, e.g. s\\tx_s_shield.dds. Pick another effect's: <select class="inp" id="mx-iconfrom" style="max-width:260px"><option value="">…</option>${D.templates.filter(x => x.icon).map(x => `<option value="${esc(x.icon)}">${esc(x.name)}</option>`).join('')}</select></div></div>
+        <label>Icon</label><div><div style="display:flex;gap:6px"><input class="inp" id="mx-icon" value="${esc(f.icon || '')}" placeholder="${esc(t.icon || '')} (the one it looks like)">
+          <button class="btn sm" id="mx-iconpic" title="Make the small and large icons from a picture of yours (from the Library or your PC)" style="white-space:nowrap">🖼 From a picture…</button></div>
+          <div class="hint">An icon file under Icons\\, e.g. s\\tx_s_shield.dds (the game finds the large one by "b_" in front of its name). Pick another effect's: <select class="inp" id="mx-iconfrom" style="max-width:260px"><option value="">…</option>${D.templates.filter(x => x.icon).map(x => `<option value="${esc(x.icon)}">${esc(x.name)}</option>`).join('')}</select></div></div>
         <label>Base cost</label><div><input class="inp" type="number" step="0.1" min="0" id="mx-cost" value="${f.cost != null ? f.cost : t.cost}" style="max-width:120px"><div class="hint">What a point of it costs to cast or enchant; ${esc(t.name || 'the one it looks like')} costs ${t.cost}.</div></div>
         <label>Has</label><div style="display:flex;gap:16px">${chk('mx-mag', 'a magnitude', f.magnitude)}${chk('mx-dur', 'a duration', f.duration)}</div>
         <label>Description</label><textarea class="inp" id="mx-desc" rows="2" placeholder="What the game says it does">${esc(f.description || '')}</textarea>
       </div>
+      ${mxLookHtml(f, t)}
       <h3 style="margin-top:18px">What it does</h3>
       <div class="msg" style="margin-bottom:8px">On the one it lands on, while it lasts. A magnitude of 10 that takes away health per second takes 10 a second.</div>
       <div id="mx-does">${(f.does || []).map(mxDoesRow).join('') || '<div class="msg">Nothing yet: it would only look the part. Add what it does:</div>'}</div>
@@ -128,6 +194,8 @@ function mxDraw(){
   ['mx-mag', 'mx-dur'].forEach(id => $('#' + id).onchange = keep);
   $('#mx-tpl').onchange = () => { keep(); const nt = mxTpl(); f.cost = nt.cost; f.magnitude = nt.magnitude !== false; f.duration = nt.duration !== false; mxDraw(); };
   $('#mx-iconfrom').onchange = e => { if (e.target.value){ $('#mx-icon').value = e.target.value; keep(); } };
+  $('#mx-iconpic').onclick = () => icPick('effect', {name: f.name || f.id, onDone: p => { $('#mx-icon').value = p; keep(); }});
+  mxLookBind(f);
   box.querySelectorAll('[data-mxd]').forEach(el => el.oninput = el.onchange = () => {
     const d = f.does[+el.dataset.n], k = el.dataset.mxd;
     d[k] = ['sign', 'x', 'y', 'z', 'value', 'chance', 'factor', 'count'].includes(k) ? +el.value : k === 'feet' ? (el.value === '' ? '' : +el.value) : el.value;

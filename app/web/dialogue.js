@@ -156,7 +156,13 @@ function dRenderNpc(){
   let h = `<div class="dhead"><div><div class="dt-type">${c.type === 'CREA' ? 'Creature' : 'Character'}</div><h2>${esc(c.name || c.id)}</h2>
     <div class="msg">${esc([c.race, c.cls, c.faction].filter(Boolean).join(' · '))} · <span class="lnk" data-drec="${c.i}">record</span> · ID ${esc(c.id)}</div></div>
     <div class="actions" style="margin:0"><button class="btn primary" id="d-addgreet">+ Greeting</button><button class="btn" id="d-addtopic">+ Topic line</button><button class="btn" id="d-aiquest" title="Ask the assistant to write a quest for this character">✦ Quest idea…</button><button class="btn" data-qgo="${esc(c.id)}" style="display:none" title="Go to them in your running game">🎮 Go to</button></div></div>`;
-  if (!c.topics.length) h += `<div class="card msg" style="margin-top:14px;line-height:1.7">${esc(c.name || c.id)} has no lines of their own yet, so they only say the generic things everyone of their race and class says.<br>
+  h += cvTabs();
+  if (CV.tab !== 'lines'){
+    $('#dmain').innerHTML = `<div class="dwrap cvwide">${h}<div id="cvbody"></div></div>`;
+    dBindNpcHead(c); cvBindTabs(c); cvRender(c);
+    return;
+  }
+  if (!c.topics.length) h += `<div class="card msg" style="margin-top:14px;line-height:1.7">${esc(c.name || c.id)} has no lines of their own yet, so they only say the generic things everyone of their race and class says (<span class="lnk" data-cvtab="test">see what they say</span>).<br>
       Start with a <b>greeting</b>: what they say when you talk to them. Then add <b>topics</b>, the words the player can click.</div>`;
   for (const t of c.topics){
     h += `<div class="tcard"><div class="thead"><span>${D_ICON[t.type]} <b>${esc(t.id)}</b> <span class="msg">${D_KIND[t.type]}</span></span>
@@ -166,6 +172,11 @@ function dRenderNpc(){
   }
   $('#dmain').innerHTML = `<div class="dwrap">${h}</div>`;
   bindLines($('#dmain'), all, l => l._topic);
+  dBindNpcHead(c); cvBindTabs(c);
+  $('#dmain').querySelectorAll('[data-addto]').forEach(b => b.onclick = () => dEditLine(b.dataset.addto, {actor: c.id, conds: []}, true));
+  $('#dmain').querySelectorAll('[data-dopen2]').forEach(b => b.onclick = () => dOpen('topic', b.dataset.dopen2));
+}
+function dBindNpcHead(c){
   $('#d-addgreet').onclick = () => dEditLine('greeting 5', {actor: c.id, conds: []}, true);
   $('#d-addtopic').onclick = () => dPickTopic(c.id);
   $('#d-aiquest').onclick = () => {
@@ -173,8 +184,6 @@ function dRenderNpc(){
     aiStatus().then(() => { renderAI(); const i = $('#ai-in'); if (i){ i.value = `Make a short quest for ${c.name || c.id} (${c.id}): `; i.focus(); } });
   };
   $('#dmain').querySelectorAll('[data-qgo]').forEach(b => b.onclick = () => qtGoto(b.dataset.qgo));
-  $('#dmain').querySelectorAll('[data-addto]').forEach(b => b.onclick = () => dEditLine(b.dataset.addto, {actor: c.id, conds: []}, true));
-  $('#dmain').querySelectorAll('[data-dopen2]').forEach(b => b.onclick = () => dOpen('topic', b.dataset.dopen2));
   const rec = $('#dmain [data-drec]'); if (rec) rec.onclick = () => { showView('browse'); openRecord(+rec.dataset.drec, true); };
 }
 
@@ -240,9 +249,17 @@ function dRenderQuest(){
   const q = D.data;
   D.qstages = D.qstages && D.qstagesFor === q.key ? D.qstages : q.stages.map(s => ({...s}));
   D.qstagesFor = q.key;
+  const qtabs = `<div class="cvtabs">${[['stages', '📜 Stages'], ['flow', '🗺 Flow: who moves it on']].map(([k, t]) => `<button data-qtab="${k}" class="${CV.qtab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+  if (CV.qtab === 'flow'){
+    $('#dmain').innerHTML = `<div class="dwrap cvwide"><div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b></div></div></div>
+      ${qtabs}<div id="q-test"></div><div id="q-flow"></div></div>`;
+    $('#dmain').querySelectorAll('[data-qtab]').forEach(b => b.onclick = () => { CV.qtab = b.dataset.qtab; dRenderQuest(); qtQuestBar(); qtMark(); });
+    cvQuestFlow(q);
+    return;
+  }
   let h = `<div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b> (used in conditions and scripts; players never see it)</div></div>
     <div class="actions" style="margin:0"><button class="btn primary" id="q-save">Save quest</button></div></div>
-    <div id="q-test"></div>
+    ${qtabs}<div id="q-test"></div>
     <label class="dlabel">Title, as shown in the journal</label><div class="ai-row"><input class="inp" id="q-title" value="${esc(q.title)}"><button class="btn sm" data-ai="title" title="Suggest with AI">✦</button></div>
     <label class="dlabel">Stages <span class="msg">(the journal entries, by number; the game shows them as the player reaches them)</span></label>
     <div id="q-stages"></div>
@@ -279,6 +296,7 @@ function dRenderQuest(){
       D.qstages = null; toast('Quest saved'); await dReload();
     } catch (e){ toast(e.message, true); }
   };
+  $('#dmain').querySelectorAll('[data-qtab]').forEach(b => b.onclick = () => { CV.qtab = b.dataset.qtab; dRenderQuest(); qtQuestBar(); qtMark(); });
   $('#dmain').querySelectorAll('[data-qnpc]').forEach(b => b.onclick = () => dOpen('npc', b.dataset.qnpc));
   $('#dmain').querySelectorAll('[data-qgo]').forEach(b => b.onclick = () => qtGoto(b.dataset.qgo));
   $('#dmain').querySelectorAll('[data-qtopic]').forEach(b => b.onclick = () => dOpen('topic', b.dataset.qtopic));

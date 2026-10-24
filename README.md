@@ -1,3 +1,5 @@
+<img src="app/web/logo.svg" alt="Morrowind Workshop" width="200">
+
 # Morrowind Workshop
 
 An easy, modern editor for making Morrowind mods with [OpenMW](https://openmw.org). It reads your own
@@ -58,9 +60,43 @@ repository is the source code it is built from.
   magicka or fatigue, push, pull, launch, dash, grow or shrink, calm, frenzy, aura, leech, swap
   places, cast a spell, change the weather, transmute, teleport, place an object, set a global,
   show a message, or your own Lua (checked, and the Assistant can write it).
+- **How it looks, part by part**: the casting glow, bolt, hit, area burst, particles, colour, speed and
+  the four sounds, each taken from any of the game's effects.
+- **Icons from your own pictures** (PNG, JPG, DDS, TGA; from the Library or your PC) for effects and
+  items: cropped, written at twice the game's size with the large `b_` spell icon, packed with the mod.
 - **Tamriel Data's effects** usable in your spells, enchantments and potions.
 - Both are written as an OpenMW Lua load script, so they need OpenMW 0.50+ and the mod as an
   `.omwaddon`.
+
+### Populate
+- **Populate this place** (right-click in the 3D view): people who would live or work there, as the
+  game's own places of that kind have them, proposed first and placed only when you say. Each is a new
+  person: race, sex, a name in the manner of their race (a household shares a family name; a home of
+  two is a married couple as often as the game's own homes of two are), a face, a
+  class, faction and rank, level, an outfit built slot by slot (armour of one make, by faction where the
+  game has it), things they carry, a few spells, how they greet, fight and wander, what they sell. They
+  stand where the game stands their kind (the trader behind the counter), and the household owns its
+  beds and chests.
+- Parameters: how busy, wealth, kind of place, faction, races, occupations; lock, re-roll, rename or
+  change anyone; **Someone who'd live here** for one person at the spot clicked.
+- **Words of their own**, written offline from templates: greetings for a first meeting and later, my
+  trade, lines about each other (kin, the head of the house, servants, friends, rivals), a little secret
+  and a rumour. The Assistant only writes when asked (✦).
+- Learnt from the game's people: every place with people in it is read once (about 30 s), what kind of
+  place it is, and who is there.
+
+### Dialogue
+- **Write a conversation**: one character's topic (or greeting) as a tree of versions (the first that
+  fits is said), what each line does, and the player's answers, each leading on. Saved, it becomes the
+  topic's own lines, with the answers numbered and ordered the way the game needs; the game's own
+  conversations are read back as trees from their lines, and only lines you change go into your mod.
+- **Conversation map**: everything a character says, laid out from their greeting, with the topics
+  each line mentions or adds and the quest stages it needs and sets.
+- **What would they say?**: a tester that picks their lines the way the game does for a state you set
+  (quest stages, items, race, faction, disposition, globals…), follows what each line does, explains
+  each pick condition by condition, and names your lines that can never be said.
+- **A quest's flow**: its stages left to right, who says what in rows, and arrows to the stage each
+  line moves it on to.
 
 ### Everything else in a mod
 - Browse every record in your load order; create and edit people, creatures, items, books, spells,
@@ -133,13 +169,20 @@ once, run in a separate process, and are cached.
     `nifwrite.py` writes Morrowind models; `pack.py` and `packshelf.py` make, open and share packs.
   - **World**: `landscape.py`, `grass.py` and `scatter.py` the land and its brushes; `pathgrid.py`
     walking paths; `mechanism.py` and `riders.py` secret entrances and what rides on sliding panels.
+  - **Dialogue**: `dialogue.py` reads and writes topics, lines and quests in the game's order;
+    `convo.py` works out what a character can say and which line wins for a given state (the map,
+    the tester and a quest's flow); `convbuild.py` turns a character's lines into a conversation tree
+    and back.
+  - **Populate**: `castsurvey.py` reads who the game's people are, place by place; `peoplesurvey.py`
+    where they stand; `populate.py` proposes a cast and places it; `poplines.py` writes their lines.
   - **Game and people**: `link.py` and `link_scripts/` are the live link (OpenMW Lua scripts);
     `saves.py` reads OpenMW's saves for Play as; `together.py` and `upnp.py` are building together;
     `uses.py` is the Use report; `verify.py` and `release.py` Get ready to share; `merge.py` Merge
     mods; `ai.py` the assistant.
   - In `app/web`: `panels.js` is the panel system, used by `worldpanels.js` (World map) and
     `pagepanels.js` (the other pages); `world3d.js` the 3D view; `planner.js` the room planner;
-    `viewwin.js` and `objwin.js` the windows over the 3D view; `effects.js` the magic effect maker;
+    `viewwin.js` and `objwin.js` the windows over the 3D view; `effects.js` the magic effect maker; `dialogue.js`, `convo.js` and `convbuild.js` the Dialogue
+    page, its map, tester and conversation builder; `populate.js` the cast window;
     `comfort.js` the status bar, right-click menus, Ctrl+K palette and shortcuts; `qol.js` the modder
     comforts; `setups.js` Play as and test setups; `pathedit.js` path grids by hand; `theme.js` the
     themes, including your own.

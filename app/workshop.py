@@ -955,6 +955,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(dialogue.topic(db, q['key']))
             elif u.path == '/api/dlg/character':
                 self._json(dialogue.character(db, q['id']))
+            elif u.path == '/api/convo/map':
+                import convo
+                self._json(convo.conversation_map(db, q['id'], q.get('scope', 'own'), q.get('cell')))
+            elif u.path == '/api/convo/problems':
+                import convo
+                self._json(convo.problems(db, q['id'], q.get('cell')))
+            elif u.path == '/api/convo/build/list':
+                import convbuild
+                self._json(convbuild.conversations(db, q['id']))
+            elif u.path == '/api/convo/build':
+                import convbuild
+                self._json(convbuild.read(db, q['id'], q['topic']))
+            elif u.path == '/api/convo/quest':
+                import convo
+                self._json(convo.quest_map(db, q['key']))
             elif u.path == '/api/dlg/quest':
                 out = dialogue.quest(db, q['key'])
                 out['used'] = dialogue.quests_using(db, q['key'])
@@ -1151,6 +1166,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'ready': False, 'note': 'The room survey is running in the background (a few minutes).'})
                 self._json({'ready': True, 'cells': s['cells'], 'themes': s['layout'].get('themes'), 'themes_text': roomsurvey.themes_report(db),
                             'clusters': s.get('clusters'), 'kinds': s['kinds']})
+            elif u.path == '/api/populate/castsurvey':
+                # who the game's people are, place by place (castsurvey.py): the whole survey once learnt
+                import castsurvey
+                import learning
+                s = castsurvey.ready(db)
+                self._json({'ready': s is not None, 'learning': learning.populate_pending(db) if s is None else [],
+                            'survey': s if q.get('full') else ({k: s[k] for k in ('places', 'people', 'wealth_cuts')} if s else None)})
             elif u.path == '/api/populate/peoplesurvey':
                 # where the game's people stand, by role and furniture (for Populate)
                 import peoplesurvey
@@ -1472,6 +1494,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(assistant.draft(body))
                 except ai.ToolError as e:
                     return self._json({'error': str(e)}, 400)
+            if u.path == '/api/library/makeicon':
+                # icons the game's way from a picture (library.py): the page made the PNGs of the right sizes
+                import library
+                return self._json(library.make_icon(db, body.get('name') or '', body.get('kind') or 'item', body.get('pictures') or [],
+                                                    body.get('source') or ''))
+            if u.path == '/api/populate/cast':
+                # Populate: a proposed cast for a place (populate.py; nothing changes)
+                import populate
+                return self._json(populate.cast(db, body['cell'], body.get('params') or {}, body.get('keep') or [], body.get('seed')))
+            if u.path == '/api/convo/say':
+                # the tester: what a character says in a given state of the game (convo.py; nothing saved)
+                import convo
+                return self._json(convo.say(db, body['id'], body.get('state') or {}, body.get('topic'), body.get('cell')))
             if u.path == '/api/ai/effectlua':
                 # the Lua for a step of one of your own magic effects, from a description (nothing saved)
                 try:
@@ -1741,6 +1776,14 @@ class Handler(BaseHTTPRequestHandler):
                                                            body.get('doors'), body.get('floors_as') or 'auto'))
                 if u.path == '/api/dlg/topic/new':
                     return self._json({'key': dialogue.create_topic(db, body.get('name'), int(body.get('kind') or 0))})
+                if u.path == '/api/populate/place':
+                    # Populate: the cast made real, as new people placed (populate.py), one change
+                    import populate
+                    return self._json(populate.place(db, body['cell'], body.get('people') or [], body.get('own', True) is not False))
+                if u.path == '/api/convo/build/save':
+                    # the conversation builder: a tree of lines and answers, written back as the topic's lines
+                    import convbuild
+                    return self._json(convbuild.save(db, body['id'], body['topic'], body.get('tree') or {}))
                 if u.path == '/api/dlg/line/save':
                     inam = dialogue.save_line(db, body['topic'], body['line'], body.get('where'))
                     return self._json({'inam': inam, 'topic': dialogue.topic(db, body['topic'])})
