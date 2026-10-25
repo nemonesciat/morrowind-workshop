@@ -192,6 +192,8 @@ function owActHtml(){
   if (OW_ITEMS.includes(t)) out.push(b('itemed', ['WEAP', 'ARMO', 'CLOT', 'BOOK'].includes(t) ? '✨ Stats & enchantment…' : t === 'ALCH' || t === 'INGR' ? '✨ Stats & effects…' : '✎ Item editor…', 'The item editor in a window: stats, looks, script, effects and enchantment'));
   if (t === 'DOOR' && r.to) out.push(b('goto', '→ Go there', 'Open the place it leads to'));
   if (t === 'LEVC' || t === 'LEVI') out.push(b('lev', '🎲 Edit the list…', 'The leveled list editor, in a window'));
+  if (r.ri != null && t === 'NPC_' && typeof anShow === 'function') out.push(b('anim', '🎞 Animation & text keys…', 'How they move: the game\'s animation for their skeleton, played on their body, and its text keys'));
+  if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(t)) out.push(b('assets', '🧩 Model & textures…', 'What it is drawn with: the model, its textures and what else uses them; change a texture in your picture editor'));
   if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(t)) out.push(b('retex', '🎨 Retexture…', 'This model with other textures, as a new record'));
   if (r.arch) out.push(b('variants', '↻ Other pieces that fit', 'Pieces the game uses in the same spot'));
   if (r.ri != null) out.push(b('dupnew', '⧉ Make this one a record of its own…', 'Copy the record under a new ID and make this placed one the copy, so it can be changed without changing the others'));
@@ -292,7 +294,10 @@ function owDrawRef(keepTyped){
   }
   if (r.type === 'DOOR'){
     ddSearch('ow-dest', 'CELL', async x => {
-      try { const m = await api('/api/cellmap?i=' + x.i); OW.door = {target: m.key, label: x.name || x.id, at: null, changed: true}; owDrawRef(); }
+      try {
+        const m = await api('/api/cellmap?i=' + x.i); OW.door = {target: m.key, label: x.name || x.id, at: null, changed: true}; owDrawRef();
+        if (m.key === OW.cell) toast('Within this same place: pick where you arrive with 📍 Pick on the map…');
+      }
       catch (e){ toast(e.message, true); }
     });
     const both = $('#ow-both'); if (both) both.onchange = () => { W.relinkBoth = both.checked; };
@@ -367,6 +372,8 @@ async function owAction(a){
     return selAction(a);
   }
   if (a === 'dupnew') return owOwnRecord();
+  if (a === 'assets') return asShow(r.ri, (r.name || r.id) + ': model & textures');
+  if (a === 'anim') return anShow(r.ri, (r.name || r.id) + ': animation & text keys');
   if (a === 'unlink'){ OW.door = {target: null, label: '', at: null, changed: true}; owDrawRef(); return; }
   if (a === 'arrive'){
     const target = OW.door && OW.door.target !== undefined ? OW.door.target : (r.to && r.to.key);

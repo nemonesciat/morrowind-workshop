@@ -150,7 +150,7 @@ class Tray : ApplicationContext
             {
                 Thread.Sleep(1500);
                 if (inBrowser) return;                   // (no Edge: a browser tab we can't watch)
-                bool showing = AppWindow.Windows().Count > 0;
+                bool showing = AppWindow.Windows(true).Count > 0;      // (a second window keeps it running too)
                 if (showing) { seen = true; gone = 0; }
                 else if (seen && ++gone >= 2) { ui.Post(_ => Quit(), null); return; }
             }

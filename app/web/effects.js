@@ -97,7 +97,7 @@ function mxDoesRow(d, n){
   const K = MX.data.does.find(x => x.kind === d.kind) || {};
   let inner = '';
   // (when, whom, how likely: every step has them; some kinds only make sense at one time)
-  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', aura: 'second', leech: 'second'}[d.kind];
+  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', resurrect: 'land', aura: 'second', leech: 'second'}[d.kind];
   if (!d.when) d.when = fixedWhen || (['health', 'magicka', 'fatigue'].includes(d.kind) ? (d.per === 'once' ? 'land' : 'second') : 'land');
   const common = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;width:100%;margin-top:4px">
       ${fixedWhen ? `<span class="msg">${esc(MX_WHEN[fixedWhen])}${d.kind === 'scale' || d.kind === 'calm' || d.kind === 'frenzy' ? ', undone as it ends' : ''}</span>` : mxSel('when', n, MX_WHEN, d.when)}
@@ -115,6 +115,11 @@ function mxDoesRow(d, n){
       <span class="msg">from everyone within</span>${mxNum('feet', n, d.feet || 10, 70)}<span class="msg">feet, each second</span>`;
   } else if (d.kind === 'leech'){
     inner = `<span class="msg">takes the magnitude of their</span>${mxSel('stat', n, MX_STATS, d.stat || 'health')}<span class="msg">each second and gives it to the caster</span>`;
+  } else if (d.kind === 'resurrect'){
+    inner = `${mxSel('which', n, {one: 'the nearest of the dead', all: 'all the dead'}, d.which || 'one')}
+      <span class="msg">within</span>${mxNum('feet', n, d.feet || 15, 70)}<span class="msg">feet stand up again, at</span>${mxNum('health', n, d.health || 100, 60)}<span class="msg">% health,</span>
+      ${mxSel('side', n, {own: 'as they were', ally: 'on the caster\'s side, following'}, d.side || 'own')}
+      <span class="msg" style="width:100%">Cast it on Self (the game's magic doesn't land on the dead): it raises those lying near you. They come back with what was left on them; what you looted stays taken.</span>`;
   } else if (d.kind === 'calm' || d.kind === 'frenzy' || d.kind === 'swap'){
     inner = `<span class="msg">${esc(K.what || '')}</span>`;
   } else if (d.kind === 'cast'){

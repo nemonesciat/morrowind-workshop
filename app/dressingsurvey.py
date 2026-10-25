@@ -128,7 +128,8 @@ def _survey(db, style):
                       'inner': 0, 'inner_pillar': 0, 'inner_ids': Counter(), 'inner_group': Counter(),
                       'well': 0, 'well_edges_up': 0, 'well_edges_low': 0, 'well_low_open': 0, 'well_corner': 0, 'well_corner_pillar': Counter(),
                       'things': defaultdict(lambda: {'n': 0, 'on': Counter(), 'cx': [], 'cy': [], 'dz': [], 'dq': Counter()}),
-                      'stairs': Counter(), 'jambs': Counter(), 'cells': []}
+                      'stairs': Counter(), 'jambs': Counter(), 'cells': [],
+                      'stair_faces': defaultdict(Counter), 'jamb_panels': defaultdict(Counter)}
         return per[d]
 
     for ck, pieces, others in walk:
@@ -274,6 +275,34 @@ def _survey(db, style):
                         wcorner.add((gx + cx_, gy + cy_, gz))
                         wcorner.add((gx + cx_, gy + cy_, gz + 4))
         A['well_corner'] += len(wcorner)
+        # the stairs' own walls: a one-tile stair is one model two storeys tall with its side walls built in,
+        # and the game lays the dressing's panels over them at the stair's own origin, turned to each wall,
+        # storey by storey (Gold Coast's Stair_01: both long sides on both storeys, its head wall upstairs)
+        pans = [(oid, op) for oid, op, _b, _t, _g in others if oid in panel_set]
+        for oid, op, bot, top, tag in others:
+            if not oid.startswith(pre) or 'stair' not in oid[len(pre):]:
+                continue
+            _sb, srid = box(oid)
+            faces = set()
+            for pid, pp in pans:
+                if abs(pp[0] - op[0]) <= 24 and abs(pp[1] - op[1]) <= 24 and -24 <= pp[2] - op[2] <= 2 * H + 24:
+                    faces.add((_q(pp[5] - op[5]), int(round((pp[2] - op[2]) / float(H)))))
+            A['stair_faces'][srid]['n'] += 1
+            for f_ in faces:
+                A['stair_faces'][srid]['%d,%d' % f_] += 1
+        # the door panels: a doorway's jamb has its panel with the doorway cut in it at the jamb's own origin,
+        # turned as the jamb is, and often a second one turned about for the wall's other face (Gold Coast:
+        # DJambRich_01 with WallRichAddon_03, DJambRich_02 with _02, the stone set's likewise)
+        for oid, op, bot, top, tag in others:
+            if not oid.startswith(pre) or not ('jamb' in oid[len(pre):] or 'frame' in oid[len(pre):]):
+                continue
+            _jb, jrid = box(oid)
+            A['jamb_panels'][jrid]['n'] += 1
+            c_, s_ = math.cos(op[5]), math.sin(op[5])
+            for pid, pp in pans:
+                dx, dy = pp[0] - op[0], pp[1] - op[1]
+                if abs(dx * c_ - dy * s_) < 40 and abs(dx * s_ + dy * c_) < 40 and abs(pp[2] - op[2]) < 40:
+                    A['jamb_panels'][jrid][box(pid)[1]] += 1
         pillar_at = {}
         for oid, op, bot, top, tag in others:
             if not oid.startswith(pre):
@@ -392,6 +421,8 @@ def _survey(db, style):
                   'wells': A['well'], 'well_edges_up': A['well_edges_up'], 'well_edges_low': A['well_edges_low'], 'well_low_open': A['well_low_open'],
                   'well_corners': A['well_corner'], 'well_corner_pillars': dict(A['well_corner_pillar'].most_common(3)),
                   'things': things, 'stairs': dict(A['stairs'].most_common(8)), 'jambs': dict(A['jambs'].most_common(6)),
+                  'stair_faces': {rid: dict(c) for rid, c in A['stair_faces'].items()},
+                  'jamb_panels': {rid: dict(c) for rid, c in A['jamb_panels'].items()},
                   'cells': sorted(A['cells'], key=lambda c: -c[1])[:12]}
     return out
 
@@ -407,7 +438,9 @@ def _disk(db, style):
     # (v2, 2026-10-22: the mesh reader ignores a model's root transform as the game does; a hall's opening
     # with the kit's floorless upper-storey pieces over it counts as a well; a railing up to 64 thick and up
     # to six tenths of the storey over its origin counts as one, the Hlaalu manor's LedgeRailSide_01)
-    return os.path.join(folder, 'dressingsurvey_%s_%s_v2.json' % (style.lower(), taste.sig(db)))
+    # (v3, 2026-10-25: the panels over the stairs' own walls, per stair model: 'stair_faces'; v4: each door
+    # jamb's door panel, 'jamb_panels')
+    return os.path.join(folder, 'dressingsurvey_%s_%s_v4.json' % (style.lower(), taste.sig(db)))
 
 
 def survey(db, style):
@@ -455,6 +488,7 @@ def rules(db, style, dressing):
     walled = float(max(1, s['walled_sides']))
     canon = lambda th: {'x': th['x'], 'y': th['y'], 'dz': th['dz'], 'turn': th['turn']}
     panels, loose_panels, arches, door_arches, rails, beam, floor, ceiling, sheet = [], [], [], [], [], None, None, None, None
+    door_panels = []             # (id, share of doorways, canon): the panels with a doorway cut in them
     open_e, door_e = float(max(1, s['open_edges'])), float(max(1, s['door_edges']))
     for rid, th in sorted(s['things'].items(), key=lambda kv: -kv[1]['n']):
         low = rid.lower()
@@ -475,6 +509,9 @@ def rules(db, style, dressing):
             elif (on.get('open', 0) + on.get('door', 0)) / tot >= (0.2 if kind == 'arch' else 0.4):
                 # an arch over the opening between two tiles: how often per open join, and per doorway
                 arches.append((rid, round(on.get('open', 0) / open_e, 3), round(on.get('door', 0) / door_e, 3), canon(th)))
+                # (a panel with a doorway cut in it, over a doorway's wall: Gold Coast's WallRichAddon_03/_02)
+                if kind == 'panel' and on.get('door', 0) >= 3:
+                    door_panels.append((rid, round(on['door'] / door_e, 3), canon(th)))
         elif kind == 'cornice' and (on.get('open', 0) + on.get('door', 0)) / tot >= 0.4 and beam is None:
             # (the Gold Coast "skirting" is a beam up at the ceiling across the join of two tiles)
             beam = (rid, round(on.get('open', 0) / open_e, 3), round(on.get('door', 0) / door_e, 3), canon(th))
@@ -506,7 +543,25 @@ def rules(db, style, dressing):
         twin_id = next((r for r in s['jambs'] if r.lower() == twin), None)
         if twin_id and s['jambs'][twin_id] > n:
             swaps[low] = twin_id
+    # the stairs' own walls the game panels: per stair model, the (quarter turn from the stair's, storey)
+    # faces it dresses in a quarter of its dressed stairs or more
+    stair_faces = {}
+    for rid, c in (s.get('stair_faces') or {}).items():
+        n = c.get('n', 0)
+        if n >= 3:
+            faces = sorted(tuple(int(v) for v in k.split(',')) for k, m in c.items() if k != 'n' and m >= 0.25 * n)
+            if faces:
+                stair_faces[rid.lower()] = faces
+    # each jamb's door panel: the panel the game stands at its origin most, when it does for a quarter of
+    # that jamb's doorways or more
+    jamb_panels = {}
+    for rid, c in (s.get('jamb_panels') or {}).items():
+        n = c.get('n', 0)
+        best = max(((k, m) for k, m in c.items() if k != 'n'), key=lambda x: x[1], default=None)
+        if n >= 3 and best and best[1] >= 0.25 * n:
+            jamb_panels[rid.lower()] = best[0]
     return {'places': s['places'], 'panels': panels, 'loose_panels': loose_panels, 'arches': arches, 'beam': beam, 'floor': floor,
+            'stair_faces': stair_faces, 'door_panels': door_panels, 'jamb_panels': jamb_panels,
             'pillar': pil, 'rails': rails,
             'well': {'sheet': sheet and sheet[:2], 'ceiling': ceiling and ceiling[:3],
                      'open_low': round(s['well_low_open'] / float(max(1, s['well_edges_low'])), 3), 'n': s['wells']},

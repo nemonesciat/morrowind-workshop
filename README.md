@@ -52,7 +52,27 @@ repository is the source code it is built from.
 - **Suggested for this place**, right-click menus (swap, replace all, retexture, add a sound, hide),
   **secret entrances** (rotating and sliding panels, with levers, sconces or books as switches and
   riders that slide along), landscape sculpting and painting, groundcover and scatter brushes, path
-  grids, and **My changes** on the map with per-change undo.
+  grids (by hand, or **Redraw** by Project Tamriel's rules, measured on 100 of the game's places), and
+  **My changes** on the map with per-change undo.
+
+### Dungeons
+- **Create > Dungeon**: a Dwemer ruin, a cave (grey stone, brown earth, pale rock or lava rock), a
+  Velothi tomb or a Daedric ruin, grown from its front door the way the game's own of the kind are put
+  together. Every piece joins where the game joins it, there are halls, chambers or rooms on the way and
+  at the far end, door frames with their doors, and every passage ends in a dead end.
+- Each piece is dressed the way a real piece of its kind was in the game: lights, rocks, urns, pipes,
+  chests and creatures. Bare tables are set the way the game's own dungeons of the kind set theirs, more
+  or fewer by the loot asked for. The last hall has the kind's best chest and a guardian (a Daedric
+  ruin's is a shrine with its Prince's statue, offerings and cursed gems). Some have someone living in
+  them (Populate's people, their camp laid as the game's own cave camps are: beds against the rock, goods
+  by the walls, now and then a fire), and the walking paths are drawn.
+- Then the place is checked and tidied: crates and chairs set level, nothing through anything else, no
+  lamp hanging on nothing, nothing standing in the way from the front door.
+- **A tool, not a form**: the plan of the layout is drawn as you choose, flat or as a 3D sketch you can
+  turn, and Make builds exactly that plan. Options: size, levels (ramps up and down), layout (one winding way, branching, a maze), water
+  (dry, pools, flooded caves), creatures, loot, lived in, and a door outside. 🎲 for another layout, ↶
+  for the one before. On the World map it opens in a window over the 3D view.
+- Learnt from the game's own places of each kind, once (15–20 s each).
 
 ### Magic of your own
 - **New magic effect**: looks taken from a template effect, its own name, icon and cost, and steps
@@ -108,6 +128,19 @@ repository is the source code it is built from.
 - **Library**: bring in your own models (`.blend` read directly, `.obj`, `.fbx`, `.dae`, `.gltf`,
   `.glb`, `.nif`), pictures and sounds; prefabs and shareable packs.
 
+### Models, textures and animations
+- **Model & textures** for anything (right-click it):
+  - what it is drawn with, and where each file comes from;
+  - its textures, with pictures, and what uses them.
+- **Change a texture** in your picture editor, everywhere or for one object. The 3D view redraws it each
+  time you save. Missing textures can be found and fixed.
+- **To Blender and back**: the model with its textures opens in Blender, and each Ctrl+S brings it back
+  exactly, everywhere or as its own object.
+- **Animation & text keys**: creatures, people and moving objects played as the game animates them.
+  - Edit the text keys that name the groups and time the sounds.
+  - Trim a group, or change its speed.
+  - Give a creature another one's animation, when their skeletons truly match.
+
 ### Live link and building together
 - Start the game from the Workshop and edits appear in it straight away; **Play as** your own
   character from a save; test setups; build in game with Shift-key tools; quest testing.
@@ -117,6 +150,10 @@ repository is the source code it is built from.
 ### Workspace
 - Every tool is a panel you can float, dock and tab; saved layouts; Ctrl+K command palette; your own
   shortcuts; preset themes or **your own**; Recent messages.
+- In the 3D view, a preview of the weather (rain, snow, ash and blight falling) and of the time of day:
+  the sky, sun and light through the day in the game's own colours for each weather, from openmw.cfg.
+- In the 3D view, a measuring grid that stays where you put it: level on a floor, upright along a wall,
+  or set at and turned to the selected object.
 
 ### Optional AI assistant
 Builds and changes things from a plain request, drafts dialogue and writes Lua for magic effects,
@@ -167,8 +204,12 @@ once, run in a separate process, and are cached.
     Data's effects; `lua_check.py` checks Lua before it is saved.
   - **Library**: `library.py` reads OBJ, glTF, COLLADA and FBX, `blendread.py` Blender files, and
     `nifwrite.py` writes Morrowind models; `pack.py` and `packshelf.py` make, open and share packs.
+  - **Assets**: `assets.py` is the Model & textures window (texture copies, thumbnails, the `.glb`
+    round trip to Blender, missing textures); `nifanim.py` reads skeletons, skins, keyframes and text
+    keys, and retimes, trims and swaps animations.
   - **World**: `landscape.py`, `grass.py` and `scatter.py` the land and its brushes; `pathgrid.py`
-    walking paths; `mechanism.py` and `riders.py` secret entrances and what rides on sliding panels.
+    walking paths; `mechanism.py` and `riders.py` secret entrances and what rides on sliding panels;
+    `dwemer.py` the dungeons (Dwemer ruins, caves, tombs, Daedric ruins).
   - **Dialogue**: `dialogue.py` reads and writes topics, lines and quests in the game's order;
     `convo.py` works out what a character can say and which line wins for a given state (the map,
     the tester and a quest's flow); `convbuild.py` turns a character's lines into a conversation tree
@@ -182,7 +223,8 @@ once, run in a separate process, and are cached.
   - In `app/web`: `panels.js` is the panel system, used by `worldpanels.js` (World map) and
     `pagepanels.js` (the other pages); `world3d.js` the 3D view; `planner.js` the room planner;
     `viewwin.js` and `objwin.js` the windows over the 3D view; `effects.js` the magic effect maker; `dialogue.js`, `convo.js` and `convbuild.js` the Dialogue
-    page, its map, tester and conversation builder; `populate.js` the cast window;
+    page, its map, tester and conversation builder; `populate.js` the cast window; `ruins.js` the
+    Dungeon card;
     `comfort.js` the status bar, right-click menus, Ctrl+K palette and shortcuts; `qol.js` the modder
     comforts; `setups.js` Play as and test setups; `pathedit.js` path grids by hand; `theme.js` the
     themes, including your own.

@@ -50,8 +50,10 @@ static class AppWindow
         return null;
     }
 
-    // Edge windows showing the Workshop (normal Edge windows are titled "... - Microsoft Edge").
-    public static List<IntPtr> Windows()
+    // Edge windows showing the Workshop (normal Edge windows are titled "... - Microsoft Edge"). A second
+    // window opened from the Workshop (web/twowin.js) is titled "Morrowind Workshop: <place>": counted
+    // only with seconds, so showing the Workshop fronts the main window and quitting closes them all.
+    public static List<IntPtr> Windows(bool seconds = false)
     {
         var edge = new HashSet<uint>();
         try { foreach (var p in Process.GetProcessesByName("msedge")) edge.Add((uint)p.Id); } catch { }
@@ -65,7 +67,8 @@ static class AppWindow
             {
                 var sb = new StringBuilder(256);
                 GetWindowText(h, sb, sb.Capacity);
-                if (sb.ToString() == Title) found.Add(h);
+                string t = sb.ToString();
+                if (t == Title || (seconds && t.StartsWith(Title + ": "))) found.Add(h);
             }
             return true;
         }, IntPtr.Zero);
@@ -91,6 +94,6 @@ static class AppWindow
     // Close the Workshop's window (quitting from the tray, or updating), the way its ✕ does.
     public static void Close()
     {
-        foreach (var h in Windows()) PostMessage(h, 0x0112, (IntPtr)0xF060, IntPtr.Zero);   // WM_SYSCOMMAND, SC_CLOSE
+        foreach (var h in Windows(true)) PostMessage(h, 0x0112, (IntPtr)0xF060, IntPtr.Zero);   // WM_SYSCOMMAND, SC_CLOSE
     }
 }

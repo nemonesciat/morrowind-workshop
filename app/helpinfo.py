@@ -15,11 +15,22 @@ LICENSES = os.path.join(HERE, 'web', 'vendor', 'licenses')
 
 
 def version():
-    try:
-        with open(os.path.join(HERE, 'version.txt'), encoding='ascii') as f:
-            return f.read().strip()
-    except OSError:
-        return 'development copy'
+    # (run from the source folder, the build's own version file beside it is the current one; a built copy
+    # has its version.txt written by the build)
+    for p in (os.path.join(HERE, '..', 'packaging', 'version.txt'), os.path.join(HERE, 'version.txt')):
+        try:
+            with open(p, encoding='ascii') as f:
+                return f.read().strip()
+        except OSError:
+            pass
+    return 'development copy'
+
+
+# who made it, its licence and where its source is, for the About window
+CREDITS = {'author': 'Nemo', 'with': 'Claude, an AI model by Anthropic',
+           'license': 'Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0)',
+           'license_url': 'https://creativecommons.org/licenses/by-nc/4.0/',
+           'github': 'https://github.com/nemonesciat/morrowind-workshop'}
 
 
 def game_log(cfg):
@@ -103,7 +114,7 @@ def about(db):
             except OSError:
                 c['text'] = ''
     return {'version': version(), 'python': platform.python_version(), 'openmw': openmw_version(db),
-            'components': comps}
+            'components': comps, 'credits': CREDITS}
 
 
 def notices_text():
@@ -212,6 +223,20 @@ def set_settings(body):
             s[k] = bool(body[k])
     if body.get('openmw_reset'):
         s.pop('openmw_install', None)
+    # the picture editor textures open in (assets.py): a program on this PC, or '' for Windows' own choice
+    if 'image_editor' in body:
+        exe = (body.get('image_editor') or '').strip().strip('"')
+        if exe and not (exe.lower().endswith('.exe') and os.path.isfile(exe)):
+            from editing import EditError
+            raise EditError('That is not a program on this PC: %s' % exe)
+        s['image_editor'] = exe
+    # Blender, wherever it is (assets.blender looks in the usual places when this is empty)
+    if 'blender' in body:
+        exe = (body.get('blender') or '').strip().strip('"')
+        if exe and not (os.path.basename(exe).lower() == 'blender.exe' and os.path.isfile(exe)):
+            from editing import EditError
+            raise EditError('That is not Blender (blender.exe) on this PC: %s' % exe)
+        s['blender'] = exe
     # the look chosen in Settings → Appearance (theme.js), your own theme with it; small, so kept as it comes
     if isinstance(body.get('theme'), dict) and len(json.dumps(body['theme'])) < 8000:
         s['theme'] = body['theme']

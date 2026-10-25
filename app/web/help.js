@@ -2,7 +2,9 @@
 // The guide opens by itself the first time the Workshop runs (Settings can turn that off).
 
 // ----- the Help menu at the top
-$('#helpbtn').onclick = e => { e.stopPropagation(); const m = $('#helpmenu'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; };
+// (one top-bar menu open at a time: opening one closes the others)
+function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
+$('#helpbtn').onclick = e => { e.stopPropagation(); topMenusClose('helpmenu'); const m = $('#helpmenu'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; };
 document.addEventListener('click', e => { if (!e.target.closest('#helpmenu')) $('#helpmenu').style.display = 'none'; });
 $('#helpmenu').addEventListener('click', e => {
   const b = e.target.closest('[data-help]'); if (!b) return;
@@ -12,7 +14,76 @@ $('#helpmenu').addEventListener('click', e => {
   else if (a === 'report') reportModal();
   else if (a === 'messages') recentMessages();
   else if (a === 'about') aboutModal();
+  else if (a === 'learning') docModal('how-the-workshop-learns.md');
 });
+
+// ----- the Workshop's own papers (web/docs/*.md), read in a window: headings, paragraphs, lists (one level
+// nested), tables, bold, italics, code and links; the same file is the one on GitHub
+async function docModal(name){
+  let md;
+  try { const r = await fetch('/web/docs/' + name, {cache: 'no-store'}); if (!r.ok) throw new Error('The paper is missing.'); md = await r.text(); }
+  catch (e){ return toast(e.message, true); }
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal doc" style="width:min(820px,95vw);max-height:88vh;overflow:auto">${docHtml(md)}
+    <div class="foot"><button class="btn primary" id="doc-close">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#doc-close').onclick = () => bg.remove();
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  bg.querySelectorAll('a[href^="http"]').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+}
+function docInline(s){
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/&lt;(https?:[^&\s]+)&gt;/g, '<a href="$1">$1</a>');
+}
+function docHtml(md){
+  const L = md.replace(/\r/g, '').split('\n'), out = [];
+  let i = 0;
+  const para = [];
+  const flush = () => { if (para.length){ out.push('<p>' + docInline(para.join(' ')) + '</p>'); para.length = 0; } };
+  while (i < L.length){
+    const line = L[i];
+    if (!line.trim()){ flush(); i++; continue; }
+    const h = line.match(/^(#{1,3})\s+(.*)$/);
+    if (h){ flush(); const n = h[1].length; out.push(`<h${n + 1}>${docInline(h[2])}</h${n + 1}>`); i++; continue; }
+    if (/^\|/.test(line)){
+      flush();
+      const rows = [];
+      while (i < L.length && /^\|/.test(L[i])){ rows.push(L[i]); i++; }
+      const cells = r => r.replace(/^\||\|$/g, '').split('|').map(c => docInline(c.trim()));
+      const body = rows.filter((r, n) => n !== 1 || !/^\|[\s:|-]+\|$/.test(r));
+      out.push('<table class="t doc-t"><tr>' + cells(body[0]).map(c => `<th>${c}</th>`).join('') + '</tr>' +
+        body.slice(1).map(r => '<tr>' + cells(r).map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</table>');
+      continue;
+    }
+    if (/^\s*- /.test(line)){
+      flush();
+      // (a list; an item may run on over indented lines, and hold a list of its own, two spaces in)
+      const items = [];
+      while (i < L.length && (/^\s*- /.test(L[i]) || (/^\s+\S/.test(L[i]) && items.length))){
+        const m = L[i].match(/^(\s*)- (.*)$/);
+        if (m) items.push({lvl: m[1].length >= 2 ? 1 : 0, text: m[2]});
+        else items[items.length - 1].text += ' ' + L[i].trim();
+        i++;
+      }
+      let html = '<ul>', open = false;
+      for (const it of items){
+        if (it.lvl && !open){ html = html.replace(/<\/li>$/, ''); html += '<ul>'; open = true; }
+        else if (!it.lvl && open){ html += '</ul></li>'; open = false; }
+        html += '<li>' + docInline(it.text) + '</li>';
+      }
+      if (open) html += '</ul></li>';
+      out.push(html + '</ul>');
+      continue;
+    }
+    para.push(line.trim()); i++;
+  }
+  flush();
+  return out.join('\n');
+}
 const HELP_KEY = s => `<kbd>${s}</kbd>`;
 function helpGo(view){ return `<button class="btn sm" data-gview="${view}">Open ${{world: 'the World map', createv: 'Create', dialog: 'Dialogue', mymod: 'My mod', plugins: 'Load order', settings: 'Settings', chars: 'Characters'}[view] || view}</button>`; }
 
@@ -194,8 +265,18 @@ async function aboutModal(){
   let a;
   try { a = await api('/api/about'); } catch (e){ return toast(e.message, true); }
   const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal" style="width:min(680px,94vw);max-height:86vh;overflow:auto"><h2>Morrowind Workshop</h2>
+  // (the logo from the top left, at the window's top right)
+  const logo = document.querySelector('.brand svg.logo, .brand svg');
+  // (it floats in the free space right of the title and version, so the text keeps its own spacing)
+  bg.innerHTML = `<div class="modal" style="width:min(680px,94vw);max-height:86vh;overflow:auto;position:relative">
+    ${logo ? `<div class="ab-logo" style="position:absolute;top:8px;right:24px;height:72px;pointer-events:none">${logo.outerHTML}</div>` : ''}
+    <h2>Morrowind Workshop</h2>
     <div class="msg">Version <b>${esc(a.version)}</b> · OpenMW ${esc(a.openmw)} · Python ${esc(a.python)}</div>
+    ${a.credits ? `<table class="t" style="font-size:12.5px;margin-top:8px">
+      <tr><td style="white-space:nowrap">Made by</td><td><b>${esc(a.credits.author)}</b>, with ${esc(a.credits.with)}</td></tr>
+      <tr><td>Licence</td><td>© 2026 ${esc(a.credits.author)} · <a href="${esc(a.credits.license_url)}" target="_blank" rel="noopener">${esc(a.credits.license)}</a>: share and change it, with credit, but not for commercial purposes</td></tr>
+      ${a.credits.github ? `<tr><td>Source</td><td><a href="${esc(a.credits.github)}" target="_blank" rel="noopener">${esc(a.credits.github.replace(/^https?:\/\//, ''))}</a></td></tr>` : ''}
+    </table>` : ''}
     <p class="msg" style="line-height:1.6">An editor for Morrowind mods with OpenMW. Not made by or affiliated with Bethesda Softworks or the OpenMW project.
       Morrowind is a trademark of Bethesda Softworks / ZeniMax Media; the Workshop includes none of its files, it reads the ones you own.</p>
     <h3 style="margin-top:12px">Built with</h3>
@@ -206,9 +287,48 @@ async function aboutModal(){
     <div class="msg" style="margin-top:8px">The full notices are in THIRD_PARTY_NOTICES.txt in the Workshop's folder.</div>
     <div class="foot"><button class="btn primary" id="ab-close">Close</button></div></div>`;
   document.body.appendChild(bg);
+  const lg = bg.querySelector('.ab-logo svg'); if (lg){ lg.style.height = '100%'; lg.style.width = 'auto'; lg.style.display = 'block'; abLogoFit(bg); }
   $('#ab-close').onclick = () => bg.remove();
   bg.querySelectorAll('[data-lic]').forEach(l => l.onclick = () => { const pre = $('#ab-lic'); pre.textContent = a.components[+l.dataset.lic].text; pre.style.display = 'block'; pre.scrollIntoView({block: 'nearest'}); });
 }
+
+// the About logo fitted into the free space at the top right: from the title's top down through the
+// "Made by" row (empty on its right) to just above the Licence row, its drawing (not its frame) flush with
+// the table's right edge; it sits on the window's own colour, so the row lines stop at it
+function abLogoFit(bg){
+  const md = bg.querySelector('.modal'), box = bg.querySelector('.ab-logo'), svg = box && box.querySelector('svg');
+  const h2 = md.querySelector('h2'), tb = md.querySelector('table'); if (!svg || !h2 || !tb) return;
+  const M = md.getBoundingClientRect(), H = h2.getBoundingClientRect(), T = tb.getBoundingClientRect();
+  const row2 = tb.rows[1] ? tb.rows[1].getBoundingClientRect() : T, made = tb.rows[0].cells[1];
+  // (as low as the Licence row, unless "Made by" runs too far right to leave room)
+  const text = document.createRange(); text.selectNodeContents(made); const tr = text.getBoundingClientRect();
+  const deep = T.right - tr.right > 170;
+  const top = H.top - M.top + md.scrollTop, bottom = (deep ? row2.top : T.top) - M.top + md.scrollTop - 6, right = T.right - M.left;
+  const vb = svg.viewBox.baseVal, bb = svg.getBBox();
+  // (the drawing's share of its frame, across and down)
+  const fx0 = (bb.x - vb.x) / vb.width, fx1 = (bb.x + bb.width - vb.x) / vb.width;
+  const fy0 = (bb.y - vb.y) / vb.height, fy1 = (bb.y + bb.height - vb.y) / vb.height;
+  const drawnH = Math.max(20, bottom - top), frameH = drawnH / (fy1 - fy0), frameW = frameH * vb.width / vb.height;
+  box.style.height = frameH + 'px'; box.style.width = frameW + 'px';
+  box.style.top = (top - fy0 * frameH) + 'px';
+  // (across: centred in the free space between the end of the text beside it and the table's right edge)
+  const ends = [h2, h2.nextElementSibling, made].filter(Boolean).map(el => { const rg = document.createRange(); rg.selectNodeContents(el); return rg.getBoundingClientRect().right - M.left; });
+  const free = Math.max(...ends), drawnW = (fx1 - fx0) * frameW;
+  const mid = (free + right) / 2;
+  // (and a hair up and right of the measured middle, where it looks centred to the eye)
+  box.style.left = (Math.min(right - drawnW, mid - drawnW / 2 + 10) - fx0 * frameW) + 'px'; box.style.right = 'auto';
+  box.style.top = (parseFloat(box.style.top) - 6) + 'px';
+  // (a little of the window's colour round the drawing, over the row lines it crosses)
+  box.style.background = getComputedStyle(md).backgroundColor; box.style.boxShadow = '0 0 0 8px ' + getComputedStyle(md).backgroundColor;
+  box.style.zIndex = '1';
+}
+
+// (a right-click on the logo, top left: About)
+document.addEventListener('contextmenu', e => {
+  const b = e.target.closest && e.target.closest('.brand'); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  pnlMenu({x: e.clientX, y: e.clientY}, [{label: 'ℹ About Morrowind Workshop…', act: () => aboutModal()}]);
+}, true);
 
 // ----- the assistant, the first time it's opened: what it is, what it costs, what it sends
 function aiNoticeHtml(){

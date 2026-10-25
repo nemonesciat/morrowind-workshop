@@ -714,6 +714,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Cache-Control', 'max-age=86400')
                 self.end_headers()
                 self.wfile.write(body)
+            elif u.path.startswith('/web/docs/') and u.path.endswith('.md') and '..' not in u.path:
+                # (the Workshop's own papers, read in a Help window: How the Workshop learns)
+                fp = os.path.join(WEB, 'docs', os.path.basename(u.path))
+                if not os.path.isfile(fp):
+                    return self._json({'error': 'not found'}, 404)
+                with open(fp, 'rb') as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/markdown; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
             elif u.path.startswith('/web/') and u.path.endswith('.js') and '..' not in u.path:
                 fp = os.path.join(WEB, os.path.basename(u.path))
                 if not os.path.isfile(fp):
@@ -751,6 +764,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(launch_settings())
             elif u.path == '/api/openmw':
                 self._json(openmw_info())
+            elif u.path == '/api/openmw/settings':
+                import omwsettings, esm
+                cfg = db.config or {}
+                out = omwsettings.read(cfg.get('userdir') or esm.openmw_userdir(), openmw_info()['install'])
+                out['running'] = link.game_running()
+                self._json(out)
             elif u.path == '/api/about':
                 self._json(helpinfo.about(db))
             elif u.path == '/api/settings':
@@ -793,7 +812,9 @@ class Handler(BaseHTTPRequestHandler):
                             'plugins': [{k: v for k, v in p.items() if k != 'counts'} for p in db.plugins]})
             elif u.path == '/api/cellmap':
                 key = q['key'] if 'key' in q else db.recs[int(q['i'])][7]
-                self._json(mapdata.cellmap(db, key))
+                # (original=1: the place as the game and your other mods have it, without this mod: a
+                # "before" window, web/twowin.js)
+                self._json(mapdata.cellmap(db, key, original=q.get('original') == '1'))
             elif u.path == '/api/lands':
                 # many cells' ground for the 2D map; coarser when zoomed out, so it stays quick
                 x0, y0, x1, y1, step = (int(q[k]) for k in ('x0', 'y0', 'x1', 'y1', 'step'))
@@ -820,6 +841,60 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/region':
                 import regions
                 self._json(regions.read(db, q.get('id', '')))
+            elif u.path == '/api/daylight':
+                import daylight
+                self._json(daylight.table())
+            elif u.path == '/api/assets/record':
+                import assets
+                self._json(assets.for_record(db, int(q['i'])))
+            elif u.path == '/api/assets/thumb':
+                import assets
+                t = assets.thumb(db, q.get('path', ''))
+                if not t:
+                    return self._json({'error': 'no picture'}, 404)
+                self.send_response(200)
+                self.send_header('Content-Type', t[1])
+                self.send_header('Content-Length', str(len(t[0])))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(t[0])
+            elif u.path == '/api/assets/editors':
+                import assets
+                self._json(assets.editors())
+            elif u.path == '/api/assets/stamp':
+                # (when the copies being edited last changed: only files in the mod's own folder)
+                import assets
+                import library
+                bases = [os.path.normcase(os.path.abspath(library.data_dir(db))), os.path.normcase(os.path.abspath(assets.EXPORTS))]
+                out = {}
+                for f in (q.get('files') or '').split('|'):
+                    if f and any(os.path.normcase(os.path.abspath(f)).startswith(b + os.sep) for b in bases):
+                        out[f] = assets.stamp(f)
+                self._json(out)
+            elif u.path in ('/api/anim/source', '/api/anim/people'):
+                # (one of a person's animation files; the own animations people in the game move with)
+                import nifanim
+                try:
+                    self._json(nifanim.source(db, q.get('file')) if u.path == '/api/anim/source' else {'rows': nifanim.person_animations(db)})
+                except ValueError as e:
+                    self._json({'error': str(e)}, 400)
+            elif u.path in ('/api/anim/record', '/api/anim/tracks'):
+                import nifanim
+                try:
+                    # (modl: another own animation model to try on a person; '' for the shared one only)
+                    d = nifanim.for_record(db, int(q['i']), q['modl'].lower().replace('\\', '/') if 'modl' in q else None)
+                    if u.path == '/api/anim/tracks':
+                        # (another's animation, to try on this skeleton: no shapes)
+                        d = {k: d[k] for k in ('id', 'type', 'name', 'tracks', 'keys', 'groups', 'length', 'files')}
+                    self._json(d)
+                except ValueError as e:
+                    self._json({'error': str(e)}, 400)
+            elif u.path == '/api/assets/findtex':
+                import assets
+                self._json({'found': assets.find_texture(db, q.get('name', ''))})
+            elif u.path == '/api/assets/blenderhere':
+                import assets
+                self._json({'blender': assets.blender()})
             elif u.path == '/api/lev':
                 self._json(levlists.read(db, q.get('id', '')))
             elif u.path == '/api/myeffects':
@@ -947,6 +1022,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(out)
             elif u.path == '/api/palette':
                 self._json(mapdata.palette(db, q['key']))
+            elif u.path == '/api/style/themes':
+                # the Style palette's tabs (stylesurvey.py); {'ready': False, 'waiting'} while it's learnt
+                import stylesurvey
+                out = stylesurvey.themes(db)
+                if q.get('key'):
+                    try:
+                        out['here'] = stylesurvey.theme_here(db, q['key'])
+                    except Exception:
+                        out['here'] = None
+                self._json(out)
+            elif u.path == '/api/style/theme':
+                # one theme's building pieces, furniture, decor and sets ('*': used everywhere)
+                import stylesurvey
+                t = stylesurvey.theme(db, q.get('name', ''))
+                if t is None:
+                    return self._json({'error': 'No such style, or the styles are still being learnt.'}, 404)
+                self._json(t)
             elif u.path == '/api/dlg/index':
                 kind = q.get('kind')
                 self._json(dialogue.index(db, q.get('q', ''), int(kind) if kind not in (None, '') else None,
@@ -1108,6 +1200,32 @@ class Handler(BaseHTTPRequestHandler):
                 # one of the game's own places read back as a plan for the room planner (nothing is changed)
                 import planfrom
                 self._json(planfrom.plan_from_cell(db, q.get('cell', '')))
+            elif u.path == '/api/build/from_building':
+                # a building outdoors (the piece or door right-clicked): is it closed and sound, and the
+                # interior that would be built in it (nothing is changed; frombuilding.py)
+                import frombuilding
+                self._json(frombuilding.preview(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None, q.get('tolerance') or 'usual'))
+            elif u.path == '/api/build/modules':
+                # whole buildings of the game's to put down outdoors, sized in interior tiles (housemodules.py)
+                import housemodules
+                self._json({'styles': housemodules.styles(db),
+                            'modules': housemodules.catalogue(db, q.get('style') or None, not q.get('all'), 120)})
+            elif u.path == '/api/build/modules/ready':
+                # the game's one-piece homes (a shack, a hut, a tent, a Nordic house): their building to place, and the
+                # ready-made interior the game puts behind it (podtwins.py)
+                import podtwins
+                s = podtwins.ready(db)
+                rows = []
+                for ext, mod in ((s or {}).get('modules') or {}).items():
+                    t = podtwins.twin_for(db, ext)
+                    if t:
+                        rows.append({'key': ext, 'twin': t, 'uses': sum(((s.get('twins') or {}).get(ext) or {}).values()),
+                                     'style': mapdata.style_of(ext), 'items': mod['items'], 'example': mod['example']})
+                rows.sort(key=lambda r: -r['uses'])
+                self._json({'ready': s is not None, 'homes': rows})
+            elif u.path == '/api/build/modules/joins':
+                import housemodules
+                self._json(housemodules.candidates(db, q.get('cell', ''), q.get('ref', ''), True, bool(q.get('walls'))))
             elif u.path == '/api/build/plan_from_cell/places':
                 # the game's interiors the Workshop can build a plan from (scored in a background pass the
                 # first time: ?all=1 lists every kit-built interior unscored), for "Plan from a place in the game"
@@ -1214,6 +1332,10 @@ class Handler(BaseHTTPRequestHandler):
                                                                    and isinstance(m['content'], str))})
             elif u.path == '/api/dev/github':
                 self._json(github_status())
+            elif u.path == '/api/changes':
+                # (asked every second or so by each window: what the other windows changed since)
+                self._json(dict(editing.changes_since(int(q.get('since', 0))),
+                                project=db.project.plugin if db.project else None))
             elif u.path == '/api/project':
                 p = db.project
                 parent, sizes = {}, {}
@@ -1238,6 +1360,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         n = int(self.headers.get('Content-Length') or 0)
+        editing.ORIGIN.window = self.headers.get('X-Workshop-Window')       # (whose change this is: editing.CHANGES)
         if u.path == '/api/library/upload':
             # a file dropped into the Library, as it is (not JSON): kept with the others of the same drop
             import library
@@ -1325,6 +1448,23 @@ class Handler(BaseHTTPRequestHandler):
                     db.load_async()
                 return self._json({'ok': True})
             # the OpenMW button works even while (or because) the game data couldn't load
+            if u.path in ('/api/openmw/settings', '/api/openmw/settings/open'):
+                import omwsettings, esm
+                userdir = (db.config or {}).get('userdir') or esm.openmw_userdir()
+                if u.path.endswith('/open'):
+                    # (settings.cfg in whatever Windows opens text files with; made empty first if there's none yet)
+                    p = omwsettings.path_of(userdir)
+                    if not os.path.isfile(p) and os.path.isdir(userdir):
+                        open(p, 'w', encoding='utf-8').close()
+                    if not os.path.isfile(p):
+                        return self._json({'error': "OpenMW's settings folder wasn't found. Run the OpenMW Launcher once."}, 400)
+                    if body.get('open', True) and hasattr(os, 'startfile'):
+                        os.startfile(p)
+                    return self._json({'ok': True, 'path': p})
+                try:
+                    return self._json(omwsettings.write(userdir, openmw_info()['install'], body.get('changes') or []))
+                except omwsettings.SettingsError as e:
+                    return self._json({'error': str(e)}, 400)
             if u.path == '/api/openmw/start':
                 editing.flush(db)           # (the plugin on disk before the game reads it)
                 return self._json(start_openmw(body.get('mode', 'menu'), body.get('launch')))
@@ -1559,6 +1699,9 @@ class Handler(BaseHTTPRequestHandler):
                 import roomscore
                 return self._json(roomscore.score_place(db, body['cell'], fast=body.get('fast', True), gaps=body.get('gaps', False)))
             with edit_lock:
+                if u.path == '/api/doors/pair':
+                    # (two doors picked in two windows lead to each other: web/twowin.js)
+                    return self._json(doors.link_pair(db, body['cell_a'], body['ref_a'], body['cell_b'], body['ref_b']))
                 if u.path == '/api/ref/relink':
                     r = doors.relink(db, body['cell'], body['ref'], body.get('target'), body.get('at'), bool(body.get('both')))
                     m = mapdata.cellmap(db, body['cell'])
@@ -1570,6 +1713,91 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(groups_ed.save_global(db, body.get('id'), body.get('data') or {}, bool(body.get('create'))))
                 if u.path == '/api/gmst/save':
                     return self._json(groups_ed.save_gmst(db, body.get('id'), body.get('value')))
+                if u.path == '/api/assets/edit':
+                    import assets
+                    return self._json(assets.edit_texture(db, body.get('path'), body.get('how') or 'everywhere', body.get('i'),
+                                                          open_it=body.get('open', True) is not False))
+                if u.path == '/api/assets/open':
+                    # (open again, in the picture editor: only a copy in the mod's own folder)
+                    import assets
+                    import library
+                    f = body.get('file') or ''
+                    base = os.path.normcase(os.path.abspath(library.data_dir(db)))
+                    if not (os.path.isfile(f) and os.path.normcase(os.path.abspath(f)).startswith(base + os.sep)):
+                        return self._json({'error': 'That file is not one of your mod\'s copies.'}, 400)
+                    return self._json({'editor': assets._open(f)})
+                if u.path == '/api/assets/giveback':
+                    import assets
+                    r = assets.give_back(db, body.get('path'))
+                    _model_cache.pop((body.get('path') or '').lower().replace('\\', '/'), None)
+                    return self._json(r)
+                if u.path == '/api/assets/export':
+                    # a model out to Blender as a .glb (with blender: true, opened there too)
+                    import assets
+                    ri = int(body['i'])
+                    r = assets.export_glb(db, db.recs[ri][5])
+                    if body.get('blender'):
+                        r['blender'] = assets.open_in_blender(r['file'])
+                    return self._json(r)
+                if u.path in ('/api/assets/blender', '/api/assets/showfile'):
+                    # (only the Workshop's own exports)
+                    import assets
+                    f = body.get('file') or ''
+                    if not (os.path.isfile(f) and os.path.normcase(os.path.abspath(f)).startswith(os.path.normcase(os.path.abspath(assets.EXPORTS)) + os.sep)):
+                        return self._json({'error': 'That is not one of the Workshop\'s exports.'}, 400)
+                    if u.path == '/api/assets/blender':
+                        return self._json({'blender': assets.open_in_blender(f)})
+                    subprocess.Popen(['explorer', '/select,', os.path.normpath(f)])
+                    return self._json({'ok': True})
+                if u.path == '/api/assets/import':
+                    import assets
+                    r = assets.import_back(db, body.get('file'), body.get('how') or 'everywhere', body.get('i'), into=body.get('into'))
+                    _model_cache.pop(r['path'], None)
+                    return self._json(r)
+                if u.path in ('/api/anim/retime', '/api/anim/adopt', '/api/anim/personadopt', '/api/anim/bringkf'):
+                    import nifanim
+                    try:
+                        if u.path == '/api/anim/retime':
+                            return self._json(nifanim.retime(db, body.get('i'), body.get('group'), body.get('factor', 1), body.get('how') or 'everywhere'))
+                        if u.path == '/api/anim/personadopt':
+                            return self._json(nifanim.person_adopt(db, body.get('i'), body.get('model') or ''))
+                        if u.path == '/api/anim/bringkf':
+                            import base64
+                            data = base64.b64decode(body.get('data') or '')
+                            if len(data) > 64 << 20:
+                                return self._json({'error': 'That file is too big to be an animation.'}, 400)
+                            return self._json(nifanim.bring_kf(db, body.get('i'), data, body.get('how') or 'everywhere'))
+                        return self._json(nifanim.adopt(db, body.get('i'), body.get('from'), body.get('how') or 'everywhere'))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path in ('/api/anim/blender', '/api/anim/motion'):
+                    # one group's motion out to Blender (open: there too), and back from the file Blender saves
+                    import animglb
+                    import assets
+                    try:
+                        if u.path == '/api/anim/blender':
+                            r = animglb.export_group(db, body.get('i'), body.get('group'))
+                            if body.get('open'):
+                                r['blender'] = animglb.open_in_blender(r['file'])
+                            return self._json(r)
+                        f = body.get('file') or ''
+                        if not (os.path.isfile(f) and os.path.normcase(os.path.abspath(f)).startswith(os.path.normcase(os.path.abspath(assets.EXPORTS)) + os.sep)):
+                            return self._json({'error': 'That is not one of the Workshop\'s exports.'}, 400)
+                        return self._json(animglb.import_motion(db, body.get('i'), f, body.get('how') or 'everywhere'))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path == '/api/anim/textkeys':
+                    import nifanim
+                    try:
+                        return self._json(nifanim.save_keys(db, body.get('i'), body.get('keys') or [], body.get('how') or 'everywhere',
+                                                            body.get('file'), body.get('group')))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path == '/api/assets/fixtex':
+                    import assets
+                    r = assets.fix_texture(db, body.get('i'), body.get('name') or '', body.get('to') or '', body.get('how') or 'everywhere')
+                    _model_cache.pop(r.get('path') or '', None)
+                    return self._json(r)
                 if u.path == '/api/region/save':
                     import regions
                     return self._json(regions.save(db, body.get('id'), body.get('data') or {}, bool(body.get('create'))))
@@ -1656,7 +1884,8 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/spells/create':
                     return self._json(items.create_spell(db, body))
                 if u.path == '/api/paths':
-                    r = pathgrid.generate(db, body['cell'])
+                    # (redrawn by Project Tamriel's rules: room pieces by their tiles, anything else from its floors)
+                    r = pathgrid.redraw(db, body['cell'])
                     m = mapdata.cellmap(db, body['cell'])
                     m['made'] = r
                     return self._json(m)
@@ -1758,6 +1987,26 @@ class Handler(BaseHTTPRequestHandler):
                         body.get('exit'), body.get('entrance'), body.get('lighting') or 'normal',
                         body.get('lights', True), body.get('door'), body.get('stairs'), body.get('floors_as') or 'auto',
                         planner=body.get('plan')))
+                if u.path == '/api/build/from_building':
+                    import frombuilding
+                    return self._json(frombuilding.build(db, body.get('cell') or '', body.get('ref') or '', body.get('name'),
+                                                         body.get('door') or None, body.get('style') or None,
+                                                         int(body['floors']) if body.get('floors') else None,
+                                                         body.get('tiles') or None, body.get('tolerance') or 'usual'))
+                if u.path == '/api/build/groundfit':
+                    # the ground fitted to a building outdoors, the way the game's meet theirs (groundfit.py)
+                    import groundfit
+                    return self._json(groundfit.fit(db, body.get('cell') or '', body.get('ref') or ''))
+                if u.path == '/api/build/modules/fit':
+                    # the game's buildings of a style laid over a volume of tiles (Plan a prefab, prefabplan.js)
+                    import housemodules
+                    return self._json(housemodules.fit_volume(db, body.get('style') or None, {'tiles': body.get('tiles') or []},
+                                                              body.get('front') or 'S', kind=body.get('kind') or 'homes',
+                                                              tolerance=body.get('tolerance') or 'usual'))
+                if u.path == '/api/build/modules/join':
+                    import housemodules
+                    return self._json(housemodules.join(db, body.get('cell') or '', body.get('ref') or '', body.get('id') or '',
+                                                        body.get('pose') or []))
                 if u.path == '/api/build/outside':
                     import outside
                     return self._json(outside.for_rooms(db, body.get('style'), float(body.get('w') or 768), float(body.get('d') or 768)))
@@ -1776,6 +2025,24 @@ class Handler(BaseHTTPRequestHandler):
                                                            body.get('doors'), body.get('floors_as') or 'auto'))
                 if u.path == '/api/dlg/topic/new':
                     return self._json({'key': dialogue.create_topic(db, body.get('name'), int(body.get('kind') or 0))})
+                if u.path == '/api/ruin/build':
+                    # a dungeon (Dwemer ruin, cave, tomb, Daedric ruin) laid out, dressed, guarded and lived in as the
+                    # game's own are (dwemer.py), one change
+                    import dwemer
+                    return self._json(dwemer.build(db, body.get('name'), body.get('size') or 'medium', body.get('levels') or 'some',
+                                                   body.get('twist') or 'branching', body.get('loot') or 'usual', body.get('creatures') or 'usual',
+                                                   entrance=body.get('entrance'), outside_door=body.get('door') or None,
+                                                   seed=body.get('seed') if body.get('seed') not in (None, '') else None,
+                                                   occupants=body.get('occupants') or 'auto', kind=body.get('kind') or 'dwemer',
+                                                   water=body.get('water') or 'none'))
+                if u.path == '/api/ruin/preview':
+                    # the layout those choices make, for the Dungeon tool's plan (nothing is written)
+                    import dwemer
+                    return self._json(dwemer.preview(db, body.get('kind') or 'dwemer', body.get('size') or 'medium', body.get('levels') or 'some',
+                                                     body.get('twist') or 'branching', body.get('seed')))
+                if u.path == '/api/ruin/again':
+                    import dwemer
+                    return self._json(dwemer.again(db, body['cell'], body.get('seed') if body.get('seed') not in (None, '') else None))
                 if u.path == '/api/populate/place':
                     # Populate: the cast made real, as new people placed (populate.py), one change
                     import populate

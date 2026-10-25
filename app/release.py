@@ -606,6 +606,28 @@ def checks(db):
         out.append({'id': 'northmarker', 'sev': 'warning', 'title': '%d place%s with no north marker' % (len(st_['north']), '' if len(st_['north']) == 1 else 's'),
                     'detail': 'An interior with a door to the outside has a NorthMarker just inside that door, turned so the map inside matches the world outside.',
                     'items': [{'label': n, 'cell': ck} for ck, n, _d in st_['north'][:30]], 'fix': {'action': 'northmarkers', 'label': 'Place them'}})
+    # the reviewers' test: each new interior laid over the building its door leads out of (frombuilding.py)
+    try:
+        import frombuilding
+        import mapdata
+        bad = []
+        for ck, c in list(p.cells.items())[:200]:
+            if ck.startswith('#') or not c.get('refs'):
+                continue
+            info = mapdata.cell_info(db, ck)
+            if not info or not info.get('own'):
+                continue
+            f = frombuilding.fits(db, ck)
+            if f and not f['ok']:
+                bad.append((ck, info.get('name') or ck, f['text']))
+        if bad:
+            out.append({'id': 'fits', 'sev': 'warning', 'title': '%d interior%s stick%s out of %s building' % (
+                len(bad), '' if len(bad) == 1 else 's', 's' if len(bad) == 1 else '', 'its' if len(bad) == 1 else 'their'),
+                'detail': 'Project Tamriel\'s reviewers lay an interior over the building outside its door and look for anything '
+                          'that sticks out; an interior should fit as well as the game\'s own interiors fit theirs.',
+                'items': [{'label': '%s: %s' % (n, t), 'cell': ck} for ck, n, t in bad[:30]]})
+    except Exception as e:
+        print('fits check:', e)
     miss = _missing_links(db)
     out.append({'id': 'links', 'sev': 'error' if miss else 'ok',
                 'title': ('%d thing%s point%s to something missing' % (len(miss), '' if len(miss) == 1 else 's', 's' if len(miss) == 1 else '')) if miss else 'Everything points to things that exist',
@@ -804,10 +826,10 @@ def settings_faults(db):
     return out
 
 
-def place_northmarker(db, cell_key, door_key):
-    """A NorthMarker a step inside the door to the outside, turned by the formula Project Tamriel uses:
-    ((360 - exterior door z) + (interior door z + 180)) mod 360, from the outside door that leads back
-    here. True when placed."""
+def place_northmarker(db, cell_key, door_key, at=None):
+    """A NorthMarker a step inside the door to the outside (or at `at`, [x, y, z]), on the floor, turned by
+    the formula Project Tamriel uses: ((360 - exterior door z) + (interior door z + 180)) mod 360, from the
+    outside door that leads back here. True when placed."""
     import mapdata
     import doors
     import fixit
@@ -839,8 +861,10 @@ def place_northmarker(db, cell_key, door_key):
         return False
     int_z = math.degrees(door['p'][5]) % 360
     rot = (((360 - ext_z) % 360) + ((int_z + 180) % 360)) % 360
-    pos = doors._in_front(m, door)
-    fixit.apply(db, cell_key, [{'op': 'place', 'id': 'NorthMarker', 'p': [round(pos[0], 2), round(pos[1], 2), round(door['p'][2], 2), 0, 0, round(math.radians(rot), 4)]}],
+    pos = list(at) if at else doors._in_front(m, door)
+    # (on the floor: _in_front's spot is 12 over the door's sill; the door's own origin floats over it)
+    z = pos[2] if at else pos[2] - 12
+    fixit.apply(db, cell_key, [{'op': 'place', 'id': 'NorthMarker', 'p': [round(pos[0], 2), round(pos[1], 2), round(z, 2), 0, 0, round(math.radians(rot), 4)]}],
                 label='Placed a NorthMarker in %s (turned %.0f degrees)' % (editing.cell_label(db, cell_key), rot))
     return True
 

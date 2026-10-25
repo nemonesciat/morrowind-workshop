@@ -38,11 +38,12 @@ def cell_info(db, cell_key):
             'gx': gx, 'gy': gy, 'region': region, 'has_water': bool(flags & 2), 'own': own}
 
 
-def cellmap(db, cell_key):
+def cellmap(db, cell_key, original=False):
+    """A place's objects for the map and the 3D view (original: without the mod being made)."""
     info = cell_info(db, cell_key)
     if not info:
         return {'exists': False, 'key': cell_key, 'refs': []}
-    refs, _hdr = db.cell_refs(cell_key)
+    refs, _hdr = db.cell_refs(cell_key, without_project=original)
     out, gone = [], []
     type_cache = {}
     mine_plugin = db.project.plugin.lower() if getattr(db, 'project', None) else None
@@ -84,6 +85,10 @@ def cellmap(db, cell_key):
     info['exists'] = True
     info['refs'] = out
     info['gone'] = gone
+    # (a Dwemer ruin the Workshop made: how, so the map's menu can make it again; dwemer.py)
+    pc = db.project.cells.get(cell_key) if getattr(db, 'project', None) else None
+    if pc and pc.get('ruin'):
+        info['ruin'] = pc['ruin']
     if not EXTRAS:
         info['paths'] = None
         info['lighting'] = None

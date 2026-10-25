@@ -219,8 +219,9 @@ def write(db, gx, gy, heights=None, tex=None):
     return heights
 
 
-def edit(db, cells, keep_objects=True, note=None):
-    """cells: [{gx, gy, h?: 65*65, t?: 256}]. Objects standing on the ground move with it."""
+def edit(db, cells, keep_objects=True, note=None, skip=()):
+    """cells: [{gx, gy, h?: 65*65, t?: 256}]. Objects standing on the ground move with it (not those in skip, ref keys:
+    a building the ground is fitted to, groundfit.py)."""
     _require_project(db)
     if not cells:
         raise EditError('Nothing to change.')
@@ -230,7 +231,7 @@ def edit(db, cells, keep_objects=True, note=None):
         before = mapdata.land(db, gx, gy).get('h') if keep_objects and c.get('h') else None
         after = write(db, gx, gy, c.get('h'), c.get('t'))
         if before:
-            moved += _follow_ground(db, gx, gy, before, after)
+            moved += _follow_ground(db, gx, gy, before, after, skip)
     db.sync_project()
     did = []
     if any(c.get('h') for c in cells):
@@ -251,7 +252,7 @@ def _height_at(h, gx, gy, x, y):
     return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty
 
 
-def _follow_ground(db, gx, gy, before, after):
+def _follow_ground(db, gx, gy, before, after, skip=()):
     """Move things that stood on the ground by as much as the ground under them moved."""
     key = '#%d,%d' % (gx, gy)
     m = mapdata.cellmap(db, key)
@@ -260,6 +261,8 @@ def _follow_ground(db, gx, gy, before, after):
     moved = 0
     c = None
     for r in m['refs']:
+        if r['k'] in skip:
+            continue
         x, y = r['p'][0], r['p'][1]
         if not (gx * CELL <= x < (gx + 1) * CELL and gy * CELL <= y < (gy + 1) * CELL):
             continue

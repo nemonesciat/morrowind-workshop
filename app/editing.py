@@ -74,7 +74,7 @@ def commit(db, note=None, reverts=None):
     p.last_state = after
     db.sync_project()
     _write_soon(db)
-    _notify(db)
+    _notify(db, entry)
     try:
         import together
         if together.active():
@@ -151,7 +151,31 @@ def flush(db=None):
         _writer['done'].wait(30)
 
 
-def _notify(db):
+# Every change, counted, with the places it touched and the window that made it: a second Workshop window
+# on the same server asks /api/changes?since=n every second or so and reloads what another window changed.
+# ORIGIN.window is set by the server for the request being answered (the page's X-Workshop-Window header).
+CHANGES = {'n': 0, 'recent': []}
+ORIGIN = threading.local()
+
+
+def _count_change(entry):
+    d = (entry or {}).get('diff') or {}
+    CHANGES['n'] += 1
+    CHANGES['recent'].append({'n': CHANGES['n'], 'by': getattr(ORIGIN, 'window', None),
+                              'cells': sorted(d.get('c', {})) if entry and d else None,
+                              'records': bool(d.get('r')) if entry and d else True})
+    del CHANGES['recent'][:-200]
+
+
+def changes_since(n):
+    """What changed after change n: {'n': now, 'changes': [...]}, or 'all': True when n is too old to say."""
+    rec = CHANGES['recent']
+    out = [c for c in rec if c['n'] > n]
+    return {'n': CHANGES['n'], 'changes': out, 'all': bool(rec) and n < rec[0]['n'] - 1}
+
+
+def _notify(db, entry=None):
+    _count_change(entry)
     cb = getattr(db, 'on_project_change', None)
     if cb:
         try:
@@ -239,7 +263,7 @@ def undo(db, to_depth=None):
     p.last_state = after
     db.sync_project()
     _write_soon(db)
-    _notify(db)
+    _notify(db, entry)
     return undone
 
 
@@ -264,7 +288,7 @@ def fold(db, n, note):
     p.last_state = after
     db.sync_project()
     _write_soon(db)
-    _notify(db)
+    _notify(db, entry)
     return entry
 
 

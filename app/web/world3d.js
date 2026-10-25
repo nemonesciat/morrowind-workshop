@@ -25,15 +25,17 @@ const TEX_Q = {active: 0, max: 8, waiting: [], pending: {}};
 function v3TexNext(){
   while (TEX_Q.active < TEX_Q.max && TEX_Q.waiting.length){ const job = TEX_Q.waiting.shift(); TEX_Q.active++; job(); }
 }
-function v3Tex(path, cb, fail){
-  const T = THREE, url = '/api/file?path=' + encodeURIComponent(path);
+function v3Tex(path, cb, fail, fresh){
+  // (fresh: fetched again past every cache, after the file was changed in a picture editor)
+  const T = THREE, url = '/api/file?path=' + encodeURIComponent(path), get = fresh ? url + '&v=' + Date.now() : url;
+  if (fresh){ delete texCache[url]; delete TEX_Q.pending[url]; }
   if (texCache[url]){ cb(texCache[url]); return; }
   if (TEX_Q.pending[url]){ TEX_Q.pending[url].push([cb, fail]); return; }
   TEX_Q.pending[url] = [[cb, fail]];
   const settle = (ok, tex) => { const list = TEX_Q.pending[url] || []; delete TEX_Q.pending[url]; TEX_Q.active--; v3TexNext();
                                 for (const [c, f] of list){ if (ok) c(tex); else if (f) f(); } };
   const loader = path.endsWith('.dds') ? new T.DDSLoader() : path.endsWith('.tga') ? new T.TGALoader() : new T.TextureLoader();
-  const attempt = (again) => loader.load(url, tex => {
+  const attempt = (again) => loader.load(get, tex => {
     if (!path.endsWith('.dds')) tex.flipY = false;
     else {
       // Morrowind's DDS files often stop their mip chain early; WebGL then draws them black
@@ -66,6 +68,18 @@ function v3Material(tex, alpha, double){
     V3.mats[k] = m;
   }
   return V3.mats[k];
+}
+// models drawn again after their file changed (a model back from Blender: assets.js)
+function v3ModelReload(ids){
+  for (const id of ids || []){ const k = String(id).toLowerCase(); delete V3.models[k]; V3.asked.delete(k); }
+  if (typeof v3Refresh === 'function') v3Refresh();
+}
+// a texture drawn again, everywhere it shows, after it was changed (the asset window: assets.js)
+function v3TexReload(path){
+  if (typeof THREE === 'undefined' || !path) return;
+  const mats = Object.entries(V3.mats).filter(([k]) => k.startsWith(path + '|')).map(([, m]) => m);
+  if (!mats.length) return;
+  v3Tex(path, t => { for (const m of mats){ m.map = t; m.color.setHex(0xffffff); m.needsUpdate = true; } }, null, true);
 }
 
 // ----- setting up -----
@@ -192,19 +206,24 @@ function v3Sync(){
   for (const [ck, r] of visibleRefs()) want.set(ck + '|' + r.k, [ck, r]);
   for (const [key, o] of V3.objs) if (!want.has(key)){ V3.root.remove(o.g); V3.objs.delete(key); }
   const need = [];
+  // (what's being dragged now, one thing or a whole group, stays where the mouse has it: a redraw mid-drag,
+  // such as the reload after the last drop coming back late, put a group's members back where they were
+  // saved, and a drop just then saved them there: the "snap back"; and it isn't rebuilt until the drop)
+  const dragging = new Set();
+  if (V3.drag){ if (V3.drag.group) for (const m of V3.drag.members) dragging.add(m.o.g.userData.ref); else dragging.add(V3.drag.key); }
   for (const [key, [ck, r]] of want){
     const id = r.id.toLowerCase();
     if (!(id in V3.models) && !V3.asked.has(id) && r.type !== 'LEVC') need.push(r.id);      // (people too: their bodies)
     const look = id + '|' + (id in V3.models ? 1 : 0);
     let o = V3.objs.get(key);
-    if (!o || o.look !== look){
+    if (!o || (o.look !== look && !dragging.has(key))){
       if (o) V3.root.remove(o.g);
       o = {g: v3Build(r), look, ck, k: r.k};
       o.g.userData.ref = key;
       V3.root.add(o.g); V3.objs.set(key, o);
     }
     o.ck = ck; o.r = r;
-    if (!(V3.drag && V3.drag.key === key)) v3Place(o.g, r);
+    if (!dragging.has(key)) v3Place(o.g, r);
   }
   if (need.length) v3Fetch(need);
   if (W.ext) v3Terrain();
@@ -273,26 +292,92 @@ const V3_WEATHER = [
   {sky: 0xc8d2dc, fog: [1500, 9000], sun: 0.45, hemi: 0.85, fall: 'snow'},
   {sky: 0xd8e0e8, fog: [250, 2200], sun: 0.3, hemi: 0.9, fall: 'blizzard'},
 ];
+// ----- the time of day: the game's own colours for each weather at sunrise, by day, at sunset and by
+// night (openmw.cfg's fallback=Weather_... lines, from Morrowind.ini), blended through the hours as the
+// game does: night until sunrise, to the sunrise colours half way through it, to day at its end; the same
+// through sunset back to night. V3.hour: null for the plain preview, else 0-24.
+const V3_KINDS = ['Clear', 'Cloudy', 'Foggy', 'Overcast', 'Rain', 'Thunderstorm', 'Ashstorm', 'Blight', 'Snow', 'Blizzard'];
+async function v3Daylight(){
+  if (V3.day || V3.dayAsked) return V3.day;
+  V3.dayAsked = true;
+  try { V3.day = await api('/api/daylight'); } catch (e){ V3.dayAsked = false; }
+  return V3.day;
+}
+function v3DayAt(kind, h){
+  const D = V3.day, K = D.kinds[kind] || D.kinds.Clear;
+  // (keys: hour, which of sunrise/day/sunset/night, how much daylight)
+  const keys = [[D.sunrise, 3, 0], [D.sunrise + D.sunrise_len / 2, 0, 0.55], [D.sunrise + D.sunrise_len, 1, 1],
+                [D.sunset, 1, 1], [D.sunset + D.sunset_len / 2, 2, 0.55], [D.sunset + D.sunset_len, 3, 0]];
+  let a = keys[0], b = keys[0], t = 0;
+  if (h >= keys[0][0] && h < keys[5][0]){
+    for (let i = 0; i < 5; i++) if (h >= keys[i][0] && h < keys[i + 1][0]){ a = keys[i]; b = keys[i + 1]; t = (h - a[0]) / Math.max(0.001, b[0] - a[0]); break; }
+  }
+  const mix = part => { const p = K[part][a[1]], q = K[part][b[1]]; return new THREE.Color((p[0] + (q[0] - p[0]) * t) / 255, (p[1] + (q[1] - p[1]) * t) / 255, (p[2] + (q[2] - p[2]) * t) / 255); };
+  return {sky: mix('Sky'), fog: mix('Fog'), amb: mix('Ambient'), sun: mix('Sun'), light: a[2] + (b[2] - a[2]) * t};
+}
+function v3HourLabel(h){
+  if (h == null) return 'Plain daylight';
+  const hh = Math.floor(h) % 24, mm = Math.round((h - Math.floor(h)) * 60);
+  const D = V3.day || {sunrise: 6, sunrise_len: 2, sunset: 18, sunset_len: 2};
+  const part = h < D.sunrise || h >= D.sunset + D.sunset_len ? 'night' : h < D.sunrise + D.sunrise_len ? 'sunrise' : h < D.sunset ? 'day' : 'sunset';
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} · ${part}`;
+}
+const V3_RAIN_LEN = 70;          // (a raindrop's streak, in game units)
 function v3ApplyWeather(){
   if (!V3.scene || !W.ext) return;
   const T = THREE, w = V3_WEATHER[V3.weather == null ? 0 : V3.weather];
-  V3.scene.background = new T.Color(w.sky);
   // (the fog moves out with the View distance, so the far cells fade in rather than stop at an edge;
   // on Near it is as it always was)
   const k = v3Dist() === 1 ? 1 : (v3Dist() + 0.6) / 1.6;
-  V3.scene.fog = new T.Fog(w.sky, w.fog[0] * k, w.fog[1] * k);
   const far = Math.max(40000, w.fog[1] * k * 1.1);
   if (V3.camera.far !== far){ V3.camera.far = far; V3.camera.updateProjectionMatrix(); }
-  V3.sun.intensity = w.sun; V3.hemi.intensity = w.hemi;
-  V3.sun.color.set(w.tint || 0xfff0d8); V3.hemi.color.set(w.tint || 0xfff4e0);
+  if (V3.hour != null && V3.day){
+    const d = v3DayAt(V3_KINDS[V3.weather == null ? 0 : V3.weather], V3.hour);
+    V3.scene.background = d.sky;
+    V3.scene.fog = new T.Fog(d.fog, w.fog[0] * k, w.fog[1] * k);
+    V3.amb.color.copy(d.amb); V3.amb.intensity = 1.0;
+    V3.hemi.color.copy(d.sky); V3.hemi.groundColor.copy(d.amb); V3.hemi.intensity = 0.15 + 0.2 * d.light;
+    // (the sun from the east at sunrise, overhead at noon, to the west at sunset; by night the moon,
+    // dim, from the other side)
+    const D = V3.day, span = (D.sunset + D.sunset_len / 2) - (D.sunrise + D.sunrise_len / 2);
+    let a = Math.PI * (V3.hour - (D.sunrise + D.sunrise_len / 2)) / Math.max(1, span);
+    const night = a < 0 || a > Math.PI;
+    if (night) a = ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    V3.sun.position.set(Math.cos(a), -0.35, Math.max(0.15, Math.sin(a)) * 1.5);
+    V3.sun.color.copy(d.sun); V3.sun.intensity = night ? 0.35 : (0.35 + 0.65 * d.light) * (w.sun / 0.75 * 0.6 + 0.4);
+    // (lamps, candles and torches count for more as the light goes)
+    if (V3.pool && v3LightMode() === 'game'){ V3.poolStrength = 0.6 + 0.8 * (1 - d.light); v3PointLightsPick(); }
+  } else {
+    V3.scene.background = new T.Color(w.sky);
+    V3.scene.fog = new T.Fog(w.sky, w.fog[0] * k, w.fog[1] * k);
+    V3.amb.color.set(0xffffff); V3.amb.intensity = 0.2;
+    V3.hemi.groundColor.set(0x50453a);
+    V3.sun.position.set(0.6, -0.8, 1.5);
+    V3.sun.intensity = w.sun; V3.hemi.intensity = w.hemi;
+    V3.sun.color.set(w.tint || 0xfff0d8); V3.hemi.color.set(w.tint || 0xfff4e0);
+  }
+  V3.hemiBase = V3.hemi.intensity;
   // falling things: one set of points that follows the camera
   if (V3.fall){ V3.scene.remove(V3.fall); V3.fall.geometry.dispose(); V3.fall.material.dispose(); V3.fall = null; }
   if (!w.fall) return;
   const kind = w.fall, n = kind === 'blizzard' ? 9000 : kind === 'rain' ? 6000 : 4000, B = 2400;
+  const col = {rain: 0x9ab0c8, snow: 0xffffff, blizzard: 0xffffff, ash: 0x6a5040, blight: 0x9a4a40}[kind];
+  if (kind === 'rain'){
+    // (rain as thin streaks, each drop a short line along its fall: drawn as dots it read as sleet)
+    const pos = new Float32Array(n * 6);
+    for (let i = 0; i < n; i++){
+      const x = (Math.random() - 0.5) * B * 2, y = (Math.random() - 0.5) * B * 2, z = (Math.random() - 0.3) * B;
+      pos.set([x, y, z, x - 2, y - 1, z - V3_RAIN_LEN], i * 6);
+    }
+    const geo = new T.BufferGeometry(); geo.setAttribute('position', new T.BufferAttribute(pos, 3));
+    const mat = new T.LineBasicMaterial({color: col, transparent: true, opacity: 0.45, depthWrite: false, fog: true});
+    V3.fall = new T.LineSegments(geo, mat); V3.fall.frustumCulled = false; V3.fall.userData = {kind, B, lines: true};
+    V3.scene.add(V3.fall);
+    return;
+  }
   const pos = new Float32Array(n * 3);
   for (let i = 0; i < n; i++){ pos[i * 3] = (Math.random() - 0.5) * B * 2; pos[i * 3 + 1] = (Math.random() - 0.5) * B * 2; pos[i * 3 + 2] = (Math.random() - 0.3) * B; }
   const geo = new T.BufferGeometry(); geo.setAttribute('position', new T.BufferAttribute(pos, 3));
-  const col = {rain: 0x9ab0c8, snow: 0xffffff, blizzard: 0xffffff, ash: 0x6a5040, blight: 0x9a4a40}[kind];
   if (!V3.dotTex){
     // a soft round dot, so flakes and ash aren't little squares
     const c = document.createElement('canvas'); c.width = c.height = 32;
@@ -312,6 +397,16 @@ function v3WeatherTick(dt, t){
   const down = {rain: 2200, snow: 160, blizzard: 420, ash: 260, blight: 230}[kind] * dt;
   const side = {rain: 60, snow: 40, blizzard: 900, ash: 700, blight: 500}[kind] * dt;
   const sway = Math.sin(t / 900);
+  if (F.userData.lines){
+    // (each streak's two ends move together, wrapped round the camera as one)
+    for (let i = 0; i < p.length; i += 6){
+      const dx = side * (0.6 + 0.4 * sway), dy = side * 0.3;
+      p[i + 2] -= down; p[i + 5] -= down; p[i] += dx; p[i + 3] += dx; p[i + 1] += dy; p[i + 4] += dy;
+      if (p[i + 2] < -B * 0.3){ p[i + 2] += B; p[i + 5] += B; }
+      if (p[i] > B){ p[i] -= B * 2; p[i + 3] -= B * 2; }
+      if (p[i + 1] > B){ p[i + 1] -= B * 2; p[i + 4] -= B * 2; }
+    }
+  } else
   for (let i = 0; i < p.length; i += 3){
     p[i + 2] -= down; p[i] += side * (0.6 + 0.4 * sway); p[i + 1] += side * 0.3;
     if (p[i + 2] < -B * 0.3) p[i + 2] += B;
@@ -325,7 +420,7 @@ function v3WeatherTick(dt, t){
   if (w && w.flash){
     if (!V3.flashT || t > V3.flashT){ V3.flashT = t + 4000 + Math.random() * 9000; V3.flashOn = t; }
     const f = V3.flashOn && t - V3.flashOn < 180 ? 1 : 0;
-    V3.hemi.intensity = w.hemi + f * 1.2;
+    V3.hemi.intensity = (V3.hemiBase != null ? V3.hemiBase : w.hemi) + f * 1.2;
   }
 }
 // up to 12 nearby lights as real point lights (a fixed set, so materials never need rebuilding)
@@ -391,8 +486,14 @@ function v3Paths(){
     pos.push(A[0] - o[0], A[1] - o[1], A[2] - o[2] + 8, B[0] - o[0], B[1] - o[1], B[2] - o[2] + 8);
   }
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  V3.pathObj = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color: 0x7fd0ff, depthTest: false, transparent: true, opacity: 0.9}));
-  V3.pathObj.renderOrder = 10;
+  // (bright where nothing is in front of them, faint behind rock and walls: drawn all bright through
+  // everything, the paths in the tunnel behind seemed to cross the rock, the user's "through walls")
+  V3.pathObj = new THREE.Group();
+  const seen = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color: 0x7fd0ff, transparent: true, opacity: 0.95}));
+  const behind = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color: 0x7fd0ff, depthTest: false, transparent: true, opacity: 0.16}));
+  seen.renderOrder = 11; behind.renderOrder = 10;
+  V3.pathObj.add(behind, seen);
+  V3.pathObj.geometry = geo;
   V3.scene.add(V3.pathObj);
 }
 
@@ -998,7 +1099,7 @@ function v3LandSave(){ try { localStorage.setItem('ws-land', JSON.stringify(V3.l
 async function v3LandPanel(){
   let p = $('#v3land');
   if (!V3.landOpen || !W.ext){ if (p) p.remove(); return; }
-  if (!p){ p = document.createElement('div'); p.id = 'v3land'; $('#v3wrap').appendChild(p); }
+  if (!p){ p = document.createElement('div'); p.id = 'v3land'; $('#v3wrap').appendChild(p); if (typeof cfMovable === 'function') cfMovable(p, '.v3lhead', 'ground'); }
   const B = V3.land;
   p.innerHTML = `<div class="v3lhead"><b>Ground</b><button class="btn sm" data-lt="close" title="Close the ground tools">✕</button></div>
     <div class="v3lrow">${V3_LANDTOOLS.map(([k, l, t]) => `<button class="btn sm ${B.tool === k ? 'primary' : ''}" data-lt="${k}" title="${t}">${l}</button>`).join('')}</div>
@@ -1154,15 +1255,29 @@ function v3ScatterDab(at, erase){
   const gap = (V3_SCATTER_GAP[B.scatSet] || (cur && cur.gap) || 200) * (11 - B.scatThick) / 6;
   const tries = Math.max(1, Math.round(Math.PI * R * R / (gap * gap)));
   const total = items.reduce((a, i) => a + i.n, 0);
+  // in clusters, with the odd one on its own (Project Tamriel's exterior tutorial: "stagger things, don't
+  // space them evenly: a cluster of trees there, one by itself there"); not on top of one another
+  const disc = () => { const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * R; return [at[0] + Math.cos(a) * d, at[1] + Math.sin(a) * d]; };
+  const centres = Array.from({length: Math.max(1, Math.round(tries / 4))}, disc);
   for (let t = 0; t < tries; t++){
-    const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * R, x = at[0] + Math.cos(a) * d, y = at[1] + Math.sin(a) * d;
+    let x, y;
+    if (Math.random() < 0.2){ [x, y] = disc(); }
+    else {
+      const c = centres[Math.floor(Math.random() * centres.length)], a = Math.random() * Math.PI * 2;
+      const d = Math.abs((Math.random() + Math.random() + Math.random() - 1.5) * gap * 0.9);
+      x = c[0] + Math.cos(a) * d; y = c[1] + Math.sin(a) * d;
+      if (Math.hypot(x - at[0], y - at[1]) > R) continue;
+    }
     const g = v3GroundAt(x, y); if (g == null) continue;
-    if (S_.near.some(p => Math.hypot(p[0] - x, p[1] - y) < gap * 0.7)) continue;
+    if (S_.near.some(p => Math.hypot(p[0] - x, p[1] - y) < gap * 0.4)) continue;
     // the game's own mix: things used more often come up more often
     let pick = Math.random() * total, it = items[0];
     for (const i of items){ pick -= i.n; if (pick <= 0){ it = i; break; } }
     const s = it.smin + Math.random() * Math.max(0, it.smax - it.smin);
-    S_.add.push({id: it.id, lib: it.lib, x, y, z: g - it.sink * s - it.zmin * s, rz: Math.random() * Math.PI * 2, s: Math.round(s * 100) / 100});
+    // leaning as the game leans this model, as often as it does (scatter.py's tilt and tilt_share)
+    const lean = it.tilt && Math.random() < (it.tilt_share || 0) ? it.tilt * Math.PI / 180 : 0;
+    const rx = lean ? (Math.random() * 2 - 1) * lean : 0, ry = lean ? (Math.random() * 2 - 1) * lean : 0;
+    S_.add.push({id: it.id, lib: it.lib, x, y, z: g - it.sink * s - it.zmin * s, rx, ry, rz: Math.random() * Math.PI * 2, s: Math.round(s * 100) / 100});
     S_.near.push([x, y]);
   }
   v3ScatterShow();
@@ -1200,7 +1315,7 @@ async function v3ScatterEnd(S_){
       const cx = S_.add.reduce((a, p) => a + p.x, 0) / S_.add.length, cy = S_.add.reduce((a, p) => a + p.y, 0) / S_.add.length;
       const set = V3.scatSets.sets.find(s => s.key === V3.land.scatSet);
       await post('/api/group/place', {cell: cellKeyAt(cx, cy), x: cx, y: cy, z: 0, yaw: 0, label: (set ? set.label : 'plants').toLowerCase(),
-        items: S_.add.map(p => ({id: p.id, lib: p.lib, type: p.lib ? 'STAT' : undefined, dx: p.x - cx, dy: p.y - cy, dz: p.z, rz: p.rz, s: p.s}))});
+        items: S_.add.map(p => ({id: p.id, lib: p.lib, type: p.lib ? 'STAT' : undefined, dx: p.x - cx, dy: p.y - cy, dz: p.z, rx: p.rx || 0, ry: p.ry || 0, rz: p.rz, s: p.s}))});
       msg = `Scattered ${S_.add.length} ${set ? set.label.toLowerCase() : 'things'}`;
     }
     toast(msg + '. Undo takes the whole stroke back.');
@@ -1332,6 +1447,7 @@ function v3Bind(el){
       // (a locked wall or building piece under the mouse: no selection, but the spot and the piece still go
       // to the menu, for "Fix this edge" and "Fix here" on it)
       const h2 = h && h.locked ? v3Pick(e, true) : h;
+      V3.lastPick = h2 && h2.point ? h2 : v3Pick(e, true);
       cfMenuAt(e, h && h.obj ? [h.obj.ck, h.obj.r] : null, h2 && h2.world, h && h.locked && h2 && h2.obj ? [h2.obj.ck, h2.obj.r] : null);
       return;
     }
@@ -1423,11 +1539,13 @@ function v3Pick(e, any, skipKey){
     let o = h.object; while (o && !o.userData.ref && !o.userData.ground) o = o.parent;
     if (!o) continue;
     const world = [h.point.x + V3.origin[0], h.point.y + V3.origin[1], h.point.z + V3.origin[2]];
-    if (o.userData.ground) return {key: null, point: h.point, world};
+    // (the face's way out, for the grid's "Put the grid here": a floor or a wall)
+    const normal = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : null;
+    if (o.userData.ground) return {key: null, point: h.point, world, normal};
     if (o.userData.ref === skipKey) continue;
     const ob = V3.objs.get(o.userData.ref);
     if (!any && ob && ob.r.arch && W.lockArch){ lockedHit = true; continue; }
-    return {key: o.userData.ref, obj: ob, point: h.point, world};
+    return {key: o.userData.ref, obj: ob, point: h.point, world, normal};
   }
   return lockedHit ? {locked: true} : null;
 }
@@ -1453,6 +1571,8 @@ function v3Click(e){
   }
   if (W.mode === 'group'){
     const G = V3.ghost;
+    // (a prefab planned in its window is pinned by the click, and set down by the window's Place here; prefabplan.js)
+    if (W.groupPlace && W.groupPlace.prefab && typeof pfPin === 'function'){ pfPin(); return; }
     const h = G && G.hit ? {world: G.hit} : v3Pick(e, true);
     if (!h || !h.world) return toast('Click on the ground or a floor.', true);
     placeGroupAt(h.world[0], h.world[1], h.world[2]);
@@ -1508,7 +1628,7 @@ function v3PlaceHint(){
 }
 function v3Hover(e){
   if (!V3.on || V3.tc.dragging) return;
-  if (W.mode === 'place' || W.mode === 'group'){ v3GhostMove(e); $('#maptip').style.display = 'none'; return; }
+  if (W.mode === 'place' || W.mode === 'group'){ if (!(V3.ghost && V3.ghost.pinned)) v3GhostMove(e); $('#maptip').style.display = 'none'; return; }
   if (v3LandOn() && V3.landOpen){
     if (V3.stroke) return;
     const now = performance.now(); if (now - (V3.hoverT || 0) < 30) return; V3.hoverT = now;
@@ -1615,6 +1735,7 @@ function v3Snap(){
 async function v3DragEnd(){
   const D = V3.drag; V3.drag = null;
   if (!D) return;
+  v3Refresh();                      // (anything a redraw left as it was while dragged catches up now)
   if (D.group){
     if (V3.pivot.position.distanceTo(D.start) < 0.05 && Math.abs(V3.pivot.rotation.z - D.startRot) < 1e-4) return;
     if (!await needProject()){ v3Refresh(); return; }
@@ -1681,12 +1802,17 @@ function v3Tools(){
     <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt</label>
     <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label>
     <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button></div>
-    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new in a window over the view: a place, a person, a container, an item, a note, a spell, a list (right-click a spot for Create here)">✚ Create</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
+    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new in a window over the view: a place, a person, a container, an item, a note, a spell, a list (right-click a spot for Create here)">✚ Create</button><button class="btn sm" data-v3="style" title="The Style palette: building pieces, furniture, decor and sets by style (Hlaalu, Redoran, Nord, Imperial...), as the game's own places use them (stylepal.js)">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
     ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Extend: build out piece by piece from the open edges of the place, with what the game joins there">⬚ Extend</button>` : ''}
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Showing light as in game (lamps, candles, fog). Click for bright, even light for editing.' : 'Showing bright, even light for editing. Click to see it as in game.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
     <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, cell borders, wireframe, what to show, and how far you can see">👁 View ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
-        <label title="Lines at the move grid's spacing (128 when the grid is off), at the selected object's base or where you look"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128})</span></label>
+        <label title="Lines at the move grid's spacing (128 when the grid is off), every fourth brighter. It stays where it is put: right-click a floor or a wall for Put the grid here"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128}, bright every ${(V3.grid || 128) * 4})</span></label>
+        <div class="v3gridrow" style="display:${V3.view.grid ? 'flex' : 'none'};gap:4px;flex-wrap:wrap;margin:2px 0 4px 20px">
+          <button class="btn sm" data-v3="gridsel" title="Lay the grid level at the selected object's base, on the game's own lines">📍 At the selection</button>
+          <button class="btn sm" data-v3="gridturn" title="Lay it at the selected object's base, turned to it: for right angles against a building">⟲ Turned to it</button>
+          <label style="display:block;width:100%" title="Show the grid through walls and floors, instead of hidden behind them like a real thing"><input type="checkbox" data-v3v="gridThrough" ${V3.view.gridThrough ? 'checked' : ''}> through walls</label>
+          <span class="msg" style="width:100%">Right-click a floor or a wall: Put the grid here.</span></div>
         ${W.ext ? `<label title="Where one cell ends and the next begins"><input type="checkbox" data-v3v="cells" ${V3.view.cells ? 'checked' : ''}> Cell borders</label>` : ''}
         <label title="Show the triangles that make up models and the ground"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
         <label title="How wide the view is: narrow like a camera lens, or wide to take a whole room in (the game's own is about 75)" style="display:block;margin-top:6px">Field of view <b id="v3fovv">${V3.fov || 60}°</b>
@@ -1710,10 +1836,13 @@ function v3Tools(){
     else if (a === 'home') v3Home();
     else if (a === 'help') $('#v3help').style.display = $('#v3help').style.display === 'none' ? 'block' : 'none';
     else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; v3Tools(); }
+    else if (a === 'gridsel') v3GridToSel(false);
+    else if (a === 'gridturn') v3GridToSel(true);
   });
   t.querySelectorAll('[data-v3v]').forEach(c => c.onchange = () => {
     V3.view[c.dataset.v3v] = c.checked;
     try { localStorage.setItem('ws-v3view', JSON.stringify(V3.view)); } catch (e) {}
+    if (c.dataset.v3v === 'grid' || c.dataset.v3v === 'gridThrough'){ V3.gridFor = null; const row = t.querySelector('.v3gridrow'); if (row) row.style.display = V3.view.grid ? 'flex' : 'none'; }
     v3ApplyView();
   });
   const vd = $('#v3dist');
@@ -1751,33 +1880,95 @@ function v3GridLines(size, div, color, opacity){
   g.renderOrder = 5;
   return g;
 }
+// The grid is a plane you put somewhere, and it stays there (the user: a grid that hopped to whatever the
+// view looked at "hardly seems like it could be useful"). V3.gridAt = {p: a point on it (scene coordinates),
+// wall: upright or level, yaw: which way its lines run}. A level grid's lines fall on the game's own
+// multiples of the step (the 256 of the building pieces, say) unless turned to an object; it is put where
+// the selection stands, or where you right-click ("Put the grid here": a floor gives a level grid, a wall
+// an upright one along it). As you move, it only reaches further along its own lines, so it never moves.
+function v3GridPlace(p, wall, yaw){
+  V3.gridAt = {p: p.clone ? p.clone() : new THREE.Vector3(p[0], p[1], p[2]), wall: !!wall, yaw: yaw || 0, key: W.key};
+  V3.gridFor = null;
+  if (!V3.view.grid){ V3.view.grid = true; try { localStorage.setItem('ws-v3view', JSON.stringify(V3.view)); } catch (e) {} v3Tools(); }
+  V3.gridT = 0;
+}
+function v3GridHere(pick){
+  if (!pick || !pick.point) return toast('Right-click on a floor, the ground or a wall to put the grid there.', true);
+  const n = pick.normal || {x: 0, y: 0, z: 1};
+  if (Math.abs(n.z) > 0.7) v3GridPlace(pick.point, false, V3.gridAt && !V3.gridAt.wall ? V3.gridAt.yaw : 0);
+  else v3GridPlace(pick.point, true, Math.atan2(n.y, n.x));
+  toast(V3.gridAt.wall ? 'The grid stands on that wall, its lines along it and upright.' : 'The grid lies level at that height. It stays there until you put it somewhere else.');
+}
+function v3GridToSel(turn){
+  const sel = V3.tc && V3.tc.object;
+  if (!sel) return toast('Select something first.', true);
+  const b = new THREE.Box3().setFromObject(sel);
+  const r = W.sel && findRef(W.sel.cell, W.sel.k);
+  v3GridPlace(new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z), false, turn && r ? -r.p[5] : 0);
+}
 function v3GridTick(t){
   if (!V3.view.grid && !(V3.view.cells && W.ext)){ if (V3.gridGroup) V3.gridGroup.visible = false; return; }
-  if (t - (V3.gridT || 0) < 200) return;
+  if (t - (V3.gridT || 0) < 120) return;
   V3.gridT = t;
   const T = THREE, step = V3.grid || 128;
   if (!V3.gridGroup){ V3.gridGroup = new T.Group(); V3.scene.add(V3.gridGroup); }
-  if (V3.gridFor !== step){
-    V3.gridFor = step;
-    for (const c of [...V3.gridGroup.children]){ V3.gridGroup.remove(c); c.geometry.dispose(); }
-    V3.fine = v3GridLines(step * 64, 64, 0xf0cd87, 0.18); V3.gridGroup.add(V3.fine);
+  // (first shown: where the selection stands, else where the view looks; once, never again by itself)
+  if (!V3.gridAt || V3.gridAt.key !== W.key){
+    let at;
+    const sel = V3.tc && V3.tc.object;
+    if (sel){ const b = new T.Box3().setFromObject(sel); at = new T.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z); }
+    else {
+      V3.ray.setFromCamera(new T.Vector2(0, 0), V3.camera);
+      const h = V3.ray.intersectObjects(W.ext ? [V3.ground] : [V3.root], true)[0];
+      at = h ? h.point : V3.pos.clone().add(v3Dir().multiplyScalar(800));
+    }
+    V3.gridAt = {p: at, wall: false, yaw: 0, key: W.key};
+    V3.gridFor = null;
+  }
+  const G = V3.gridAt;
+  G.key = W.key;
+  const through = !!V3.view.gridThrough;
+  const sig = step + '|' + G.wall + '|' + G.yaw + '|' + through;
+  if (V3.gridFor !== sig){
+    V3.gridFor = sig;
+    for (const c of [...V3.gridGroup.children]){ V3.gridGroup.remove(c); c.traverse(o => o.geometry && o.geometry.dispose()); }
+    const mk = (size, div, color, op) => {
+      const g = new T.GridHelper(size, div, color, color);
+      for (const m of Array.isArray(g.material) ? g.material : [g.material]){ m.depthTest = !through; m.transparent = true; m.opacity = op; }
+      g.renderOrder = 5;
+      return g;
+    };
+    // (the step's lines faint, every fourth brighter: distances read at a glance)
+    V3.plane = new T.Group();
+    const fine = mk(step * 64, 64, 0xf0cd87, 0.16), major = mk(step * 64, 16, 0xf0cd87, 0.42);
+    // (GridHelper lies in its own x-z plane: turned up into x-y for a level grid; left upright for a wall)
+    for (const g of [fine, major]){ if (!G.wall) g.rotation.x = Math.PI / 2; V3.plane.add(g); }
+    V3.plane.rotation.z = G.wall ? G.yaw - Math.PI / 2 : G.yaw;
+    V3.fine = V3.plane;
+    V3.gridGroup.add(V3.plane);
     V3.borders = v3GridLines(CELL * 6, 6, 0xffb347, 0.85); V3.gridGroup.add(V3.borders);
   }
-  // where: the selected object's base, else what the middle of the view is looking at
-  let at = null;
-  const sel = V3.tc && V3.tc.object;
-  if (sel){ const b = new T.Box3().setFromObject(sel); at = new T.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z); }
-  else {
-    V3.ray.setFromCamera(new T.Vector2(0, 0), V3.camera);
-    const h = V3.ray.intersectObjects(W.ext ? [V3.ground] : [V3.root], true)[0];
-    at = h ? h.point : V3.pos.clone().add(v3Dir().multiplyScalar(800));
+  // reach out along its own lines to under the camera, a whole number of the bright lines at a time
+  const big = step * 4, c = Math.cos(G.yaw), s = Math.sin(G.yaw);
+  const cam = V3.camera.position;
+  let px = G.p.x, py = G.p.y, pz = G.p.z;
+  if (!G.wall){
+    // (a level grid that isn't turned: on the game's own multiples of the step)
+    if (!G.yaw){ px = Math.round((px + V3.origin[0]) / step) * step - V3.origin[0]; py = Math.round((py + V3.origin[1]) / step) * step - V3.origin[1]; }
+    const du = (cam.x - px) * c + (cam.y - py) * s, dv = -(cam.x - px) * s + (cam.y - py) * c;
+    const ou = Math.round(du / big) * big, ov = Math.round(dv / big) * big;
+    V3.plane.position.set(px + ou * c - ov * s, py + ou * s + ov * c, pz + 1);
+  } else {
+    const tx = -s, ty = c;                                        // (along the wall)
+    const dt = (cam.x - px) * tx + (cam.y - py) * ty, dz = cam.z - pz;
+    const ot = Math.round(dt / big) * big, oz = Math.round(dz / big) * big;
+    V3.plane.position.set(px + c * 1 + ot * tx, py + s * 1 + ot * ty, pz + oz);
   }
-  const snap = (v, o, s) => Math.round((v + o) / s) * s - o;            // grid lines on world multiples
   V3.gridGroup.visible = true;
-  V3.fine.visible = !!V3.view.grid;
-  V3.fine.position.set(snap(at.x, V3.origin[0], step), snap(at.y, V3.origin[1], step), at.z + 1);
+  V3.plane.visible = !!V3.view.grid;
+  const snap = (v, o, s_) => Math.round((v + o) / s_) * s_ - o;
   V3.borders.visible = !!(V3.view.cells && W.ext);
-  V3.borders.position.set(snap(at.x, V3.origin[0], CELL), snap(at.y, V3.origin[1], CELL), at.z + 2);
+  V3.borders.position.set(snap(cam.x, V3.origin[0], CELL), snap(cam.y, V3.origin[1], CELL), (G.wall ? pz : pz) + 2);
 }
 
 // ----- drawing -----

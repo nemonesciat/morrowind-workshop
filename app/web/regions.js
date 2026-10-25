@@ -127,7 +127,19 @@ function regViewHtml(i){
     <div class="actions" style="margin-top:6px"><button class="btn sm" id="reg-paint">🖌 Paint regions…</button><button class="btn sm" id="reg-all">🌦 All regions</button></div>
     <h3>Weather preview (3D)</h3>
     <select class="inp" id="reg-weather">${['auto', 'Clear', 'Cloudy', 'Foggy', 'Overcast', 'Rain', 'Thunderstorm', 'Ash storm', 'Blight', 'Snow', 'Blizzard'].map((w, n) => `<option value="${n - 1}" ${(V3.weather == null ? -1 : V3.weather) === n - 1 ? 'selected' : ''}>${n ? w : 'Plain daylight (no weather)'}</option>`).join('')}</select>
-    <div class="msg" style="font-size:11.5px">How the sky, fog and falling rain, ash or snow look in the 3D view. The game picks the weather from the region's chances.</div>`;
+    <div class="msg" style="font-size:11.5px">How the sky, fog and falling rain, ash or snow look in the 3D view. The game picks the weather from the region's chances.</div>
+    <h3>Time of day (3D)</h3>
+    <div class="regday"><input type="range" id="reg-hour" min="0" max="24" step="0.25" value="${V3.hour == null ? 13 : V3.hour}" title="Drag through the day: the sky, fog, sun and light as the game has them at each hour, for the weather above">
+      <span class="regday-t" id="reg-hour-t">${esc(typeof v3HourLabel === 'function' ? v3HourLabel(V3.hour) : '')}</span></div>
+    <div class="actions" style="margin-top:4px"><button class="btn sm" id="reg-hour-x" ${V3.hour == null ? 'disabled' : ''} title="Back to the plain, even daylight">☀ Plain daylight</button></div>
+    <div class="msg" style="font-size:11.5px">Sunrise, day, sunset and night in the game's own colours for the weather chosen above (from your openmw.cfg). Lamps and torches count for more as it gets dark.</div>`;
+}
+function regDayCss(){
+  if ($('#regday-css')) return;
+  const c = document.createElement('style'); c.id = 'regday-css';
+  c.textContent = `.regday{display:flex;gap:8px;align-items:center}.regday input{flex:1;min-width:0}
+    .regday-t{flex:none;width:96px;font-size:12px;color:var(--muted);text-align:right;white-space:nowrap}`;
+  document.head.appendChild(c);
 }
 async function regViewBind(i){
   if (!i || i.interior) return;
@@ -143,4 +155,16 @@ async function regViewBind(i){
   const pa = $('#reg-paint'); if (pa) pa.onclick = async () => { if (V3.on) await v3Enable(false); regPaint(i.region || (REG.data.regions[0] || {}).id || ''); };
   const al = $('#reg-all'); if (al) al.onclick = () => ruShow('region');
   const we = $('#reg-weather'); if (we) we.onchange = () => { V3.weather = +we.value < 0 ? null : +we.value; if (typeof v3ApplyWeather === 'function') v3ApplyWeather(); };
+  regDayCss();
+  const hr = $('#reg-hour'), ht = $('#reg-hour-t'), hx = $('#reg-hour-x');
+  if (hr) hr.oninput = async () => {
+    if (typeof v3Daylight !== 'function') return;
+    await v3Daylight();
+    V3.hour = +hr.value;
+    if (ht) ht.textContent = v3HourLabel(V3.hour);
+    if (hx) hx.disabled = false;
+    if (!V3.on && !regDayCss.told){ regDayCss.told = true; toast('Turn on the 3D view to see the time of day.'); }
+    v3ApplyWeather();
+  };
+  if (hx) hx.onclick = () => { V3.hour = null; if (ht) ht.textContent = v3HourLabel(null); hx.disabled = true; v3ApplyWeather(); };
 }

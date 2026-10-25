@@ -572,13 +572,14 @@ def write_lines(db, made):
             key = GREETING_TOPIC if ln.get('topic') == 'greeting' else (ln.get('topic') or '').lower()
             if not dialogue._dial_versions(db, key):
                 continue                        # (a topic this load order doesn't have)
-            conds, disp = [], 0
+            # (topic lines need a disposition of 30, as Project Tamriel's dialogue guide asks of "almost all NPC
+            # dialogue" and as the game's own topics do: its little secrets 541 of 1,076 at 30 and only 23 at 60;
+            # greetings carry none, 1,949 of 17,993 in the game; 2026-10-24)
+            conds, disp = [], 0 if key == GREETING_TOPIC else 30
             if ln.get('when') == 'first':
                 conds.append({'kind': 'function', 'func': talked, 'op': '=', 'value': 0})
             elif ln.get('when') == 'again':
                 conds.append({'kind': 'function', 'func': talked, 'op': '=', 'value': 1})
-            elif ln.get('when') == 'liked':
-                disp = 60
             by_topic.setdefault(key, []).append((nid, text[:1000], conds, disp))
     n = 0
     for key, lines in by_topic.items():

@@ -17,6 +17,9 @@ works on (anyone, NPCs, creatures, undead, Daedra, the player, anyone but the pl
   aura                         the magnitude off (or onto) everyone within so many feet, each second
   leech                        the magnitude taken from them and given to the caster, each second
   swap                         the caster and the one it lands on change places
+  resurrect                    the dead near the one it lands on stand up again, with what was left on them
+                               (made again where they lay: OpenMW's Lua has no Resurrect), as they were or
+                               following the caster
   cast                         a spell of the game's (or yours) cast on them: chains and combos
   weather                      the region's weather changes (a storm, ash, blight, snow...)
   teleport / spawn / global / message   as before
@@ -56,6 +59,8 @@ DOES = [
     ('aura', 'Aura', 'Each second, the magnitude off (or onto) the health, magicka or fatigue of everyone within so many feet.'),
     ('leech', 'Leech', 'Each second, the magnitude taken from their health, magicka or fatigue and given to the caster.'),
     ('swap', 'Swap places', 'The caster and the one it lands on change places.'),
+    ('resurrect', 'Raise the dead', 'The dead within so many feet of the one it lands on (cast on Self: of you) stand up again, carrying '
+                  'what was left on them: what was looted stays taken. As they were, or on your side, following you.'),
     ('cast', 'Cast a spell on them', 'Another spell (the game\'s, or one of yours) cast on them: for chains and combos.'),
     ('weather', 'Change the weather', 'The region\'s weather turns to a storm, ash, blight, snow, rain or clear skies.'),
     ('transmute', 'Transmute', 'One of the first item it finds in their inventory, of the pairs you list (iron ore into silver, silver into gold...), becomes the next.'),
@@ -66,7 +71,7 @@ DOES = [
     ('lua', 'Lua of your own', 'Your own code, run when you choose, with helpers for the steps above. The Assistant can write it from a description.'),
 ]
 # (where each kind is done: on the actor itself, or by the global script for what only the world can do)
-WORLD = ('teleport', 'spawn', 'global', 'message', 'scale', 'weather', 'swap', 'transmute')
+WORLD = ('teleport', 'spawn', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
 FT = 22.1                     # (game units to a foot, as Tamriel Data's Blink reckons it)
 
 
@@ -223,6 +228,13 @@ def _step(db, d):
             raise EditError('Grow or shrink: the factor is between 0.1 (a tenth the size) and 10.')
         out['when'] = 'land'
     elif k in ('calm', 'frenzy', 'swap'):
+        out['when'] = 'land'
+    elif k == 'resurrect':
+        # (the game's magic doesn't land on the dead, so it raises those near the one it lands on)
+        out['feet'] = max(1.0, min(200.0, _num(d.get('feet'), label + ': the reach', 15.0)))
+        out['which'] = 'all' if d.get('which') == 'all' else 'one'
+        out['health'] = max(1.0, min(100.0, _num(d.get('health'), label + ': their health', 100.0)))
+        out['side'] = 'ally' if d.get('side') == 'ally' else 'own'
         out['when'] = 'land'
     elif k in ('aura', 'leech'):
         out['stat'] = d.get('stat') if d.get('stat') in STATS else 'health'
@@ -461,7 +473,7 @@ def _write(db, lst):
             rows.append('  [%s] = {\n%s\n  },' % (_lua(e['id'].lower()), '\n'.join(steps)))
     _put(db, ACTOR, 'NPC, CREATURE, PLAYER', (ACTOR_LUA % ('\n'.join(fns), '\n'.join(rows))) if rows else None)
     _put(db, GLOBAL, 'GLOBAL', GLOBAL_LUA if rows else None)
-    _put(db, PLAYER, 'PLAYER', PLAYER_LUA if (rows and (msgs or any(d['kind'] in ('lua', 'transmute') for e in lst for d in e['does']))) else None)
+    _put(db, PLAYER, 'PLAYER', PLAYER_LUA if (rows and (msgs or any(d['kind'] in ('lua', 'transmute', 'resurrect') for e in lst for d in e['does']))) else None)
 
 
 # The actor script: on every actor near the player, it reads the spells working on it each frame (as Tamriel
@@ -598,6 +610,8 @@ local function run(d, st, dt, phase)
     st.scaled = true
   elseif k == 'swap' then
     if st.caster and st.caster:isValid() and st.caster ~= self.object then world('swap', { other = st.caster }) end
+  elseif k == 'resurrect' then
+    world('resurrect', { feet = d.feet, which = d.which, health = d.health, side = d.side, caster = st.caster or self.object })
   elseif k == 'lua' then
     if d.fn then
       local ok, err = pcall(d.fn, ctxFor(st, dt, phase))
@@ -666,6 +680,28 @@ return {
   },
   eventHandlers = {
     WS_MyEffectStat = function(data) change(data.stat, data.amount) end,
+    -- raised from the dead (the global script made this one where the corpse lay): back on their feet with
+    -- what the corpse had on, at the health asked for, and on the caster's side if asked
+    WS_MyEffectRaised = function(data)
+      if data.equip and next(data.equip) then
+        local inv, eq = Actor.inventory(self), {}
+        for slot, rid in pairs(data.equip) do
+          local item = inv:find(rid)
+          if item then eq[slot] = item end
+        end
+        pcall(Actor.setEquipment, self, eq)
+      end
+      local h = Actor.stats.dynamic.health(self)
+      h.current = math.max(1, (h.base + h.modifier) * (data.health or 100) / 100)
+      if data.side == 'ally' and data.caster and data.caster:isValid() then
+        Actor.stats.ai.fight(self).base = 0
+        local ok, I = pcall(require, 'openmw.interfaces')
+        if ok and I.AI then
+          I.AI.removePackages('Combat')
+          I.AI.startPackage({ type = 'Follow', target = data.caster })
+        end
+      end
+    end,
   },
 }
 '''
@@ -728,6 +764,44 @@ local DO = {
         if types.Player.objectIsInstance(a) then a:sendEvent('WS_MyEffectMessage', { text = 'Transmuted.' }) end
         return
       end
+    end
+  end,
+  -- raise the dead near the one it landed on. The engine's own Resurrect isn't open to Lua, so the same
+  -- character is made again where the corpse lies, the corpse's own things moved onto them (what was
+  -- looted stays taken, what they still wore is put back on) and the corpse taken away
+  resurrect = function(a, d)
+    local reach = (d.feet or 15) * ''' + str(FT) + '''
+    local dead = {}
+    for _, T in ipairs({ types.NPC, types.Creature }) do
+      for _, c in ipairs(a.cell:getAll(T)) do
+        if c ~= a and c.count > 0 and not types.Player.objectIsInstance(c) and types.Actor.isDead(c) then
+          local dist = (c.position - a.position):length()
+          if dist <= reach then dead[#dead + 1] = { c = c, dist = dist } end
+        end
+      end
+    end
+    table.sort(dead, function(x, y) return x.dist < y.dist end)
+    if #dead == 0 then
+      if types.Player.objectIsInstance(a) then a:sendEvent('WS_MyEffectMessage', { text = 'No one lies dead near enough.' }) end
+      return
+    end
+    for i, e in ipairs(dead) do
+      if d.which ~= 'all' and i > 1 then break end
+      local c = e.c
+      local cinv = types.Actor.inventory(c)
+      pcall(function() cinv:resolve() end)
+      local equip = {}
+      local okE, eq = pcall(types.Actor.getEquipment, c)
+      if okE and eq then for slot, item in pairs(eq) do equip[slot] = item.recordId end end
+      local n = world.createObject(c.recordId, 1)
+      n:teleport(c.cell, c.position, c.rotation)
+      -- (what their record gives them taken away first: only the corpse's things come back with them)
+      local ninv = types.Actor.inventory(n)
+      pcall(function() ninv:resolve() end)
+      for _, item in ipairs(ninv:getAll()) do item:remove() end
+      for _, item in ipairs(cinv:getAll()) do item:moveInto(ninv) end
+      c:remove()
+      n:sendEvent('WS_MyEffectRaised', { equip = equip, health = d.health, side = d.side, caster = d.caster })
     end
   end,
   cast = function(a, d)

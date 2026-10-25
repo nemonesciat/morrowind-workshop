@@ -13,10 +13,12 @@ async function togPoll(){
   const st = TOG.st, b = $('#togetherbtn');
   if (b && st){
     const n = (st.members || []).filter(m => m.here !== false).length;
-    if (st.role === 'host'){ b.textContent = `👥 Hosting · ${n + 1} here`; b.className = 'btn primary'; }
-    else if (st.role === 'join'){ b.textContent = st.connected ? `👥 With ${st.host} · ${n} here` : '👥 Reconnecting…'; b.className = st.connected ? 'btn primary' : 'btn danger'; }
-    else if (togIsCopy() && st.can_rejoin){ b.textContent = '👥 Rejoin'; b.className = 'btn primary'; }
-    else { b.textContent = '👥 Build together'; b.className = 'btn'; }
+    // (the words in a .tl, which a narrow header folds away to leave the icon: the toolbar never wraps)
+    const say = t => { b.innerHTML = '👥<span class="tl"> ' + esc(t) + '</span>'; b.title = t; };
+    if (st.role === 'host'){ say(`Hosting · ${n + 1} here`); b.className = 'btn primary'; }
+    else if (st.role === 'join'){ say(st.connected ? `With ${st.host} · ${n} here` : 'Reconnecting…'); b.className = st.connected ? 'btn primary' : 'btn danger'; }
+    else if (togIsCopy() && st.can_rejoin){ say('Rejoin'); b.className = 'btn primary'; }
+    else { say('Build together'); b.title = 'Build this mod together with other people, live, from wherever they are'; b.className = 'btn'; }
   }
   if (!st) return;
   // a note when someone else changed something

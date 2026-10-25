@@ -11,7 +11,7 @@ try { VW.pos = JSON.parse(localStorage.getItem('ws-vwin-pos') || '{}') || {}; } 
 
 // the pages that can be a window: their title, and what showView would draw for them
 const VW_HOST = {
-  createv: {title: () => CR.kind && CR_CARDS[CR.kind] ? CR_CARDS[CR.kind][0] + ' ' + CR_CARDS[CR.kind][1] : '✚ Create', render: () => renderCreate(), w: 880},
+  createv: {title: () => CR.kind && CR_CARDS[CR.kind] ? CR_CARDS[CR.kind][0] + ' ' + CR_CARDS[CR.kind][1] : '✚ Create', render: () => renderCreate(), w: 1000},
   lists: {title: () => '🎲 ' + (LV.id ? 'Leveled list ' + LV.id : 'Random loot or spawn list'), render: () => renderLists(), w: 980},
   itemed: {title: () => '✎ ' + (IE.data ? (IE.data.name || IE.data.id) : 'Edit an item, spell or enchantment'), render: () => renderItemEd(), w: 900},
   chars: {title: () => '👤 ' + (C.data ? (C.data.name || C.data.id) : 'Characters'), render: () => renderChars(), w: 1000},
@@ -201,6 +201,11 @@ async function vwCreated(kind, r, label){
   vwClose('createv');
   if (kind === 'build'){
     toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : 'Furnish it here, then try it with Play here.'));
+    await worldOpen(r.key);
+    return;
+  }
+  if (kind === 'ruin' && r && r.key){
+    toast(`Made "${label}": ${r.tunnels} tunnel pieces, ${ruinHalls(r.kind, r.halls)}${r.people ? `, ${r.people} ${r.people === 1 ? 'person' : 'people'} living in it` : ''}. Right-click in it for 🎲 Make this again.`);
     await worldOpen(r.key);
     return;
   }

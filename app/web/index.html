@@ -42,7 +42,15 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 .hdr-top{display:flex;align-items:center;gap:10px;min-width:0;color:var(--muted);font-size:12px;white-space:nowrap}
 .hdr-top .search{flex:1 1 240px;max-width:640px;min-width:0}
 .hdr-top .proj{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.hdr-row .hdr-right{margin-left:0;flex-wrap:wrap;row-gap:6px}
+/* the toolbar is one row in every state (the game linking adds only the small ⌖): in a narrower header its
+   words fold away to their icons, Build together's first, rather than the toolbar taking another row and
+   the header growing (which resized the 3D view when the game linked) */
+.hdr-row{container-type:inline-size}
+.hdr-row .hdr-right{margin-left:0;flex-wrap:nowrap;min-width:0}
+.btn.ico{min-width:32px;padding-left:0;padding-right:0;text-align:center}
+@container (max-width:720px){#togetherbtn .tl{display:none}}
+@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl{display:none}}
+@container (max-width:500px){#aibtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
 .lg-a{stroke:var(--gold)}.lg-b{stroke:var(--gold2)}
@@ -248,7 +256,7 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 #map{position:absolute;inset:0;width:100%;height:100%;cursor:grab;display:block}
 #map.dragging{cursor:grabbing}
 #map.place{cursor:crosshair}
-.maptip{position:absolute;pointer-events:none;background:#000c;border:1px solid var(--line2);border-radius:6px;padding:4px 8px;font-size:12px;display:none;white-space:nowrap;z-index:2}
+.maptip{position:absolute;pointer-events:none;background:color-mix(in srgb,var(--panel) 94%,transparent);color:var(--text);box-shadow:0 2px 8px #0006;border:1px solid var(--line2);border-radius:6px;padding:4px 8px;font-size:12px;display:none;white-space:nowrap;z-index:2}
 .mapbanner{position:absolute;top:54px;left:50%;transform:translateX(-50%);background:color-mix(in srgb,var(--panel2-c) 93%,transparent);border:1px solid var(--gold);border-radius:9px;padding:7px 14px;font-size:13px;color:var(--gold2);display:none;z-index:2}
 .mapnav{position:absolute;left:12px;bottom:12px;display:grid;grid-template-columns:repeat(3,30px);gap:3px;z-index:2}
 .mapnav button{width:30px;height:30px;border-radius:6px;border:1px solid var(--line2);background:color-mix(in srgb,var(--panel) 87%,transparent);cursor:pointer;color:var(--muted)}
@@ -269,7 +277,40 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .v3viewmenu{position:absolute;top:calc(100% + 4px);left:0;background:color-mix(in srgb,var(--panel) 95%,transparent);border:1px solid var(--line2);border-radius:8px;padding:6px;min-width:170px;z-index:6;box-shadow:0 8px 24px #000a}
 .v3tools .v3viewmenu label{border:0;background:none;padding:4px 6px;color:var(--text)}
 #v3land{position:absolute;left:12px;top:56px;width:270px;max-height:calc(100% - 80px);overflow:auto;background:color-mix(in srgb,var(--bg2-b) 94%,transparent);border:1px solid var(--line2);border-radius:9px;padding:10px 12px;z-index:3;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
-#v3land .v3lhead{display:flex;justify-content:space-between;align-items:center;color:var(--text);font-size:13.5px}
+#v3land .v3lhead{display:flex;justify-content:space-between;align-items:center;color:var(--text);font-size:13.5px;cursor:move}
+/* (window chrome isn't text to pick up: titles, buttons, labels and the 3D view's own small windows don't
+   highlight on a double-click or a drag; text boxes still do) */
+button,.btn,label,h1,h2,h3,h4,#v3wrap{-webkit-user-select:none;user-select:none}
+/* (a second view inside the Workshop, twowin.js: floating over the main view or docked beside it; the page in
+   its frame shows only its World map / 3D view) */
+#twpanel{position:absolute;right:16px;top:56px;width:min(46%,760px);height:62%;z-index:30;display:flex;flex-direction:column;background:var(--bg2-b,var(--bg2));border:1px solid var(--line2);border-radius:9px;box-shadow:0 10px 30px #0008;overflow:hidden}
+#twpanel .twp-head{display:flex;gap:6px;align-items:center;padding:4px 6px 4px 10px;border-bottom:1px solid var(--line);background:linear-gradient(var(--bg3),var(--bg2))}
+#twpanel .twp-title{flex:1;cursor:move;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#twpanel .twp-frame{flex:1;border:0;width:100%;background:#000}
+#twpanel .twp-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--line2) 50%)}
+#twpanel .twp-edge{display:none}
+#twpanel.moving iframe{pointer-events:none}
+#twpanel.docked{left:auto!important;top:0!important;right:0!important;bottom:0;height:auto!important;width:var(--tww,42%)!important;border-radius:0;border-width:0 0 0 1px;box-shadow:none}
+#twpanel.docked .twp-title{cursor:default}
+#twpanel.docked .twp-grip{display:none}
+#twpanel.docked .twp-edge{display:block;position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize}
+main.twdock #world{right:var(--tww,42%)}
+main:not(:has(#world.on)) #twpanel{display:none}
+body.embed .app{grid-template-rows:1fr}
+body.embed #outdated{display:none}
+/* (the Workshop's own papers in a Help window, help.js docModal) */
+.modal.doc{line-height:1.6}.modal.doc p,.modal.doc li{color:var(--text);font-size:14px}
+.modal.doc h3{margin:18px 0 6px}.modal.doc ul{margin:4px 0 8px;padding-left:22px}.modal.doc li{margin:2px 0}
+.modal.doc code{font-size:12.5px;background:var(--panel2);padding:0 4px;border-radius:4px}
+.modal.doc .doc-t{font-size:13px;margin:6px 0 10px}.modal.doc .doc-t th{text-align:left}
+/* (in a second view the 3D tools stay one row that scrolls sideways, so they don't cover the small view; no
+   Panels button, as it shows no panels) */
+body.embed #v3tools{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+body.embed #v3tools .v3grp{flex:none;flex-wrap:nowrap;white-space:nowrap}
+body.embed #w-panels,body.embed #viewsw .tb-grip,body.embed #v3tools .tb-grip{display:none}
+body.embed header{display:none}
+body.embed #world>.pdock,body.embed #world .pcenter>.pdock,body.embed #world>.pfloat,body.embed #world>.pdrop{display:none}
+input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
 #v3land .v3lrow{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 #v3land input[type=range]{flex:1}
 #v3land .v3lrow span{min-width:34px;text-align:right;color:var(--text)}
@@ -590,6 +631,12 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 .ccard .kick{display:block;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-top:6px}
 .ccard b{display:block;font-family:Cinzel,serif;color:var(--gold2);font-size:16px;margin:4px 0}
 .cform{background:var(--panel);border:1px solid var(--line2);border-radius:11px;padding:18px 20px;max-width:760px}
+.cform:has(.dtool){max-width:1120px}
+.vwbody .cform{border:0;background:none;padding:4px 6px;max-width:none}
+.ctabs{display:flex;flex-wrap:wrap;gap:2px;align-items:center;margin:0 0 10px;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--panel);max-width:1120px}
+.ctab{display:flex;gap:6px;align-items:center;padding:5px 10px;background:none;border:0;border-radius:6px;color:var(--muted);cursor:pointer;font:inherit;font-size:12.5px;white-space:nowrap}
+.ctab:hover{background:#ffffff0d;color:var(--text)}.ctab.on{background:#d2a85a24;color:var(--gold2)}
+.ctsep{width:1px;align-self:stretch;background:var(--line);margin:3px 4px}
 .cform h2{font-family:Cinzel,serif;color:var(--gold2);margin:0 0 4px;font-weight:600}
 .frow{display:grid;grid-template-columns:170px 1fr;gap:8px 14px;align-items:center;margin-top:10px}
 .frow>label{color:var(--muted);font-size:13px}
@@ -659,12 +706,13 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   </div>
   <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
   </div>
-  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥 Build together</button><button class="btn" id="jumpme" style="display:none" title="Show where your character is on the World map (or in 3D)">⌖ Jump to my character</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">? Help ▾</button><div class="omwmenu" id="helpmenu">
+  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character">⌖</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Getting started</b><small>What the Workshop does and how to make your first mod.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶ OpenMW ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶ Undo</button><button class="btn primary" id="aibtn">✦ Assistant</button><button class="btn" id="reload" title="Re-read your openmw.cfg and all plugins">↻ Reload</button></div>
+        <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn primary" id="aibtn" title="Assistant">✦<span class="tl"> Assistant</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -747,7 +795,9 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api = async (p, opt) => { const r = await fetch(p, opt); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
 const fmtN = n => Number(n).toLocaleString();
-const post = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+// (which window an edit came from, so a second window reloads only what another one changed: twowin.js)
+const WIN_ID = Math.random().toString(36).slice(2, 10);
+const post = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json', 'X-Workshop-Window': WIN_ID}, body: JSON.stringify(body || {})});
 // A fault in the page itself (a script error, a promise nobody caught): said on screen and written to the
 // Workshop's log, so "nothing happens" never stays silent
 const _said = {};
@@ -823,7 +873,7 @@ setInterval(async () => { if (S.summary && S.summary.state === 'ready' && $('#w-
 // the first Auto-furnish after an install (or a change of load order) has to wait for the learning: the
 // server answers {waiting: [survey names]} and this waits, showing the progress in `el`, until none of
 // them is running or queued any more (the learning is kept, so this happens once)
-async function waitForLearning(names, el){
+async function waitForLearning(names, el, after){
   const total = names.length, t0 = Date.now();
   for (;;){
     let sv = null;
@@ -833,7 +883,7 @@ async function waitForLearning(names, el){
     const done = total - busy, m = Math.floor((Date.now() - t0) / 60000);
     if (el) el.innerHTML = `<div class="msg"><b>Learning from the game's places first</b> (once, kept for good): ${done} of ${total} done${m ? ', ' + m + ' min so far' : ''}.<br>Now: ${esc(sv && sv.running || '…')}</div>
       <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden;margin:6px 0"><div style="height:100%;width:${Math.round(100 * done / total)}%;background:var(--gold);transition:width .5s"></div></div>
-      <div class="hint">The rest of the Workshop works meanwhile; the furnishing starts by itself when this is done.</div>`;
+      <div class="hint">The rest of the Workshop works meanwhile; ${after || 'the furnishing starts by itself'} when this is done.</div>`;
     await new Promise(r => setTimeout(r, 3000));
   }
 }
@@ -851,6 +901,7 @@ function loadProblemsNote(s){
   const probs = s.load_problems || [];
   const key = probs.map(p => p.plugin + '|' + p.text).join('\n');
   if (!probs.length || key === _loadProblemsSaid) return;
+  if (typeof TW !== 'undefined' && TW.embed) return;       // (a second view inside the Workshop: the main view says it)
   _loadProblemsSaid = key;
   const t = document.createElement('div'); t.className = 'toast err'; t.style.whiteSpace = 'pre-line'; t.style.maxWidth = '560px';
   t.textContent = (probs.length === 1 ? 'A plugin in your load order has a problem:\n' : probs.length + ' plugins in your load order have problems:\n') +
@@ -2122,6 +2173,7 @@ function drawMap(){
   drawPaths();
   if (typeof placecheckDraw === 'function') placecheckDraw(g);      // the health check's markers
   if (typeof extendDraw === 'function') extendDraw(g);              // Extend mode's open edges (extend.js)
+  if (typeof frombuildingDraw === 'function') frombuildingDraw(g);  // an interior planned in a building (frombuilding.js)
   drawPlayer();
   // the selection box being dragged
   if (W.drag && W.drag.kind === 'box'){
@@ -2654,6 +2706,21 @@ function palTilesHtml(g){
     return tileHtml(gr[0], tog) + (open ? gr.slice(1).map(it => tileHtml(it, '', true)).join('') : '');
   }).join('');
 }
+// the walking paths here redrawn by Project Tamriel's rules (pathgrid.redraw), from the Paths panel, the map's
+// right-click menu or Ctrl+K
+async function redrawPaths(btn){
+  if (!W.key) return toast('Open a place first.', true);
+  if (!await needProject()) return;
+  if (W.mode === 'paths'){ PE.discard = true; setMode(null); }      // (made afresh: what was being edited goes)
+  if (btn) btn.disabled = true;
+  toast('Redrawing the walking paths…');
+  try {
+    const m = await post('/api/paths', {cell: W.key});
+    W.cells[W.key] = prepCell(m); W.info = m; W.showPaths = true;
+    toast(`Redrew the walking paths: ${m.made.points} points, ${m.made.links} links. Undo brings the old ones back.`);
+    await afterChange(); renderWside(); drawMap(); if (V3.on) v3Refresh();
+  } catch (e){ toast(e.message, true); if (btn) btn.disabled = false; }
+}
 // the Paths panel: the walking paths (path grid) people and creatures follow here
 function pathsPanelHtml(i){
   if (!(i.interior || i.key.startsWith('#'))) return '<div class="msg" style="padding:10px 0">Walking paths belong to an interior or an outdoor cell.</div>';
@@ -2666,7 +2733,7 @@ function pathsPanelHtml(i){
     <div class="actions" style="margin-top:8px">${editing
       ? '<button class="btn sm primary" id="w-editpaths">✓ Done (save)</button><button class="btn sm" id="w-discardpaths">Discard changes</button>'
       : `<button class="btn sm primary" id="w-editpaths" title="Add, move, join and take out points yourself, on the map or in 3D">✎ Edit by hand</button>
-        <button class="btn sm" id="w-makepaths" title="${i.interior ? 'Work out paths from the rooms, doorways and furniture' : 'Work out paths over the walkable ground, around buildings, rocks and trees'}">${n ? '↻ Make them again' : '＋ Make them for me'}</button>`}</div>
+        <button class="btn sm" id="w-makepaths" title="${i.interior ? 'Redraw them by Project Tamriel\'s rules: a point to a tile (fewer in open floor), joined only where you can walk straight between them, round the furniture, no redundant links, a point at every door. Replaces the paths here now, the game\'s own too' : 'Work out paths over the walkable ground, around buildings, rocks and trees'}">${n ? '↻ Redraw them' : '＋ Make them for me'}</button>`}</div>
     <h3>Editing by hand</h3>
     <ul class="glist" style="font-size:12.5px;margin-top:4px">
       <li><b>Click</b> to add a point, joined to the selected one (<kbd class="cf">Ctrl</kbd>+click: not joined).</li>
@@ -2675,7 +2742,7 @@ function pathsPanelHtml(i){
       <li><kbd class="cf">Delete</kbd> takes the selected point out; <kbd class="cf">Ctrl+Z</kbd> undoes.</li>
       <li><kbd class="cf">Esc</kbd> or Done saves it all as one Undo.</li>
     </ul>
-    <div class="msg" style="font-size:11.5px">${i.interior ? '"Make them for me" works them out for places built from room pieces; make them again after moving furniture around, then touch up by hand.'
+    <div class="msg" style="font-size:11.5px">${i.interior ? 'Redraw works in any place (rooms, caves, ruins, the game\'s own) by Project Tamriel\'s path grid rules, measured on 100 of the game\'s own places. Redraw after moving furniture around, then touch up by hand.'
       : 'Outdoors, each cell keeps its own paths: this is the cell in the middle of the view. Making them again replaces the paths it has now (the game\'s own ones too).'}</div>`;
 }
 function renderWside(){
@@ -2699,7 +2766,8 @@ function renderWside(){
   // --- Place
   h += `<div class="wpane on" data-pane="place"><div id="w-placing"></div>
     <button class="btn sm" id="w-create" style="width:100%;margin-bottom:8px" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
-    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" style="width:100%;margin-bottom:8px" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check this place…</button><div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
+    <button class="btn sm" id="w-stylepal" style="width:100%;margin-bottom:8px" title="Building pieces, furniture, decor and whole sets sorted by style (Hlaalu, Redoran, Telvanni, Nord, Imperial, Gold Coast...), the way the game's own places use them: see what goes with what, then click or drag to place">🎨 Style palette…</button>
+    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" style="width:100%;margin-bottom:8px" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check this place…</button><div id="w-taste"></div>' : ''}<button class="btn sm" id="w-2win" style="width:100%;margin-bottom:8px" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Open in a second window</button><div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
     <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${paletteHtml()}</div></div>`;
@@ -2902,12 +2970,15 @@ function bindWside(){
   const fb = $('#w-furnish'); if (fb) fb.onclick = () => furnishDialog(W.key);
   const fxb = $('#w-fixit'); if (fxb) fxb.onclick = () => fixitOpen(W.key);
   const pcb = $('#w-check'); if (pcb) pcb.onclick = () => placecheckOpen(W.key);
+  const tw = $('#w-2win'); if (tw) tw.onclick = () => twOpen(W.key);
   if ($('#w-taste')) renderTaste(W.key);
   if (selRef && selRef.type === 'DOOR'){
     const both = $('#w-relink-both'); if (both) both.onchange = () => { W.relinkBoth = both.checked; };
     ddSearch('w-relink', 'CELL', async r => {
       if (!await needProject()) return;
       const m = await api('/api/cellmap?i=' + r.i);
+      // (elsewhere in this same place: the spot is clicked, not guessed)
+      if (m.key === W.sel.cell) return doorWithinPlace(W.sel.cell, selRef);
       await relinkDoor(W.sel.cell, selRef.k, m.key, null, r.name || r.id);
     });
   }
@@ -2921,17 +2992,7 @@ function bindWside(){
   const pth = $('#w-paths'); if (pth) pth.onchange = () => { W.showPaths = pth.checked; drawMap(); };
   const edp = $('#w-editpaths'); if (edp) edp.onclick = () => { if (W.mode === 'paths') setMode(null); else peStart(); };
   const dsp = $('#w-discardpaths'); if (dsp) dsp.onclick = () => { if (PE) PE.discard = true; setMode(null); };
-  const mkp = $('#w-makepaths'); if (mkp) mkp.onclick = async () => {
-    if (!await needProject()) return;
-    if (W.mode === 'paths'){ PE.discard = true; setMode(null); }      // (made afresh: what was being edited goes)
-    mkp.disabled = true;
-    try {
-      const m = await post('/api/paths', {cell: W.key});
-      W.cells[W.key] = prepCell(m); W.info = m; W.showPaths = true;
-      toast(`Made walking paths: ${m.made.points} points, ${m.made.links} links.`);
-      await afterChange(); renderWside(); drawMap();
-    } catch (e){ toast(e.message, true); mkp.disabled = false; }
-  };
+  const mkp = $('#w-makepaths'); if (mkp) mkp.onclick = () => redrawPaths(mkp);
   const sp = $('#w-selpic'); if (sp && selRef && selRef.ri != null) sp.onclick = () => { sp.className = 'mv'; sp.onclick = null; showModel(sp, {i: selRef.ri}, 'sel'); };
   const lb = $('#w-link'); if (lb) lb.dataset.html = '';
   renderLinkBits();
@@ -2951,6 +3012,12 @@ async function relinkDoor(cell, ref, target, at, label){
     toast(`The door now leads to ${label || target}${r.back ? ', and ' + r.back + ' there leads back' : ''}.` + (LINK.connected ? ' Already live in game.' : ''));
     return true;
   } catch (e){ toast(e.message, true); return false; }
+}
+// a door to elsewhere in the place it stands in (a tower's upper floor, the far end of a tomb): click where you arrive
+function doorWithinPlace(cell, ref){
+  if (W.key !== cell) return toast('Open the door\'s place first.', true);
+  W.arriving = {cell, ref: ref.k, target: cell, name: ref.name || ref.id};
+  setMode('arrive');
 }
 async function arriveAt(x, y, z, rz){
   const A = W.arriving; if (!A) return;
@@ -3036,7 +3103,7 @@ async function furnishDialog(cellKey){
   if (!await needProject()) return;
   let info;
   try { info = await api('/api/furnish/rooms?key=' + encodeURIComponent(cellKey)); } catch (e){ return toast(e.message, true); }
-  if (!info.rooms.length) return toast('No rooms found here. Auto-furnish works in places built from modular room pieces, like the ones Build from pieces makes.', true);
+  if (!info.rooms.length) return toast('No rooms found here: no floor a person could stand on was found in this place\'s building pieces.', true);
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   const opts = [...info.purposes, 'none'];
   bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Auto-furnish</h2>
@@ -3427,8 +3494,13 @@ async function renderCreate(){
   if (!CR.opts.magic) CR.opts.magic = await api('/api/items/options');
   if (CR.kind === 'interior') CR.kind = 'build';       // (the old "New interior + door" lives inside Build from pieces now)
   const card = k => { const c = CR_CARDS[k]; return `<button class="ccard ${CR.kind === k ? 'on' : ''}" data-ck="${k}"><span class="ic">${c[0]}</span>${c[3] ? `<span class="kick">${c[3]}</span>` : ''}<b>${c[1]}</b><span class="msg">${c[2]}</span></button>`; };
-  let h = `<h1>Create</h1><p class="lead">Quick starts for the things you make most. Each goes into your mod as one change that one Undo takes back, and you can fine-tune it afterwards in Browse.</p>
-    <div class="cgroups">${CR_GROUPS.map(([name, kinds, aside]) => `<div class="cgh">${name}${aside ? `<span class="msg">${aside}</span>` : ''}</div><div class="cgrid">${kinds.map(card).join('')}</div>`).join('')}</div>`;
+  // (once a kind is picked it is a tool, not a menu: in a window over the view only the tool shows; on the
+  // page the cards fold into a slim row of tabs over it)
+  const inWin = typeof vwHosting === 'function' && vwHosting('createv');
+  const tab = k => { const c = CR_CARDS[k]; return `<button class="ctab ${CR.kind === k ? 'on' : ''}" data-ck="${k}" title="${esc(c[2])}"><span>${c[0]}</span>${c[1]}</button>`; };
+  let h = !CR.kind ? `<h1>Create</h1><p class="lead">Quick starts for the things you make most. Each goes into your mod as one change that one Undo takes back, and you can fine-tune it afterwards in Browse.</p>
+    <div class="cgroups">${CR_GROUPS.map(([name, kinds, aside]) => `<div class="cgh">${name}${aside ? `<span class="msg">${aside}</span>` : ''}</div><div class="cgrid">${kinds.map(card).join('')}</div>`).join('')}</div>`
+    : inWin ? '' : `<div class="ctabs"><button class="ctab" data-ckall title="Every kind of thing to make, as cards">▦ All</button><span class="ctsep"></span>${CR_GROUPS.map(([_n, kinds]) => kinds.filter(k => CR_CARDS[k]).map(tab).join('')).join('<span class="ctsep"></span>')}</div>`;
   // (a form that cannot be drawn says so in its place, with a way to start the page afresh, instead of
   // leaving the card dead: the user's "Build from pieces doesn't even open")
   let formErr = null;
@@ -3452,6 +3524,7 @@ async function renderCreate(){
 // order you'd make them (a place, who lives there, what they own), then the one card that changes things)
 const CR_CARDS = {
   build: ['🧱', 'Build from pieces', 'Lay out rooms on a grid: walls, doorways, ceilings, stairs and a way out are built from a style\'s pieces, and furnished. Or copy a place the game made, with a door from outside.', 'A place'],
+  ruin: ['⚙', 'Dungeon', 'A Dwemer ruin, a cave, a Velothi tomb or a Daedric ruin, laid out, lit, stocked and guarded the way the game\'s own are, with whoever has moved in. Make it again until you like it.', 'A place'],
   npc: ['🧍', 'New NPC', 'A townsperson, quest character, merchant or guard, dressed the way the game\'s own people of their race and class are.', 'A person'],
   container: ['🧰', 'Container with contents', 'A chest, crate, barrel or sack, filled with what you choose, locked and owned if you like.', 'In a place'],
   item: ['🗡', 'New item', 'A weapon, armor, clothing, potion, tool or other item, started from one you pick. Enchant it if you like.', 'A thing'],
@@ -3462,7 +3535,7 @@ const CR_CARDS = {
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
   merge: ['⊕', 'Merge another mod into this one', 'Everything another of your mods holds (its places, objects, records and scripts) added to this mod. The other mod is left as it is; this mod\'s Undo history starts afresh (a backup is kept).', 'A change'],
 };
-const CR_GROUPS = [['Make something new', ['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'],
+const CR_GROUPS = [['Make something new', ['build', 'ruin', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
                    ['Change something that exists', ['itemed', 'merge']]];
 // the rest of a form, folded away under a line
@@ -3497,6 +3570,8 @@ function crWhat(){
     t = `<b>Build it</b> makes a new place ${q(val('cr-name')) || 'with the name you give it'} from ${esc(st || 'the style')}'s pieces: ${rooms} room${rooms === 1 ? '' : 's'} with floors, walls, ceilings, doorways${(CR.plan && CR.plan.rooms || []).some(r => r.floor) ? ', stairs' : ''} and a way out` +
         ($('#cr-blamps') && $('#cr-blamps').checked ? ', lanterns hung' : '') + (furn ? `, furnished${fa && fa !== 'Comfortable (the usual)' ? ' ' + esc(fa.toLowerCase()) : ''}` : ', unfurnished') +
         (where ? `, with a ${CR.bout === 'building' && $('#cr-boutb') && $('#cr-boutb').style.display !== 'none' ? 'whole building' : 'door'} outside ${where}` : '') + '. One Undo takes it all back.';
+  } else if (CR.kind === 'ruin' && typeof ruinWhat === 'function'){
+    t = ruinWhat(where);
   } else if (CR.kind === 'npc'){
     const role = radio('cr-role') || 'townsperson', name = val('cr-name');
     t = `<b>Create NPC</b> makes ${q(name) || 'a person'}: a ${radio('cr-sex') || 'male'} ${esc(optText('cr-race'))} ${esc(optText('cr-class'))}, level ${val('cr-level') || 5}, ` +
@@ -3528,6 +3603,7 @@ function formHtml(kind){
   const o = CR.opts;
   const idRow = from => `<label>ID</label><input class="inp" id="cr-id" placeholder="filled in from the ${from}"><div class="hint">The game's own handle for it, for scripts and the console. Letters, digits and underscores.</div>`;
   const what = `<div class="cwhat" id="cr-what"></div>`;
+  if (kind === 'ruin' && typeof ruinFormHtml === 'function') return ruinFormHtml(what);
   if (kind === 'build'){
     const copy = CR.bmode === 'copy';
     return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds the floors, walls, ceilings, doorways, stairs and a way out from the style's own pieces, so it looks like the base game, and furnishes the rooms the way similar places in the game are furnished. <b>Plans ▾</b> has ready-made layouts, your saved plans, <b>Plan from a place in the game</b> (a house the game made, read as a plan of its rooms, doorways and stairs, to study and build from) and <b>Copy a place from the game</b>: a room or house the game made, copied whole, with a working door from outside.</p>
@@ -3649,6 +3725,7 @@ function bindForm(){
     document.querySelectorAll('[data-ck]').forEach(x => x.classList.toggle('on', x === b));
     if (!$('#cform')) b.insertAdjacentHTML('beforeend', '<span class="msg" style="display:block;margin-top:6px"><span class="spin"></span> Opening…</span>');
     renderCreate().catch(e => reportClientError('Create "' + b.dataset.ck + '": ' + (e && (e.stack || e.message) || e), 'renderCreate')); });
+  document.querySelectorAll('[data-ckall]').forEach(b => b.onclick = () => { CR.kind = null; renderCreate(); });
   if (!CR.kind) return;
   const name = $('#cr-name'), idf = $('#cr-id');
   if (name && idf){
@@ -3988,6 +4065,9 @@ async function createGo(){
           catch (e){ toast('Built it, but could not furnish ' + c.name + ': ' + e.message, true); }
         }
       }
+    } else if (CR.kind === 'ruin'){
+      r = await ruinGo(msg);
+      label = val('cr-name');
     } else if (CR.kind === 'item'){
       if (!CR.itTpl) throw new Error('Pick an item to start from.');
       const stats = {}; document.querySelectorAll('[data-st]').forEach(el => stats[el.dataset.st] = el.value);
@@ -4032,6 +4112,9 @@ async function createGo(){
     } else if (CR.kind === 'build'){
       toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : 'Furnish it here, then try it with Play here.'));
       showView('world'); await worldOpen(r.key);
+    } else if (CR.kind === 'ruin'){
+      toast(`Made "${label}": ${r.tunnels} tunnel pieces, ${ruinHalls(r.kind, r.halls)}${r.people ? `, ${r.people} ${r.people === 1 ? 'person' : 'people'} living in it` : ''}. Right-click in it for 🎲 Make this again.`);
+      showView('world'); await worldOpen(r.key);
     } else if (CR.kind === 'book' && r.given){
       toast('Created ' + label + ', given to ' + r.given + '.');
       openRecord(r.i, true); showView('browse');
@@ -4063,14 +4146,16 @@ async function doUndo(to){
   } catch (err){ toast(err.message, true); }
 }
 $('#undobtn').onclick = () => doUndo();
-async function refreshAfterEdits(){
+// (remote: another view's change, twowin.js; what you're typing here is left alone)
+async function refreshAfterEdits(remote){
+  const typing = remote && (S.editing || (document.activeElement && document.activeElement.matches('input,textarea,select,[contenteditable]')));
   await afterChange();
   if (REG.data){ try { await regLoad(true); } catch (e){} }
   if (V3.on && W.ext && typeof v3GrassReload === 'function') v3GrassReload();
-  if ($('#dialog').classList.contains('on')){ D.qstages = null; if (D.mode) await dOpen(D.mode, D.key); else renderDialog(); }
+  if ($('#dialog').classList.contains('on') && !typing){ D.qstages = null; if (D.mode) await dOpen(D.mode, D.key); else renderDialog(); }
   if (W.key && W.ext){ W.lands = {}; v3LandsReload(); await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL)); }
   if (W.key){ for (const k of Object.keys(W.cells)) if (W.cells[k].exists) await worldReloadCell(k); W.sel = W.sel && findRef(W.sel.cell, W.sel.k) ? W.sel : null; renderWside(); drawMap(); }
-  if (S.cur && $('#browse').classList.contains('on')){
+  if (S.cur && $('#browse').classList.contains('on') && !typing){
     const r = await api('/api/search?' + new URLSearchParams({q: S.cur.id, types: S.cur.type, limit: 30}));
     const hit = r.rows.find(x => x.id.toLowerCase() === S.cur.id.toLowerCase());
     if (hit) openRecord(hit.i, false); else $('#detail').innerHTML = '<div class="empty"><h3>Removed</h3></div>';
@@ -4187,6 +4272,8 @@ poll();
 <script src="/web/planner.js"></script>
 <script src="/web/brushes.js"></script>
 <script src="/web/library.js"></script>
+<script src="/web/assets.js"></script>
+<script src="/web/anim.js"></script>
 <script src="/web/fixit.js"></script>
 <script src="/web/fixhere.js"></script>
 <script src="/web/extend.js"></script>
@@ -4202,15 +4289,20 @@ poll();
 <script src="/web/setups.js"></script>
 <script src="/web/pagepanels.js"></script>
 <script src="/web/viewwin.js"></script>
+<script src="/web/stylepal.js"></script>
 <script src="/web/effects.js"></script>
 <script src="/web/convo.js"></script>
 <script src="/web/convbuild.js"></script>
 <script src="/web/populate.js"></script>
 <script src="/web/iconpick.js"></script>
+<script src="/web/ruins.js"></script>
 <script src="/web/together.js"></script>
 <script src="/web/loadorder.js"></script>
 <script src="/web/help.js"></script>
 <script src="/web/demo.js"></script>
 <script src="/web/navmenu.js"></script>
+<script src="/web/frombuilding.js"></script>
+<script src="/web/prefabplan.js"></script>
+<script src="/web/twowin.js"></script>
 </body>
 </html>

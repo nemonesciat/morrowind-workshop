@@ -107,9 +107,12 @@ def write_nif(parts, root_name='Scene Root', collision='shape'):
         col = part.get('color') or (1.0, 1.0, 1.0)
         # a lamp's parts glow (lit from inside, whatever light falls on them)
         glow = tuple(part['glow']) if isinstance(part.get('glow'), (list, tuple)) else ((1.0, 1.0, 1.0) if part.get('glow') else (0, 0, 0))
+        # (Project Tamriel's asset rules: ambient and diffuse white, specular and emissive black, glossiness 0;
+        # a textured part keeps the texture's own colours, an untextured one is tinted by its diffuse)
+        amb = (1.0, 1.0, 1.0) if part.get('texture') else col
         props.append(add('NiMaterialProperty', _net('') + struct.pack('<H', 1) +
-                         struct.pack('<3f', *col) + struct.pack('<3f', *col) + struct.pack('<3f', 0, 0, 0) +
-                         struct.pack('<3f', *glow) + struct.pack('<ff', 10.0, part.get('opacity', 1.0))))
+                         struct.pack('<3f', *amb) + struct.pack('<3f', *col) + struct.pack('<3f', 0, 0, 0) +
+                         struct.pack('<3f', *glow) + struct.pack('<ff', 0.0, part.get('opacity', 1.0))))
         if part.get('alpha'):
             props.append(add('NiAlphaProperty', _net('') + struct.pack('<H', 237) + b'\x00'))
         if part.get('double'):

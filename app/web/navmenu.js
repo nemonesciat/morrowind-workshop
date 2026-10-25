@@ -4,7 +4,9 @@
 
 // open the page, then click what's on it once it has drawn (a page fills in after its data arrives)
 async function navGo(view, sel, text, missing){
-  showView(view);
+  // (on the World map, a page that can be a window comes up as one over the view, the map staying put)
+  if (typeof VW_HOST !== 'undefined' && VW_HOST[view] && typeof cfWorldOn === 'function' && cfWorldOn()) vwRun(view, () => showView(view));
+  else showView(view);
   for (let n = 0; n < 40; n++){
     const box = document.getElementById(view) || document;
     let el = sel ? box.querySelector(sel) || document.querySelector(sel) : null;
@@ -38,9 +40,9 @@ const NAV_MENU = {
     {label: '▶ Play here (pick a spot)', act: () => { showView('world'); cfRun('play'); }},
     {label: 'Switch between the flat map and 3D', act: () => { showView('world'); cfRun('view3d'); }},
     {label: '▤ Panels and layouts…', act: () => { showView('world'); cfRun('panels'); }}],
-  createv: () => [
-    ...['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'].map(k => ({label: CR_CARDS[k][0] + ' ' + CR_CARDS[k][1], act: () => navGo('createv', `[data-ck="${k}"]`)})), '-',
-    ...['itemed', 'merge'].map(k => ({label: CR_CARDS[k][0] + ' ' + CR_CARDS[k][1], act: () => navGo('createv', `[data-ck="${k}"]`)}))],
+  // (the Create page's own groups of cards, so a new card is on the list as soon as it is on the page)
+  createv: () => CR_GROUPS.flatMap((g, n) => [...(n ? ['-'] : []),
+    ...g[1].filter(k => CR_CARDS[k]).map(k => ({label: CR_CARDS[k][0] + ' ' + CR_CARDS[k][1], act: () => navGo('createv', `[data-ck="${k}"]`)}))]),
   library: () => [
     {label: 'Add models, pictures or sounds…', act: () => navGo('library', '#lib-pick')},
     {label: 'Add a folder…', act: () => navGo('library', '#lib-pickdir')}, '-',

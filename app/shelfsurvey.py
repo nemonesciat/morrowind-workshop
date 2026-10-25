@@ -1157,27 +1157,31 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     import wealthsurvey as _ws
     ware_ok = (lambda e: _ws.ware_over(band, _ws.ware_class(e)) == 0) if band else (lambda e: True)
 
-    def swap_everyday(o, fam, dear=False, limit=None):
+    def swap_everyday(o, fam, dear=False, limit=None, to=None):
         """o swapped for another everyday thing of its family and size (its value about the same, or
-        anything plain when the old one was too dear for the place; never over `limit`): True when done."""
+        anything plain when the old one was too dear for the place; never over `limit`): True when done.
+        to: that very thing (the other copies of a set swapped as the first one was)."""
         key = o['id'].lower()
         b0, _t = _bounds_of(db, bounds, o['id'])
         if not b0 or not fb:
             return False
-        if not pool_e:
-            pool_e.extend(everyday_pool(db, purpose, rid))
-        ck = (key, dear, limit)
-        if ck not in same_e:
-            v0 = value_of(db, key)[1]
-            same_e[ck] = [e for e in pool_e if e != key and family(db, e) == fam and not interesting(db, e)
-                          and (lambda bb: bb and _same_size(bb, b0, 3.0) and _axes(bb) == _axes(b0))(_bounds_of(db, bounds, e)[0])
-                          and (dear or max(v0, value_of(db, e)[1]) <= 15 or 0.4 <= (value_of(db, e)[1] or 1) / float(v0 or 1) <= 2.5)
-                          and (limit is None or value_of(db, e)[1] <= limit)
-                          and ware_ok(e)
-                          and plain(db, e, min_uses)]
-        if not same_e[ck]:
-            return False
-        e = rng.choice(same_e[ck])
+        if to is not None:
+            e = to
+        else:
+            if not pool_e:
+                pool_e.extend(everyday_pool(db, purpose, rid))
+            ck = (key, dear, limit)
+            if ck not in same_e:
+                v0 = value_of(db, key)[1]
+                same_e[ck] = [e for e in pool_e if e != key and family(db, e) == fam and not interesting(db, e)
+                              and (lambda bb: bb and _same_size(bb, b0, 3.0) and _axes(bb) == _axes(b0))(_bounds_of(db, bounds, e)[0])
+                              and (dear or max(v0, value_of(db, e)[1]) <= 15 or 0.4 <= (value_of(db, e)[1] or 1) / float(v0 or 1) <= 2.5)
+                              and (limit is None or value_of(db, e)[1] <= limit)
+                              and ware_ok(e)
+                              and plain(db, e, min_uses)]
+            if not same_e[ck]:
+                return False
+            e = rng.choice(same_e[ck])
         new = _stand(db, bounds, e, o['x'], o['y'], o['rx'], o['ry'], o['rz'], o['level'], o['s'])
         if new and _fits_on(fb, s['levels'], _fp_of(new), o['level'], [p for p in objs if p is not o]):
             o.update(new)
@@ -1251,14 +1255,24 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
             budget['titles'].add(key)
             if stem:
                 budget['stems'].add(stem)
+    # (a set is swapped as a set: the game's three plates of one model on a table become three of another
+    # model, never three odd ones; the game's tables of four things or more repeat a model, 0.80 distinct
+    # models a thing, where a swap per thing made every table 1.00. pt-showcases-study.md, T5)
+    set_to = {}
     for o in objs:
         if o['kind'] not in ('MISC', 'INGR', 'ALCH') or interesting(db, o['id']):
             continue
         fam = family(db, o['id'])
         if not fam or fam in ('paper', 'cloth'):
             continue
-        if rng.random() < 0.35:
-            swap_everyday(o, fam)
+        key0 = o['id'].lower()
+        if key0 in set_to:
+            if set_to[key0]:
+                swap_everyday(o, fam, to=set_to[key0])
+        elif rng.random() < 0.35 and swap_everyday(o, fam):
+            set_to[key0] = o['id']
+        else:
+            set_to[key0] = None
         b0, _t = _bounds_of(db, bounds, o['id'])
         if not b0:
             continue

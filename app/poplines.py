@@ -165,7 +165,7 @@ SECRET_SELF = ["I've been putting a little aside. One day I'll leave {town} and 
 RUMOR_PLACE = ["They say {place} was built over something older. You can hear it some nights, if you listen.",
                "Folk say the last owner of {place} left in a hurry. Nobody knows why.",
                "There's talk of smugglers using the coast near {town}. The guards pretend not to know.",
-               "A trader came through last week saying the roads past {town} aren't safe. Bandits, or worse.",
+               "A trader came through recently saying the roads past {town} aren't safe. Bandits, or worse.",
                "Prices are up all over {town}. Someone's getting rich, and it isn't me.",
                "They say there's an old tomb near {town} that nobody goes into twice."]
 
@@ -250,8 +250,9 @@ def fill(text, p, others, ctx, rng, about=None, kin=''):
     out = text
     for k, v in d.items():
         out = out.replace('{' + k + '}', v)
-    if race == 'khajiit':
-        out = khajiit(out)
+    # (no "this one" for the Khajiit: Project Tamriel's dialogue guide, "TES3 Khajiit do not refer to themselves
+    # using 'this one' as they do in later games"; 41 of the game's 2,096 Khajiit lines say it, 2026-10-24.
+    # khajiit() stays for a line you ask it of)
     return out
 
 

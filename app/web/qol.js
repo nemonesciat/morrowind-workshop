@@ -255,23 +255,99 @@ async function qolReopen(){
   b.querySelector('button').onclick = e => { e.stopPropagation(); qolReopen(); };
 })();
 
-// ---------------------------------------------------------------- scaling a group
+// ---------------------------------------------------------------- a slider on the spot
+// A small box where the pointer last was, in place of a dialog asking for a number: a slider to drag (the
+// change shows as you drag), a field to type into, a few marks to click; Enter or a click elsewhere keeps
+// it, Esc puts it back. o: {title, value, min, max, step, marks, fmt, input(v), keep(v), cancel()}.
+const QOL_PT = {x: innerWidth / 2, y: innerHeight / 2};
+document.addEventListener('pointerdown', e => { QOL_PT.x = e.clientX; QOL_PT.y = e.clientY; }, true);
+document.addEventListener('contextmenu', e => { QOL_PT.x = e.clientX; QOL_PT.y = e.clientY; }, true);
+let qolSlideOpen = null;
+function qolSlide(o){
+  if (qolSlideOpen) qolSlideOpen.done(false);
+  const box = document.createElement('div');
+  box.className = 'qslide';
+  const fmt = o.fmt || (v => String(v));
+  box.innerHTML = `<div class="qs-t">${esc(o.title)}</div>
+    <div class="qs-row"><input type="range" class="qs-r" min="${o.min}" max="${o.max}" step="${o.step}" value="${o.value}">
+      <input class="inp qs-n" value="${fmt(o.value)}" spellcheck="false"></div>
+    ${o.marks ? `<div class="qs-m">${o.marks.map(m => `<button class="btn sm" type="button" data-qm="${m}">${fmt(m)}</button>`).join('')}</div>` : ''}
+    <div class="qs-f"><span class="msg">Enter or click away keeps it · Esc undoes</span><button class="btn sm" type="button" data-qx>✕</button><button class="btn sm primary" type="button" data-qk>✓</button></div>`;
+  document.body.appendChild(box);
+  const R = box.querySelector('.qs-r'), N = box.querySelector('.qs-n');
+  // (by the pointer, kept inside the window)
+  const w = box.offsetWidth, h = box.offsetHeight;
+  box.style.left = Math.max(8, Math.min(innerWidth - w - 8, QOL_PT.x - w / 2)) + 'px';
+  box.style.top = Math.max(8, Math.min(innerHeight - h - 8, QOL_PT.y + 12)) + 'px';
+  let v = o.value;
+  const set = (x, from) => {
+    x = Math.max(o.min, Math.min(o.max, x));
+    if (!isFinite(x)) return;
+    v = x;
+    if (from !== 'r') R.value = x;
+    if (from !== 'n') N.value = fmt(x);
+    o.input && o.input(x);
+  };
+  R.oninput = () => set(parseFloat(R.value), 'r');
+  N.oninput = () => { const x = parseFloat(N.value.replace(',', '.')); if (isFinite(x) && x > 0) set(x, 'n'); };
+  box.onwheel = e => { e.preventDefault(); set(Math.round((v - Math.sign(e.deltaY) * o.step) / o.step) * o.step, null); };
+  box.querySelectorAll('[data-qm]').forEach(b => b.onclick = () => set(parseFloat(b.dataset.qm), null));
+  const away = e => { if (!box.contains(e.target)) done(true); };
+  const keys = e => {
+    if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(false); }
+    else if (e.key === 'Enter'){ e.preventDefault(); e.stopPropagation(); done(true); }
+  };
+  function done(keep){
+    if (!box.isConnected) return;
+    box.remove(); qolSlideOpen = null;
+    document.removeEventListener('pointerdown', away, true);
+    document.removeEventListener('keydown', keys, true);
+    if (keep && v !== o.value) o.keep(v); else o.cancel && o.cancel();
+  }
+  box.querySelector('[data-qk]').onclick = () => done(true);
+  box.querySelector('[data-qx]').onclick = () => done(false);
+  setTimeout(() => { document.addEventListener('pointerdown', away, true); document.addEventListener('keydown', keys, true); }, 0);
+  qolSlideOpen = {done};
+  R.focus();
+  return box;
+}
+
+// ---------------------------------------------------------------- scaling (one thing or a group)
+// One thing: its own size, 0.5 to 2 as the game allows. Several: by how much, round their middle, so they
+// keep their places to each other. Shown as you drag, written as one change when you keep it.
 async function qolScale(){
   const sel = selectionRefs(); if (!sel.length) return false;
-  const a = await askText(`Make ${sel.length === 1 ? 'it' : 'these ' + sel.length} bigger or smaller by how much? (e.g. 1.5 for half as big again, 0.5 for half the size)`, '1.25');
-  const f = parseFloat(a); if (!a || !isFinite(f) || f <= 0) return;
-  if (!await needProject()) return;
+  const one = sel.length === 1;
+  const was = sel.map(([cell, r]) => ({r, p: r.p.slice(), s: r.s || 1}));
   const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2, cz = Math.min(...sel.map(s => s[1].p[2]));
-  let clamped = 0;
-  const moves = sel.map(([cell, r]) => {
-    const p = r.p.slice();
-    if (sel.length > 1){ p[0] = cx + (p[0] - cx) * f; p[1] = cy + (p[1] - cy) * f; p[2] = cz + (p[2] - cz) * f; }
-    let s = Math.round((r.s || 1) * f * 1000) / 1000;
-    if (s < 0.5 || s > 2){ s = Math.max(0.5, Math.min(2, s)); clamped++; }      // (the game allows 0.5 to 2)
-    return {cell, ref: r.k, p, s};
+  // (what each would become for a slider value v: the size for one, the factor for several)
+  const plan = v => was.map(w => {
+    const f = one ? v / w.s : v;
+    const p = w.p.slice();
+    if (!one){ p[0] = cx + (w.p[0] - cx) * f; p[1] = cy + (w.p[1] - cy) * f; p[2] = cz + (w.p[2] - cz) * f; }
+    const s = Math.round(Math.max(0.5, Math.min(2, w.s * f)) * 1000) / 1000;      // (the game allows 0.5 to 2)
+    return {w, p, s, clamped: w.s * f < 0.5 - 1e-6 || w.s * f > 2 + 1e-6};
   });
-  await groupAction('/api/group/move', {moves}, `Scaled ${sel.length === 1 ? sel[0][1].name || sel[0][1].id : sel.length + ' objects'} by ${f}` + (clamped ? ` (${clamped} stopped at the game's limit of 0.5 to 2)` : ''));
+  const show = v => { for (const x of plan(v)){ x.w.r.p = x.p; x.w.r.s = x.s; } drawMap(); if (W.sel) renderWside && renderWside(); };
+  const back = () => { for (const w of was){ w.r.p = w.p; w.r.s = w.s; } drawMap(); if (W.sel) renderWside && renderWside(); };
+  const name = one ? (sel[0][1].name || sel[0][1].id) : sel.length + ' objects';
+  qolSlide({
+    title: one ? `Size of ${name}` : `Make the ${sel.length} bigger or smaller (×)`,
+    value: one ? was[0].s : 1, min: 0.5, max: 2, step: 0.01,
+    marks: one ? [0.5, 0.75, 1, 1.25, 1.5, 2] : [0.5, 0.8, 1, 1.25, 1.5, 2],
+    fmt: v => (Math.round(v * 100) / 100).toString(),
+    input: show,
+    cancel: back,
+    keep: async v => {
+      const xs_ = plan(v);
+      back();
+      if (!await needProject()) return;
+      const moves = xs_.map((x, n) => ({cell: sel[n][0], ref: sel[n][1].k, p: x.p, s: x.s}));
+      const clamped = xs_.filter(x => x.clamped).length;
+      const say = one ? `${name} now at size ${Math.round(xs_[0].s * 100) / 100}` : `Scaled ${name} by ${Math.round(v * 100) / 100}`;
+      await groupAction('/api/group/move', {moves}, say + (clamped ? ` (${clamped} stopped at the game's limit of 0.5 to 2)` : ''));
+    }});
 }
 
 // ---------------------------------------------------------------- search and replace objects
@@ -331,6 +407,7 @@ CF_ACT.push(
   {id: 'unhide', label: 'Show everything hidden again', keys: ['Alt+H'], world: true, run: () => qolUnhide()},
   {id: 'onlymine', label: 'Show only my changes (on / off)', keys: [], world: true, run: () => { W.onlyMine = !W.onlyMine; drawMap(); renderWside(); toast(W.onlyMine ? 'Showing only what your mod changed.' : 'Showing everything.'); }},
   {id: 'paths', label: 'Edit walking paths by hand (path grid)', keys: [], world: true, run: () => { if (W.mode === 'paths') setMode(null); else peStart(); }},
+  {id: 'redrawpaths', label: 'Redraw the walking paths here (Project Tamriel\'s rules)', keys: [], world: true, run: () => redrawPaths()},
   {id: 'marks', label: 'Mark my changes on the map (on / off)', keys: [], world: true, run: () => { setMarks(!W.marks); drawMap(); renderWside(); }},
   {id: 'changes', label: 'My changes (the list)', keys: [], world: true, run: () => PNL.show('world', 'changes')},
   {id: 'through', label: 'Go through the selected door', keys: ['Enter'], world: true, run: () => {

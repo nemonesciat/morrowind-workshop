@@ -172,6 +172,21 @@ def _wall_ray(sc, x):
 _front = {}
 
 
+def _touches_wall(sc, bx):
+    """A flat thing's back against the building, by its real surfaces: from its middle at its middle height, a
+    ray across its thin side reaches a face within its half depth and a hand (a traced place's tile faces are
+    measured at waist height, a cave's rock bulges and falls away above it)."""
+    if not sc.tris:
+        return True
+    cx, cy, zm = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2
+    thin_x = (bx[3] - bx[0]) <= (bx[4] - bx[1])
+    half = ((bx[3] - bx[0]) if thin_x else (bx[4] - bx[1])) / 2
+    for d in (((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0)) if thin_x else ((0.0, 1.0, 0.0), (0.0, -1.0, 0.0))):
+        if sc.nearest_any((cx, cy, zm), d, half + 24) is not None:
+            return True
+    return False
+
+
 def _gap(a, b):
     """The gap between two boxes on the floor plan (0 when they overlap)."""
     return max(a[0] - b[3], b[0] - a[3], a[1] - b[4], b[1] - a[4], 0)
@@ -262,7 +277,13 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
               and fl - 30 <= x['_box'][2] <= fl + (400 if x['type'] == 'LIGH' else 200)]
     faces = _faces(room, T)
     out = []
-    tables = [x for x in inside if x['_fam'] in ('table', 'counter')]
+    # (what holds a thing up, or what a chair is drawn up to, may stand just off a traced room's tiles: on a doorway's
+    # strip, which is in no room, or a tile the floor only half covers. A kit room's tiles are all its floor. On the
+    # game's own places as they are, read by floortrace: a cup's table, a chair's table "missing", 2026-10-24)
+    around = inside if not info.get('traced') else [
+        x for x in refs if x['_box'] and room['x_min'] - T <= x['p'][0] <= room['x_max'] + T and room['y_min'] - T <= x['p'][1] <= room['y_max'] + T
+        and fl - 60 <= x['_box'][2] <= fl + 400]
+    tables = [x for x in around if x['_fam'] in ('table', 'counter')]
     win_tiles = furnish.window_tiles(room, info['refs'], T)
     counters = [x for x in inside if x['_fam'] == 'counter' and x['_box'][2] < fl + 60]
     for x in inside:
@@ -281,6 +302,17 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                 if s in 'EW' and not (bx[1] < ty + T / 2 - 8 and bx[4] > ty - T / 2 + 8 and abs(x['p'][0] - tx) < T / 2 + 8):
                     continue
                 over = {'N': bx[4] - face, 'S': face - bx[1], 'E': bx[3] - face, 'W': face - bx[0]}[s]
+                if over > 6 and info.get('traced') and sc.tris:
+                    # (a traced room's face is measured at waist height across its tile: a cave's rock
+                    # overhangs a low firepit, falls away by a tall bed. The building's own faces say whether
+                    # one runs through the thing: rays from its middle out to its sides, low and high)
+                    dx, dy = furnish.STEP[s]
+                    cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
+                    half = (bx[3] - bx[0]) / 2 if dx else (bx[4] - bx[1]) / 2
+                    if not any(sc.nearest_any((cx + ox, cy + oy, bx[2] + (bx[5] - bx[2]) * fz), (float(dx), float(dy), 0.0), half - 6) is not None
+                               for fz in (0.3, 0.7) for ox, oy in (((0, 0), (0, (bx[4] - bx[1]) / 4), (0, -(bx[4] - bx[1]) / 4)) if dx
+                                                                   else ((0, 0), ((bx[3] - bx[0]) / 4, 0), (-(bx[3] - bx[0]) / 4, 0)))):
+                        continue
                 if over > 6:
                     dx, dy = furnish.STEP[s]
                     out.append(_issue('wall', x, '%s stands %.0f into the %s wall' % (x.get('name') or x['id'], over, {'N': 'north', 'S': 'south', 'E': 'east', 'W': 'west'}[s]),
@@ -299,10 +331,11 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                 drop = (h[0] - 8) if h is not None else None
                 # (a hearth's mantel and its shelves stand well over its box top: the pot or the broom the
                 # dressing stood on the fireplace's own mesh is on it, by the ray that laid it)
-                on_hearth = any(o['_fam'] == 'fire' for o in _under(x, inside, above=140)) or _in_hearth(x, hearths, above=140)
+                on_hearth = any(o['_fam'] == 'fire' for o in _under(x, around, above=140)) or _in_hearth(x, hearths, above=140)
                 # (a flat thing well up a wall, its back at the wall face, hangs there whatever its name)
-                on_wall = x['type'] in ('STAT', 'ACTI') and bottom > fl + 50 and min(bx[3] - bx[0], bx[4] - bx[1]) <= 44 and _wall_dist(bx, faces, T) <= 24
-                if drop is not None and drop > 24 and not _under(x, inside) and not on_hearth and not on_wall:
+                on_wall = x['type'] in ('STAT', 'ACTI') and bottom > fl + 50 and min(bx[3] - bx[0], bx[4] - bx[1]) <= 44 and (
+                    _wall_dist(bx, faces, T) <= 24 or (info.get('traced') and _touches_wall(sc, bx)))
+                if drop is not None and drop > 24 and not _under(x, around) and not on_hearth and not on_wall:
                     out.append(_issue('floating', x, '%s floats %.0f above what\'s under it' % (x.get('name') or x['id'], drop), room,
                                       [_move(x, 0, 0, -drop, 'Set it down'), _remove(x)]))
                 elif fam == 'chair' and bottom > fl + 10 and (h is None or h[0] - 8 > 10):
@@ -310,10 +343,10 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                                       [_move(x, 0, 0, -(h[0] - 8 if h is not None else bottom - fl), 'Set it down'), _remove(x)]))
             elif x['type'] == 'LIGH' and not HANG_LIGHT.search(low) and 'sconce' not in low:
                 h = sc.nearest((cx, cy, bottom + 8), (0.0, 0.0, -1.0), 300)
-                under = [o for o in inside if o is not x and o['_box'] and o['_box'][0] - 12 <= x['p'][0] <= o['_box'][3] + 12
+                under = [o for o in around if o is not x and o['_box'] and o['_box'][0] - 12 <= x['p'][0] <= o['_box'][3] + 12
                          and o['_box'][1] - 12 <= x['p'][1] <= o['_box'][4] + 12 and abs(o['_box'][5] - bottom) < 30]
                 # (a log fire inside a hearth: within the hearth's own box, below its top)
-                under += [o for o in _under(x, inside) if o['_fam'] == 'fire']
+                under += [o for o in _under(x, around) if o['_fam'] == 'fire']
                 if (h is None or h[0] - 8 > 24) and not under and not _in_hearth(x, hearths):     # (a kit's fireplace is the building: its fire hovers in it)
                     drop = (h[0] - 8) if h is not None else 0
                     out.append(_issue('floating', x, '%s stands on nothing' % (x.get('name') or x['id']), room,
@@ -324,7 +357,7 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
             cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
             # (45: a table's or a chest's mesh top may stand 35 to 40 over its box top, and the dressing's own
             # ray test put the lantern on the mesh)
-            rests = [o for o in inside if o is not x and o['_box'] and o['_box'][0] - 12 <= x['p'][0] <= o['_box'][3] + 12
+            rests = [o for o in around if o is not x and o['_box'] and o['_box'][0] - 12 <= x['p'][0] <= o['_box'][3] + 12
                      and o['_box'][1] - 12 <= x['p'][1] <= o['_box'][4] + 12 and abs(o['_box'][5] - bottom) < 45]
             down = sc.nearest((cx, cy, bottom + 8), (0.0, 0.0, -1.0), 60) if not rests else None
             stands = bool(rests) or (down is not None and down[0] - 8 <= 24)
@@ -349,17 +382,22 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
         # --- a chair with nothing to sit at
         if fam == 'chair':
             # (a stool at the hearth is sat on too: the game's fire scenes, a stool either side of the fireplace)
-            sit_at = tables + ([o for o in inside if o['_fam'] == 'bath'] if room['purpose'] == 'bath' else []) + [o for o in inside if o['_fam'] == 'fire']
+            sit_at = tables + ([o for o in around if o['_fam'] == 'bath'] if room['purpose'] == 'bath' else []) + [o for o in around if o['_fam'] == 'fire']
             near = [t for t in sit_at if _gap(t['_box'], bx) < (200 if t['_fam'] == 'counter' else 70)]
             if not near and room['purpose'] in SEAT_ROOMS and _wall_dist(bx, faces, T) <= 40:
                 near = [x]                                      # (a hall's chair against the wall)
             if not near:
                 out.append(_issue('chair', x, '%s has nothing to sit at' % (x.get('name') or x['id']), room, [_remove(x)]))
         # --- hung on nothing
+        # (a traced room's faces are measured, not laid: the wall at the piece's back by the building's real faces)
+        traced = info.get('traced')
+        if traced and fam in ('bookshelf', 'cupboard', 'shelf') and x['id'].lower() not in _front:
+            _front[x['id'].lower()] = furnish.front_of(db, x['id']) or (0.0, -1.0)
         if fam in ('bookshelf', 'cupboard', 'shelf') and bottom < fl + 30 and \
-                not furnish.wall_behind(x['b'], x['p'][5], x['p'][0], x['p'][1], room, T, furnish.front_of(db, x['id']), x.get('s') or 1.0, reach=30):
+                not (_wall_ray(sc, x) if traced else
+                     furnish.wall_behind(x['b'], x['p'][5], x['p'][0], x['p'][1], room, T, furnish.front_of(db, x['id']), x.get('s') or 1.0, reach=30)):
             out.append(_issue('nowall', x, '%s stands with no wall behind it' % (x.get('name') or x['id']), room, [_remove(x)]))
-        elif fam == 'shelf' and bottom > fl + 30 and (_wall_dist(bx, faces, T) > 24 or not _wall_ray(sc, x)):
+        elif fam == 'shelf' and bottom > fl + 30 and ((_wall_dist(bx, faces, T) > 24 and not traced) or not _wall_ray(sc, x)):
             out.append(_issue('nowall', x, '%s hangs %s' % (x.get('name') or x['id'], ('%.0f off the nearest wall' % _wall_dist(bx, faces, T)) if _wall_dist(bx, faces, T) > 24 else 'with no wall at its back (a doorway or a post there)'), room, [_remove(x)]))
         # --- a planter alone at a plain wall or in the open (the game stands its planters at a post, a
         #     window, a doorway, a seat or a stair, or with a vase, a lamp or another planter beside)
@@ -384,10 +422,10 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                 and _wall_dist(bx, faces, T) <= 24 and furnish._tile_of(x['p'][0], x['p'][1], room, T) in win_tiles:
             out.append(_issue('window', x, '%s hangs over the window' % (x.get('name') or x['id']), room, [_remove(x)]))
         # --- tableware, a book, food or a tool on a bare floor
-        if x['type'] in ('MISC', 'BOOK', 'INGR', 'ALCH', 'APPA', 'PROB', 'REPA', 'LOCK') and bottom < fl + 12 and not _under(x, inside, above=60) \
+        if x['type'] in ('MISC', 'BOOK', 'INGR', 'ALCH', 'APPA', 'PROB', 'REPA', 'LOCK') and bottom < fl + 12 and not _under(x, around, above=60) \
                 and not re.search(r'basket|sack|bundle_|rug|mat_|cushion|pillow|log|firewood|bucket|pail|crate|barrel|urn|pot_0|skull|bone', low):
             out.append(_issue('floor', x, '%s lies on the floor with nothing under it' % (x.get('name') or x['id']), room, [_remove(x)]))
-        elif FLAT_HANGING.search(low) and x['type'] == 'STAT' and _wall_dist(bx, faces, T) > 24:
+        elif FLAT_HANGING.search(low) and x['type'] == 'STAT' and _wall_dist(bx, faces, T) > 24 and not (traced and _touches_wall(sc, bx)):
             out.append(_issue('nowall', x, '%s hangs %.0f off the nearest wall' % (x.get('name') or x['id'], _wall_dist(bx, faces, T)), room, [_remove(x)]))
         # --- a bath's water sheet with no tub under it (a piece that exists only inside another)
         if furnish.RIDER_ONLY.search(low) and x['type'] in ('STAT', 'ACTI'):
@@ -410,7 +448,7 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
             cooking = rl == 'fire' and any(o is not x and o['_box'] and hearthsurvey.role(o['id'].lower(), o['type']) == 'cook'
                                            and o['_box'][0] - 20 <= cx <= o['_box'][3] + 20 and o['_box'][1] - 20 <= cy <= o['_box'][4] + 20
                                            and 0 <= o['_box'][2] - bottom <= 60 for o in inside)
-            stored = rl == 'tool' and any(o['_fam'] in ('table', 'shelf', 'counter', 'crate', 'chest', 'cupboard', 'bookshelf') for o in _under(x, inside, above=60))
+            stored = rl == 'tool' and any(o['_fam'] in ('table', 'shelf', 'counter', 'crate', 'chest', 'cupboard', 'bookshelf') for o in _under(x, around, above=60))
             if not (built or cooking or stored):
                 out.append(_issue('nohearth', x, '%s stands with no hearth it belongs to' % (x.get('name') or x['id']), room, [_remove(x)]))
         # --- a planter with fewer things in it than the game's usual for the model (its dressings' median)
@@ -704,6 +742,14 @@ def _hall_blocks(info, refs):
         if room['purpose'] not in furnish.HALL_PURPOSES:
             continue
         obs = hallsurvey.obstacles(refs, room['floor'])
+        if info.get('traced'):
+            # (a traced hall's tiles are half a kit tile: one walks round a chest through the next tile over, so
+            # the way through is looked for over the whole hall, from each way in to every other)
+            x = _traced_hall_block(room, T, obs)
+            if x is not None:
+                out.append(_issue('hallblock', x, '%s stands across the %s: there is no way past it' % (
+                    x.get('name') or x['id'], room['name']), room, [_remove(x)]))
+            continue
         for t in room['_tiles']:
             near = [o for o in obs if o[0] < t['x'] + T / 2 + 30 and o[2] > t['x'] - T / 2 - 30 and o[1] < t['y'] + T / 2 + 30 and o[3] > t['y'] - T / 2 - 30]
             if not near or not hallsurvey.blocked(t, T, [o[:4] for o in near]):
@@ -713,6 +759,61 @@ def _hall_blocks(info, refs):
             out.append(_issue('hallblock', x, '%s stands across the %s: there is no way past it' % (
                 x.get('name') or x['id'], room['name']), room, [_remove(x)]))
     return out
+
+
+def _traced_hall_block(room, T, obs):
+    """The thing that cuts a traced hall's ways in off from each other (the nearest to the cut), or None when one
+    can walk from every way into the hall to every other round what stands in it."""
+    import hallsurvey
+    G, BODY = hallsurvey.STEP_G, hallsurvey.BODY
+    n = int(T // G)
+    tiles = {(round(t['x'] / T * 2), round(t['y'] / T * 2)): t for t in room['_tiles']}
+    near = [o for o in obs if o[0] < room['x_max'] and o[2] > room['x_min'] and o[1] < room['y_max'] and o[3] > room['y_min']]
+    if not near:
+        return None
+    free, ways = set(), []
+    for t in room['_tiles']:
+        x0, y0 = t['x'] - T / 2, t['y'] - T / 2
+        pat = t['pat']
+        walls = {s: (pat.get('offset') or {}).get(s, T / 2 - 16) for s in 'NESW' if pat.get(s) == 'wall'}
+        for i in range(n):
+            for j in range(n):
+                px, py = x0 + (i + 0.5) * G, y0 + (j + 0.5) * G
+                dx, dy = px - t['x'], py - t['y']
+                if ('E' in walls and dx > walls['E'] - BODY) or ('W' in walls and -dx > walls['W'] - BODY) \
+                        or ('N' in walls and dy > walls['N'] - BODY) or ('S' in walls and -dy > walls['S'] - BODY):
+                    continue
+                if any(b[0] - BODY <= px <= b[2] + BODY and b[1] - BODY <= py <= b[3] + BODY for b in near):
+                    continue
+                free.add((int(math.floor(px / G)), int(math.floor(py / G))))
+        # (a way in: an open side or a doorway onto a tile of no other part of this hall)
+        for s, (sx, sy) in furnish.STEP.items():
+            if pat.get(s) not in ('open', 'door'):
+                continue
+            if (round(t['x'] / T * 2) + 2 * sx, round(t['y'] / T * 2) + 2 * sy) in tiles:
+                continue
+            cells = []
+            for k in range(n):
+                px = x0 + ((n - 1 if sx > 0 else 0 if sx < 0 else k) + 0.5) * G
+                py = y0 + ((n - 1 if sy > 0 else 0 if sy < 0 else k) + 0.5) * G
+                cells.append((int(math.floor(px / G)), int(math.floor(py / G))))
+            ways.append(cells)
+    if len(ways) < 2:
+        return None
+    start = [c for c in ways[0] if c in free]
+    seen, todo = set(start), list(start)
+    while todo:
+        i, j = todo.pop()
+        for c in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+            if c in free and c not in seen:
+                seen.add(c)
+                todo.append(c)
+    cut = [w for w in ways[1:] if not any(c in seen for c in w)]
+    if not start or cut:
+        w = (cut[0] if cut else ways[0])[len((cut[0] if cut else ways[0])) // 2]
+        px, py = (w[0] + 0.5) * G, (w[1] + 0.5) * G
+        return min(near, key=lambda o: math.hypot(max(o[0] - px, 0, px - o[2]), max(o[1] - py, 0, py - o[3])))[4]
+    return None
 
 
 def faults(db, cell_key):

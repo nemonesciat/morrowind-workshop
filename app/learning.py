@@ -70,6 +70,18 @@ def populate_pending(db):
     return _names() or before or ["the game's people"]
 
 
+def ruin_pending(db, kind='dwemer'):
+    """Like pending(), for the dungeon maker: [] when the game's places of the kind are learnt (dwemer.py)."""
+    before = _names()
+    import dwemer
+    try:
+        if dwemer.ready(db, kind) is not None:
+            return []
+    except Exception:
+        pass
+    return _names() or before or [dwemer.learning_name(kind)]
+
+
 _warmed = {}
 
 
@@ -95,6 +107,18 @@ def prewarm(db):
     # one up; every place's people in about 30 s, 2026-10-23)
     try:
         populate_pending(db)
+    except Exception:
+        pass
+    # (the game's Dwemer ruins, for the ruin maker: last, about 17 s, 2026-10-24)
+    try:
+        ruin_pending(db)
+    except Exception:
+        pass
+    # (the Style palette's themes and what goes with them, stylesurvey.py: after the rest, about 25 s,
+    # 2026-10-25; its window waits for it with a progress line if opened before)
+    try:
+        import stylesurvey
+        stylesurvey.ready(db)
     except Exception:
         pass
     # (the style list's own work, every kit's pieces and the Gold Coast dressings, about 4 s: done once

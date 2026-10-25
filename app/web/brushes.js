@@ -64,7 +64,8 @@ async function brNew(seed){
   const items = [];
   if (seed){ const d = await api('/api/brushes/item?id=' + encodeURIComponent(seed.id)); items.push({...d, id: seed.id, name: seed.name || d.name, weight: 5}); }
   const r = await post('/api/brushes/save', {brush: {name: 'My brush ' + n, items}});
-  BR.editing = r; V3.scatSets = null; V3.land.scatSet = 'my:' + r.id;
+  BR.editing = r; V3.scatSets = null;
+  if (V3.land) V3.land.scatSet = 'my:' + r.id;      // (none yet when the land tools haven't been opened, as indoors)
   return r;
 }
 
@@ -75,11 +76,17 @@ async function brAddTo(id, name){
   let target;
   if (!list.length) target = null;
   else {
-    const pick = await askText('Add "' + (name || id) + '" to which brush?\n\n' + list.map((b, n) => `${n + 1}. ${b.name}`).join('\n') + `\n${list.length + 1}. A new brush\n\nType a number:`, '1');
-    if (pick === null) return;
-    const k = parseInt(pick, 10) - 1;
-    if (!(k >= 0 && k <= list.length)) return toast('That isn\'t one of the numbers.', true);
-    target = k < list.length ? list[k] : null;
+    // (a menu of the brushes where the pointer is, not a box to type a number into)
+    target = await new Promise(res => {
+      const items = [{label: 'Add "' + (name || id) + '" to which brush?', disabled: true, head: true},
+        ...list.map(b => ({label: '🌿 ' + b.name, act: () => res(b)})), '-', {label: '＋ A new brush', act: () => res(null)}];
+      const m = pnlMenu({x: QOL_PT.x, y: QOL_PT.y}, items);
+      m.querySelectorAll('button').forEach((b, n) => { const it = items.filter(x => x !== '-')[n]; if (it && it.head) b.className = 'phd'; });
+      // (closed without a choice: nothing happens)
+      const gone = new MutationObserver(() => { if (!m.isConnected){ gone.disconnect(); setTimeout(() => res(undefined), 0); } });
+      gone.observe(document.body, {childList: true, subtree: true});
+    });
+    if (target === undefined) return;
   }
   if (!target){ const b = await brNew({id, name}); toast(`Made a new brush, "${b.name}", with ${name || id} on it. Find it under 🌿 Scatter in the 3D view.`); return; }
   if (target.items.some(i => i.id.toLowerCase() === id.toLowerCase())) return toast('It is on that brush already.');

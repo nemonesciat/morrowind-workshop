@@ -189,13 +189,15 @@ function omwRender(){
        ${OMW.launcher ? '<button data-omw="launcher"><b>OpenMW Launcher</b><small>OpenMW\'s own settings, mods and data files.</small></button>' : ''}
        <button data-omw="order"><b>Load order…</b><small>Switch plugins on or off and change their order.</small></button>
        <button data-omw="opts"><b>Game start options…</b><small>Controller in the background, your own options, or choose each time.</small></button>
+       <button data-omw="settings"><b>OpenMW settings…</b><small>Graphics, shadows, the game's options: every setting, with what it does.</small></button>
+       <button data-omw="settingscfg"><b>Open settings.cfg</b><small>OpenMW's settings file, in your text editor.</small></button>
        <div class="omwfoot">OpenMW: ${esc(OMW.install)} · <span class="lnk" data-omw="pick">change</span></div>`
     : `<div class="omwfoot" style="border:0">OpenMW wasn't found on this computer.</div>
        <button data-omw="pick"><b>Choose OpenMW's folder…</b><small>The folder with openmw.exe in it.</small></button>
        <button data-omw="get"><b>Get OpenMW</b><small>openmw.org (free). Install it, run its Launcher once, then come back.</small></button>`;
   const b = $('#omwbtn'); if (b) b.classList.toggle('warn', !found);
 }
-$('#omwbtn').onclick = e => { e.stopPropagation(); const m = $('#omwmenu'); const show = m.style.display !== 'block'; m.style.display = show ? 'block' : 'none'; if (show) omwRefresh(); };
+$('#omwbtn').onclick = e => { e.stopPropagation(); if (typeof topMenusClose === 'function') topMenusClose('omwmenu'); const m = $('#omwmenu'); const show = m.style.display !== 'block'; m.style.display = show ? 'block' : 'none'; if (show) omwRefresh(); };
 document.addEventListener('click', e => { if (!e.target.closest('#omwmenu')) $('#omwmenu').style.display = 'none'; });
 $('#omwmenu').addEventListener('click', async e => {
   const b = e.target.closest('[data-omw]'); if (!b) return;
@@ -203,6 +205,8 @@ $('#omwmenu').addEventListener('click', async e => {
   try {
     if (a === 'menu'){ if (await gameStart('/api/openmw/start', {mode: 'menu'})) toast('Starting OpenMW…'); }
     else if (a === 'opts') launchModal();
+    else if (a === 'settings') omsShow();
+    else if (a === 'settingscfg'){ const r = await post('/api/openmw/settings/open', {}); toast('Opening ' + r.path + '…'); }
     else if (a === 'launcher'){ await post('/api/openmw/start', {mode: 'launcher'}); toast('Opening OpenMW\'s Launcher…'); }
     else if (a === 'here'){ showView('world'); toast('Open a place on the map, then press "Play here" (or "Pick a spot") in the Place panel.'); }
     else if (a === 'order') showView('plugins');
@@ -215,6 +219,84 @@ $('#omwmenu').addEventListener('click', async e => {
   } catch (err){ toast(err.message, true); }
 });
 omwRefresh();
+
+// ---------- OpenMW's own settings (settings.cfg): the popular ones first, every one searchable ----------
+const OMS = {d: null, tab: 'popular', q: '', edits: {}};
+async function omsShow(){
+  let d;
+  try { d = await api('/api/openmw/settings'); } catch (e){ return toast(e.message, true); }
+  OMS.d = d; OMS.edits = {};
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; OMS.bg = bg;
+  bg.innerHTML = `<div class="modal" style="width:min(820px,96vw);max-height:90vh;display:flex;flex-direction:column"><h2>OpenMW settings</h2>
+    <div class="msg">In ${esc(d.path)}${d.exists ? '' : ' (not made yet: OpenMW makes it the first time you change a setting)'}. Only what you change from OpenMW's own defaults is written there.</div>
+    ${d.running ? '<div class="msg err" style="margin-top:4px">The game is running: close it first, as OpenMW writes this file again when it quits.</div>' : ''}
+    ${d.defaults_found ? '' : '<div class="msg err" style="margin-top:4px">OpenMW\'s list of settings (defaults.bin) wasn\'t found in its folder. Open settings.cfg to change it by hand.</div>'}
+    <div style="display:flex;gap:6px;align-items:center;margin:8px 0">
+      <button class="btn sm" data-omst="popular">Popular</button><button class="btn sm" data-omst="all">All settings</button><button class="btn sm" data-omst="changed">Changed</button>
+      <input class="inp" id="oms-q" placeholder="Search settings and what they do…" style="flex:1" autocomplete="off"></div>
+    <div id="oms-list" style="flex:1;overflow:auto;min-height:200px;border:1px solid var(--line);border-radius:8px;padding:4px 8px"></div>
+    <div class="foot"><button class="btn" id="oms-file" title="settings.cfg in your text editor">Open settings.cfg</button><span class="msg" id="oms-msg" style="flex:1"></span>
+      <button class="btn" id="oms-close">Close</button><button class="btn primary" id="oms-save" disabled>Save changes</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = s => bg.querySelector(s);
+  bg.querySelectorAll('[data-omst]').forEach(b => b.onclick = () => { OMS.tab = b.dataset.omst; omsDraw(); });
+  q('#oms-q').oninput = e => { OMS.q = e.target.value; if (OMS.q && OMS.tab === 'popular') OMS.tab = 'all'; omsDraw(); };
+  q('#oms-close').onclick = () => { if (Object.keys(OMS.edits).length && !confirm('Close without saving your changes?')) return; bg.remove(); };
+  q('#oms-file').onclick = async () => { try { const r = await post('/api/openmw/settings/open', {}); toast('Opening ' + r.path + '…'); } catch (e){ toast(e.message, true); } };
+  q('#oms-save').onclick = omsSave;
+  omsDraw();
+}
+function omsKey(r){ return r.section + '|' + r.key; }
+function omsDraw(){
+  const d = OMS.d, box = OMS.bg && OMS.bg.querySelector('#oms-list'); if (!box) return;
+  OMS.bg.querySelectorAll('[data-omst]').forEach(b => b.classList.toggle('primary', b.dataset.omst === OMS.tab));
+  const by = {}; d.settings.forEach(r => { by[omsKey(r).toLowerCase()] = r; });
+  let rows;
+  if (OMS.tab === 'popular') rows = d.popular.map(([s, k]) => by[(s + '|' + k).toLowerCase()]).filter(Boolean);
+  else if (OMS.tab === 'changed') rows = d.settings.filter(r => r.changed || OMS.edits[omsKey(r)] != null);
+  else rows = d.settings;
+  const ql = OMS.q.trim().toLowerCase();
+  if (ql) rows = rows.filter(r => (r.section + ' ' + r.key + ' ' + r.help).toLowerCase().includes(ql));
+  const val = r => OMS.edits[omsKey(r)] != null ? OMS.edits[omsKey(r)] : r.value;
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const ctl = (r, n) => {
+    const v = val(r);
+    if (r.kind === 'bool') return `<input type="checkbox" data-oms="${n}" ${v === 'true' ? 'checked' : ''}>`;
+    if (r.choices) return `<select class="inp" data-oms="${n}" style="width:auto">${r.choices.map(([c, l]) => `<option value="${esc(c)}" ${c === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    const num = r.kind === 'int' || r.kind === 'float';
+    return `<input class="inp ${num ? 'num' : ''}" data-oms="${n}" value="${esc(v)}" style="width:${num ? '110px' : '220px'}">`;
+  };
+  let sec = null, h = '';
+  OMS.rows = rows;
+  rows.forEach((r, n) => {
+    if (OMS.tab !== 'popular' && r.section !== sec){ sec = r.section; h += `<div class="an-h" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:10px 0 2px">${esc(sec)}</div>`; }
+    const mine = r.changed || OMS.edits[omsKey(r)] != null;
+    h += `<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
+      <div><b>${esc(cap(r.key))}</b>${OMS.tab === 'popular' ? ` <span class="msg">${esc(r.section)}</span>` : ''}${mine ? ' <span class="mine">changed</span>' : ''}
+        ${r.help ? `<div class="msg" style="font-size:11.5px;white-space:pre-line">${esc(r.help)}</div>` : ''}</div>
+      <div style="display:flex;gap:6px;align-items:center">${ctl(r, n)}${val(r) !== r.default ? `<button class="btn sm" data-omsd="${n}" title="Back to OpenMW's default (${esc(r.default)})">↺</button>` : ''}</div></div>`;
+  });
+  box.innerHTML = h || '<div class="msg" style="padding:10px">No settings match.</div>';
+  const set = (n, v) => { const r = OMS.rows[n]; if (v === r.value) delete OMS.edits[omsKey(r)]; else OMS.edits[omsKey(r)] = v; omsCount(); };
+  box.querySelectorAll('[data-oms]').forEach(el => {
+    const n = +el.dataset.oms;
+    el.onchange = () => { set(n, el.type === 'checkbox' ? (el.checked ? 'true' : 'false') : el.value.trim()); if (el.type !== 'text') omsDraw(); };
+  });
+  box.querySelectorAll('[data-omsd]').forEach(b => b.onclick = () => { const r = OMS.rows[+b.dataset.omsd]; set(+b.dataset.omsd, r.default); omsDraw(); });
+  omsCount();
+}
+function omsCount(){
+  const n = Object.keys(OMS.edits).length, b = OMS.bg && OMS.bg.querySelector('#oms-save');
+  if (b){ b.disabled = !n; b.textContent = n ? `Save ${n} change${n === 1 ? '' : 's'}` : 'Save changes'; }
+}
+async function omsSave(){
+  const changes = Object.entries(OMS.edits).map(([k, value]) => { const [section, key] = k.split('|'); return {section, key, value}; });
+  try {
+    const r = await post('/api/openmw/settings', {changes});
+    OMS.d = await api('/api/openmw/settings'); OMS.edits = {}; omsDraw();
+    const m = OMS.bg.querySelector('#oms-msg'); if (m) m.textContent = `Saved ${r.changed} setting${r.changed === 1 ? '' : 's'}${r.backup ? '; the old file is kept beside it' : ''}. They take effect the next time the game starts.`;
+  } catch (e){ toast(e.message, true); }
+}
 
 // ---------- how the game is started: options, saved or picked for one start ----------
 function launchForm(L){

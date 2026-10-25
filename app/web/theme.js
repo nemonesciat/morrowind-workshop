@@ -13,10 +13,11 @@ const TH_THEMES = {
     bg: '#11130d', panel: '#191c13', panel2: '#212519', line: '#313724', line2: '#444c31', text: '#e6e8d6', muted: '#9ea38a', faint: '#80876c',
     gold: '#d6b44a', gold2: '#f1d77e', hover: '#23271b', sel: '#333a1f', deep: '#0d0f0a', bg2: '#15180f', bg3: '#1b1f14', line0: '#1f2318', goldline: '#8a7a34'}},
   dagoth: {label: 'Dagoth', about: 'Black, with the glow of Red Mountain', v: {
-    // (near-black, not cherry: the only colour is the ember red of the accents, lines and selection)
-    bg: '#070405', panel: '#0e0809', panel2: '#150b0d', line: '#3a0f14', line2: '#6a1820', text: '#f2e6e4', muted: '#a88f8f', faint: '#7d6364',
-    gold: '#ff3a2e', gold2: '#ff8a6e', hover: '#1b0a0d', sel: '#4a0b11', deep: '#030102', bg2: '#0a0506', bg3: '#100809', line0: '#200a0e', goldline: '#a3161e',
-    red: '#ff5a3c', amber: '#ff9a3c'}},
+    // (the user's own "New Dagoth", 2026-10-24: pure black, the deep red of the accents and lines, near-black
+    // main buttons, a blood-dark 3D view)
+    bg: '#000000', panel: '#000000', panel2: '#0f0e0e', line: '#4d0009', line2: '#713339', text: '#f2e6e4', muted: '#a58d8d', faint: '#8c7878',
+    gold: '#c70a00', gold2: '#d8544c', hover: '#181717', sel: '#380300', deep: '#000000', bg2: '#000000', bg3: '#000000', line0: '#2a0005', goldline: '#770600',
+    red: '#ff5a3c', amber: '#ff9a3c', blue: '#7fa7d6', green: '#8fbf7a', view3d: '#330000'}, btn: '#110403'},
   dwemer: {label: 'Dwemer', about: 'Bronze and verdigris', v: {
     bg: '#0e1211', panel: '#151b19', panel2: '#1c2421', line: '#2b3833', line2: '#3c4d46', text: '#e1ebe5', muted: '#93a49b', faint: '#788a80',
     gold: '#c8964a', gold2: '#e8bd78', hover: '#1f2925', sel: '#2e3426', deep: '#0b0e0d', bg2: '#121816', bg3: '#18201d', line0: '#1b2420', goldline: '#7d6033'}},
@@ -26,11 +27,12 @@ const TH_THEMES = {
     bg: '#e4dccb', panel: '#f3eee3', panel2: '#e9e1d0', line: '#c9b994', line2: '#a9956a', text: '#221a12', muted: '#5c4d36', faint: '#6c5d45',
     gold: '#8e1d1d', gold2: '#5f1010', hover: '#e4d9c0', sel: '#e2c9a2', deep: '#faf7f0', bg2: '#dfd5c0', bg3: '#ece5d5', line0: '#d7cbb0', goldline: '#b8902f',
     red: '#9f2d1d', amber: '#9c6a0c', blue: '#2e5d97', green: '#4b7833'}},
-  indoril: {label: 'Indoril', about: 'Light: Mournhold stone and pearl, with deep slate blue', light: true, v: {
-    // (grey stone, not white: a shade darker than a page, pearl for the panels, the blue kept to the accents)
-    bg: '#cfccc4', panel: '#e6e4de', panel2: '#d9d6cf', line: '#afaba1', line2: '#8f8a7f', text: '#1f2327', muted: '#4a5058', faint: '#5d636b',
-    gold: '#34506e', gold2: '#213a55', hover: '#d2cfc8', sel: '#c3c9d1', deep: '#f2f1ed', bg2: '#c8c5bd', bg3: '#d6d3cc', line0: '#bfbbb2', goldline: '#6f84a0',
-    red: '#9e3a2e', amber: '#8f6610', blue: '#34506e', green: '#3c6e47'}},
+  indoril: {label: 'Indoril', about: 'Light: Mournhold grey stone and pale blue panels, with deep Almalexia blue', light: true, v: {
+    // (the user's own theme, made from High contrast and liked enough to be the light preset, 2026-10-24:
+    // near-black text and lines on grey and pale blue, white main buttons, a dark 3D view)
+    bg: '#afadb3', panel: '#dce0ea', panel2: '#d0d4dd', line: '#0d0326', line2: '#100823', text: '#1a1919', muted: '#121212', faint: '#2a292a',
+    gold: '#12327d', gold2: '#0d2358', hover: '#c9ccd5', sel: '#a3afcb', deep: '#c7c6ca', bg2: '#bcbcc4', bg3: '#ced1da', line0: '#565065', goldline: '#516393',
+    red: '#df2201', amber: '#8d6411', blue: '#4480c5', green: '#2e8f05', view3d: '#171717'}, btn: '#ffffff'},
   contrast: {label: 'High contrast', about: 'Black, white and bright yellow: easiest to read', v: {
     bg: '#000000', panel: '#0a0a0a', panel2: '#161616', line: '#5c5c5c', line2: '#8c8c8c', text: '#ffffff', muted: '#e2e2e2', faint: '#bdbdbd',
     gold: '#ffd23f', gold2: '#ffe680', hover: '#232323', sel: '#3d3400', deep: '#000000', bg2: '#0a0a0a', bg3: '#111111', line0: '#333333', goldline: '#b39400'}},
@@ -77,8 +79,9 @@ function thFromPreset(name){
   const T = TH_THEMES[name] || TH_THEMES.contrast, v = Object.assign({}, TH_USUAL, T.v);
   const c = {};
   for (const [k] of TH_KEYS) c[k] = v[k];
-  if (T.v.gold) c.btn = thMix(v.panel, v.gold, T.light ? 13 : 30);
-  if (name === 'contrast' || name === 'dagoth') c.view3d = '#000000';
+  if (T.btn) c.btn = T.btn;
+  else if (T.v.gold) c.btn = thMix(v.panel, v.gold, T.light ? 13 : 30);
+  if (name === 'contrast') c.view3d = '#000000';
   return {from: TH_THEMES[name] ? name : 'contrast', c, head: 'cinzel', body: 'inter', size: 1};
 }
 // every shade the pages use, from the Custom theme's few colours
@@ -154,6 +157,7 @@ function thApply(t){
     'tag-mine': `color-mix(in srgb,var(--gold) ${tint[2]}%,var(--panel))`, 'tag-flag': `color-mix(in srgb,var(--red) ${tint[3]}%,var(--panel))`,
     'tag-flag-p': `color-mix(in srgb,var(--blue) ${tint[3]}%,var(--panel))`, 'toast-err': 'var(--red)',
     hl: `color-mix(in srgb,var(--gold) ${light ? 18 : 30}%,var(--panel))`});
+  if (!cv && base.btn && !t.accent) Object.assign(v, {'btn-primary': base.btn, 'btn-primary-hover': `color-mix(in srgb,${base.btn},var(--text) 12%)`});
   if (cv){
     Object.assign(v, {'btn-primary': cv.btn, 'btn-primary-hover': `color-mix(in srgb,${cv.btn},var(--text) 12%)`});
     const cu = t.custom, h = TH_HEAD_FONTS[cu.head], b = TH_BODY_FONTS[cu.body];

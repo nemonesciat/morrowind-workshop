@@ -17,6 +17,12 @@ function cfCss(){
   #wstatus .on{color:#8fd18f}
   #wstatus .mode{color:var(--gold2)}
   .pmenu{max-height:calc(100vh - 16px);overflow:auto}
+  .qslide{position:fixed;z-index:210;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 12px 40px #000c;padding:8px 10px;width:290px}
+  .qslide .qs-t{font-size:12px;color:var(--faint);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qslide .qs-row{display:flex;gap:8px;align-items:center}.qslide .qs-r{flex:1;accent-color:var(--gold)}
+  .qslide .qs-n{width:58px;text-align:right;padding:3px 6px}
+  .qslide .qs-m{display:flex;gap:4px;margin-top:6px}.qslide .qs-m .btn{flex:1;padding:2px 0;min-width:0}
+  .qslide .qs-f{display:flex;gap:4px;align-items:center;margin-top:8px}.qslide .qs-f .msg{flex:1;font-size:11px}
   .pmenu button[disabled]{cursor:default}
   .pmenu button:hover:not([disabled]){background:#ffffff12}.pmenu button[disabled]:hover{background:none}
   .pmenu .phd{opacity:1!important;font-size:11px;color:var(--faint);padding:4px 10px 2px;letter-spacing:.04em;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -185,6 +191,38 @@ async function cfSelectWithContents(ck, r){
 function cfSelectLike(r){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLowerCase() === r.id.toLowerCase() && (W.ext || ck === W.key))); }
 
 // ---------------------------------------------------------------- right-click menus
+// a small window over the 3D view moved by dragging its title (handle: a selector inside it), kept inside
+// the view, and remembered under key for next time
+function cfMovable(el, handle, key){
+  if (!el || el.dataset.movable) return;
+  el.dataset.movable = '1';
+  try { const p = JSON.parse(localStorage.getItem('ws-pos-' + key) || 'null'); if (p){ el.style.left = p[0] + 'px'; el.style.top = p[1] + 'px'; el.style.right = 'auto'; el.style.bottom = 'auto'; } } catch (e) {}
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !e.target.closest(handle) || e.target.closest('button,input,select,a')) return;
+    e.preventDefault();
+    const box = el.offsetParent || document.body, r0 = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+    const dx = e.clientX - r0.left, dy = e.clientY - r0.top;
+    const move = ev => {
+      const x = Math.max(0, Math.min(b.width - 60, ev.clientX - b.left - dx)), y = Math.max(0, Math.min(b.height - 30, ev.clientY - b.top - dy));
+      el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.right = 'auto'; el.style.bottom = 'auto';
+    };
+    el.classList.add('moving');
+    const up = () => {
+      el.classList.remove('moving');
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+      try { localStorage.setItem('ws-pos-' + key, JSON.stringify([parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0])); } catch (e) {}
+    };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  });
+}
+
+// what's copied, pasted: at the spot clicked, or (no spot under the mouse) placed with the next click
+function cfPasteItem(at){
+  if (!W.clip) return null;
+  if (at) return {label: `📋 Paste ${W.clip.label} here`, act: () => { W.groupPlace = {items: W.clip.items, label: W.clip.label, yaw: 0}; placeGroupAt(at[0], at[1], V3.on ? at[2] : null); }};
+  return {label: `📋 Paste ${W.clip.label}… (click where it goes)`, act: () => startGroupPlace(W.clip.items, W.clip.label)};
+}
+
 // hit: [cell, ref] under the mouse (or null); at: the world spot [x, y, z] under it (or null)
 function cfMenuAt(e, hit, at, locked){
   if (!cfWorldOn() || !W.key) return;
@@ -198,6 +236,8 @@ function cfMenuAt(e, hit, at, locked){
       {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⟲ Turn 90° the other way', act: () => groupDo('turnback')},
       {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⇄ Replace them with…', act: () => cfRun('replace')},
       {label: '🧩 Save as a prefab…', act: () => { const f = $('#g-prefabname'); if (f) f.value = ''; groupDo('prefab'); }});
+    if (W.clip) items.push(cfPasteItem(null));
+    if (typeof twObjectItems === 'function') items.push(...twObjectItems(null, null));
     sep(); items.push({label: '◌ Hide them (H)', act: () => cfRun('hide')}, {label: 'Hide everything else (Shift+H)', act: () => cfRun('isolate')},
       {label: 'Clear the selection', act: () => cfRun('clearsel')}, {label: 'Delete all of them', act: () => groupDo('delete')});
   } else if (hit){
@@ -210,7 +250,11 @@ function cfMenuAt(e, hit, at, locked){
     if (r.ri != null) items.push({label: '📄 Open its record', act: () => { showView('browse'); openRecord(r.ri, true); }});
     items.push({label: '🔎 Where it\'s used (F1)', act: () => qolUses(r.id)});
     sep();
-    items.push({label: '⧉ Copy', act: () => groupDo('copy')}, {label: 'Duplicate', act: () => selAction('dup')}, {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⤢ Scale…', act: () => cfRun('scale')});
+    items.push({label: '⧉ Copy', act: () => groupDo('copy')});
+    if (W.clip) items.push(cfPasteItem(at));
+    items.push({label: 'Duplicate', act: () => selAction('dup')}, {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⤢ Scale…', act: () => cfRun('scale')});
+    // (another view open: link this door with one there, send or move this there; twowin.js)
+    if (typeof twObjectItems === 'function') items.push(...twObjectItems(ck, r));
     if (V3.on) items.push({label: '⤓ Set it down on what\'s below', act: () => v3DropToFloor()});
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
@@ -222,7 +266,11 @@ function cfMenuAt(e, hit, at, locked){
     if (r.type === 'DOOR'){
       sep();
       if (r.to) items.push({label: '→ Go where it leads', act: () => selAction('gotodest')}, {label: '📍 Pick where you arrive…', act: () => selAction('arrive')});
+      // (where it leads, in another view, both live: twowin.js)
+      if (r.to && typeof twPanelOpen === 'function' && !TW.embed) items.push({label: '⧉ Open where it leads in a second view', act: () => twPanelOpen(r.to.key, r.to)});
+      if (r.to && typeof twMenuItem === 'function') items.push(twMenuItem(r.to.key, r.to, '↗ Open where it leads in a second window'));
       else items.push({label: 'Make it lead somewhere…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-relink'); if (s) s.focus(); }, 50); }});
+      if (W.info && W.info.interior) items.push({label: '🌀 Make it lead elsewhere in this place (click where you arrive)…', act: () => doorWithinPlace(ck, r)});
     }
     if (['STAT', 'ACTI', 'CONT', 'DOOR'].includes(r.type) && typeof dressProbe === 'function'){
       // (dress this piece the game's way: shown once the Workshop has answered whether the game dresses
@@ -251,7 +299,10 @@ function cfMenuAt(e, hit, at, locked){
     if (r.arch && W.info && W.info.interior && typeof extendStart === 'function') items.push({label: '➕ Add a room through this wall…', act: () => extendStart(ck, r.k, at ? [at[0], at[1], V3.on && at[2] != null ? at[2] : null] : null)});
     // (Extend mode from this piece: its open faces lit, the game's candidates for each; extend.js)
     if (r.arch && W.info && W.info.interior && typeof extendMode === 'function') items.push({label: '⬚ Extend from here (piece by piece)…', act: () => extendMode(true, ck, {ref: r.k})});
+    // (outdoors, a building's piece or door: the interior built inside it; frombuilding.js)
+    if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb) items.push(fb, gfMenuItem(ck, r)); }
     if (r.arch) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
+    if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(r.type) && typeof asShow === 'function') items.push({label: '🧩 Model & textures…', act: () => asShow(r.ri, (r.name || r.id) + ': model & textures')});
     if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(r.type)) items.push({label: '🎨 Retexture…', act: () => selAction('retex')});
     items.push({label: '🔊 Add a sound…', act: () => selAction('sound')});
     sep();
@@ -267,7 +318,9 @@ function cfMenuAt(e, hit, at, locked){
     }
     if (typeof QOL !== 'undefined' && QOL.back.length) items.push({label: `← Back to ${QOL.back[QOL.back.length - 1].name} (Alt+←)`, act: () => qolBack()});
     if (W.hide.size) items.push({label: `Show the ${W.hide.size} hidden again (Alt+H)`, act: () => cfRun('unhide')});
-    if (W.clip && at) items.push({label: `📋 Paste ${W.clip.label} here`, act: () => { W.groupPlace = {items: W.clip.items, label: W.clip.label, yaw: 0}; placeGroupAt(at[0], at[1], V3.on ? at[2] : null); }});
+    if (W.clip) items.push(cfPasteItem(at));
+    // (outdoors: a house stacked as a volume and fitted with the game's buildings; prefabplan.js)
+    if (W.ext && typeof pfOpen === 'function') items.push({label: '🏗 Plan a prefab…', act: () => pfOpen()});
     if (at) items.push({label: '▶ Play here', act: () => playHere({cell: cellKeyAt(at[0], at[1]), x: at[0], y: at[1], z: V3.on && at[2] != null ? at[2] + 60 : groundZ(at[0], at[1]) + (W.ext ? 60 : 40), rz: 0})});
     // (a locked building piece under the mouse: Fix here on it without selecting it; else the edge nearest the spot)
     if (W.info && W.info.interior && locked && locked[1].arch && typeof fixhereMenu === 'function') items.push({label: `🧱 Fix here: what the game stands at ${locked[1].name || locked[1].id}…`, act: () => fixhereMenu(locked[0], locked[1].k, pt, null)});
@@ -275,7 +328,11 @@ function cfMenuAt(e, hit, at, locked){
     if (W.info && W.info.interior && typeof extendMode === 'function') items.push({label: (typeof EXM !== 'undefined' && EXM.on) ? '⬚ Leave Extend mode' : '⬚ Extend by piece (open edges lit, the game\'s candidates)…', act: () => extendMode(!(typeof EXM !== 'undefined' && EXM.on), W.info.key, locked && locked[1].arch ? {ref: locked[1].k} : null)});
     if (W.info && W.info.interior && locked && locked[1].arch) {}
     else if (W.info && W.info.interior && at && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix this edge: what the game stands here…', act: () => fixhereMenu(W.info.key, null, pt, [at[0], at[1], V3.on && at[2] != null ? at[2] : null])});
+    if (W.info && W.info.ruin && typeof ruinAgain === 'function') items.push({label: '🎲 Make this place again (a new layout)', act: () => ruinAgain(W.info.key)});
     if (W.info && W.info.interior) items.push({label: '🔧 Find gaps here', act: () => fixitOpen(W.info.key)}, {label: '🩺 Check this place', act: () => placecheckOpen(W.info.key)});
+    if (W.info && W.info.interior && typeof redrawPaths === 'function') items.push({label: '🧭 Redraw the walking paths (Project Tamriel\'s rules)', act: () => redrawPaths()});
+    // (another view on this place, or the game's version of it; with one open: follow it, its lighting; twowin.js)
+    if (typeof twPlaceItems === 'function') items.push(...twPlaceItems());
     items.push({label: 'Select everything you can see', act: () => cfSelectAll()});
     if (W.sel || W.multi.size) items.push({label: 'Clear the selection', act: () => cfRun('clearsel')});
     sep(); items.push({label: '▤ Panels and layouts…', act: () => PNL.windowsMenu('world', pt)}, {label: '⌘ All commands… (Ctrl+K)', act: () => cfPalette()});
@@ -294,12 +351,19 @@ function cfMenuAt(e, hit, at, locked){
       // between one piece and a whole house: every dressable piece in the room, one Undo
       if (ri.pieces && typeof dressRoom === 'function') items.push({label: `🪄 Dress everything in the ${nm} (${ri.pieces} pieces, the game's way)`, act: () => dressRoom(rck, ri.room, nm)});
       // (a room the plan knows comes out whole, its pieces and furniture, the wall closing again; extend.js)
-      if (ri.tiles && typeof extendRemoveRoom === 'function') items.push({label: `✂ Remove the ${nm} (its pieces and furniture; the wall closes again)`, act: () => extendRemoveRoom(rck, ri.room, nm)});
+      if (ri.tiles && !ri.traced && typeof extendRemoveRoom === 'function') items.push({label: `✂ Remove the ${nm} (its pieces and furniture; the wall closes again)`, act: () => extendRemoveRoom(rck, ri.room, nm)});
     } else {
       const p = roomProbe(rck, spot);
       if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } });
     }
   }
+  // (the grid, put where you clicked: level on a floor, upright along a wall; world3d.js)
+  if (V3.on && V3.lastPick && V3.lastPick.point && typeof v3GridHere === 'function'){
+    const pk = V3.lastPick, wall = pk.normal && Math.abs(pk.normal.z) <= 0.7;
+    sep(); items.push({label: wall ? '▦ Put the grid here, on this wall' : '▦ Put the grid here, level at this height', act: () => v3GridHere(pk)});
+  }
+  // (this view in a second window, whatever was clicked; twowin.js)
+  if (typeof twHereItems === 'function'){ const tw = twHereItems(); if (tw.length){ sep(); items.push(...tw); } }
   while (items[items.length - 1] === '-') items.pop();
   const m = pnlMenu(pt, items);
   cfMenuOpen = m;

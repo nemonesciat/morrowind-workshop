@@ -213,8 +213,10 @@ function pe3DTick(){
   const lines = [];
   for (const [a, b] of PE.edges) if (PE.pts[a] && PE.pts[b]) lines.push(...at(PE.pts[a]), ...at(PE.pts[b]));
   const lg = new T.BufferGeometry(); lg.setAttribute('position', new T.Float32BufferAttribute(lines, 3));
-  const ln = new T.LineSegments(lg, new T.LineBasicMaterial({color: 0x7fd0ff, depthTest: false, transparent: true, opacity: 0.95}));
-  ln.renderOrder = 11; grp.add(ln);
+  // (links bright where seen, faint behind rock; the points stay grabbable through it)
+  const ln = new T.LineSegments(lg, new T.LineBasicMaterial({color: 0x7fd0ff, transparent: true, opacity: 0.95}));
+  const lb = new T.LineSegments(lg, new T.LineBasicMaterial({color: 0x7fd0ff, depthTest: false, transparent: true, opacity: 0.18}));
+  ln.renderOrder = 11; lb.renderOrder = 10; grp.add(lb, ln);
   const dots = (list, color, size) => {
     const pg = new T.BufferGeometry(); pg.setAttribute('position', new T.Float32BufferAttribute(list, 3));
     const pt = new T.Points(pg, new T.PointsMaterial({color, size, sizeAttenuation: false, depthTest: false, transparent: true}));

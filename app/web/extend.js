@@ -33,6 +33,7 @@ async function extendStart(cell, ref, at){
     <div class="foot" style="margin-top:8px"><button class="btn" id="ex-cancel">Cancel</button><button class="btn primary" id="ex-go" disabled>Build it</button></div>`;
   $('#v3wrap').appendChild(card);
   EX.card = card;
+  if (typeof cfMovable === 'function') cfMovable(card, 'h2', 'extend');
   const q = s => card.querySelector(s);
   q('#ex-cancel').onclick = extendClose;
   q('#ex-kind').onchange = () => { EX.kind = q('#ex-kind').value; q('#ex-name').value = EX.kind; EX.name = EX.kind; extendPreview(); };

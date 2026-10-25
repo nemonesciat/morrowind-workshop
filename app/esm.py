@@ -208,6 +208,10 @@ def read_openmw_config(install_hint=None):
                     result['archives'].append(val)
                 elif key == 'groundcover':
                     result['groundcover'].append(val)       # grass plugins, drawn as groundcover
+                elif key == 'fallback' and ',' in val:
+                    # (Morrowind.ini's settings as OpenMW keeps them: the weather's colours by the hour, and more)
+                    k, v = val.split(',', 1)
+                    result.setdefault('fallback', {})[k.strip()] = v.strip()
                 elif key == 'replace':
                     for k in [x.strip() for x in val.split(',')]:
                         if k in ('data', 'content', 'fallback-archive', 'groundcover'):

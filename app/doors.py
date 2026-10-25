@@ -65,16 +65,20 @@ def arrival(db, target, source_key=None, near=None):
     if not m.get('exists'):
         raise EditError('That place does not exist.')
     doors = [r for r in m['refs'] if r['type'] == 'DOOR']
+    back = None
     if source_key:
-        back = [r for r in doors if _leads_to(db, r.get('to'), source_key)]
-        if back:
+        backs = [r for r in doors if _leads_to(db, r.get('to'), source_key)]
+        if backs:
             if near:
-                back.sort(key=lambda r: math.hypot(r['p'][0] - near[0], r['p'][1] - near[1]))
-            return _in_front(m, back[0]), back[0]
+                backs.sort(key=lambda r: math.hypot(r['p'][0] - near[0], r['p'][1] - near[1]))
+            back = backs[0]
+            if not near:
+                return _in_front(m, back), back
     if near:
+        # (a spot that was clicked is where you arrive, even with a door back there: that door still leads back)
         x, y = float(near[0]), float(near[1])
         z = near[2] if len(near) > 2 and near[2] is not None else mapdata.surface_z(db, m['refs'], m['interior'], x, y, None, 1.0, 'NPC_', None) + 10
-        return [x, y, z, 0, 0, float(near[3]) if len(near) > 3 and near[3] is not None else 0.0], None
+        return [x, y, z, 0, 0, float(near[3]) if len(near) > 3 and near[3] is not None else 0.0], back
     linked = [r for r in doors if r.get('to')]
     if linked:
         return _in_front(m, linked[0]), None
@@ -111,6 +115,39 @@ def _set_link(subs, dest_name, pos):
     return out
 
 
+def link_pair(db, cell_a, ref_a, cell_b, ref_b):
+    """Two picked doors lead to each other, each arriving in front of the other (one picked in each of two
+    windows, web/twowin.js), as one change."""
+    editing._require_project(db)
+    if cell_a == cell_b and ref_a == ref_b:
+        raise EditError('Pick two different doors.')
+    ends = []
+    for ck, rk in ((cell_a, ref_a), (cell_b, ref_b)):
+        c, refs = editing._cell(db, ck)
+        ref = refs.get(rk)
+        if not ref:
+            raise EditError('That door is no longer here.')
+        rid = ref_info(ref['subs'])[0]
+        ri = db.resolve_id(rid)
+        if ri is None or db.recs[ri][0] != 'DOOR':
+            raise EditError('"%s" is not a door.' % rid)
+        m = mapdata.cellmap(db, ck)
+        here = next((r for r in m['refs'] if r['k'] == rk), None)
+        if not here:
+            raise EditError('That door is no longer here.')
+        ends.append({'cell': ck, 'k': rk, 'c': c, 'ref': ref, 'id': rid, 'here': here, 'map': m,
+                     'info': mapdata.cell_info(db, ck)})
+    for me, other in ((ends[0], ends[1]), (ends[1], ends[0])):
+        pos = _in_front(other['map'], other['here'])
+        name = other['info']['name'] if other['info']['interior'] else ''
+        ref = me['ref']
+        editing._store(me['c'], me['k'], ref['origin'], ref['idx'], _set_link(ref['subs'], name, pos))
+    a, b = ends
+    editing.commit(db, 'Doors "%s" in %s and "%s" in %s now lead to each other' % (
+        a['id'], editing.cell_label(db, a['cell']), b['id'], editing.cell_label(db, b['cell'])))
+    return {'ok': True, 'cells': sorted({a['cell'], b['cell']})}
+
+
 def relink(db, cell_key, refkey, target=None, at=None, both_ways=False):
     """Make a door lead to `target` (a cell key), arriving at `at` ([x, y, z, rz] or None to choose).
     target None removes the link. both_ways also points the door at the other end back here."""
@@ -130,14 +167,16 @@ def relink(db, cell_key, refkey, target=None, at=None, both_ways=False):
     info = mapdata.cell_info(db, target)
     if not info:
         raise EditError('There is no place called "%s".' % target)
-    if target == cell_key:
-        raise EditError('A door can\'t lead into the place it stands in. Pick another place.')
+    # (a door to elsewhere in its own place, as the game's towers, manors and tombs have: the spot is picked)
+    same = target == cell_key
+    if same and not at:
+        raise EditError('Pick where you arrive in this place: click the spot.')
     here = next((r for r in mapdata.cellmap(db, cell_key)['refs'] if r['k'] == refkey), None)
     near = None
     if at:
         near = [float(at[0]), float(at[1]), None if len(at) < 3 or at[2] is None else float(at[2]),
                 float(at[3]) if len(at) > 3 and at[3] is not None else None]
-    pos, back = arrival(db, target, cell_key, near)
+    pos, back = arrival(db, target, None if same else cell_key, near)
     dest_name = info['name'] if info['interior'] else ''
     editing._store(c, refkey, ref['origin'], ref['idx'], _set_link(ref['subs'], dest_name, pos))
     note = 'Door "%s" in %s now leads to %s' % (rid, editing.cell_label(db, cell_key), info['name'] or info['id'])
@@ -145,7 +184,7 @@ def relink(db, cell_key, refkey, target=None, at=None, both_ways=False):
     if both_ways and here:
         # the door at the other end: the one that already leads here, or the closest door to where you arrive
         m2 = mapdata.cellmap(db, target)
-        cand = back or min((r for r in m2['refs'] if r['type'] == 'DOOR'),
+        cand = back or min((r for r in m2['refs'] if r['type'] == 'DOOR' and not (same and r['k'] == refkey)),
                            key=lambda r: math.hypot(r['p'][0] - pos[0], r['p'][1] - pos[1]), default=None)
         if cand and math.hypot(cand['p'][0] - pos[0], cand['p'][1] - pos[1]) < 600:
             c2, refs2 = editing._cell(db, target)

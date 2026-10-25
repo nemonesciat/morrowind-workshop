@@ -2,6 +2,7 @@
 plants, rocks, bushes and trees, with how often each one appears, the sizes the game uses and how
 deep each is sunk into the ground. All learnt from the cells of the same region."""
 import json
+import math
 import os
 import uuid
 
@@ -25,6 +26,27 @@ def _kind(low):
         if any(w in low for w in words) and not any(w in low for w in nots):
             return key
     return None
+
+
+def _tilt(pos):
+    """How far a placed thing leans from upright, in degrees (its larger tilt about x or y)."""
+    a = max(abs(math.degrees(pos[3])) % 360, abs(math.degrees(pos[4])) % 360)
+    return min(a, 360 - a)
+
+
+def _tilt_stats(tilts):
+    """{'tilt': how far the game leans it (its 80th percentile, degrees), 'tilt_share': how often it leans
+    at all}: Project Tamriel's exterior tutorial ("nothing looks worse than everything in sight standing
+    straight up, all rotated the exact same way"), from the game's own placements of the model."""
+    lean = sorted(t for t in tilts if 1.0 <= t <= 45)
+    if not tilts or not lean:
+        return {'tilt': 0.0, 'tilt_share': 0.0}
+    return {'tilt': round(lean[min(len(lean) - 1, len(lean) * 8 // 10)], 1), 'tilt_share': round(len(lean) / len(tilts), 2)}
+
+
+def _cap_scale(kind, s):
+    """Project Tamriel's exterior guidelines: rocks rarely above 1.3 (their texture stretches visibly)."""
+    return min(s, 1.3) if kind == 'rocks' else s
 
 
 def sets(db, cell_key, sample=36):
@@ -64,12 +86,13 @@ def sets(db, cell_key, sample=36):
             if not info or not info[0] or info[1] not in ('STAT', 'CONT', 'ACTI'):
                 continue
             b = info[0]
-            st = stats.setdefault(low, {'id': info[2], 'name': info[3] or '', 'kind': k, 'n': 0, 'scales': [], 'sinks': [], 'zmin': b[2],
+            st = stats.setdefault(low, {'id': info[2], 'name': info[3] or '', 'kind': k, 'n': 0, 'scales': [], 'sinks': [], 'tilts': [], 'zmin': b[2],
                                         'size': [round(b[3] - b[0]), round(b[4] - b[1]), round(b[5] - b[2])]})
             st['n'] += 1
             s = s or 1.0
             if len(st['scales']) < 40:
                 st['scales'].append(s)
+                st['tilts'].append(_tilt(pos))
                 g = mapdata.terrain_z(db, pos[0], pos[1])
                 if g is not None:
                     st['sinks'].append((g - (pos[2] + b[2] * s)) / s)      # how far its bottom is below the ground
@@ -82,10 +105,10 @@ def sets(db, cell_key, sample=36):
             sc = sorted(v['scales'])
             sk = sorted(v['sinks'])
             items.append({'id': v['id'], 'name': v['name'], 'n': v['n'], 'smin': round(sc[len(sc) // 10], 2),
-                          'smax': round(sc[min(len(sc) - 1, len(sc) * 9 // 10)], 2),
-                          # never sunk deeper than most of its height, nor floating
-                          'sink': round(max(0.0, min(sk[len(sk) // 2], v['size'][2] * 0.6)), 1) if sk else 0.0,
-                          'size': v['size'], 'zmin': round(v['zmin'], 1)})
+                          'smax': round(_cap_scale(key, sc[min(len(sc) - 1, len(sc) * 9 // 10)]), 2),
+                          # never sunk deeper than most of its height (grass: a third, so its stem shows), nor floating
+                          'sink': round(max(0.0, min(sk[len(sk) // 2], v['size'][2] * (0.33 if key == 'grass' else 0.6))), 1) if sk else 0.0,
+                          'size': v['size'], 'zmin': round(v['zmin'], 1), **_tilt_stats(v['tilts'])})
         if items:
             out.append({'key': key, 'label': label, 'items': items})
     res = {'region': reg, 'sets': out}
@@ -169,7 +192,7 @@ def item_defaults(db, rid):
     ri = db.resolve_id(rid)
     b = mapdata.object_bounds(db, ri) if ri is not None else None
     b = b or [-20, -20, 0, 20, 20, 40]
-    scales, sinks = [], []
+    scales, sinks, tilts = [], [], []
     for ci in list(db.used_in.get(low, ()))[:40]:
         r = db.recs[ci]
         if r[0] != 'CELL' or not r[7].startswith('#'):
@@ -181,6 +204,7 @@ def item_defaults(db, rid):
                 continue
             s = s or 1.0
             scales.append(s)
+            tilts.append(_tilt(pos))
             g = mapdata.terrain_z(db, pos[0], pos[1])
             if g is not None:
                 sinks.append((g - (pos[2] + b[2] * s)) / s)
@@ -192,7 +216,7 @@ def item_defaults(db, rid):
            'smin': round(scales[len(scales) // 10], 2) if scales else 0.9,
            'smax': round(scales[min(len(scales) - 1, len(scales) * 9 // 10)], 2) if scales else 1.1,
            'sink': round(max(0.0, min(sinks[len(sinks) // 2], (b[5] - b[2]) * 0.6)), 1) if sinks else 0.0,
-           'size': [round(b[3] - b[0]), round(b[4] - b[1]), round(b[5] - b[2])], 'zmin': round(b[2], 1)}
+           'size': [round(b[3] - b[0]), round(b[4] - b[1]), round(b[5] - b[2])], 'zmin': round(b[2], 1), **_tilt_stats(tilts)}
     _item_cache[low] = (db.recs, out)
     return dict(out)
 
