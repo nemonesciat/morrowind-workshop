@@ -65,13 +65,15 @@ DOES = [
     ('weather', 'Change the weather', 'The region\'s weather turns to a storm, ash, blight, snow, rain or clear skies.'),
     ('transmute', 'Transmute', 'One of the first item it finds in their inventory, of the pairs you list (iron ore into silver, silver into gold...), becomes the next.'),
     ('teleport', 'Teleport', 'Send the one it lands on to a place: a cell and a spot in it.'),
-    ('spawn', 'Place something', 'Place an object or a creature beside the one it lands on.'),
+    ('summon', 'Summon', 'A creature or person (or one from a random creature list) appears beside the caster, follows and fights for them, '
+               'and vanishes when the effect ends, when the caster dies, or when it is cast again, as the game\'s own summons do.'),
+    ('spawn', 'Place something', 'Place an object or a creature beside the one it lands on, to stay.'),
     ('global', 'Set a global variable', 'Set one of the game\'s global variables, so an MWScript or a dialogue line can react.'),
     ('message', 'Show a message', 'Show a line of text to the player.'),
     ('lua', 'Lua of your own', 'Your own code, run when you choose, with helpers for the steps above. The Assistant can write it from a description.'),
 ]
 # (where each kind is done: on the actor itself, or by the global script for what only the world can do)
-WORLD = ('teleport', 'spawn', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
+WORLD = ('teleport', 'spawn', 'summon', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
 FT = 22.1                     # (game units to a foot, as Tamriel Data's Blink reckons it)
 
 
@@ -278,6 +280,15 @@ def _step(db, d):
         if ri is None:
             raise EditError('Place something: there is no object or creature called "%s".' % sid)
         out['id'] = db.recs[ri][1]
+    elif k == 'summon':
+        sid = (d.get('id') or '').strip()
+        ri = db.resolve_id(sid) if sid else None
+        if ri is None or db.recs[ri][0] not in ('CREA', 'NPC_', 'LEVC'):
+            raise EditError('Summon: there is no creature, person or random creature list called "%s".' % sid)
+        out['id'] = db.recs[ri][1]
+        out['list'] = db.recs[ri][0] == 'LEVC'
+        out['count'] = max(1, min(5, int(_num(d.get('count'), 'Summon: how many', 1))))
+        out['when'] = 'land'
     elif k == 'global':
         gname = (d.get('name') or '').strip()
         if not db.by_key.get(('GLOB', gname.lower())):
@@ -466,7 +477,8 @@ def _write(db, lst):
             if d['kind'] == 'lua':
                 fn = 'user_%s_%d' % (re.sub(r'[^a-z0-9]', '_', e['id'].lower()), n)
                 fns.append('-- %s: %s\nlocal function %s(ctx)\n%s\nend\n' % (e['name'], d.get('brief') or 'Lua of your own', fn, d['code']))
-            steps.append('    ' + _row(d, fn) + ',')
+            # (a summon knows its step, so two summons in one effect each call their own)
+            steps.append('    ' + _row(dict(d, n=n) if d['kind'] == 'summon' else d, fn) + ',')
             if d['kind'] == 'message':
                 msgs = True
         if steps:
@@ -610,6 +622,11 @@ local function run(d, st, dt, phase)
     st.scaled = true
   elseif k == 'swap' then
     if st.caster and st.caster:isValid() and st.caster ~= self.object then world('swap', { other = st.caster }) end
+  elseif k == 'summon' then
+    -- (keyed by this actor and the spell, so a game loaded while it lasts doesn't call a second one)
+    local spell = tostring(self.id) .. ':' .. st.key
+    world('summon', { id = d.id, list = d.list, count = d.count, spell = spell, key = spell .. ':' .. tostring(d.n or 0), eff = st.id, caster = st.caster or self.object })
+    st.summoned = true
   elseif k == 'resurrect' then
     world('resurrect', { feet = d.feet, which = d.which, health = d.health, side = d.side, caster = st.caster or self.object })
   elseif k == 'lua' then
@@ -635,6 +652,7 @@ local function finish(st)
   each(st, 'end', 0)
   if st.fight ~= nil then Actor.stats.ai.fight(self).base = st.fight end
   if st.scaled then world('unscale', {}) end
+  if st.summoned then world('unsummon', { spell = tostring(self.id) .. ':' .. st.key }) end
 end
 
 return {
@@ -651,7 +669,7 @@ return {
             local st = active[key]
             local mag = effect.magnitudeThisFrame or effect.magnitude or 0
             if not st then
-              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, user = {} }
+              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {} }
               active[key] = st
               each(st, 'land', dt)
             end
@@ -714,8 +732,30 @@ local world = require('openmw.world')
 
 local moving = {}          -- actor id -> { actor, from, to, arc, t, time }
 local scaled = {}          -- actor id -> the scale it had
+local summoned = {}        -- actor:spell key -> { caster, eff, objects, told }
 
 local function player() return world.players[1] end
+
+-- the game's own summoning flash, where it has one
+local function flash(id, pos)
+  pcall(function()
+    local rec = types.Static.record(id)
+    if rec and rec.model then world.vfx.spawn(rec.model, pos) end
+  end)
+end
+
+-- a summon's time is up: what it called goes, in the game's flash
+local function dismiss(key)
+  local s = summoned[key]
+  summoned[key] = nil
+  if not s then return end
+  for _, o in ipairs(s.objects or {}) do
+    if o:isValid() and o.count > 0 then
+      flash('VFX_Summon_End', o.position)
+      o:remove()
+    end
+  end
+end
 
 local function weatherRecord(name)
   local ok, rec = pcall(function() return core.weather.records[name] end)
@@ -733,6 +773,37 @@ local DO = {
   spawn = function(a, d)
     local yaw = a.rotation:getYaw()
     world.createObject(d.id, 1):teleport(a.cell, a.position + util.vector3(math.sin(yaw) * 90, math.cos(yaw) * 90, 0))
+  end,
+  summon = function(a, d)
+    local c = (d.caster and d.caster:isValid()) and d.caster or a
+    if summoned[d.key] then return end
+    -- (cast again: the ones called before go, as the game's own summons do)
+    for key, s in pairs(summoned) do
+      if s.caster == c and s.eff == d.eff and s.spell ~= d.spell then dismiss(key) end
+    end
+    local n, objs = d.count or 1, {}
+    for i = 1, n do
+      local rid = d.id
+      if d.list then
+        local ok, r = pcall(function() return types.LevelledCreature.record(d.id):getRandomId(types.Actor.stats.level(c).current) end)
+        rid = ok and r or nil
+      end
+      if rid and rid ~= '' then
+        -- (in front of the caster, side by side when there are several)
+        local yaw = c.rotation:getYaw() + (i - 1 - (n - 1) / 2) * 0.6
+        local pos = c.position + util.vector3(math.sin(yaw) * 110, math.cos(yaw) * 110, 0)
+        local o = world.createObject(rid, 1)
+        o:teleport(c.cell, pos, c.rotation)
+        flash('VFX_Summon_Start', pos)
+        objs[#objs + 1] = o
+      end
+    end
+    summoned[d.key] = { caster = c, eff = d.eff, spell = d.spell, objects = objs, told = false }
+  end,
+  unsummon = function(a, d)
+    for key, s in pairs(summoned) do
+      if s.spell == d.spell then dismiss(key) end
+    end
   end,
   global = function(a, d) world.mwscript.getGlobalVariables(player())[d.name] = d.value end,
   message = function(a, d) player():sendEvent('WS_MyEffectMessage', { text = d.text }) end,
@@ -827,9 +898,23 @@ return {
           if not ok or m.t >= m.time then moving[id] = nil end
         end
       end
+      for key, s in pairs(summoned) do
+        if not (s.caster and s.caster:isValid()) or types.Actor.isDead(s.caster) then
+          dismiss(key)          -- (the caster died: their summons go with them)
+        elseif not s.told then
+          -- (a frame after they were made, once their own scripts run: on the caster's side, following)
+          s.told = true
+          for _, o in ipairs(s.objects) do
+            if o:isValid() then o:sendEvent('WS_MyEffectRaised', { health = 100, side = 'ally', caster = s.caster }) end
+          end
+        end
+      end
     end,
-    onSave = function() return { scaled = scaled } end,
-    onLoad = function(data) if data and data.scaled then scaled = data.scaled end end,
+    onSave = function() return { scaled = scaled, summoned = summoned } end,
+    onLoad = function(data)
+      if data and data.scaled then scaled = data.scaled end
+      if data and data.summoned then summoned = data.summoned end
+    end,
   },
   eventHandlers = {
     WS_MyEffectWorld = function(data)

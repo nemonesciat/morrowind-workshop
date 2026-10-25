@@ -41,8 +41,36 @@ const DT_SEG = {
   size: [['small', 'Small', 'about 20 pieces, one hall'], ['medium', 'Medium', 'about 45 pieces, two halls'], ['large', 'Large', 'about 80 pieces, three halls']],
   levels: [['flat', 'Flat', 'all on one level'], ['some', 'Some', 'some ramps up and down, as the game\'s'], ['steep', 'Steep', 'up and down a lot']],
   twist: [['linear', 'Winding', 'one long winding way through'], ['branching', 'Branching', 'side passages, as the game\'s'], ['maze', 'Maze', 'crossroads and dead ends']],
-  water: [['none', 'Dry', 'no water'], ['pools', 'Pools', 'water over the lowest floors'], ['flooded', 'Flooded', 'the lower half under water, the way in dry, with fish']],
 };
+// the amounts, as sliders measured against the game's own places of the kind (the user: "trinary choices feel
+// so arbitrary"): creatures and loot in % of what the game's own pieces like these hold, lived in as the
+// chance someone has moved in (starting at the kind's own share), water as the share of the floors under it
+const DT_SLIDE = {
+  water: {id: 'dt-water', max: 90, step: 5, def: 0, label: 'Water'},
+  crea: {id: 'dt-crea', max: 300, step: 10, def: 100, label: 'Creatures'},
+  loot: {id: 'dt-loot', max: 300, step: 10, def: 100, label: 'Loot'},
+  occ: {id: 'dt-occ', max: 100, step: 1, def: null, label: 'Lived in'},
+};
+DT.lived = null;              // (the lived-in slider moved by hand: kept when the kind changes)
+const dtLivedDef = () => Math.round(100 * ((DT.lay && DT.lay.game && DT.lay.kind === DT.kind) ? DT.lay.game.lived : (DT_LIVED[DT.kind] || 0.47)));
+const DT_LIVED = {dwemer: 0.47, tomb: 0.2, daedric: 0.5, cave_mold: 0.55, cave_mud: 0.55, cave_py: 0.55, cave_lava: 0.55};
+function dtSlideSay(k){
+  const el = $('#' + DT_SLIDE[k].id); if (!el) return '';
+  const v = +el.value, G = (DT.lay && DT.lay.game) || null;
+  if (k === 'water') return v ? `Up ${v}% of the way from the lowest floor to the way in, which stays dry` : 'Dry';
+  if (k === 'occ'){ const g = dtLivedDef(); return `${v}% chance someone lives here${v === g ? ' (as the game\'s own)' : ` (the game's own: ${g}%)`}`; }
+  const what = k === 'crea' ? 'creatures' : 'things to take';
+  const n = G ? (k === 'crea' ? G.creatures : G.loot) : null;
+  if (!v) return k === 'crea' ? 'No creatures' : 'Nothing to take';
+  const about = n != null ? `: about ${Math.round(n * v / 100)} ${what}` : '';
+  return v === 100 ? `As the game's own${about}` : `${v}% of the game's${about}`;
+}
+function dtSlideHtml(k){
+  const S_ = DT_SLIDE[k], val = S_.def == null ? (DT.lived != null ? DT.lived : dtLivedDef()) : S_.def;
+  return `<div class="dt-sl"><label for="${S_.id}">${S_.label}</label><input type="range" id="${S_.id}" min="0" max="${S_.max}" step="${S_.step}" value="${val}"
+    title="Double-click: back to ${k === 'water' ? 'dry' : 'the game\'s own'}" data-sl="${k}"><div class="dt-slv" id="${S_.id}-say"></div></div>`;
+}
+function dtSlideAll(){ for (const k in DT_SLIDE){ const o = $('#' + DT_SLIDE[k].id + '-say'); if (o) o.textContent = dtSlideSay(k); } }
 
 function ruinFormHtml(what){
   const s = (id, k, v) => sel(id, RUIN_OPTS[k], v);
@@ -60,12 +88,8 @@ function ruinFormHtml(what){
       <div class="dt-h">Size</div>${seg('size', 'medium')}
       <div class="dt-h">Levels</div>${seg('levels', 'some')}
       <div class="dt-h">Layout</div>${seg('twist', 'branching')}
-      <div class="dt-h">Water</div>${seg('water', 'none')}
-      <div class="dt-grid">
-        <label>Creatures</label>${s('ru-crea', 'creatures', 'usual')}
-        <label>Loot</label>${s('ru-loot', 'loot', 'usual')}
-        <label>Lived in</label>${s('ru-occ', 'occupants', 'auto')}
-      </div>
+      <div class="dt-h">How much, against the game's own</div>
+      ${dtSlideHtml('crea')}${dtSlideHtml('loot')}${dtSlideHtml('occ')}${dtSlideHtml('water')}
       <div class="dt-h">Name</div>
       <input class="inp" id="cr-name" placeholder="e.g. ${esc(K[2])}" maxlength="63" title="${esc(K[3])}">
       <div class="dt-h">Door outside</div>
@@ -147,6 +171,10 @@ async function dtPreview(){
     const st = $('#dt-stat');
     if (st) st.textContent = `${r.tunnels} tunnel pieces, ${r.halls} ${r.hall_word}${r.halls === 1 ? '' : 's'}${r.open_left ? `, ${r.open_left} left open` : ''}`;
     const hw = $('#dt-hw'); if (hw) hw.textContent = r.hall_word;
+    // (the lived-in slider at the kind's own share until it is moved by hand; the readouts in this layout's numbers)
+    const occ = $('#dt-occ'); if (occ && DT.lived == null) occ.value = dtLivedDef();
+    dtSlideAll();
+    if (typeof crWhat === 'function') crWhat();
     dtDraw();
     return;
   }
@@ -307,6 +335,9 @@ function dtCss(){
   .dt-seg button{flex:1;padding:4px 0;background:none;border:0;border-right:1px solid var(--line);color:var(--muted);cursor:pointer;font:inherit}
   .dt-seg button:last-child{border-right:0}.dt-seg button:hover{background:#ffffff0d}.dt-seg button.on{background:#d2a85a24;color:var(--gold2)}
   .dt-grid{display:grid;grid-template-columns:70px 1fr;gap:4px 6px;align-items:center;margin-top:6px}
+  .dt-sl{display:grid;grid-template-columns:70px 1fr;gap:0 6px;align-items:center;margin-top:2px}
+  .dt-sl input[type=range]{width:100%;min-width:0;accent-color:var(--gold2);margin:2px 0}
+  .dt-slv{grid-column:1 / -1;font-size:11px;color:var(--faint);min-height:14px;line-height:1.25}
   .dt-grid select,.dt-side .inp,.dt-door select{font-size:12.5px;padding:3px 6px;min-width:0;width:100%}
   .dt-go{display:flex;gap:8px;align-items:center;margin-top:10px}
   .dt-main{display:flex;flex-direction:column;min-width:0}
@@ -349,28 +380,38 @@ document.addEventListener('click', e => {
   dtPreview();
 });
 document.addEventListener('change', e => { if (e.target && e.target.id === 'ru-seed') dtPreview(); });
+document.addEventListener('input', e => {
+  const k = e.target && e.target.dataset && e.target.dataset.sl; if (!k) return;
+  if (k === 'occ') DT.lived = +e.target.value;
+  dtSlideAll();
+  if (typeof crWhat === 'function') crWhat();
+});
+document.addEventListener('dblclick', e => {
+  const k = e.target && e.target.dataset && e.target.dataset.sl; if (!k) return;
+  if (k === 'occ'){ DT.lived = null; e.target.value = dtLivedDef(); } else e.target.value = DT_SLIDE[k].def;
+  dtSlideAll();
+  if (typeof crWhat === 'function') crWhat();
+});
 
-const RUIN_SAY = {
-  twist: {linear: 'one long winding way through', branching: 'branching, with side passages', maze: 'a maze of crossroads and dead ends'},
-  levels: {flat: 'all on one level', some: 'with some ramps up and down', steep: 'climbing and dropping a lot'},
-  creatures: {none: 'no creatures', few: 'a few creatures', usual: 'as many creatures as the game\'s own', many: 'many creatures'},
-  loot: {sparse: 'picked-over loot', usual: 'loot as in the game\'s own', rich: 'rich loot'},
-};
 function ruinWhat(where){
   const v = id => (($('#' + id) || {}).value || '');
-  const say = (k, id) => RUIN_SAY[k][v(id)] || '';
   const name = v('cr-name').trim();
   const K = ruinKind(v('ru-kind'));
+  const pct = (id, what) => { const n = +v(id); return n === 100 ? `as many ${what} as the game's own` : n ? `${n}% of the game's ${what}` : `no ${what}`; };
+  const occ = +v('dt-occ'), water = +v('dt-water');
   return `<b>Make it</b> builds the plan shown as ${name ? `"${esc(name)}"` : 'a new place'}, dressed as the game's own ${esc(K[1].replace('Cave: ', 'caves of ').toLowerCase().replace('dwemer ruin', 'Dwemer ruins').replace('velothi tomb', 'Velothi tombs').replace('daedric ruin', 'Daedric ruins'))}, ` +
-    `with ${say('creatures', 'ru-crea')} and ${say('loot', 'ru-loot')}` +
-    (v('ru-occ') === 'yes' ? ', someone living in it' : v('ru-occ') === 'none' ? ', nobody living in it' : '') +
+    `with ${pct('dt-crea', 'creatures')} and ${pct('dt-loot', 'loot')}` +
+    (occ >= 100 ? ', someone living in it' : occ <= 0 ? ', nobody living in it' : `, a ${occ}% chance someone lives in it`) +
+    (water ? `, ${water}% of its floors under water` : '') +
     (where ? `, its front door linked to a door ${where}` : '') + '. One Undo takes it back.';
 }
 
 async function ruinGo(msg){
   const v = id => (($('#' + id) || {}).value || '');
-  const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), creatures: v('ru-crea'),
-    loot: v('ru-loot'), occupants: v('ru-occ'), water: v('ru-water') || 'none', seed: v('ru-seed').trim() || null, entrance: placeValue()};
+  // (the sliders as shares: 1 is the game's own; lived in as a chance, or 'auto' when left at the kind's own)
+  const n = (id, d) => { const x = parseFloat(v(id)); return isFinite(x) ? x / 100 : d; };
+  const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), creatures: n('dt-crea', 1),
+    loot: n('dt-loot', 1), occupants: DT.lived == null ? 'auto' : n('dt-occ', 'auto'), water: n('dt-water', 0), seed: v('ru-seed').trim() || null, entrance: placeValue()};
   // (the first of each kind waits for the survey of the game's own, 15-20 s once; the survey process learns it)
   for (let n = 0; n < 120; n++){
     const r = await post('/api/ruin/build', body);

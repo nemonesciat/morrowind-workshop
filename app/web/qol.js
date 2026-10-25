@@ -350,6 +350,74 @@ async function qolScale(){
     }});
 }
 
+// ---------------------------------------------------------------- tilt: lean what's selected forwards or sideways
+// (the game keeps a turn about X, Y and Z for everything placed; each thing leans about its own spot)
+function qolTilt(){
+  const sel = selectionRefs(); if (!sel.length) return false;
+  const one = sel.length === 1, name = one ? (sel[0][1].name || sel[0][1].id) : sel.length + ' objects';
+  const was = sel.map(([cell, r]) => ({cell, r, p: r.p.slice()}));
+  const deg = v => Math.round(((v * 180 / Math.PI + 540) % 360 - 180) * 10) / 10;
+  // (one thing starts at its own tilt; several start level, and the sliders add to what each has)
+  let fx = one ? deg(was[0].p[3]) : 0, fy = one ? deg(was[0].p[4]) : 0;
+  const plan = () => was.map(w => {
+    const p = w.p.slice();
+    if (one){ p[3] = fx * Math.PI / 180; p[4] = fy * Math.PI / 180; }
+    else { p[3] = w.p[3] + fx * Math.PI / 180; p[4] = w.p[4] + fy * Math.PI / 180; }
+    return {w, p};
+  });
+  const show = () => { for (const x of plan()) x.w.r.p = x.p; drawMap(); if (typeof v3Refresh === 'function') v3Refresh(); };
+  const back = () => { for (const w of was) w.r.p = w.p; drawMap(); if (typeof v3Refresh === 'function') v3Refresh(); };
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  const row = (k, label, v) => `<label>${label}</label><div style="display:flex;gap:8px;align-items:center">
+      <input type="range" min="-90" max="90" step="1" value="${v}" data-tr="${k}" style="flex:1"><input class="inp" data-tn="${k}" value="${v}" style="width:70px"><span class="msg">°</span></div>`;
+  bg.innerHTML = `<div class="modal" style="width:min(460px,94vw)"><h2>Tilt ${esc(name)}</h2>
+    <div class="msg">${one ? 'Lean it forwards or sideways' : 'Lean each of them forwards or sideways, on top of the tilt it has'}, keeping which way it faces. The game keeps it as it is shown here.</div>
+    <div class="frow" style="margin-top:10px">${row('x', 'Forwards (X)', fx)}${row('y', 'Sideways (Y)', fy)}</div>
+    <div class="actions" style="margin-top:12px"><button class="btn sm" data-tl="level">Level ${one ? 'it' : 'them'}</button>
+      ${typeof V3 !== 'undefined' && V3.on ? '<button class="btn sm" data-tl="handles" title="The turning handles in the 3D view, with the two tilt rings shown">Tilt with the handles</button>' : ''}
+      <span style="flex:1"></span><button class="btn sm" data-tl="cancel">Cancel</button><button class="btn sm primary" data-tl="keep">Keep</button></div></div>`;
+  document.body.appendChild(bg);
+  const sync = () => {
+    bg.querySelector('[data-tr=x]').value = fx; bg.querySelector('[data-tn=x]').value = fx;
+    bg.querySelector('[data-tr=y]').value = fy; bg.querySelector('[data-tn=y]').value = fy;
+    show();
+  };
+  const setv = (k, v) => { v = Math.max(-90, Math.min(90, v)); if (!isFinite(v)) return; if (k === 'x') fx = v; else fy = v; };
+  bg.querySelectorAll('[data-tr]').forEach(el => el.oninput = () => { setv(el.dataset.tr, parseFloat(el.value)); sync(); });
+  bg.querySelectorAll('[data-tn]').forEach(el => el.onchange = () => { setv(el.dataset.tn, parseFloat(el.value.replace(',', '.'))); sync(); });
+  const close = () => { bg.remove(); document.removeEventListener('keydown', keys, true); };
+  const cancel = () => { back(); close(); };
+  const keep = async () => {
+    const xs = plan(); back(); close();
+    if (xs.every(x => x.p[3] === x.w.p[3] && x.p[4] === x.w.p[4])) return;
+    if (!await needProject()) return;
+    const moves = xs.map(x => ({cell: x.w.cell, ref: x.w.r.k, p: x.p, s: x.w.r.s || 1}));
+    await groupAction('/api/group/move', {moves}, one ? `Tilted ${name} (${fx}° forwards, ${fy}° sideways)` : `Tilted ${name}`);
+  };
+  const keys = e => { if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); cancel(); } else if (e.key === 'Enter'){ e.preventDefault(); e.stopPropagation(); keep(); } };
+  document.addEventListener('keydown', keys, true);
+  bg.querySelector('[data-tl=level]').onclick = () => {
+    if (one){ fx = 0; fy = 0; sync(); return; }
+    // (several: each one level, whatever tilt it had)
+    close();
+    (async () => {
+      if (!await needProject()) return;
+      await groupAction('/api/group/move', {moves: was.map(w => ({cell: w.cell, ref: w.r.k, p: [w.p[0], w.p[1], w.p[2], 0, 0, w.p[5]], s: w.r.s || 1}))}, `Levelled ${name}`);
+    })();
+  };
+  bg.querySelector('[data-tl=cancel]').onclick = cancel;
+  bg.querySelector('[data-tl=keep]').onclick = keep;
+  const hb = bg.querySelector('[data-tl=handles]');
+  if (hb) hb.onclick = () => {
+    cancel();
+    V3.tilt = true; V3.mode = 'rotate';
+    if (typeof v3ApplyMode === 'function') v3ApplyMode();
+    if (typeof v3Tools === 'function') v3Tools();
+    toast('Turning with tilt: drag the red or green ring to lean it, the blue one to turn it.');
+  };
+  return true;
+}
+
 // ---------------------------------------------------------------- search and replace objects
 function qolReplace(from){
   const bg = document.createElement('div'); bg.className = 'modal-bg';
@@ -417,6 +485,7 @@ CF_ACT.push(
   {id: 'back', label: 'Back through the door (the place before)', keys: ['Alt+ArrowLeft'], world: true, run: () => QOL.back.length ? qolBack() : false},
   {id: 'reopen', label: 'Reopen the last place you worked on', keys: [], run: () => qolReopen()},
   {id: 'scale', label: 'Scale what\'s selected…', keys: [], world: true, run: () => qolScale()},
+  {id: 'tilt', label: 'Tilt what\'s selected…', keys: [], world: true, run: () => qolTilt()},
   {id: 'replace', label: 'Search and replace objects…', keys: ['Ctrl+H'], world: true, run: () => qolReplace(cfSelRef() ? cfSelRef().id : '')},
   {id: 'setups', label: 'Test setups for Play…', keys: [], run: () => qolSetups()},
   {id: 'find', label: 'Find in the list (Objects, or the search box)', keys: ['Ctrl+F'], run: () => {

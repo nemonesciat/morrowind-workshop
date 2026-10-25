@@ -223,7 +223,8 @@ function v3Sync(){
       V3.root.add(o.g); V3.objs.set(key, o);
     }
     o.ck = ck; o.r = r;
-    if (!dragging.has(key)) v3Place(o.g, r);
+    // (physics on: where the physics has it, not where it was saved; physics.js)
+    if (!dragging.has(key) && !(typeof PH !== 'undefined' && PH.on && PH.bodies.has(key))) v3Place(o.g, r);
   }
   if (need.length) v3Fetch(need);
   if (W.ext) v3Terrain();
@@ -998,6 +999,21 @@ function v3StrokeAt(at, e){
     const ox = c.gx * CELL, oy = c.gy * CELL;
     if (at[0] + R < ox || at[0] - R > ox + CELL || at[1] + R < oy || at[1] - R > oy + CELL) continue;
     const L = c.L;
+    if (tool === 'tint'){
+      // the land's own colour at each point, mixed towards the brush's colour (Ctrl: back towards plain)
+      const cb = v3LandCols(L), col = c.mesh.geometry.attributes.color;
+      const want = e.ctrlKey ? [255, 255, 255] : v3Hex(B.tint || '#b4a078');
+      let any = false;
+      for (let y = 0; y <= 64; y++) for (let x = 0; x <= 64; x++){
+        const d = Math.hypot(ox + x * 128 - at[0], oy + y * 128 - at[1]); if (d >= R) continue;
+        const w = Math.min(1, fall(d) * k * 0.3), v = y * 65 + x;
+        for (let i = 0; i < 3; i++) cb[v * 3 + i] = Math.round(cb[v * 3 + i] + (want[i] - cb[v * 3 + i]) * w);
+        col.setXYZ(v, cb[v * 3] / 255, cb[v * 3 + 1] / 255, cb[v * 3 + 2] / 255);
+        any = true;
+      }
+      if (any){ col.needsUpdate = true; v3StrokeMark(ck, 'c'); }
+      continue;
+    }
     if (tool === 'paint'){
       if (!B.tex) continue;
       let any = false;
@@ -1045,6 +1061,23 @@ function v3StrokeAt(at, e){
     v3LandHeights(c.mesh, c.L); v3LandNormals(c.mesh, c.L);
   }
 }
+// a cell's vertex colours as bytes to paint into (plain white where the game gave it none)
+function v3LandCols(L){
+  if (!L.cb){
+    L.cb = new Uint8Array(65 * 65 * 3).fill(255);
+    if (L.c){ const s = atob(L.c); for (let i = 0; i < L.cb.length && i < s.length; i++) L.cb[i] = s.charCodeAt(i); }
+  }
+  return L.cb;
+}
+function v3Hex(h){ const n = parseInt((h || '#ffffff').slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function v3B64(bytes){ let s = ''; for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)); return btoa(s); }
+// Shift+click with the tint brush: the colour the ground has there
+function v3TintEyedrop(at){
+  const gx = Math.floor(at[0] / CELL), gy = Math.floor(at[1] / CELL), c = V3.lands[gx + ',' + gy]; if (!c || !c.L) return;
+  const x = Math.round((at[0] - gx * CELL) / 128), y = Math.round((at[1] - gy * CELL) / 128), cb = v3LandCols(c.L), v = (y * 65 + x) * 3;
+  V3.land.tint = '#' + [cb[v], cb[v + 1], cb[v + 2]].map(n => n.toString(16).padStart(2, '0')).join('');
+  v3LandSave(); v3LandPanel();
+}
 function v3StrokeMark(ck, what){ const m = V3.stroke.cells.get(ck) || {}; m[what] = true; V3.stroke.cells.set(ck, m); }
 async function v3StrokeEnd(){
   const S_ = V3.stroke; V3.stroke = null;
@@ -1056,6 +1089,7 @@ async function v3StrokeEnd(){
     const c = V3.lands[ck]; if (!c || !c.L) continue;
     const L = c.L, cell = {gx: c.gx, gy: c.gy};
     if (what.h) cell.h = L.h.map(v => Math.round(v));
+    if (what.c) cell.c = v3B64(v3LandCols(L));
     if (what.t){
       // the server wants texture names: ones painted now, or the ones the cell already had
       cell.t = L.ids.map((p, i) => (L.texIds && L.texIds[p]) || L.origId[i] || '');
@@ -1065,7 +1099,7 @@ async function v3StrokeEnd(){
   try {
     const r = await post('/api/land/edit', {cells, keep_objects: V3.land.follow !== false});
     const n = cells.length;
-    toast((S_.cells.size && cells.some(c => c.t) && !cells.some(c => c.h) ? 'Painted the ground' : 'Reshaped the ground') +
+    toast((cells.some(c => c.h) ? 'Reshaped the ground' : cells.some(c => c.t) ? 'Painted the ground' : 'Tinted the ground') +
           (n > 1 ? ` in ${n} cells` : '') + (r.moved ? ` (${r.moved} objects followed it)` : '') + '. Ground changes show in game after a restart.');
     W.lands = {};
     if (r.moved) for (const k of Object.keys(W.cells)) if (W.cells[k].exists) await worldReloadCell(k);
@@ -1080,6 +1114,7 @@ async function v3StrokeEnd(){
 const V3_LANDTOOLS = [['raise', '▲ Raise', 'Raise the ground (Ctrl: lower)'], ['lower', '▼ Lower', 'Lower the ground (Ctrl: raise)'],
   ['smooth', '≈ Smooth', 'Even out bumps'], ['flatten', '▬ Flatten', 'Level the ground to the height where you start the stroke'],
   ['paint', '🖌 Paint', 'Paint a ground texture (Shift+click: pick the texture under the mouse)'],
+  ['tint', '🎨 Tint', 'Paint the ground\'s own colour, the shading the game multiplies into its textures (Ctrl: back to plain; Shift+click: pick the colour under the mouse). Or shade it automatically, the way the game does.'],
   ['scatter', '🌿 Scatter', 'Scatter grass, plants, rocks or trees of this region (Ctrl: clear them away)']];
 // how far apart things of each kind usually grow (at thickness 5)
 const V3_SCATTER_GAP = {grass: 110, plants: 200, rocks: 380, trees: 650, logs: 700};
@@ -1112,6 +1147,15 @@ async function v3LandPanel(){
       <div id="v3lgrid"></div>
     </div>
     <div id="v3lscat" style="display:${B.tool === 'scatter' ? 'block' : 'none'}"></div>
+    <div id="v3ltint" style="display:${B.tool === 'tint' ? 'block' : 'none'}">
+      <label class="v3lrow">Colour <input type="color" id="v3lcol" value="${esc(B.tint || '#b4a078')}"> <span class="faint">Shift+click the ground to pick one</span></label>
+      <div class="faint" style="margin:8px 0 4px"><b>Shade automatically</b>, the way the game shades the ground near here:</div>
+      <div class="v3lrow"><button class="btn sm" data-shade="seams" title="Darken or tint where two textures meet, by as much as the game does at that pair, so the join doesn't show as a hard edge">Where textures meet</button>
+        <button class="btn sm" data-shade="texture" title="Give each texture the tint the game gives it near here (grass, roads, rock...), blended as the textures blend">By texture</button></div>
+      <div class="v3lrow"><label title="Only the cell under the camera, or it and the eight around it"><input type="checkbox" id="v3lshade9" ${B.shade9 ? 'checked' : ''}> and the cells around</label></div>
+      <label class="v3lrow">Amount <input type="range" id="v3lshadek" min="10" max="100" step="5" value="${B.shadeK || 100}"><span>${B.shadeK || 100}%</span></label>
+      <div class="faint" id="v3lshadeinfo"></div>
+    </div>
     <div class="v3lnote">Drag on the ground to use the brush. Right-drag still looks around. Each stroke can be undone. ${B.tool === 'scatter' ? 'Scattered things show in game after a restart, like other new objects.' : 'Ground changes show in game after a restart.'}</div>`;
   p.querySelectorAll('[data-lt]').forEach(b => b.onclick = () => {
     const a = b.dataset.lt;
@@ -1127,7 +1171,40 @@ async function v3LandPanel(){
     v3LandGrid();
   }
   if (B.tool === 'scatter') v3ScatterPanel();
+  if (B.tool === 'tint') v3TintPanel();
   v3SwatchScan(p);
+}
+// ----- the tint brush and the automatic shading (landshade.py)
+async function v3TintPanel(){
+  const B = V3.land;
+  $('#v3lcol').oninput = e => { B.tint = e.target.value; v3LandSave(); };
+  $('#v3lshade9').onchange = e => { B.shade9 = e.target.checked; v3LandSave(); };
+  $('#v3lshadek').oninput = e => { B.shadeK = +e.target.value; e.target.nextElementSibling.textContent = B.shadeK + '%'; v3LandSave(); };
+  document.querySelectorAll('[data-shade]').forEach(b => b.onclick = async () => {
+    if (!await needProject()) return;
+    const [cx, cy] = v3CamCell(), cells = [];
+    for (let dx = B.shade9 ? -1 : 0; dx <= (B.shade9 ? 1 : 0); dx++) for (let dy = B.shade9 ? -1 : 0; dy <= (B.shade9 ? 1 : 0); dy++) cells.push([cx + dx, cy + dy]);
+    b.disabled = true; toast('Learning how the game shades the ground near here…');
+    try {
+      const r = await post('/api/land/shade', {cells, mode: b.dataset.shade, strength: (B.shadeK || 100) / 100});
+      toast(`Shaded ${r.cells} cell${r.cells === 1 ? '' : 's'} ${b.dataset.shade === 'texture' ? 'by texture' : 'where textures meet'}, learnt from ${r.learnt_from} cells of the game nearby. Undo takes it back. Ground changes show in game after a restart.`);
+      afterChange(); W.lands = {}; v3LandsReload();
+    } catch (e){ toast(e.message, true); }
+    b.disabled = false;
+  });
+  // what the game does near here, in a line or two
+  const [cx, cy] = v3CamCell(), box = $('#v3lshadeinfo'); if (!box) return;
+  const key = cx + ',' + cy;
+  if (!V3.shadeInfo || V3.shadeInfo.key !== key){
+    box.innerHTML = '<span class="spin"></span>Reading the shading nearby…';
+    try { V3.shadeInfo = await api(`/api/land/shadeinfo?gx=${cx}&gy=${cy}`); V3.shadeInfo.key = key; } catch (e){ box.textContent = ''; return; }
+  }
+  const I = V3.shadeInfo; if (!I.exists || !$('#v3lshadeinfo')) return;
+  const sw = rgb => `<span style="display:inline-block;width:12px;height:12px;border:1px solid #0006;vertical-align:-2px;background:rgb(${rgb.join(',')})"></span>`;
+  const short = t => esc((t || 'default').replace(/^.*[\\/]/, '').replace(/\.(dds|tga|bmp)$/i, ''));
+  const dark = I.seams.filter(s => s.learnt).map(s => Math.round((1 - (s.k[0] + s.k[1] + s.k[2]) / 3) * 100));
+  $('#v3lshadeinfo').innerHTML = `Learnt from ${I.cells} cells nearby. ${I.tints.length ? 'Here: ' + I.tints.slice(0, 6).map(t => `${sw(t.rgb)} ${short(t.tex)}`).join(' · ') : ''}
+    ${I.seams.length ? `<br>${I.seams.length} kind${I.seams.length === 1 ? '' : 's'} of seam in this cell${dark.length ? `; the game darkens such joins by about ${Math.round(dark.reduce((a, b) => a + b, 0) / dark.length)}%` : ''}.` : '<br>No seams between textures in this cell.'}`;
 }
 // ----- scattering what grows in the region
 async function v3ScatterPanel(){
@@ -1389,6 +1466,7 @@ function v3Bind(el){
     if (e.button === 0 && !e.altKey && v3LandOn() && V3.landOpen){
       // the ground brush
       if (e.shiftKey && V3.land.tool === 'paint'){ const at = v3Brush(e); if (at) v3LandEyedrop(at); return; }
+      if (e.shiftKey && V3.land.tool === 'tint'){ const at = v3Brush(e); if (at) v3TintEyedrop(at); return; }
       if (V3.land.tool === 'paint' && !V3.land.tex){ toast('Pick a ground texture first.', true); return; }
       if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.', true); return; }
       if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; }
@@ -1677,6 +1755,7 @@ function v3ApplyMode(){
 }
 
 function v3DragStart(){
+  if (typeof phDragStart === 'function') setTimeout(phDragStart, 0);     // (physics on: what's dragged pushes; physics.js)
   if (V3.tc.object === V3.pivot && W.multi.size > 1){
     // a whole group: remember where every member started, relative to the handles
     const members = [...W.multi.values()].map(m => V3.objs.get(m.cell + '|' + m.k)).filter(Boolean);
@@ -1735,6 +1814,8 @@ function v3Snap(){
 async function v3DragEnd(){
   const D = V3.drag; V3.drag = null;
   if (!D) return;
+  // (physics on: let go, it falls and rests; nothing is saved until Keep; physics.js)
+  if (typeof phDragEnd === 'function' && phDragEnd(D)) return;
   v3Refresh();                      // (anything a redraw left as it was while dragged catches up now)
   if (D.group){
     if (V3.pivot.position.distanceTo(D.start) < 0.05 && Math.abs(V3.pivot.rotation.z - D.startRot) < 1e-4) return;
@@ -1801,7 +1882,8 @@ function v3Tools(){
     <div class="v3grp" data-grp="snap">${grip}<label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap pieces</label>
     <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt</label>
     <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label>
-    <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button></div>
+    <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button>
+    <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Physics here: loose things fall, rest and get pushed by what you drag, with gravity and high friction, while it's on. Keep where they lie, or put them back (physics.js)">🧲 Physics</button></div>
     <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new in a window over the view: a place, a person, a container, an item, a note, a spell, a list (right-click a spot for Create here)">✚ Create</button><button class="btn sm" data-v3="style" title="The Style palette: building pieces, furniture, decor and sets by style (Hlaalu, Redoran, Nord, Imperial...), as the game's own places use them (stylepal.js)">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
     ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Extend: build out piece by piece from the open edges of the place, with what the game joins there">⬚ Extend</button>` : ''}
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Showing light as in game (lamps, candles, fog). Click for bright, even light for editing.' : 'Showing bright, even light for editing. Click to see it as in game.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
@@ -1830,6 +1912,7 @@ function v3Tools(){
     const a = b.dataset.v3;
     if (a === 'translate' || a === 'rotate'){ V3.mode = a; v3ApplyMode(); v3Tools(); }
     else if (a === 'floor') v3DropToFloor();
+    else if (a === 'physics' && typeof phToggle === 'function') phToggle(!PH.on);
     else if (a === 'land') v3LandToggle(!V3.landOpen);
     else if (a === 'extend' && typeof extendMode === 'function') extendMode(!EXM.on, W.key);
     else if (a === 'light'){ V3.lightMode = v3LightMode() === 'game' ? 'bright' : 'game'; try { localStorage.setItem('ws-light', V3.lightMode); } catch (e) {} v3ApplyLighting(); v3Tools(); }
@@ -1990,6 +2073,7 @@ function v3Loop(){
     if (V3.keys.q) V3.pos.z -= sp;
     V3.camera.position.copy(V3.pos);
     V3.camera.lookAt(V3.pos.clone().add(d));
+    if (typeof phTick === 'function') phTick(dt);          // (physics on: a step of the world; physics.js)
     V3.water.position.set(V3.pos.x, V3.pos.y, -V3.origin[2]);
     if (V3.selBox.visible && V3.tc.object) V3.selBox.setFromObject(V3.tc.object);
     v3GridTick(t);

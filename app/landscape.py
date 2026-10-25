@@ -166,8 +166,9 @@ def _normals(h):
     return bytes(out)
 
 
-def write(db, gx, gy, heights=None, tex=None):
-    """Put changed heights (65*65 list) and/or ground textures (16*16 LTEX ids) into the mod."""
+def write(db, gx, gy, heights=None, tex=None, colors=None):
+    """Put changed heights (65*65 list), ground textures (16*16 LTEX ids) and/or vertex colours (65*65*3 bytes)
+    into the mod."""
     _require_project(db)
     w = _winner(db, gx, gy)
     if w is None:
@@ -203,25 +204,37 @@ def write(db, gx, gy, heights=None, tex=None):
                     n += 1
     vtex = struct.pack('<256H', *vt)
     new = {'VHGT': vhgt, 'VNML': _normals(heights), 'VTEX': vtex}
+    if colors is not None:
+        colors = bytes(colors)
+        if len(colors) != N * N * 3:
+            raise EditError('Vertex colours must be 65 x 65 RGB.')
+        new['VCLR'] = colors
     out, done = [], set()
     for t, d in subs:
         if t in new:
             out.append((t, new[t]))
             done.add(t)
         elif t == 'DATA':
-            out.append((t, struct.pack('<I', (struct.unpack_from('<I', d)[0] if len(d) >= 4 else 0) | 1 | 4)))
+            # (the record says what it carries: 1 heights and normals, 2 vertex colours, 4 textures)
+            out.append((t, struct.pack('<I', (struct.unpack_from('<I', d)[0] if len(d) >= 4 else 0) | 1 | 4 | (2 if 'VCLR' in new else 0))))
         else:
             out.append((t, d))
-    for t in ('VNML', 'VHGT', 'VTEX'):
-        if t not in done:
-            out.append((t, new[t]))
+    for t in ('VNML', 'VHGT', 'VCLR', 'VTEX'):
+        if t in new and t not in done:
+            if t == 'VCLR':
+                # (vertex colours go before the textures, where the game keeps them)
+                at = next((n for n, (s, _d) in enumerate(out) if s == 'VTEX'), len(out))
+                out.insert(at, (t, new[t]))
+            else:
+                out.append((t, new[t]))
     db.project.set_record('LAND', '%d,%d' % (gx, gy), flags & ~0x20, join_subs(out))
     return heights
 
 
 def edit(db, cells, keep_objects=True, note=None, skip=()):
-    """cells: [{gx, gy, h?: 65*65, t?: 256}]. Objects standing on the ground move with it (not those in skip, ref keys:
-    a building the ground is fitted to, groundfit.py)."""
+    """cells: [{gx, gy, h?: 65*65, t?: 256, c?: base64 of 65*65 RGB}]. Objects standing on the ground move with it (not those
+    in skip, ref keys: a building the ground is fitted to, groundfit.py)."""
+    import base64
     _require_project(db)
     if not cells:
         raise EditError('Nothing to change.')
@@ -229,7 +242,10 @@ def edit(db, cells, keep_objects=True, note=None, skip=()):
     for c in cells:
         gx, gy = int(c['gx']), int(c['gy'])
         before = mapdata.land(db, gx, gy).get('h') if keep_objects and c.get('h') else None
-        after = write(db, gx, gy, c.get('h'), c.get('t'))
+        cols = c.get('c')
+        if isinstance(cols, str):
+            cols = base64.b64decode(cols)
+        after = write(db, gx, gy, c.get('h'), c.get('t'), cols)
         if before:
             moved += _follow_ground(db, gx, gy, before, after, skip)
     db.sync_project()
@@ -238,6 +254,8 @@ def edit(db, cells, keep_objects=True, note=None, skip=()):
         did.append('reshaped')
     if any(c.get('t') for c in cells):
         did.append('painted')
+    if any(c.get('c') for c in cells):
+        did.append('shaded')
     commit(db, note or 'Ground %s in %d cell%s%s' % (' and '.join(did) or 'changed', len(cells), '' if len(cells) == 1 else 's',
                                                     (' (%d objects followed it)' % moved) if moved else ''))
     return {'moved': moved}

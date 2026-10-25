@@ -210,21 +210,11 @@ async function poPlace(){
 
 // ---------------------------------------------------------------- the ways in
 // the view's right-click menu: "👥 Populate this place…" and "🧍 Someone who'd live here"
-(function(){
-  const orig = cfMenuAt;
-  cfMenuAt = function(e, hit, at, locked){
-    orig(e, hit, at, locked);
-    const m = typeof cfMenuOpen !== 'undefined' && cfMenuOpen; if (!m || !m.isConnected || W.mode === 'paths' || W.ext || !W.key) return;
-    if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)) return;
-    const spot = typeof vwSpot === 'function' ? vwSpot(at || (hit && hit[1] && hit[1].p) || null) : null;
-    const a = document.createElement('button'); a.textContent = '👥 Populate this place…';
-    a.title = 'People who would live or work here, as the game\'s own places of this kind have them: see them first, then place them';
-    a.onclick = ev => { ev.stopPropagation(); m.remove(); poOpen(W.key, null); };
-    const b = document.createElement('button'); b.textContent = '🧍 Someone who\'d live here';
-    b.title = 'One person for this place, standing where you clicked';
-    b.onclick = ev => { ev.stopPropagation(); m.remove(); PO.data = null; poOpen(W.key, spot); };
-    const after = [...m.querySelectorAll('button')].find(x => /Create here/.test(x.textContent));
-    if (after){ after.after(b); after.after(a); } else { m.append(a); m.append(b); }
-  };
-})();
+CF_MENU_MORE.push((e, hit, at) => {
+  if (W.mode === 'paths' || W.ext || !W.key) return [];
+  if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)) return [];
+  const spot = typeof vwSpot === 'function' ? vwSpot(at || (hit && hit[1] && hit[1].p) || null) : null;
+  return [{label: '👥 Populate this place…', title: 'People who would live or work here, as the game\'s own places of this kind have them: see them first, then place them', act: () => poOpen(W.key, null)},
+          {label: '🧍 Someone who\'d live here', title: 'One person for this place, standing where you clicked', act: () => { PO.data = null; poOpen(W.key, spot); }}];
+});
 CF_ACT.push({id: 'populate', label: 'Populate this place… (people who would live or work here)', keys: [], world: true, run: () => poOpen(W.key, null)});

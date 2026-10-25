@@ -33,7 +33,7 @@ PROCESSES = None              # survey processes at once; None: by the machine (
 project_path = [None]         # set by the server when a project is open (the surveys skip its own cells)
 # what each survey costs, in seconds on the user's machine (cold, 2026-10-22), for sharing the queue out
 COST = {'kits.learn_stairs': 60, 'layoutsurvey.survey': 40, 'catalogue.survey': 45, 'shelfsurvey.interest_survey': 50,
-        'gapsurvey.survey': 15}
+        'gapsurvey.survey': 15, 'hangsurvey.survey': 450}
 COST_OTHER = 12
 
 

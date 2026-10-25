@@ -109,10 +109,12 @@ function wpRenderPin(it){
   const b = it.el, st = it.state, r = findRef(st.cell, st.k);
   if (!r){ b.innerHTML = `<div class="msg" style="padding:10px 0">${W.cells[st.cell] ? 'This object isn\'t there any more.' : 'Open its place to see it: ' + esc(st.cell)}</div>`; return; }
   const deg = v => ((v * 180 / Math.PI) % 360 + 360) % 360;
+  const tilt = v => (Math.round((((v || 0) * 180 / Math.PI + 540) % 360 - 180) * 10) / 10).toString();      // (−180 to 180: level is 0)
   b.innerHTML = `<div class="selcard"><div>${thumbImg(r.id, r.type, 120)}</div><div style="min-width:0"><div style="font-weight:600">${esc(r.name || r.id)}</div>
       <div class="msg" style="word-break:break-all">${esc(r.id)}</div><div class="msg">${esc(S.typeLabels[r.type] || '')} · ${r.mine ? '<span class="mine">your mod</span>' : 'from ' + esc(r.src || '')}</div></div></div>
     <div class="xyz"><div><label>X</label><input class="inp" data-pp="0" value="${r.p[0].toFixed(1)}"></div><div><label>Y</label><input class="inp" data-pp="1" value="${r.p[1].toFixed(1)}"></div><div><label>Height</label><input class="inp" data-pp="2" value="${r.p[2].toFixed(1)}"></div></div>
-    <div class="two"><div><label>Turn (degrees)</label><input class="inp" data-pp="5" value="${deg(r.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" data-pp="s" value="${r.s}"></div></div>
+    <div class="xyz"><div><label>Turn (°)</label><input class="inp" data-pp="5" value="${deg(r.p[5]).toFixed(0)}"></div><div><label title="Leaning forwards (about X)">Tilt fwd (°)</label><input class="inp" data-pp="3" value="${tilt(r.p[3])}"></div><div><label title="Leaning sideways (about Y)">Tilt side (°)</label><input class="inp" data-pp="4" value="${tilt(r.p[4])}"></div></div>
+    <div class="two"><div><label>Scale</label><input class="inp" data-pp="s" value="${r.s}"></div><div></div></div>
     <div class="actions"><button class="btn sm primary" data-pa="apply">Apply</button><button class="btn sm" data-pa="select">Select it</button><button class="btn sm" data-pa="look">Look at it</button></div>`;
   if (typeof v3ThumbScan === 'function') v3ThumbScan(b);
   b.querySelector('[data-pa=apply]').onclick = async () => {
@@ -120,13 +122,13 @@ function wpRenderPin(it){
     const p = r.p.slice(); let s = r.s;
     b.querySelectorAll('[data-pp]').forEach(inp => {
       const v = parseFloat(inp.value); if (isNaN(v)) return;
-      if (inp.dataset.pp === 's') s = v; else if (inp.dataset.pp === '5') p[5] = v * Math.PI / 180; else p[+inp.dataset.pp] = v;
+      if (inp.dataset.pp === 's') s = v; else if (['3', '4', '5'].includes(inp.dataset.pp)) p[+inp.dataset.pp] = v * Math.PI / 180; else p[+inp.dataset.pp] = v;
     });
     try { await refAction('/api/ref/move', {cell: st.cell, ref: r.k, p, s}, st.cell, null, 'Moved ' + (r.name || r.id)); }
     catch (e){ toast(e.message, true); }
   };
   b.querySelector('[data-pa=select]').onclick = () => { if (W.key === st.cell){ selectRef(st.cell, r.k); centerOn(r); } };
-  b.querySelector('[data-pa=look]').onclick = () => { if (W.key === st.cell){ selectRef(st.cell, r.k, true); centerOn(r); if (V3.on && typeof v3Focus === 'function') v3Focus(); } };
+  b.querySelector('[data-pa=look]').onclick = () => { if (W.key === st.cell){ selectRef(st.cell, r.k, true); centerOn(r); if (V3.on && typeof v3Focus === 'function') v3Focus(r); } };
 }
 
 // ----- another Objects list, with a filter of its own

@@ -97,7 +97,7 @@ function mxDoesRow(d, n){
   const K = MX.data.does.find(x => x.kind === d.kind) || {};
   let inner = '';
   // (when, whom, how likely: every step has them; some kinds only make sense at one time)
-  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', resurrect: 'land', aura: 'second', leech: 'second'}[d.kind];
+  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', resurrect: 'land', summon: 'land', aura: 'second', leech: 'second'}[d.kind];
   if (!d.when) d.when = fixedWhen || (['health', 'magicka', 'fatigue'].includes(d.kind) ? (d.per === 'once' ? 'land' : 'second') : 'land');
   const common = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;width:100%;margin-top:4px">
       ${fixedWhen ? `<span class="msg">${esc(MX_WHEN[fixedWhen])}${d.kind === 'scale' || d.kind === 'calm' || d.kind === 'frenzy' ? ', undone as it ends' : ''}</span>` : mxSel('when', n, MX_WHEN, d.when)}
@@ -146,7 +146,11 @@ function mxDoesRow(d, n){
       <span class="msg">z</span><input class="inp" type="number" data-mxd="z" data-n="${n}" value="${d.z || 0}" style="width:80px">
       ${W && W.key ? `<button class="btn sm" data-mxhere="${n}" title="The place open on the World map and the middle of its view">Here on the map</button>` : ''}`;
   } else if (d.kind === 'spawn'){
-    inner = `<div class="dd" style="flex:1"><input class="inp" id="mx-spawn-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="An object or creature… (search)" autocomplete="off"><div class="ddlist" id="mx-spawn-${n}-l"></div></div>`;
+    inner = `<div class="dd" style="flex:1"><input class="inp" id="mx-spawn-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="An object or creature… (search)" autocomplete="off" style="width:100%"><div class="ddlist" id="mx-spawn-${n}-l"></div></div>`;
+  } else if (d.kind === 'summon'){
+    inner = `${mxNum('count', n, d.count || 1, 60)}
+      <div class="dd" style="flex:1;min-width:320px"><input class="inp" id="mx-summon-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="A creature, person or random creature list… (search)" autocomplete="off" style="width:100%"><div class="ddlist" id="mx-summon-${n}-l"></div></div>
+      <span class="msg" style="width:100%">Beside the caster, on their side and following them, for as long as the effect lasts (give the spell a duration). They go when it ends, when the caster dies, or when it's cast again.</span>`;
   } else if (d.kind === 'global'){
     inner = `<div class="dd"><input class="inp" id="mx-glob-${n}" data-mxd="name" data-n="${n}" value="${esc(d.name || '')}" placeholder="A global variable… (search)" autocomplete="off" style="max-width:240px"><div class="ddlist" id="mx-glob-${n}-l"></div></div>
       <span class="msg">to</span><input class="inp" type="number" data-mxd="value" data-n="${n}" value="${d.value || 0}" style="width:90px">`;
@@ -225,7 +229,7 @@ function mxDraw(){
     keep(); const k = b.dataset.mxadd;
     f.does.push(['health', 'magicka', 'fatigue'].includes(k) ? {kind: k, sign: -1, when: 'second'} : k === 'teleport' ? {kind: k, cell: '', x: 0, y: 0, z: 0}
       : k === 'scale' ? {kind: k, factor: 2} : k === 'aura' ? {kind: k, sign: -1, stat: 'health', feet: 10} : k === 'leech' ? {kind: k, stat: 'health'}
-      : k === 'weather' ? {kind: k, weather: 'thunderstorm'} : k === 'transmute' ? {kind: k, pairs: [{from: '', to: ''}], count: 1} : {kind: k});
+      : k === 'weather' ? {kind: k, weather: 'thunderstorm'} : k === 'transmute' ? {kind: k, pairs: [{from: '', to: ''}], count: 1} : k === 'summon' ? {kind: k, count: 1} : {kind: k});
     mxDraw();
   });
   box.querySelectorAll('[data-mxhere]').forEach(b => b.onclick = () => {
@@ -235,6 +239,7 @@ function mxDraw(){
   });
   (f.does || []).forEach((d, n) => {
     if (d.kind === 'spawn' && $('#mx-spawn-' + n)) ddSearch('mx-spawn-' + n, 'CREA,NPC_,LEVC,STAT,ACTI,MISC,WEAP,ARMO,CLOT,LIGH,CONT,ALCH,INGR,BOOK', r => { d.id = r.id; $('#mx-spawn-' + n).value = r.id; });
+    if (d.kind === 'summon' && $('#mx-summon-' + n)) ddSearch('mx-summon-' + n, 'CREA,NPC_,LEVC', r => { d.id = r.id; $('#mx-summon-' + n).value = r.id; });
     if (d.kind === 'global' && $('#mx-glob-' + n)) ddSearch('mx-glob-' + n, 'GLOB', r => { d.name = r.id; $('#mx-glob-' + n).value = r.id; });
     if (d.kind === 'cast' && $('#mx-cast-' + n)) ddSearch('mx-cast-' + n, 'SPEL', r => { d.id = r.id; $('#mx-cast-' + n).value = r.id; });
     if (d.kind === 'transmute') (d.pairs || []).forEach((p, i) => {

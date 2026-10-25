@@ -13,7 +13,7 @@ NODE_TYPES = {b'NiNode', b'NiBSAnimationNode', b'NiBSParticleNode', b'NiBillboar
 GEOM_TYPES = {b'NiTriShape', b'NiTriStrips'}
 SKIP_SUBTREES = {b'RootCollisionNode', b'AvoidNode'}
 
-CACHE_VERSION = 4      # 3: the root node's transform ignored, as the game does; 4: a type name as extra-data text
+CACHE_VERSION = 5      # 3: the root node's transform ignored, as the game does; 4: a type name as extra-data text; 5: a root mesh keeps its transform
 _IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 
@@ -105,8 +105,8 @@ def bounds_from_nif(data):
             flags, (lR, lt, ls), p = _read_av(data, p)
             if flags & 1 and i != 0:
                 return                   # hidden
-            if i == 0:
-                lR, lt, ls = _IDENTITY, (0.0, 0.0, 0.0), 1.0     # (the game ignores the root node's own transform)
+            if i == 0 and typ in NODE_TYPES:
+                lR, lt, ls = _IDENTITY, (0.0, 0.0, 0.0), 1.0     # (the game ignores the root NODE's own transform; a root mesh keeps its own)
             nR = _mul(R, lR)
             nt = [t[k] + s * v for k, v in enumerate(_apply(R, lt))]
             ns = s * ls
@@ -242,11 +242,14 @@ def mesh_from_nif(data, max_verts=60000):
         _f, (lR, lt, ls), p2 = _read_av(data, p)
         if flags & 1 and i != 0:
             return
-        if i == 0:
-            # The game ignores the root node's own transform (Morrowind, and OpenMW for it). Measured on
+        if i == 0 and typ in NODE_TYPES:
+            # The game ignores the root NODE's own transform (Morrowind, and OpenMW for it). Measured on
             # Ald-ruhn, Sarethi Manor: in_redoran_l_3way_01's root is turned 180°, and only with that turn
             # ignored do its three-way pieces at x=0 open east onto the corner and three-way at x=512, as
             # the game's hall does. 268 of the game's placed models carry such a root transform.
+            # A model whose root is its mesh itself keeps its transform: contain_crate_01's root shape
+            # is shifted 32 down, and the game's own crates all stand with their origin 32 over the
+            # floor (the user's crates, laid with the shift ignored, sank 32 into the floor in game).
             lR, lt, ls = _IDENTITY, (0.0, 0.0, 0.0), 1.0
         # property refs sit just before the bounding-volume flag: re-read them
         q = q + 2 + 12 + 36 + 4 + 12

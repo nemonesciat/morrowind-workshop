@@ -945,6 +945,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(npc.autocalc(db, q.get('race', ''), q.get('cls', ''), int(q.get('level') or 1), q.get('female') == '1'))
             elif u.path == '/api/land/textures':
                 self._json(landscape.textures(db))
+            elif u.path == '/api/land/shadeinfo':
+                # what the game's shading near this cell is like (landshade.py)
+                import landshade
+                self._json(landshade.summary(db, int(q['gx']), int(q['gy'])))
             elif u.path == '/api/model':
                 self._json(model_for(q))
             elif u.path == '/api/file':
@@ -1120,6 +1124,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(groups.prefabs())
             elif u.path == '/api/items/options':
                 self._json(items.options(db))
+            elif u.path in ('/api/forge/options', '/api/forge/propose', '/api/forge/like'):
+                # the Forge: a new weapon or armour piece with the numbers the game gives its type and material
+                import gearsurvey
+                if u.path.endswith('options'):
+                    return self._json(gearsurvey.options(db))
+                if u.path.endswith('like'):
+                    it = gearsurvey._read(db, int(q.get('i', -1))) if q.get('i', '').lstrip('-').isdigit() else None
+                    return self._json({'type': it['type'], 'mat': it['mat'], 'i': it['i'], 'kind': it['kind']} if it else {'error': 'Not a weapon or armour piece.'}, 200 if it else 400)
+                bw = q.get('between')
+                between = (lambda p: (p[0], p[1], float(p[2])))(bw.split(',')) if bw else None
+                try:
+                    return self._json(gearsurvey.propose(db, q.get('kind'), q.get('type'), q.get('mat') or None, between))
+                except ValueError as e:
+                    return self._json({'error': str(e)}, 400)
+            elif u.path == '/api/spellgive/options':
+                # Give spells to people: who there is to pick from (spellgive.py)
+                import spellgive
+                self._json(spellgive.options(db))
             elif u.path == '/api/grass':
                 import grass
                 gx, gy = int(q.get('gx', 0)), int(q.get('gy', 0))
@@ -1847,6 +1869,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(mwscript.save(db, body.get('id'), body.get('text') or '', bool(body.get('create'))))
                 if u.path == '/api/npc/save':
                     return self._json(npc.save(db, body['id'], body['data']))
+                if u.path == '/api/settle':
+                    # what lies loose in a spot falls into place, as if with gravity (settle.py); the moves come
+                    # back to be made as one Undo (/api/group/move)
+                    import settle
+                    return self._json(settle.settle(db, body.get('cell') or '', body.get('at'), float(body.get('radius') or 200),
+                                                    body.get('refs') or None, float(body.get('max_drop') or 48)))
+                if u.path == '/api/land/shade':
+                    import landshade
+                    return self._json(landshade.shade(db, body.get('cells') or [], body.get('mode') or 'seams', body.get('strength', 1.0)))
                 if u.path == '/api/land/edit':
                     return self._json(landscape.edit(db, body.get('cells') or [], body.get('keep_objects', True)))
                 if u.path == '/api/group/move':
@@ -1881,6 +1912,27 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(plans.delete_plan(body.get('name', '')))
                 if u.path == '/api/items/create':
                     return self._json(items.create_item(db, body))
+                if u.path == '/api/forge/check':
+                    import gearsurvey
+                    bw = body.get('between')
+                    try:
+                        return self._json(gearsurvey.check(db, body.get('kind'), body.get('type'), body.get('mat') or None,
+                                                           body.get('stats') or {}, tuple(bw) if bw else None))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path.startswith('/api/spellgive/'):
+                    # Give spells to people: everyone who fits, in their records or by a script (spellgive.py)
+                    import spellgive
+                    act = u.path.rsplit('/', 1)[1]
+                    if act == 'preview':
+                        return self._json(spellgive.preview(db, body.get('spells') or [], body.get('filters') or {}))
+                    if act == 'give':
+                        return self._json(spellgive.give(db, body.get('spells') or [], body.get('filters') or {},
+                                                         body.get('mode') or 'records', body.get('label') or ''))
+                    if act == 'remove':
+                        return self._json(spellgive.remove_rule(db, int(body.get('n', -1))))
+                    if act == 'refresh':
+                        return self._json(spellgive.refresh(db))
                 if u.path == '/api/spells/create':
                     return self._json(items.create_spell(db, body))
                 if u.path == '/api/paths':
@@ -1968,7 +2020,8 @@ class Handler(BaseHTTPRequestHandler):
                     if body.get('add'):
                         # one more thing on the piece, everything on it kept
                         return self._json(furnish.furnish(db, body['cell'], piece=body['ref'], add=True, replace=False, seed=_random.randrange(1 << 30)))
-                    return self._json(furnish.furnish(db, body['cell'], piece=body['ref'], replace=True, seed=_random.randrange(1 << 30)))
+                    return self._json(furnish.furnish(db, body['cell'], piece=body['ref'], replace=True, seed=_random.randrange(1 << 30),
+                                                      books=bool(body.get('books'))))
                 if u.path == '/api/taste':
                     # mark one of the game's places as an example (or unmark it): the surveys that
                     # Auto-furnish goes by weigh it several times over, and run again in the background
@@ -2029,12 +2082,14 @@ class Handler(BaseHTTPRequestHandler):
                     # a dungeon (Dwemer ruin, cave, tomb, Daedric ruin) laid out, dressed, guarded and lived in as the
                     # game's own are (dwemer.py), one change
                     import dwemer
+                    # (loot, creatures, lived in and water may be slider numbers, 0 among them: not "or" defaults)
+                    got = lambda k, d: body.get(k) if body.get(k) not in (None, '') else d
                     return self._json(dwemer.build(db, body.get('name'), body.get('size') or 'medium', body.get('levels') or 'some',
-                                                   body.get('twist') or 'branching', body.get('loot') or 'usual', body.get('creatures') or 'usual',
+                                                   body.get('twist') or 'branching', got('loot', 'usual'), got('creatures', 'usual'),
                                                    entrance=body.get('entrance'), outside_door=body.get('door') or None,
                                                    seed=body.get('seed') if body.get('seed') not in (None, '') else None,
-                                                   occupants=body.get('occupants') or 'auto', kind=body.get('kind') or 'dwemer',
-                                                   water=body.get('water') or 'none'))
+                                                   occupants=got('occupants', 'auto'), kind=body.get('kind') or 'dwemer',
+                                                   water=got('water', 'none')))
                 if u.path == '/api/ruin/preview':
                     # the layout those choices make, for the Dungeon tool's plan (nothing is written)
                     import dwemer

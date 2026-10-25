@@ -89,7 +89,7 @@ class Scene:
         self.two.append(two)
         lo = [int(math.floor(min(w[k], w[k + 3], w[k + 6]) / G)) for k in range(3)]
         hi = [int(math.floor(max(w[k], w[k + 3], w[k + 6]) / G)) for k in range(3)]
-        if (hi[0] - lo[0] + 1) * (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1) > 4000:
+        if (hi[0] - lo[0] + 1) * (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1) > getattr(self, 'max_cells', 4000):
             return                                    # (a huge triangle: a ground plane or a sky, not a wall)
         grid = self.grid
         for ix in range(lo[0], hi[0] + 1):

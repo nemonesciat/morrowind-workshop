@@ -145,7 +145,7 @@ function renderGuide(){
   <p>While the game runs from the Workshop, the top shows <b>● Game linked</b>. Then:</p>
   <ul class="glist">
     <li>Edits you make in the Workshop appear in the game. Brand-new places and records need a restart of the game.</li>
-    <li><b>⌖ Jump to my character</b> shows where you are on the map; <b>Follow my character</b> on the map keeps up with you.</li>
+    <li><b>Me</b>, with the map pin (jump to my character) shows where you are on the map; <b>Follow my character</b> on the map keeps up with you.</li>
     <li>On the Dialogue page you can set quest stages, give items and change variables in the running game, and see which conditions are true right now.</li>
     <li>In the game, hold ${HELP_KEY('Shift')}: ${HELP_KEY('B')} build menu · ${HELP_KEY('J')} place the chosen object · ${HELP_KEY('G')} grab and move what you look at (mouse wheel turns it) ·
       ${HELP_KEY('K')} select it in the Workshop · ${HELP_KEY('Delete')} remove it · ${HELP_KEY('Z')} undo · ${HELP_KEY('X')} cancel.</li>
@@ -277,7 +277,7 @@ async function aboutModal(){
       <tr><td>Licence</td><td>© 2026 ${esc(a.credits.author)} · <a href="${esc(a.credits.license_url)}" target="_blank" rel="noopener">${esc(a.credits.license)}</a>: share and change it, with credit, but not for commercial purposes</td></tr>
       ${a.credits.github ? `<tr><td>Source</td><td><a href="${esc(a.credits.github)}" target="_blank" rel="noopener">${esc(a.credits.github.replace(/^https?:\/\//, ''))}</a></td></tr>` : ''}
     </table>` : ''}
-    <p class="msg" style="line-height:1.6">An editor for Morrowind mods with OpenMW. Not made by or affiliated with Bethesda Softworks or the OpenMW project.
+    <p class="msg" style="line-height:1.6">A workshop for Morrowind mods with OpenMW. Not made by or affiliated with Bethesda Softworks or the OpenMW project.
       Morrowind is a trademark of Bethesda Softworks / ZeniMax Media; the Workshop includes none of its files, it reads the ones you own.</p>
     <h3 style="margin-top:12px">Built with</h3>
     <table class="t" style="font-size:12.5px">${a.components.map((c, n) => `<tr><td><b>${esc(c.name)}</b> ${esc(c.version)}${c.by ? `<div class="msg">${esc(c.by)}</div>` : ''}</td>

@@ -1851,7 +1851,7 @@ def piece_info(db, cell_key, ref):
         return {'dressable': False, 'dressed': False, 'model': None, 'kind': None, 'dressings_known': 0}
     rid, tag = r['id'], r['type']
     fam_ = roomsurvey.family_of(db, rid, tag)
-    n = 0
+    n = nb = 0
     rng = random.Random(0)
     if fam_ == 'planter':
         import arrangesurvey
@@ -1865,9 +1865,12 @@ def piece_info(db, cell_key, ref):
     elif tag in ('STAT', 'ACTI', 'CONT', 'DOOR'):
         # (an activator or a hidden door with a furniture model's mesh takes the model's dressings: shelfsurvey)
         import shelfsurvey
-        n = len(shelfsurvey.survey(db, rid)['dressings'])
+        ds_ = shelfsurvey.survey(db, rid)['dressings']
+        n = len(ds_)
+        # (how many of them are mostly books: "Fill with books" shows when there are any)
+        nb = sum(1 for d in ds_ if d['objects'] and sum(1 for o in d['objects'] if o['kind'] == 'BOOK') >= 0.6 * len(d['objects']))
     dressed = bool(c) and any(v.get('on') == ref and not v.get('deleted') for v in c['refs'].values())
-    return {'dressable': n > 0, 'dressed': dressed, 'model': rid, 'kind': fam_, 'dressings_known': n}
+    return {'dressable': n > 0, 'dressed': dressed, 'model': rid, 'kind': fam_, 'dressings_known': n, 'book_dressings': nb if n else 0}
 
 
 def room_at(db, cell_key, at):
@@ -1941,7 +1944,7 @@ SKETCH_KINDS = ('bed', 'table', 'chair', 'bench', 'bookshelf', 'shelf', 'cupboar
 
 
 def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, replace=False, level=None, like=None, piece=None,
-            room=None, purpose=None, add=False, dress_room=False, commit=True, sketch=False):
+            room=None, purpose=None, add=False, dress_room=False, commit=True, sketch=False, books=False):
     """Fill rooms with furniture. plan: [{'id': room id, 'purpose': ...}] (all rooms, by their
     guessed purpose, if None). Everything goes in as one change. Returns what was placed. replace:
     first take out what Auto-furnish put here before (else the rooms are furnished on top of it).
@@ -2640,7 +2643,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
     # a book nor a series; the shelves fill out with other things. Libraries, shops and guilds are free.)
     book_budget = {'left': 3, 'titles': set(), 'stems': set()} if theme == 'house' else None
 
-    def dress(rec, purpose, min_z=None):
+    def dress(rec, purpose, min_z=None, fill_books=False):
         """Set a new bookshelf, shelf, table or counter out the way the game dresses that model (see
         shelfsurvey.py): the things of one of its real dressings, at the same spots on the same shelves,
         with books and dishes swapped, the odd end piece changed and now and then something interesting
@@ -2651,7 +2654,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         import shelfsurvey
         d = shelfsurvey.dressing(db, rec['id'], purpose, rng, books=fam.get('book') or [], theme=theme, used=dressings_used,
                                  cap=L['cap'] if L else None, rate_k=L['rate'] if L else 1.0, max_value=L['max_value'] if L else None,
-                                 band=L['band'] if L else 'comfortable', budget=book_budget)
+                                 band=L['band'] if L else 'comfortable', budget=book_budget, fill_books=fill_books)
         if d is None:
             return None
         if min_z is not None:
@@ -2687,6 +2690,13 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         # (a plant is sunk into a planter's soil or stands up on a rock: the soil within 30 under or 40
         # over its bottom will do, where a shelf's thing must rest on the board within 22)
         is_pl = roomsurvey.family_of(db, rec['id'], rec['type']) == 'planter'
+        if own.tris and not is_pl and not WINERACK.search(rec['id'].lower()):
+            # every book under the board above it, measured on the piece's own mesh (shelfsurvey.fit_books:
+            # a shorter book swapped in, a tall one laid down flat or piled, else left out)
+            def room_at(x, y, bottom):
+                wx_, wy_ = shelfsurvey.to_world(x, y, rz)
+                return shelfsurvey.board_over(own, px + wx_, py + wy_, pz + bottom)
+            d = shelfsurvey.fit_books(db, d, rec['b'], room_at, fam.get('book') or [], rng, max_value=L['max_value'] if L else None)
         kept = []
         for o in d:
             wx, wy = shelfsurvey.to_world(o['x'], o['y'], rz)
@@ -2833,6 +2843,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 rw.append((r_, w2))
             if rw is None:
                 continue
+            if o['kind'] == 'BOOK' and own.tris:
+                # (never a book taller than the room under the board above it)
+                up_ = shelfsurvey.board_over(own, X, Y, wb[2])
+                if up_ is not None and wb[5] - wb[2] > up_ - 1.5:
+                    continue
             if o['kind'] == 'BOOK':
                 pose, d_ = shelfsurvey.book_pose(db, bounds_, o)
                 if pose == 'lean':
@@ -5922,6 +5937,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             elif fam_ == 'shrine':
                 import shrinesurvey
                 got_ = dress_shrine(prec, shrinesurvey.composition(db, prec['id'], rng))
+            elif books:
+                # ("Fill with books": the model's dressings that are mostly books, whatever the room)
+                got_ = [o['id'] for o in (dress(prec, purpose, fill_books=True) or [])]
             else:
                 # (a table or a desk dressed again draws a whole scene as often as the game's tables of the
                 # kind carry one: the scribe's desk, the alchemist's bench; else the model's everyday dressing)

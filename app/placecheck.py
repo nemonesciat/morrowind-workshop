@@ -37,6 +37,7 @@ from collections import Counter
 import arrangesurvey
 import fixit
 import furnish
+import hangsurvey
 import hearthsurvey
 import kits
 import mapdata
@@ -64,6 +65,7 @@ KINDS = [
     ('chair', 'Chairs with nothing to sit at', 'A chair with no table, desk, counter or bath within reach.'),
     ('nowall', 'Hung on nothing', 'A shelf, bookshelf, cupboard or tapestry with no wall behind it.'),
     ('light', 'Lights hung from nothing', 'A hanging light with no ceiling piece above it.'),
+    ('hung', 'Hanging things hung from nothing', 'Something the game hangs from a ceiling or a beam (an anchor, a planter on its chain, a sign) hanging in the air well below anything to hang from.'),
     ('water', 'Water with no bath', 'A bath\'s water sheet (or a flame) with nothing it belongs in under it.'),
     ('nohearth', 'Fire things with no hearth', 'A log fire, coals, fire tools or a tool stand with no hearth, fireplace or oven within reach.'),
     ('smithfire', 'Smith\'s tools with no forge', 'An anvil or a smith\'s bellows with no forge, coals or fire within reach to heat the metal.'),
@@ -324,9 +326,12 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
         in_planter = x.get('_on_planter') or fam != 'planter' and shelfsurvey.GARDEN.search(low) and any(
             o is not x and o['_box'] and o['_fam'] == 'planter' and o['_box'][0] - 12 <= x['p'][0] <= o['_box'][3] + 12
             and o['_box'][1] - 12 <= x['p'][1] <= o['_box'][4] + 12 and o['_box'][2] - 30 <= bottom <= o['_box'][5] + 160 for o in inside)
+        hung_model = x['type'] in THING_TYPES and not x.get('arch') and hangsurvey.hangs(db, hangsurvey.model_of(db, x), x['id'])
         if not candle and x['type'] in THING_TYPES and not in_planter:
             cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
-            if not HUNG.search(low):
+            # (a thing the game hangs is not "floating": an anchor or a sign in the air is hung; whether from
+            # anything is the 'hung' check's)
+            if not HUNG.search(low) and not hung_model:
                 h = sc.nearest((cx, cy, bottom + 8), (0.0, 0.0, -1.0), 400)
                 drop = (h[0] - 8) if h is not None else None
                 # (a hearth's mantel and its shelves stand well over its box top: the pot or the broom the
@@ -379,6 +384,29 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                         raise_ = gap - hanggap.usual_gap(db, x['id'])
                         out.append(_issue('light', x, '%s hangs %.0f below the ceiling: its chain doesn\'t reach' % (x.get('name') or x['id'], gap),
                                           room, [_move(x, 0, 0, raise_, 'Raise it to the ceiling'), _remove(x)]))
+        # --- hanging decor hung from nothing (hangsurvey.py): a model the game hangs from a ceiling or a beam,
+        #     hanging here in the air far below anything to hang from (the user's anchor, "isn't attached to the
+        #     ceiling"); raised to the surface over it, at the gap the game hangs that model
+        # (not a wall's things: a shelf, a sconce, a rack, a banner hangs on its wall, the ceiling over it by chance)
+        # (nor what spans or climbs: ivy and vines up a wall, a clothes line strung wall to wall, a web, a mist;
+        # 27 in 100 of the game's own places before these were left out)
+        on_its_wall = fam in ('shelf', 'bookshelf', 'cupboard') or re.search(
+            r'sconce|shelf|rack|hook|tapestr|banner|painting|picture|portrait|sign|flora|ivy|vine|moss|root|mist|fog|smoke|web|rope|line|cloth', low)
+        # (nor armour, weapons, clothes: shown on their pegs and stands)
+        cg = hangsurvey.ceiling_gap(db, hangsurvey.model_of(db, x), x['id']) if hung_model and not on_its_wall and x['type'] not in ('ARMO', 'WEAP', 'CLOT') \
+            and not (x['type'] == 'LIGH' and HANG_LIGHT.search(low)) else None
+        if cg:
+            cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
+            down = sc.nearest((cx, cy, bottom + 8), (0.0, 0.0, -1.0), 400)
+            if down is None or down[0] - 8 > 24:            # (hung, not set down on something)
+                up = sc.nearest((cx, cy, bx[5] + 2), (0.0, 0.0, 1.0), 800)
+                gap = (up[0] + 2) if up is not None else None
+                p50, p90 = cg
+                if gap is None:
+                    out.append(_issue('hung', x, '%s hangs from nothing (nothing over it to hang from)' % (x.get('name') or x['id']), room, [_remove(x)]))
+                elif gap > max(p90, p50 + 12) and gap < 400:
+                    out.append(_issue('hung', x, '%s hangs %.0f below the ceiling, from nothing (the game hangs it %.0f below)' % (x.get('name') or x['id'], gap, p50),
+                                      room, [_move(x, 0, 0, gap - p50, 'Hang it from the beam above'), _remove(x)]))
         # --- a chair with nothing to sit at
         if fam == 'chair':
             # (a stool at the hearth is sat on too: the game's fire scenes, a stool either side of the fireplace)

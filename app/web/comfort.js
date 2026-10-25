@@ -227,14 +227,16 @@ function cfPasteItem(at){
 function cfMenuAt(e, hit, at, locked){
   if (!cfWorldOn() || !W.key) return;
   if (W.mode === 'paths'){ peMenu(e); return; }
-  const items = [], pt = {x: e.clientX, y: e.clientY};
+  const items = [], pt = {x: e.clientX, y: e.clientY}, tok = {};
   const sep = () => { if (items.length && items[items.length - 1] !== '-') items.push('-'); };
   const head = t => items.push({label: t, disabled: true, head: true});
   if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)){
     head(`${W.multi.size} objects`);
     items.push({label: '⧉ Copy', act: () => groupDo('copy')}, {label: 'Duplicate', act: () => groupDo('dup')},
       {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⟲ Turn 90° the other way', act: () => groupDo('turnback')},
-      {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⇄ Replace them with…', act: () => cfRun('replace')},
+      {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⤡ Tilt them…', act: () => cfRun('tilt')},
+      {label: '🫳 Settle them (let them fall into place)', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0]}, `${W.multi.size} objects`)},
+      {label: '⇄ Replace them with…', act: () => cfRun('replace')},
       {label: '🧩 Save as a prefab…', act: () => { const f = $('#g-prefabname'); if (f) f.value = ''; groupDo('prefab'); }});
     if (W.clip) items.push(cfPasteItem(null));
     if (typeof twObjectItems === 'function') items.push(...twObjectItems(null, null));
@@ -252,10 +254,14 @@ function cfMenuAt(e, hit, at, locked){
     sep();
     items.push({label: '⧉ Copy', act: () => groupDo('copy')});
     if (W.clip) items.push(cfPasteItem(at));
-    items.push({label: 'Duplicate', act: () => selAction('dup')}, {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⤢ Scale…', act: () => cfRun('scale')});
+    items.push({label: 'Duplicate', act: () => selAction('dup')}, {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⤡ Tilt…', act: () => cfRun('tilt')}, {label: '⤢ Scale…', act: () => cfRun('scale')});
     // (another view open: link this door with one there, send or move this there; twowin.js)
     if (typeof twObjectItems === 'function') items.push(...twObjectItems(ck, r));
     if (V3.on) items.push({label: '⤓ Set it down on what\'s below', act: () => v3DropToFloor()});
+    // (gravity for a moment: the thing itself, or a piece of furniture and everything lying on it; settle.py)
+    if (['STAT', 'ACTI', 'CONT'].includes(r.type) && !r.arch && r.b && Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) > 140)
+      items.push({label: '🫳 Settle everything on it (let it fall into place)', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20}, 'what lies on ' + (r.name || r.id))});
+    else if (!r.arch) items.push({label: '🫳 Settle it (let it fall into place)', act: () => cfSettle({cell: ck, refs: [r.k]}, r.name || r.id)});
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
     items.push({label: `Select all the ${r.name || r.id} here`, act: () => cfSelectLike(r)});
@@ -280,8 +286,9 @@ function cfMenuAt(e, hit, at, locked){
         sep();
         items.push({label: d.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id); }});
         items.push({label: '➕ Add one thing (keeps what is on it; again for another)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); addOne(ck, r.k, r.name || r.id); }});
+        if (d.book_dressings) items.push({label: '📚 Fill with books (a shelf of books, whatever the room)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id, true); }});
       }
-      else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } }); }
+      else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } }); }
     }
     if (['STAT', 'ACTI', 'CONT', 'DOOR', 'LIGH', 'MISC'].includes(r.type)){
       // secret entrances (web/secretdoor.js); a light (a log pile) or a misc thing with a model can be one too
@@ -304,6 +311,8 @@ function cfMenuAt(e, hit, at, locked){
     if (r.arch) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
     if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(r.type) && typeof asShow === 'function') items.push({label: '🧩 Model & textures…', act: () => asShow(r.ri, (r.name || r.id) + ': model & textures')});
     if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(r.type)) items.push({label: '🎨 Retexture…', act: () => selAction('retex')});
+    // (a new piece of this kind with the game's numbers for its material; forge.js)
+    if ((r.type === 'WEAP' || r.type === 'ARMO') && typeof forgeShow === 'function') items.push({label: '⚒ Forge a new piece like this…', act: () => forgeShow({kind: r.type === 'WEAP' ? 'weapon' : 'armor', like: r.ri})});
     items.push({label: '🔊 Add a sound…', act: () => selAction('sound')});
     sep();
     if (r.mine) items.push({label: '↶ Undo my changes to it', act: () => selAction('restore')});
@@ -319,6 +328,7 @@ function cfMenuAt(e, hit, at, locked){
     if (typeof QOL !== 'undefined' && QOL.back.length) items.push({label: `← Back to ${QOL.back[QOL.back.length - 1].name} (Alt+←)`, act: () => qolBack()});
     if (W.hide.size) items.push({label: `Show the ${W.hide.size} hidden again (Alt+H)`, act: () => cfRun('unhide')});
     if (W.clip) items.push(cfPasteItem(at));
+    if (at) items.push({label: '🫳 Settle what\'s loose here (let it fall into place)…', act: () => cfSettleAsk(at)});
     // (outdoors: a house stacked as a volume and fitted with the game's buildings; prefabplan.js)
     if (W.ext && typeof pfOpen === 'function') items.push({label: '🏗 Plan a prefab…', act: () => pfOpen()});
     if (at) items.push({label: '▶ Play here', act: () => playHere({cell: cellKeyAt(at[0], at[1]), x: at[0], y: at[1], z: V3.on && at[2] != null ? at[2] + 60 : groundZ(at[0], at[1]) + (W.ext ? 60 : 40), rz: 0})});
@@ -326,7 +336,19 @@ function cfMenuAt(e, hit, at, locked){
     if (W.info && W.info.interior && locked && locked[1].arch && typeof fixhereMenu === 'function') items.push({label: `🧱 Fix here: what the game stands at ${locked[1].name || locked[1].id}…`, act: () => fixhereMenu(locked[0], locked[1].k, pt, null)});
     if (W.info && W.info.interior && locked && locked[1].arch && typeof extendStart === 'function') items.push({label: '➕ Add a room through this wall…', act: () => extendStart(locked[0], locked[1].k, at ? [at[0], at[1], V3.on && at[2] != null ? at[2] : null] : null)});
     if (W.info && W.info.interior && typeof extendMode === 'function') items.push({label: (typeof EXM !== 'undefined' && EXM.on) ? '⬚ Leave Extend mode' : '⬚ Extend by piece (open edges lit, the game\'s candidates)…', act: () => extendMode(!(typeof EXM !== 'undefined' && EXM.on), W.info.key, locked && locked[1].arch ? {ref: locked[1].k} : null)});
-    if (W.info && W.info.interior && locked && locked[1].arch) {}
+    // (a locked piece that takes a dressing, a Daedric platform, a built-in shelf: dressed without unlocking
+    // it, the user: "even if lock walls and buildings is checked, it should still be possible to dress
+    // surfaces that can take it")
+    if (locked && locked[1].arch && ['STAT', 'ACTI', 'CONT'].includes(locked[1].type) && typeof dressProbe === 'function'){
+      const [lck, lr] = locked, ld = W.dressable && W.dressable[dressKey(lck, lr.k)];
+      if (ld && ld.dressable){
+        sep();
+        items.push({label: ld.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => dressPiece(lck, lr.k, lr.name || lr.id)});
+        if (ld.book_dressings) items.push({label: '📚 Fill with books (a shelf of books, whatever the room)', act: () => dressPiece(lck, lr.k, lr.name || lr.id, true)});
+        items.push({label: '➕ Add one thing (keeps what is on it; again for another)', act: () => addOne(lck, lr.k, lr.name || lr.id)});
+      }
+      else { const p = dressProbe(lck, lr); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } }); }
+    }
     else if (W.info && W.info.interior && at && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix this edge: what the game stands here…', act: () => fixhereMenu(W.info.key, null, pt, [at[0], at[1], V3.on && at[2] != null ? at[2] : null])});
     if (W.info && W.info.ruin && typeof ruinAgain === 'function') items.push({label: '🎲 Make this place again (a new layout)', act: () => ruinAgain(W.info.key)});
     if (W.info && W.info.interior) items.push({label: '🔧 Find gaps here', act: () => fixitOpen(W.info.key)}, {label: '🩺 Check this place', act: () => placecheckOpen(W.info.key)});
@@ -354,7 +376,9 @@ function cfMenuAt(e, hit, at, locked){
       if (ri.tiles && !ri.traced && typeof extendRemoveRoom === 'function') items.push({label: `✂ Remove the ${nm} (its pieces and furniture; the wall closes again)`, act: () => extendRemoveRoom(rck, ri.room, nm)});
     } else {
       const p = roomProbe(rck, spot);
-      if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected){ cfMenuOpen.remove(); cfMenuAt(e, hit, at); } });
+      // (the menu drawn again with everything it was given: the locked wall under the mouse too, or its
+      // "Fix here" and "Add a room through this wall" went missing whenever the room's answer came late)
+      if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } });
     }
   }
   // (the grid, put where you clicked: level on a floor, upright along a wall; world3d.js)
@@ -364,12 +388,42 @@ function cfMenuAt(e, hit, at, locked){
   }
   // (this view in a second window, whatever was clicked; twowin.js)
   if (typeof twHereItems === 'function'){ const tw = twHereItems(); if (tw.length){ sep(); items.push(...tw); } }
+  // (what other parts of the Workshop add: Create here, Populate; each sorted into its group like the rest)
+  for (const f of CF_MENU_MORE){ try { items.push(...(f(e, hit, at, locked) || [])); } catch (err) {} }
   while (items[items.length - 1] === '-') items.pop();
-  const m = pnlMenu(pt, items);
+  // the kind of thing right-clicked, for the menu's quick actions (ctxmenu.js)
+  const r_ = hit && hit[1];
+  const kind = !hit ? (locked && locked[1].arch ? 'piece' : 'spot') : (W.multi.size > 1 && inMulti(hit[0], r_.k)) ? 'group'
+    : ['DOOR', 'NPC_', 'CREA'].includes(r_.type) ? r_.type : r_.arch ? 'piece'
+    : (['STAT', 'ACTI', 'CONT'].includes(r_.type) && r_.b && Math.max(r_.b[3] - r_.b[0], r_.b[4] - r_.b[1]) * (r_.s || 1) > 140) ? 'furniture'
+    : ['WEAP', 'ARMO', 'CLOT', 'MISC', 'BOOK', 'ALCH', 'INGR', 'APPA', 'LIGH'].includes(r_.type) ? 'item' : 'thing';
+  const m = typeof cmMenu === 'function' ? cmMenu(pt, items, {kind}) : pnlMenu(pt, items);
+  m._tok = tok;                    // (a late answer redraws only the menu it was asked for)
   cfMenuOpen = m;
-  m.querySelectorAll('button').forEach((b, n) => { const it = items.filter(x => x !== '-')[n]; if (it && it.head){ b.className = 'phd'; } });
+  if (typeof cmMenu !== 'function') m.querySelectorAll('button').forEach((b, n) => { const it = items.filter(x => x !== '-')[n]; if (it && it.head){ b.className = 'phd'; } });
 }
+// (functions (e, hit, at, locked) → entries, added to the right-click menu by other parts of the Workshop)
+const CF_MENU_MORE = [];
 let cfMenuOpen = null;      // (the right-click menu showing now, to rebuild when a late answer adds an entry)
+
+// Settle (settle.py): loose things fall onto what's under them, rise out of what they're sunk into, are
+// nudged back over what holds them and apart from each other, by their real shapes. One Undo.
+async function cfSettle(q, what){
+  if (!await needProject()) return;
+  toast('Settling ' + what + '…');
+  try {
+    const r = await post('/api/settle', Object.assign({cell: W.key}, q));
+    const R_ = r.report || {};
+    if (!r.moves.length) return toast(R_.note || `Everything there rests as it is (${R_.n || 0} looked at).`);
+    const bits = [R_.dropped && `${R_.dropped} dropped`, R_.raised && `${R_.raised} lifted out of what they were sunk in`, R_.nudged && `${R_.nudged} nudged back over what holds them`, R_.apart && `${R_.apart} moved apart`].filter(Boolean);
+    await groupAction('/api/group/move', {moves: r.moves}, `Settled ${r.moves.length} of ${R_.n} things (${bits.join(', ')})`);
+  } catch (e){ toast(e.message, true); }
+}
+// how far round the spot to settle
+function cfSettleAsk(at){
+  const sizes = [['A small spot (a table top)', 90], ['This corner (2 m)', 200], ['The room around (5 m)', 500], ['The whole place', 99999]];
+  pnlMenu(QOL_PT || {x: innerWidth / 2, y: innerHeight / 2}, sizes.map(([l, rad]) => ({label: l, act: () => cfSettle({at: [at[0], at[1], V3.on && at[2] != null ? at[2] : null], radius: rad}, l.toLowerCase())})));
+}
 function cfRun(id){ const a = CF_ACT.find(x => x.id === id); if (a) a.run(); }
 
 // the flat map, and the object lists in the panels

@@ -16,6 +16,22 @@ async function navGo(view, sel, text, missing){
   }
   toast(missing || `"${text || sel}" isn't there on this page just now.`, true);
 }
+// a kind of thing to make, picked straight away (the cards' own onclick does the same): over the 3D view
+// Create comes up as a window with no cards to click, and the user saw '"[data-ck="ruin"]" isn't there'
+function navCreate(k){
+  // (a page that can be a window comes up as one over the World map's view, as navGo has it)
+  const open = view => (typeof VW_HOST !== 'undefined' && VW_HOST[view] && typeof cfWorldOn === 'function' && cfWorldOn()) ? vwRun(view, () => showView(view)) : showView(view);
+  // (the cards that open a page of their own, as bindForm's)
+  if (k === 'forge' && typeof forgeShow === 'function') return forgeShow();
+  if (k === 'givespell' && typeof sgShow === 'function') return sgShow();
+  if (k === 'merge' && typeof mergeModal === 'function') return mergeModal();
+  if (k === 'lists'){ LV.id = null; LV.data = null; return open('lists'); }
+  if (k === 'effect'){ MX.form = null; return open('myeff'); }
+  if (k === 'itemed'){ IE.id = null; IE.data = null; return open('itemed'); }
+  CR.kind = k; CR.items = []; CR.idEdited = false;
+  open('createv');
+  if (typeof renderCreate === 'function') renderCreate();
+}
 function navType(tag){
   showView('browse'); S.types = tag ? [tag] : []; buildSide(); runSearch();
 }
@@ -42,7 +58,7 @@ const NAV_MENU = {
     {label: '▤ Panels and layouts…', act: () => { showView('world'); cfRun('panels'); }}],
   // (the Create page's own groups of cards, so a new card is on the list as soon as it is on the page)
   createv: () => CR_GROUPS.flatMap((g, n) => [...(n ? ['-'] : []),
-    ...g[1].filter(k => CR_CARDS[k]).map(k => ({label: CR_CARDS[k][0] + ' ' + CR_CARDS[k][1], act: () => navGo('createv', `[data-ck="${k}"]`)}))]),
+    ...g[1].filter(k => CR_CARDS[k]).map(k => ({label: CR_CARDS[k][0] + ' ' + CR_CARDS[k][1], act: () => navCreate(k)}))]),
   library: () => [
     {label: 'Add models, pictures or sounds…', act: () => navGo('library', '#lib-pick')},
     {label: 'Add a folder…', act: () => navGo('library', '#lib-pickdir')}, '-',

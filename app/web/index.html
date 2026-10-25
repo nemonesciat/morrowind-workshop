@@ -48,6 +48,9 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 .hdr-row{container-type:inline-size}
 .hdr-row .hdr-right{margin-left:0;flex-wrap:nowrap;min-width:0}
 .btn.ico{min-width:32px;padding-left:0;padding-right:0;text-align:center}
+/* (the jump-to-character button: a pin and a word, so room either side and the two centred on one line) */
+#jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
+#jumpme svg{flex:none;display:block}
 @container (max-width:720px){#togetherbtn .tl{display:none}}
 @container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl{display:none}}
 @container (max-width:500px){#aibtn .tl{display:none}}
@@ -706,7 +709,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   </div>
   <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
   </div>
-  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character">⌖</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
+  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Getting started</b><small>What the Workshop does and how to make your first mod.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
@@ -2787,12 +2790,14 @@ function renderWside(){
       <div style="display:flex;gap:6px;margin-top:6px"><input class="inp" id="g-prefabname" placeholder="e.g. Market stall, Alchemist's corner"><button class="btn sm primary" data-ga="prefab">Save</button></div>`;
   } else if (sel){
     const deg = v => ((v * 180 / Math.PI) % 360 + 360) % 360;
+    const tilt = v => (Math.round((((v || 0) * 180 / Math.PI + 540) % 360 - 180) * 10) / 10).toString();      // (−180 to 180: level is 0)
     h += `<div class="selcard"><div id="w-selpic" title="Click to turn it around in 3D">${thumbImg(sel.id, sel.type, 160)}</div><div style="min-width:0">
         <div style="font-weight:600">${sel.ri != null ? `<span class="lnk" data-rec="${sel.ri}">${esc(sel.name || sel.id)}</span>` : esc(sel.name || sel.id)}</div>
         <div class="msg" style="word-break:break-all">${esc(sel.id)}</div>
         <div class="msg">${esc(S.typeLabels[sel.type] || 'unknown type')} · ${sel.mine ? '<span class="mine">your mod</span>' : 'from ' + esc(sel.src)}</div></div></div>
       <div class="xyz"><div><label>X</label><input class="inp" id="s-x" value="${sel.p[0].toFixed(1)}"></div><div><label>Y</label><input class="inp" id="s-y" value="${sel.p[1].toFixed(1)}"></div><div><label>Height</label><input class="inp" id="s-z" value="${sel.p[2].toFixed(1)}"></div></div>
-      <div class="two"><div><label>Turn (degrees)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div></div>
+      <div class="xyz"><div><label>Turn (°)</label><input class="inp" id="s-r" value="${deg(sel.p[5]).toFixed(0)}"></div><div><label title="Leaning forwards (about X)">Tilt fwd (°)</label><input class="inp" id="s-tx" value="${tilt(sel.p[3])}"></div><div><label title="Leaning sideways (about Y)">Tilt side (°)</label><input class="inp" id="s-ty" value="${tilt(sel.p[4])}"></div></div>
+      <div class="two"><div><label>Scale</label><input class="inp" id="s-s" value="${sel.s}"></div><div></div></div>
       <div class="actions"><button class="btn sm primary" data-sa="apply">Apply</button><button class="btn sm" data-sa="dup">Duplicate</button><button class="btn sm" data-ga="copy" title="Ctrl+C, then Ctrl+V to paste it anywhere">⧉ Copy</button><button class="btn sm danger" data-sa="delete">Delete</button>${['STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'INGR'].includes(sel.type) ? '<button class="btn sm" data-sa="brush" title="Put it on one of your own scatter brushes">🌿 Add to brush</button>' : ''}${['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(sel.type) ? '<button class="btn sm" data-sa="retex" title="A new object like this one, with your own pictures">🎨 Retexture</button>' : ''}<button class="btn sm" data-sa="sound" title="A sound from your Library, playing over and over where this stands">🔊 Add a sound</button>${sel.arch ? '<button class="btn sm" data-sa="variants" title="Other pieces of this building style that fit the same spot">↻ Other pieces</button>' : ''}${sel.mine ? `<button class="btn sm" data-sa="restore">Undo</button>` : ''}<span id="w-dress"></span>${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="talk" title="What they say: greetings, topics, quests">💬 Dialogue</button>' : ''}${sel.type === 'NPC_' || sel.type === 'CREA' ? '<button class="btn sm" data-sa="char" title="Looks, stats, behaviour, services, inventory">' + (sel.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character') + '</button>' : ''}</div>
       <div class="dd" style="margin-top:10px"><input class="inp" id="w-swap" placeholder="Swap for… (search for a replacement)" autocomplete="off"><div class="ddlist" id="w-swap-l"></div></div>
       <div id="w-props" style="margin-top:8px"></div>
@@ -3255,7 +3260,8 @@ function dressKey(ck, k){ return ck + '|' + k; }
 function dressButtonHtml(d){
   if (!d || !d.dressable) return '';
   return `<button class="btn sm" data-sa="dress" title="${esc(d.dressed ? 'Take its dressing off and lay a fresh one, drawn from the game\'s ' + d.dressings_known + ' dressings of this model' : 'Put on it what the game puts on this model (' + d.dressings_known + ' dressings seen); one undoable change')}">${d.dressed ? '🎲 Dress again' : '🪄 Dress this (the game\'s way)'}</button>` +
-    `<button class="btn sm" data-sa="addone" title="One more thing the game stands on this model, at a free spot, keeping all that is on it; press again for another">➕ Add one thing</button>`;
+    `<button class="btn sm" data-sa="addone" title="One more thing the game stands on this model, at a free spot, keeping all that is on it; press again for another">➕ Add one thing</button>` +
+    (d.book_dressings ? `<button class="btn sm" data-sa="books" title="A shelf of books: one of the game's ${d.book_dressings} dressings of this model that are mostly books, whatever the room">📚 Fill with books</button>` : '');
 }
 async function addOne(ck, k, name){
   try {
@@ -3282,11 +3288,11 @@ function dressProbe(ck, sel){
   })();
   return W.dressing[key];
 }
-async function dressPiece(ck, k, name){
+async function dressPiece(ck, k, name, books){
   try {
-    const m = await post('/api/furnish/piece', {cell: ck, ref: k, replace: true});
+    const m = await post('/api/furnish/piece', {cell: ck, ref: k, replace: true, books: books ? 1 : 0});
     delete W.dressable[dressKey(ck, k)];
-    toast((m.removed ? 'Took ' + m.removed + ' things off and ' : '') + 'laid ' + m.placed + ' on ' + (name || m.model) + ' (one of the game\'s ' + m.dressings_known + ' dressings of it)');
+    toast((m.removed ? 'Took ' + m.removed + ' things off and ' : '') + 'laid ' + m.placed + ' on ' + (name || m.model) + (books ? ' (a shelf of books, as the game fills it)' : ' (one of the game\'s ' + m.dressings_known + ' dressings of it)'));
     await refreshAfterEdits();
     if (findRef(ck, k)) selectRef(ck, k, true);
   } catch (err){ toast(err.message, true); }
@@ -3333,6 +3339,7 @@ async function selAction(a){
   const sel = W.sel && findRef(W.sel.cell, W.sel.k); if (!sel) return;
   if (a === 'dress'){ if (!await needProject()) return; return dressPiece(W.sel.cell, sel.k, sel.name || sel.id); }
   if (a === 'addone'){ if (!await needProject()) return; return addOne(W.sel.cell, sel.k, sel.name || sel.id); }
+  if (a === 'books'){ if (!await needProject()) return; return dressPiece(W.sel.cell, sel.k, sel.name || sel.id, true); }
   if (a === 'talk') return openCharacterDialogue(sel.id);
   if (a === 'char') return cOpen(sel.id);
   if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
@@ -3364,8 +3371,9 @@ async function selAction(a){
   if (a === 'apply'){
     const num = id => parseFloat($('#' + id).value);
     const p = sel.p.slice(); p[0] = num('s-x'); p[1] = num('s-y'); p[2] = num('s-z'); p[5] = num('s-r') * Math.PI / 180;
+    p[3] = num('s-tx') * Math.PI / 180; p[4] = num('s-ty') * Math.PI / 180;
     const s = num('s-s');
-    if ([p[0], p[1], p[2], p[5], s].some(isNaN)) return toast('Please enter numbers only', true);
+    if ([p[0], p[1], p[2], p[3], p[4], p[5], s].some(isNaN)) return toast('Please enter numbers only', true);
     await refAction('/api/ref/move', {cell: ck, ref: sel.k, p, s}, ck, sel.k, 'Updated ' + (sel.name || sel.id));
   } else if (a === 'dup'){
     const p = sel.p.slice(); p[0] += 64; p[1] -= 64;
@@ -3514,7 +3522,7 @@ async function renderCreate(){
     reportClientError('Create form "' + CR.kind + '": ' + (formErr.stack || formErr), 'renderCreate');
     const rb = $('#cr-reset');
     if (rb) rb.onclick = () => { try { localStorage.removeItem('ws-plan'); } catch (e){} CR.plan = null; CR.items = []; CR.opts = null; CR.kind = null; renderCreate(); };
-    document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { CR.kind = b.dataset.ck; CR.items = []; renderCreate(); });
+    document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'forge' && typeof forgeShow === 'function') return forgeShow(); if (b.dataset.ck === 'givespell' && typeof sgShow === 'function') return sgShow(); CR.kind = b.dataset.ck; CR.items = []; renderCreate(); });
     return;
   }
   try { bindForm(); }
@@ -3528,16 +3536,18 @@ const CR_CARDS = {
   npc: ['🧍', 'New NPC', 'A townsperson, quest character, merchant or guard, dressed the way the game\'s own people of their race and class are.', 'A person'],
   container: ['🧰', 'Container with contents', 'A chest, crate, barrel or sack, filled with what you choose, locked and owned if you like.', 'In a place'],
   item: ['🗡', 'New item', 'A weapon, armor, clothing, potion, tool or other item, started from one you pick. Enchant it if you like.', 'A thing'],
+  forge: ['⚒', 'Forge a weapon or armour', 'Pick what it is and its material: the Workshop gives it the numbers the game gives that kind of piece, and says when yours go beyond the game.', 'A thing'],
   book: ['📜', 'Note, letter or book', 'Something to read in game, in your own words, placed somewhere or given to someone.', 'A thing'],
   spell: ['✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone, or to the player.', 'Magic'],
   lists: ['🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.', 'A list'],
   effect: ['🌀', 'New magic effect', 'An effect of your own for spells, enchantments and potions: it looks like one of the game\'s and does what you pick (OpenMW 0.50 or newer).', 'Magic'],
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
+  givespell: ['🪄', 'Give spells to people', 'Teach spells to everyone who fits: by race, class, faction, a spell they know or a skill, in the regions or towns you pick. In their records, or by a script that leaves them untouched.', 'Magic'],
   merge: ['⊕', 'Merge another mod into this one', 'Everything another of your mods holds (its places, objects, records and scripts) added to this mod. The other mod is left as it is; this mod\'s Undo history starts afresh (a backup is kept).', 'A change'],
 };
-const CR_GROUPS = [['Make something new', ['build', 'ruin', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'],
+const CR_GROUPS = [['Make something new', ['build', 'ruin', 'npc', 'container', 'item', 'forge', 'book', 'spell', 'effect', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
-                   ['Change something that exists', ['itemed', 'merge']]];
+                   ['Change something that exists', ['itemed', 'givespell', 'merge']]];
 // the rest of a form, folded away under a line
 function moreHtml(label, inner){ return `<details class="cmore"><summary>${esc(label)}</summary><div class="frow">${inner}</div></details>`; }
 function chk(id, label, on, title){ return `<label class="msg" style="display:flex;gap:6px;align-items:center" ${title ? `title="${esc(title)}"` : ''}><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`; }
@@ -3720,7 +3730,10 @@ function bindForm(){
   document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'lists'){ LV.id = null; LV.data = null; showView('lists'); return; }
     if (b.dataset.ck === 'effect'){ MX.form = null; showView('myeff'); return; }
     if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; }
-    if (b.dataset.ck === 'merge'){ mergeModal(); return; } CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false;
+    if (b.dataset.ck === 'merge'){ mergeModal(); return; }
+    if (b.dataset.ck === 'forge'){ if (typeof forgeShow === 'function') forgeShow(); return; }
+    if (b.dataset.ck === 'givespell'){ if (typeof sgShow === 'function') sgShow(); return; }
+    CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false;
     // the click answers at once, even when the form's options are still being gathered
     document.querySelectorAll('[data-ck]').forEach(x => x.classList.toggle('on', x === b));
     if (!$('#cform')) b.insertAdjacentHTML('beforeend', '<span class="msg" style="display:block;margin-top:6px"><span class="spin"></span> Opening…</span>');
@@ -4282,6 +4295,7 @@ poll();
 <script src="/web/refprops.js"></script>
 <script src="/web/objwin.js"></script>
 <script src="/web/comfort.js"></script>
+<script src="/web/ctxmenu.js"></script>
 <script src="/web/secretdoor.js"></script>
 <script src="/web/qol.js"></script>
 <script src="/web/pathedit.js"></script>
@@ -4290,6 +4304,9 @@ poll();
 <script src="/web/pagepanels.js"></script>
 <script src="/web/viewwin.js"></script>
 <script src="/web/stylepal.js"></script>
+<script src="/web/forge.js"></script>
+<script src="/web/spellgive.js"></script>
+<script src="/web/physics.js"></script>
 <script src="/web/effects.js"></script>
 <script src="/web/convo.js"></script>
 <script src="/web/convbuild.js"></script>

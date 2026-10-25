@@ -1017,7 +1017,7 @@ def everyday_pool(db, purpose, rid=None):
 
 
 def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=None, cap=None, rate_k=1.0, max_value=None,
-             band=None, budget=None):
+             band=None, budget=None, fill_books=False):
     """A dressing for a new piece of this furniture, from what the game puts on it: one of the game's own
     dressings (picked at random, so the common patterns come up most; from rooms of this purpose when the
     game has dressed it in a few of those; one not used in this house yet, when `used` is the house's set
@@ -1032,10 +1032,29 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     things included (a dear dish swapped for a plain one of its size, else dropped). band: the household's
     (Project Tamriel's tableware classes: nothing finer than a class above the band's, beyond a piece or two,
     and no ebonyware); budget: the home's book allowance, {'left', 'titles', 'stems'}, shared over the house
-    (one to three common books outside the study, no second copy, no series)."""
+    (one to three common books outside the study, no second copy, no series). fill_books: a shelf of books,
+    asked for by hand ("Fill with books"): only the game's dressings of the model that are mostly books, the
+    fullest of a few draws, never bare, and no house allowance."""
     s = survey(db, rid)
     if not s['dressings']:
         return None
+    nbooks = lambda d: sum(1 for o in d['objects'] if o['kind'] == 'BOOK')
+    if fill_books:
+        # (counting the books a copy keeps: a quest's own, placed once, are left out, so a shelf of them came
+        # out bare)
+        nbooks = lambda d: sum(1 for o in d['objects'] if o['kind'] == 'BOOK' and plain(db, o['id'], min_uses))
+        # (the user: "IMPOSSIBLE to get a bookshelf with books on it ... I hit decorate like 10 times": a
+        # house's allowance of three books and a draw among dishes and candles left it bare of books)
+        bookish = sorted((d for d in s['dressings'] if d['objects']), key=lambda d: (nbooks(d) >= 0.6 * len(d['objects']), nbooks(d)), reverse=True)
+        pool_b = [d for d in bookish if nbooks(d) >= 0.6 * len(d['objects'])] or bookish[:5]
+        if not pool_b or not nbooks(max(pool_b, key=nbooks)):
+            return None
+        # (the fuller ones: a "shelf of books" with three on it was the user's complaint, not the answer)
+        most = max(nbooks(d) for d in pool_b)
+        full_b = [d for d in pool_b if nbooks(d) >= max(6, most // 2)]
+        if len(full_b) >= 2:
+            pool_b = full_b
+        purpose, budget = 'study', None
     # (a cap given by the caller is a band's: nothing at all dearer than it, books included; the theme's
     # own cap, used when none is given, holds the interesting things only, as before)
     hard = max_value if max_value is not None else cap
@@ -1058,12 +1077,14 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
             pool = fit
     # the game leaves some of these bare: so does this, a little less often
     empty_share = s['empty'] / float(s['n'] or 1)
-    if rng.random() < max(0.0, empty_share - 0.3):
+    if fill_books:
+        pool = pool_b
+    elif rng.random() < max(0.0, empty_share - 0.3):
         return []
     # not the same one twice in a house (the pool is small: a house's shelves would all match)
     low = rid.lower()
     keys = {id(d): (low, i) for i, d in enumerate(s['dressings'])}
-    if used is not None:
+    if used is not None and not fill_books:
         fresh = [d for d in pool if keys[id(d)] not in used]
         if fresh:
             pool = fresh
@@ -1072,7 +1093,7 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     # the fullest of three draws two times in three: the game's library shelves carry 8 to 20 books,
     # and "three books on one shelf" was the user's verdict on a library)
     tall = kind_of(rid) == 'bookshelf' and len(s.get('levels') or []) >= 2
-    if tall and purpose in ('study', 'shop', 'living'):
+    if tall and purpose in ('study', 'shop', 'living') and not fill_books:
         full = [d for d in pool if len(d['objects']) >= 4]
         if len(full) >= 2:
             pool = full
@@ -1098,7 +1119,10 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     draws = 3 if tall else 2
     picks = [rng.choice(pool) for _ in range(draws)]
     chosen = max(picks, key=lambda d: len(d['objects'])) if rng.random() < (0.67 if tall else 0.5) else picks[0]
-    if tall:
+    if fill_books:
+        # (the most books of three draws: a full shelf, but not always the very same one)
+        chosen = max([rng.choice(pool) for _ in range(3)], key=nbooks)
+    elif tall:
         # (and at least as full as the game's median dressing of the model, one time in two)
         sizes = sorted(len(d['objects']) for d in s['dressings'])
         gmed = sizes[len(sizes) // 2] if sizes else 0
@@ -1364,6 +1388,147 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     if fb:
         shelf_sense(db, bounds, fb, s['levels'], objs, ax)
     return [{k: o[k] for k in ('id', 'x', 'y', 'z', 'rx', 'ry', 'rz', 's')} for o in objs]
+
+
+def board_over(own, x, y, bottom):
+    """The clear height over a spot of a piece of furniture (world coordinates; own: the piece's own
+    geometry, seethrough.overlay), or None when nothing is over it. A surface within 5 of the bottom is the
+    board the thing stands in (the user's hut: books sunk a unit or two into their board, whose top face
+    read as "2 units of room") and is looked past."""
+    z = bottom + 0.5
+    for _ in range(4):
+        h = own.nearest_any((x, y, z), (0.0, 0.0, 1.0), 800)
+        if h is None:
+            return None
+        top = z + h[0]
+        if top - bottom >= 5.0:
+            return top - bottom
+        z = top + 0.5
+    return None
+
+
+def fit_books(db, objs, fb, headroom, books, rng, max_value=None):
+    """Every book on a dressing fits under the board above it (the user's "too large books" on a shelf, the
+    tall Tamriel Data tome standing through the shelf over it). The dressing's levels only know the boards
+    the game's own dressings of the model put something on, so a board the game left bare had no say;
+    here the clear height over each book is measured by the caller from the furniture's own mesh
+    (headroom(x, y, bottom) in the furniture's frame: the height free over that spot, or None when nothing
+    is over it). A book that doesn't fit is, in turn:
+    - swapped for a shorter book of its thickness that the game leaves about, the same way round, standing
+      where it stood (the tallest that fits, so the row's tops stay even);
+    - laid down flat on its cover, spine out, as the game lays its big books: in its own spot or slid along
+      the row to a free one, or on another book laid flat there (a pile, never higher than the board allows);
+    - left out.
+    objs: the dressing ({'id', 'x', 'y', 'z', 'rx', 'ry', 'rz', 's'} in the furniture's frame); returns it fitted."""
+    bounds = {}
+    ax = _axis(fb)[0]
+
+    def kind(o):
+        ri = db.resolve_id(o['id'])
+        return db.recs[ri][0] if ri is not None else ''
+
+    def box(o):
+        b, _t = _bounds_of(db, bounds, o['id'])
+        if not b:
+            return None
+        fp = box_turned(b, o['rx'], o['ry'], o['rz'], o['s'])
+        return (o['x'] + fp[0], o['y'] + fp[1], o['z'] + fp[2], o['x'] + fp[3], o['y'] + fp[4], o['z'] + fp[5])
+
+    live = {id(o): box(o) for o in objs}
+    out, flats = [], []
+    pool = None
+
+    def clear(bx, skip):
+        if bx[0] < fb[0] - EDGE or bx[3] > fb[3] + EDGE or bx[1] < fb[1] - EDGE or bx[4] > fb[4] + EDGE:
+            return False
+        return not any(_overlap(bx, b2) for k2, b2 in live.items() if k2 not in skip and b2)
+
+    for o in objs:
+        bx = live.get(id(o))
+        if not bx or kind(o) != 'BOOK':
+            out.append(o)
+            continue
+        cx, cy = (bx[0] + bx[3]) / 2.0, (bx[1] + bx[4]) / 2.0
+        room = headroom(cx, cy, bx[2])
+        if room is None or bx[5] - bx[2] <= room - 1.5:
+            out.append(o)
+            continue
+        b0, _t = _bounds_of(db, bounds, o['id'])
+        # 1. a shorter book of its thickness, the same way round
+        if pool is None:
+            pool = [bk for bk in list(books or []) + list(_everyday_books(db)) if not interesting(db, bk)]
+            if max_value is not None:
+                pool = [bk for bk in pool if value_of(db, bk)[1] <= max_value]
+        dims0 = sorted((b0[3] - b0[0], b0[4] - b0[1], b0[5] - b0[2]))
+        fits = []
+        for bk in pool:
+            bb, _t2 = _bounds_of(db, bounds, bk)
+            if not bb or _axes(bb) != _axes(b0):
+                continue
+            dims = sorted((bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]))
+            if abs(dims[0] - dims0[0]) > 3 or dims[1] > dims0[1] + 4:
+                continue
+            fp2 = box_turned(bb, o['rx'], o['ry'], o['rz'], o['s'])
+            if fp2[5] - fp2[2] > room - 2:
+                continue
+            o2 = dict(o, id=bk, z=round(o['z'] + (bx[2] - o['z']) - fp2[2], 1))
+            b2 = box(o2)
+            if b2 and clear(b2, {id(o)}):
+                fits.append((fp2[5] - fp2[2], o2, b2))
+        if fits:
+            top = max(h for h, _o, _b in fits)
+            near = [f for f in fits if f[0] >= top - 6]
+            _h, o2, b2 = rng.choice(near)
+            live[id(o)] = b2
+            out.append(o2)
+            continue
+        # 2. laid down flat on its cover, spine out (its height along the row), or across when the row has no room
+        best = None
+        for rx_ in (0.0, math.pi / 2, -math.pi / 2):
+            for ry_ in (0.0, math.pi / 2, -math.pi / 2):
+                for rz_ in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2):
+                    fp = box_turned(b0, rx_, ry_, rz_, o['s'])
+                    hz = fp[5] - fp[2]
+                    if hz > dims0[0] + 0.5:
+                        continue                 # (not lying on its cover)
+                    along = (fp[ax + 3] - fp[ax]) >= (fp[4 - ax] - fp[1 - ax])
+                    pref = (0 if along else 1, abs(rx_) + abs(ry_))
+                    if best is None or pref < best[0]:
+                        best = (pref, (rx_, ry_, rz_), fp)
+                    elif pref == best[0] and rng.random() < 0.3:
+                        best = (pref, (rx_, ry_, rz_), fp)
+        placed = False
+        if best:
+            (rx_, ry_, rz_), fp = best[1], best[2]
+            rz_ = (rz_ + rng.uniform(-0.08, 0.08)) % (2 * math.pi)
+            fp = box_turned(b0, rx_, ry_, rz_, o['s'])
+            hz = fp[5] - fp[2]
+            steps = [0] + [s_ * k for k in range(1, 9) for s_ in (6, -6)]
+            for dxy in steps:
+                ox_, oy_ = (cx + dxy, cy) if ax == 0 else (cx, cy + dxy)
+                # (on the board, or on a book laid flat there already: a pile of two or three)
+                for under in [None] + [f for f in flats if f[0] <= ox_ <= f[3] and f[1] <= oy_ <= f[4]]:
+                    base = bx[2] if under is None else under[5]
+                    r_ = headroom(ox_, oy_, bx[2])
+                    if r_ is not None and (base - bx[2]) + hz > r_ - 1.5:
+                        continue
+                    o2 = dict(o, x=round(ox_ - (fp[0] + fp[3]) / 2.0, 1), y=round(oy_ - (fp[1] + fp[4]) / 2.0, 1),
+                              z=round(base - fp[2], 1), rx=rx_, ry=ry_, rz=round(rz_, 3))
+                    b2 = box(o2)
+                    skip = {id(o)}
+                    if under is not None:
+                        skip |= {k2 for k2, bb2 in live.items() if bb2 == under}
+                    if b2 and clear(b2, skip):
+                        live[id(o)] = b2
+                        flats.append(b2)
+                        out.append(o2)
+                        placed = True
+                        break
+                if placed:
+                    break
+        if not placed:
+            live[id(o)] = None                   # 3. left out
+    return out
 
 
 _SERIES = re.compile(r'^(.*?)[ _]?(\d+|i{1,3}|iv|v)$')

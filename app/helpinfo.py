@@ -80,6 +80,8 @@ def components():
             'by': 'Python Software Foundation', 'url': 'https://www.python.org'},
            {'name': 'three.js', 'version': 'r128', 'license': 'MIT', 'by': 'three.js authors',
             'url': 'https://threejs.org', 'text': 'three.js-LICENSE.txt'},
+           {'name': 'Rapier (physics, @dimforge/rapier3d-compat)', 'version': '0.14.0', 'license': 'Apache License 2.0',
+            'by': 'Dimforge', 'url': 'https://rapier.rs', 'text': 'rapier3d-compat-LICENSE.txt'},
            {'name': 'Cinzel (font)', 'version': '', 'license': 'SIL Open Font License 1.1',
             'by': 'The Cinzel Project Authors', 'url': 'https://github.com/NDISCOVER/Cinzel', 'text': 'Cinzel-OFL.txt'},
            {'name': 'Inter (font)', 'version': '', 'license': 'SIL Open Font License 1.1',

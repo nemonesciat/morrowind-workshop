@@ -229,20 +229,12 @@ async function vwCreated(kind, r, label){
 
 // ---------------------------------------------------------------- the ways in
 // the right-click menu on the view: "✚ Create here…"
-(function(){
-  const orig = cfMenuAt;
-  cfMenuAt = function(e, hit, at, locked){
-    orig(e, hit, at, locked);
-    const m = typeof cfMenuOpen !== 'undefined' && cfMenuOpen; if (!m || !m.isConnected || W.mode === 'paths') return;
-    if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)) return;
-    const spot = at || (hit && hit[1] && hit[1].p) || null, pt = {x: e.clientX, y: e.clientY};
-    const b = document.createElement('button'); b.textContent = '✚ Create here…'; b.title = 'A new place, person, container, item, note, spell or list, made in a window over the view';
-    b.onclick = ev => { ev.stopPropagation(); m.remove(); setTimeout(() => vwCreateMenu(pt, spot), 0); };
-    // (after Play here or the object's first entries; else at the top)
-    const after = [...m.querySelectorAll('button')].find(x => /Play here|Open its window/.test(x.textContent)) || m.querySelector('button.phd');
-    if (after) after.after(b); else m.prepend(b);
-  };
-})();
+CF_MENU_MORE.push((e, hit, at) => {
+  if (W.mode === 'paths') return [];
+  if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)) return [];
+  const spot = at || (hit && hit[1] && hit[1].p) || null, pt = {x: e.clientX, y: e.clientY};
+  return [{label: '✚ Create here…', title: 'A new place, person, container, item, note, spell or list, made in a window over the view', act: () => setTimeout(() => vwCreateMenu(pt, spot), 0)}];
+});
 // the Ctrl+K command list: each card
 for (const k of ['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists', 'itemed', 'merge'])
   CF_ACT.push({id: 'vwcreate-' + k, label: 'Create in a window: ' + CR_CARDS[k][1], keys: [], world: true, run: () => vwCreate(k, null)});
