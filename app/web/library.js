@@ -9,6 +9,9 @@ function libCss(){
   if ($('#lib-css')) return;
   const c = document.createElement('style'); c.id = 'lib-css';
   c.textContent = `
+  .lib-kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;max-width:820px;margin:8px 0 12px}
+  .lib-kinds>div{display:flex;flex-direction:column;gap:2px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+  .lib-kinds b{color:var(--gold2);font-weight:600}.lib-kinds .msg{font-size:12px;line-height:1.45}
   .lib-card input[type=range], .modal input[type=range], .modal input[type=checkbox]{accent-color:#d9b26a}
   .lib-drop{border:2px dashed #6b5730;border-radius:12px;padding:26px;text-align:center;background:var(--bg2);color:var(--muted-c);transition:.15s}
   .lib-drop.over{border-color:var(--gold2);background:#221c12;color:var(--text-c)}
@@ -28,10 +31,12 @@ async function renderLibrary(){
   libCss();
   const box = $('#librarywrap'); if (!box) return;
   box.innerHTML = `<h1 style="margin:0 0 4px">Library</h1>
-    <p class="msg" style="max-width:820px">Your own models and textures, for every mod you make. Drop them below: models made in Blender or other programs
-      (.blend, .obj, .fbx, .dae, .gltf, .glb) are turned into Morrowind models, and Morrowind's own .nif models come in as they are. Pictures (.png, .jpg, .tga, .dds) can go on
-      your models or <b>retexture</b> anything in the game: select it on the World map and choose 🎨 Retexture. Sounds (.wav, .mp3, .ogg) can play
-      where you place them, on any object (select it and choose 🔊 Add a sound), or from your scripts.</p>
+    <p class="msg" style="max-width:820px">Your own models, pictures and sounds, ready for every mod you make.</p>
+    <div class="lib-kinds">
+      <div><b>📦 Models</b><span class="msg">From Blender and the like (.blend .obj .fbx .dae .gltf .glb) turned into game models; .nif as they are.</span></div>
+      <div><b>🎨 Pictures</b><span class="msg">On your models, or to retexture anything: select it on the World map, then Retexture.</span></div>
+      <div><b>🔊 Sounds</b><span class="msg">Where you place them, on an object (Add a sound), or from your scripts.</span></div>
+    </div>
     <div class="lib-drop" id="lib-drop"><b>Drop models, pictures or sounds here</b>
       <div class="msg">A model with its pictures: drop them together (or the folder they're in).</div>
       <div style="margin-top:10px;display:flex;gap:6px;justify-content:center"><button class="btn sm primary" id="lib-pick">Choose files…</button><button class="btn sm" id="lib-pickdir">Choose a folder…</button></div>

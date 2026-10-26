@@ -2006,11 +2006,13 @@ function v3Tools(){
   const grip = typeof tbGrip === 'function' ? tbGrip() : '';
   t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button></div>
-    <div class="v3grp" data-grp="steps">${grip}<label title="Move in steps">Grid <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
-    <label title="Turn in steps">Angle <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label></div>
-    <div class="v3grp" data-grp="snap">${grip}<label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap pieces</label>
-    <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt</label>
-    <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label>
+    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Moving and turning in steps, lining up with pieces, tilting, landing on surfaces">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
+      <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
+        <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
+        <label title="Turn in steps">Turn in steps of <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label>
+        <label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap to pieces</label>
+        <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt when turning</label>
+        <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label></div></span>
     <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button>
     <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Physics here: loose things fall, rest and get pushed by what you drag, with gravity and high friction, while it's on. Keep where they lie, or put them back (physics.js)">🧲 Physics</button></div>
     <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new in a window over the view: a place, a person, a container, an item, a note, a spell, a list (right-click a spot for Create here)">✚ Create</button><button class="btn sm" data-v3="style" title="The Style palette: building pieces, furniture, decor and sets by style (Hlaalu, Redoran, Nord, Imperial...), as the game's own places use them (stylepal.js)">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
@@ -2048,7 +2050,8 @@ function v3Tools(){
     else if (a === 'light'){ V3.lightMode = v3LightMode() === 'game' ? 'bright' : 'game'; try { localStorage.setItem('ws-light', V3.lightMode); } catch (e) {} v3ApplyLighting(); v3Tools(); }
     else if (a === 'home') v3Home();
     else if (a === 'help') $('#v3help').style.display = $('#v3help').style.display === 'none' ? 'block' : 'none';
-    else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; v3Tools(); }
+    else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; v3Tools(); }
+    else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
     else if (a === 'gridturn') v3GridToSel(true);
   });
@@ -2063,7 +2066,7 @@ function v3Tools(){
   const vf = $('#v3fov');
   if (vf) vf.oninput = () => { V3.fov = +vf.value; $('#v3fovv').textContent = V3.fov + '°'; if (V3.camera){ V3.camera.fov = V3.fov; V3.camera.updateProjectionMatrix(); } try { localStorage.setItem('ws-fov', String(V3.fov)); } catch (e) {} };
   $('#v3grid').onchange = e => { V3.grid = +e.target.value; v3ApplyMode(); v3Tools(); V3.gridFor = null; };
-  $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); };
+  $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); v3Tools(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
   $('#v3tilt').onchange = e => { V3.tilt = e.target.checked; v3ApplyMode(); };
   $('#v3rest').onchange = e => { V3.rest = e.target.checked; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} };

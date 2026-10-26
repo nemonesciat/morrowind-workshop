@@ -36,7 +36,7 @@ function pnlCss(){
   .ptabs.more-r{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
   .ptabs.more-l{-webkit-mask-image:linear-gradient(90deg,transparent,#000 28px);mask-image:linear-gradient(90deg,transparent,#000 28px)}
   .ptabs.more-l.more-r{-webkit-mask-image:linear-gradient(90deg,transparent,#000 28px,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,transparent,#000 28px,#000 calc(100% - 28px),transparent)}
-  .ptab{background:none;border:0;border-bottom:2px solid transparent;color:var(--faint);padding:6px 9px 5px;cursor:pointer;font:inherit;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:4px;flex:0 1 auto;min-width:calc(3.4em + 20px);max-width:150px;overflow:hidden}
+  .ptab{background:none;border:0;border-bottom:2px solid transparent;color:var(--faint);padding:6px 7px 5px;cursor:pointer;font:inherit;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:4px;flex:none;max-width:150px;overflow:hidden}
   .ptab span{display:block;flex:0 1 auto;min-width:0}
   .ptab b,.ptab i{flex:none}
   .ptab.on{flex:none;max-width:200px}

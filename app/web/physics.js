@@ -17,11 +17,24 @@ const PH_ITEMS = new Set(['WEAP', 'ARMO', 'CLOT', 'MISC', 'BOOK', 'ALCH', 'INGR'
 const PH_CLUTTER = /scrap|plank|_log|debris|rubble|bone|skull|broken|shard|_wood_?\d/;
 const PH_CLUTTER_SIZE = 320;
 // (furniture that things rest in or on)
-const PH_HOLDER = /shelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|drawers|rack|counter|table|desk|bar_|_bar|altar|planter/;
+// (a bar counter, not a barrel: "_bar" alone kept every barrel out as furniture that holds things)
+const PH_HOLDER = /shelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|drawers|rack|counter|table|desk|bar_|_bar(?!rel)|altar|planter/;
+
+// (the panel's "Larger things too": barrels, kegs, crates, urns, sacks and chests take part as well, up to a big
+// crate's size, even when their name files them with the building, Tamriel Data's T_Dwe_DngRuin_F_ barrels; the
+// user: "I'd still like to use gravity to settle them in some cases". Kept for next time)
+// (not "f-urn": furn_dwrv_bed00 and the well took part as urns)
+const PH_BIG = /barrel|keg|crate|(?<!f)urn|sack|basket|chest|_box|box_|_pot|jar|bucket|cask/;
+try { PH.big = localStorage.getItem('ph_big') === '1'; } catch (e) {}
 
 function phLoose(r, chosen){
-  if (!r || r.arch || !r.b || ['NPC_', 'CREA', 'LEVC', 'LEVI', 'DOOR'].includes(r.type)) return false;
+  if (!r || !r.b || ['NPC_', 'CREA', 'LEVC', 'LEVI', 'DOOR'].includes(r.type)) return false;
   const low = r.id.toLowerCase(), s = r.s || 1, size = Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1], r.b[5] - r.b[2]) * s;
+  const bigKind = ['CONT', 'STAT', 'ACTI'].includes(r.type) && PH_BIG.test(low);
+  if (PH.big && bigKind && !PH_HOLDER.test(low) && size <= PH_CLUTTER_SIZE) return true;
+  // (and without it, none of them, even small: small clutter only, the user's choice; picked ones still do)
+  if (bigKind && !chosen) return false;
+  if (r.arch) return false;
   if (PH_SUNK.test(low) || (r.type === 'INGR' && low.includes('flor'))) return false;
   // (what you picked takes part, furniture too, as Settle it does: up to a big crate's size; but not furniture
   // that holds things: a body is a wrapped solid, so a bookshelf picked before Physics lost its boards and the
@@ -43,6 +56,15 @@ function phChosen(){
   return out;
 }
 
+// whether this one takes part: with "Only the selected" (on by itself when a group is picked: the user, "select
+// a group of objects and make physics just apply to them") the picked ones alone, wherever they are, the rest
+// solid; else every loose thing in reach, and the picked ones
+function phPart(key, o){
+  const mine = !!(PH.chosen && PH.chosen.has(key));
+  if (PH.onlySel && PH.chosen && PH.chosen.size) return mine && phLoose(o.r, true);
+  return phLoose(o.r, mine);
+}
+
 async function phToggle(on){
   if (on === PH.on || PH.loading) return;
   // (off again with the button, or Esc: put back, nothing saved; Keep where they lie is the panel's)
@@ -57,6 +79,16 @@ async function phToggle(on){
     }
     PH.centre = null;                  // (round where you look now)
     PH.chosen = phChosen();
+    PH.onlySel = PH.chosen.size > 1;
+    // (the solid world round the group itself when it alone moves: round where you look, a group off to one
+    // side fell through a floor that wasn't built)
+    PH.group = null;
+    const gs = [...PH.chosen].map(k => V3.objs.get(k)).filter(o => o && o.g);
+    if (gs.length > 1){
+      const c = new THREE.Vector3(); gs.forEach(o => c.add(o.g.position)); c.divideScalar(gs.length);
+      PH.group = {c, r: Math.max(...gs.map(o => Math.hypot(o.g.position.x - c.x, o.g.position.y - c.y)))};
+    }
+    if (PH.onlySel && PH.group) PH.centre = PH.group.c.clone();
     await phPreSettle();
     phBuild();
     PH.on = true;
@@ -76,8 +108,8 @@ async function phPreSettle(){
   if (!PH.centre) PH.centre = V3.pos.clone().addScaledVector(v3Dir(), 300);
   const C = PH.centre, keys = [];
   for (const [key, o] of V3.objs){
-    if (!o.g || !phLoose(o.r, PH.chosen && PH.chosen.has(key)) || o.ck !== W.key) continue;
-    if (Math.hypot(o.g.position.x - C.x, o.g.position.y - C.y) > PH.reach) continue;
+    if (!o.g || !phPart(key, o) || o.ck !== W.key) continue;
+    if (!(PH.chosen && PH.chosen.has(key)) && Math.hypot(o.g.position.x - C.x, o.g.position.y - C.y) > PH.reach) continue;
     keys.push(o.r.k);
     PH.saved.set(key, {p: o.g.position.clone(), q: o.g.quaternion.clone()});
   }
@@ -111,11 +143,13 @@ function phBuild(){
     if (!o.g || !o.r) continue;
     o.g.updateMatrixWorld(true);
     const mine = PH.chosen && PH.chosen.has(key);
-    if (phLoose(o.r, mine)){ if (mine || near(o.g, PH.reach)) loose.push([key, o]); continue; }
+    // (loose but out of reach: solid where it stands, or what falls near it went through a barrel left out)
+    if (phPart(key, o) && (mine || near(o.g, PH.reach))){ loose.push([key, o]); continue; }
     if (['NPC_', 'CREA', 'LEVC'].includes(o.r.type)) continue;
     // (the solid world reaches a little further than the bodies; big pieces always count)
     const bx = new T.Box3().setFromObject(o.g), sz = bx.getSize(new T.Vector3());
-    if (!near(o.g, PH.reach + 300) && Math.max(sz.x, sz.y) < 600) continue;
+    const solidR = (PH.onlySel && PH.group ? Math.max(PH.group.r, 100) : PH.reach) + 300;
+    if (!near(o.g, solidR) && Math.max(sz.x, sz.y) < 600) continue;
     // (fixed: its triangles, in the world)
     const pos = [], idx = [];
     o.g.traverse(mesh => {
@@ -369,6 +403,8 @@ function phPanel(){
     <div class="msg" style="margin:4px 0 6px;line-height:1.4">Loose things fall and rest; drag one to push the others. Hung things and the building stay put. Nothing is saved until you keep it; Esc or the Physics button puts them back.</div>
     <label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="How far from the spot you looked at loose things take part">Reach
       <input type="range" min="1" max="1000" step="1" value="${PH.reach}" data-ph="reach" style="flex:1"><span data-ph="reachv" style="min-width:3.2em;text-align:right">${PH.reach}</span></label>
+    ${PH.chosen && PH.chosen.size > 1 ? `<label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="On: only the things you picked move, wherever they are; everything else stays solid. Off: every loose thing in reach takes part, these too"><input type="checkbox" data-ph="only" ${PH.onlySel ? 'checked' : ''}> Only the ${PH.chosen.size} selected</label>` : ''}
+    <label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="Off: only small loose things (cups, books, bones). On: barrels, kegs, crates, urns, sacks and chests fall and settle too"><input type="checkbox" data-ph="big" ${PH.big ? 'checked' : ''}> Larger things too (barrels, crates)</label>
     <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-ph="keep">✔ Keep where they lie</button><button class="btn sm" data-ph="back">↶ Put back</button>
     <button class="btn sm" data-ph="jiggle" title="A little shake: everything loose wakes and settles again">〰 Jiggle</button></div>`;
   ($('#v3wrap') || document.body).appendChild(p);
@@ -379,6 +415,15 @@ function phPanel(){
   const rs = p.querySelector('[data-ph=reach]'), rv = p.querySelector('[data-ph=reachv]');
   rs.oninput = () => { rv.textContent = rs.value; };
   rs.onchange = () => phSetReach(+rs.value);           // (on letting go: a rebuild takes a moment)
+  // (bigger things in or out: the same rebuild as a new reach)
+  const only = p.querySelector('[data-ph=only]');
+  if (only) only.onchange = e => {
+    PH.onlySel = e.target.checked;
+    // (round the group again, or round where you look)
+    PH.centre = PH.onlySel && PH.group ? PH.group.c.clone() : V3.pos.clone().addScaledVector(v3Dir(), 300);
+    phSetReach(PH.reach);
+  };
+  p.querySelector('[data-ph=big]').onchange = e => { PH.big = e.target.checked; try { localStorage.setItem('ph_big', PH.big ? '1' : '0'); } catch (x) {} phSetReach(PH.reach); };
   // (moved by its title row, kept inside the view)
   const grip = p.querySelector('[data-ph=grip]');
   grip.onmousedown = e => {

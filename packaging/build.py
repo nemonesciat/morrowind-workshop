@@ -307,7 +307,9 @@ def main():
     log('Morrowind Workshop', version)
     shutil.rmtree(OUT, ignore_errors=True)
     os.makedirs(STAGE)
-    # the icon, also used by the page itself (the Workshop window's taskbar button shows it)
+    # the icon, also used by the page itself (the Workshop window's taskbar button shows it). Since 2026-10-26 it
+    # is web/vendor/workshop-icon.svg (the logo's half gear, M over W) rendered at 16-256; draw_icon's ring and
+    # star is only the stand-in when the file is missing
     icon = os.path.join(APP, 'web', 'vendor', 'workshop.ico')
     if not os.path.exists(icon):
         write_icon(icon)

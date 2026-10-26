@@ -703,7 +703,9 @@ class Handler(BaseHTTPRequestHandler):
                 # libraries and fonts shipped with the Workshop (so it works offline); they never change
                 fp = os.path.join(WEB, 'vendor', os.path.basename(u.path))
                 kind = {'.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-                        '.woff2': 'font/woff2', '.ico': 'image/x-icon'}.get(os.path.splitext(fp)[1])
+                        '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+                        # (the window's icon at its biggest, and its drawing)
+                        '.png': 'image/png', '.svg': 'image/svg+xml'}.get(os.path.splitext(fp)[1])
                 if not kind or not os.path.isfile(fp):
                     return self._json({'error': 'not found'}, 404)
                 with open(fp, 'rb') as f:
@@ -1517,7 +1519,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.load_async()
                 return self._json(r)
             if u.path == '/api/report':
-                return self._json(helpinfo.report(db, link, body.get('what', '')))
+                return self._json(helpinfo.report(db, link, body.get('what', ''), body.get('page')))
             if u.path == '/api/dev/github/pick':
                 return self._json(github_pick())
             if u.path == '/api/dev/github/sync':

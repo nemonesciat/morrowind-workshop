@@ -36,7 +36,7 @@ function loRender(){
       <button class="btn primary" id="lo-save" ${LO.dirty ? '' : 'disabled'}>Save load order</button>
       <button class="btn" id="lo-revert" ${LO.dirty ? '' : 'disabled'}>Undo my changes</button>
       ${orderProblem ? '<button class="btn" id="lo-fix" title="Move plugins only as far as needed so every master loads before what needs it">Fix master order</button>' : ''}
-      <span class="msg">${LO.dirty ? 'Not saved yet.' : `Saved in ${esc(I.cfg || 'openmw.cfg')}. Each save makes a backup first.`}</span>
+      <span class="msg">${LO.dirty ? 'Not saved yet.' : `Saved in OpenMW's <span title="${esc(I.cfg || 'openmw.cfg')}" style="cursor:help;border-bottom:1px dotted var(--faint)">openmw.cfg</span>. Each save makes a backup first.`}</span>
     </div>
     <table class="t lot"><tr><th style="width:26px"></th><th style="width:30px">On</th><th>#</th><th>Plugin</th><th>Author / description</th><th style="text-align:right">New</th><th style="text-align:right">Changes</th><th style="width:70px"></th></tr>`;
   LO.order.forEach((name, n) => {

@@ -246,14 +246,29 @@ async function qolReopen(){
   const v = qolLast(); if (!v || !v.key) return toast('No place to go back to yet.', true);
   showView('world'); await worldOpen(v.key); await qolRestoreView(v);
 }
-(function qolEmptyMap(){
-  const v = qolLast(), box = $('#mapempty > div');
-  if (!v || !v.key || !box || $('#q-reopen')) return;
-  const b = document.createElement('div'); b.style.marginTop = '14px';
-  b.innerHTML = `<button class="btn primary" id="q-reopen">↺ Back to ${esc(v.name || v.key)}</button>`;
-  box.appendChild(b);
-  b.querySelector('button').onclick = e => { e.stopPropagation(); qolReopen(); };
-})();
+// the World map with no place open: find one, go back to the last one, the places you were in lately, or
+// build a new one (drawn each time the map shows with nothing open)
+function qolEmptyMap(){
+  const box = $('#mapempty'); if (!box || W.key) return;
+  if (box.contains(document.activeElement)) return;
+  const v = qolLast(), recent = (typeof WP !== 'undefined' ? WP.places : []).filter(p => !v || p.name !== v.name).slice(0, 6);
+  box.innerHTML = `<div class="me-card">
+    <h3>Open a place</h3>
+    <div class="dd"><input class="inp" id="me-goto" placeholder="Balmora, Seyda Neen, Caldera Mine…" autocomplete="off" spellcheck="false"><div class="ddlist" id="me-goto-l"></div></div>
+    ${v && v.key ? `<button class="btn primary" id="q-reopen">↺ Back to ${esc(v.name || v.key)}</button>` : ''}
+    ${recent.length ? `<div class="me-h">Lately</div><div class="me-places">${recent.map(p => `<button class="btn sm" data-mei="${p.i}">${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</button>`).join('')}</div>` : ''}
+    <div class="me-h">Or make a new one</div>
+    <div class="me-places"><button class="btn sm" data-mek="build">🏠 Build a house</button><button class="btn sm" data-mek="ruin">⚒ Make a dungeon</button></div>
+    <div class="msg me-foot">Ctrl+K finds any place too, and every cell in Browse has "Open on map".</div></div>`;
+  ddSearch('me-goto', 'CELL', r => worldOpenIndex(r.i));
+  const rb = $('#q-reopen'); if (rb) rb.onclick = e => { e.stopPropagation(); qolReopen(); };
+  box.querySelectorAll('[data-mei]').forEach(b => b.onclick = () => worldOpenIndex(+b.dataset.mei));
+  box.querySelectorAll('[data-mek]').forEach(b => b.onclick = () => {
+    showView('createv');
+    const k = b.dataset.mek;
+    setTimeout(() => { const c = document.querySelector(`[data-ck="${k}"]`); if (c) c.click(); }, 50);
+  });
+}
 
 // ---------------------------------------------------------------- a slider on the spot
 // A small box where the pointer last was, in place of a dialog asking for a number: a slider to drag (the
@@ -497,6 +512,29 @@ CF_ACT.push(
 
 // the Test setup button: the setup in use, and God mode when it's on (God mode lives in Test setups)
 try { if (W.god === undefined) W.god = localStorage.getItem('ws-god') === '1'; } catch (e){}
+// the toolbar at the top fits its row: no button squeezes; when the row is too long, words fold away to their
+// icons one button at a time (Build together's first, the AI button's last) until it fits (the user: "Me" lost
+// its sides and the reload button fell off the screen with the game linked)
+const HDR_FOLD = ['togetherbtn', 'helpbtn', 'omwbtn', 'undobtn', 'redobtn', 'aibtn'];
+function hdrFit(){
+  const r = document.querySelector('.hdr-right'); if (!r) return;
+  HDR_FOLD.forEach(id => { const b = document.getElementById(id); if (b) b.classList.remove('fold'); });
+  for (const id of HDR_FOLD){
+    if (r.scrollWidth <= r.clientWidth + 1) break;
+    const b = document.getElementById(id); if (b) b.classList.add('fold');
+  }
+}
+(function(){
+  const r = document.querySelector('.hdr-right'); if (!r) return;
+  let pend = 0;
+  const soon = () => { if (!pend) pend = requestAnimationFrame(() => { pend = 0; hdrFit(); }); };
+  addEventListener('resize', soon);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(soon).observe(r.parentElement || r);
+  // (the link chip coming and going, its words changing; not class changes, which hdrFit makes itself)
+  new MutationObserver(soon).observe(r, {childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style']});
+  soon();
+})();
+
 function qolSetupLabel(){
   const b = $('#q-setup'); if (!b) return;
   b.textContent = '🧪 ' + (QOL.setupOn || 'Test setup…') + (W.god ? ' · god' : '');

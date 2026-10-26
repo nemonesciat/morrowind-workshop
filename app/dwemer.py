@@ -1876,9 +1876,16 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
         # make more valuable loot and better loot in chests": richer fills what's there, below)
         chosen = _set_items(rng.choice(pool_))
         x, y, z, rz = p['p'][0], p['p'][1], p['p'][2], p['p'][5]
+        bx = p.get('box')
         for rid, t, lx, ly, lz, rx, ry, drz, s in chosen:
             low = rid.lower()
             if low in uniq or db.resolve_id(rid) is None or MASONRY_FIRE.match(low):
+                continue
+            # (only what stands within the piece's own height: over its roof or under its floor it belonged to
+            # whatever stood there in the game, a gallery or the room above. Two big rugs lay tilted on a tomb
+            # junction's roof, the user's Vafrothi)
+            # (not in caves: a cave piece's box runs far down into the rock and up round its formations)
+            if bx and not K.get('kind', '').startswith('cave') and not (bx[2] - 24 <= z + lz <= bx[5] - 4):
                 continue
             if not mine and t not in ('CREA', 'LEVC', 'INGR') and (EGG_MINE.search(low) or EGG_MINE.search((db.recs[db.resolve_id(rid)][5] or '').lower())):
                 continue                         # (an egg mine's, not a cave's; kwama foragers still roam)
@@ -1912,9 +1919,20 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
     return out
 
 
-RICHER_TYPES = ('MISC', 'ALCH', 'INGR', 'APPA', 'BOOK')
+RICHER_TYPES = ('MISC', 'ALCH', 'INGR', 'APPA', 'BOOK', 'CONT')
 RICHER_NOT = re.compile(r'^gold_|key|_uni|unique|_q_|quest|soulgem')
+# (a chest for a chest, a crate for a crate: what kind of container it is, by its name)
+CONT_FAMILY = re.compile(r'chest|crate|barrel|sack|urn|basket|keg|box|closet|cabinet|cupboard|drawers|desk')
 _RICH_POOL = {}
+
+
+def _worth(db, rid, t):
+    """What a thing is worth: an item's value, or what a container holds (wealthsurvey)."""
+    if t == 'CONT':
+        import wealthsurvey
+        return wealthsurvey.container_value(db, rid) or 0.0
+    import shelfsurvey
+    return shelfsurvey.value_of(db, rid)[1]
 
 
 def _rich_pool(db, S):
@@ -1935,8 +1953,9 @@ def _rich_pool(db, S):
                     ob = mapdata.object_bounds(db, ri) if ri is not None else None
                     if not ob:
                         continue
-                    val = shelfsurvey.value_of(db, rid)[1]
-                    pool.append((rid, t, val, max(ob[3] - ob[0], ob[4] - ob[1], ob[5] - ob[2]), ob[2]))
+                    val = _worth(db, rid, t)
+                    fam = CONT_FAMILY.search(low) if t == 'CONT' else None
+                    pool.append((rid, t, val, max(ob[3] - ob[0], ob[4] - ob[1], ob[5] - ob[2]), ob[2], fam.group(0) if fam else None))
         _RICH_POOL[k] = pool
     return _RICH_POOL[k]
 
@@ -1946,18 +1965,22 @@ def _richer(db, S, rid, t, lz, s, rng):
     place of rid, its bottom where rid's was: raised Loot leaves richer things on the shelves and tables ("loot
     setting should affect the kind of decoration and clutter in some capacity, what is left on shelves", the
     user); the same rid when there is none."""
-    import shelfsurvey
     if RICHER_NOT.search(rid.lower()):
         return rid, lz
     ri = db.resolve_id(rid)
     ob = mapdata.object_bounds(db, ri) if ri is not None else None
     if not ob:
         return rid, lz
-    val = shelfsurvey.value_of(db, rid)[1]
+    val = _worth(db, rid, t)
     size = max(ob[3] - ob[0], ob[4] - ob[1], ob[5] - ob[2])
-    # (a step up, not a fortune: 1.5 to 4 times its worth; one swap made a tomb's clutter worth 54,000 gold)
-    cand = [c for c in _rich_pool(db, S) if c[1] == t and max(val * 1.5, val + 5) < c[2] <= max(val * 4, val + 40)
-            and 0.7 * size <= c[3] <= 1.3 * size]
+    fam = CONT_FAMILY.search(rid.lower()) if t == 'CONT' else None
+    if t == 'CONT' and not fam:
+        return rid, lz
+    # (a step up, not a fortune: 1.5 to 4 times its worth; one swap made a tomb's clutter worth 54,000 gold.
+    # A container holding nothing may become one holding up to 300; "better loot in chests", the user)
+    top = max(val * 4, val + (300 if t == 'CONT' else 40))
+    cand = [c for c in _rich_pool(db, S) if c[1] == t and max(val * 1.5, val + 5) < c[2] <= top
+            and 0.7 * size <= c[3] <= 1.3 * size and (t != 'CONT' or c[5] == fam.group(0))]
     if not cand:
         return rid, lz
     c = rng.choice(cand)
@@ -2138,7 +2161,9 @@ def _clear_ways(db, key, lay, S, K):
         # (low things count too where they're furniture: a chest copied from against a game piece's wall stood
         # in the middle of a corridor junction here, under the knee-high line, "poor worldbuilding", the user's
         # Nchudjak; rubble and bones on the floor are the game's way and stay)
-        low_ok = lambda k_: k_ in byk and (byk[k_]['type'] == 'CONT' or FURNITURE.search(byk[k_]['id'].lower()))
+        # (and a length of pipe lying across the way: one lay in the middle of a corridor, the user's Nchudjak)
+        low_ok = lambda k_: k_ in byk and (byk[k_]['type'] == 'CONT' or FURNITURE.search(byk[k_]['id'].lower())
+                                           or LOOSE_PIPE.search(byk[k_]['id'].lower()))
         byk = {r['k']: r for r in m['refs']}
         for p in lay['pieces']:
             if p.get('gone') or not p.get('id'):
@@ -2154,7 +2179,9 @@ def _clear_ways(db, key, lay, S, K):
             mz = sum(o['z'] for o in ports) / len(ports)
             for o, off in [(o, off) for o in ports for off in width]:
                 dx, dy = SIDES[o['side']]
-                ax, ay, az = o['x'] - dx * 24 - dy * off, o['y'] - dy * 24 + dx * off, o['z']
+                # (from 48 out past the opening, so the threshold is walked too: a pipe lay across a crossing's
+                # opening, reaching out from it, where a line starting inside never met it, the user's Nchudjak)
+                ax, ay, az = o['x'] + dx * 48 - dy * off, o['y'] + dy * 48 + dx * off, o['z']
                 n = max(2, int(math.hypot(mx - ax, my - ay) / 48) + 1)
                 reach = min(1.0, HALL_DOOR_CLEAR / max(1.0, math.hypot(mx - ax, my - ay))) if in_hall else 1.0
                 line = []
@@ -2175,7 +2202,9 @@ def _clear_ways(db, key, lay, S, K):
                 for (x0, y0, f0), (x1, y1, f1) in zip(line, line[1:]):
                     if abs(f1 - f0) > 120:
                         continue                    # (a drop or a step: not one walk)
-                    for hgt in (20, 50, 110):
+                    # (140: head height. A pipe from a game crossing whose side was a wall hung across the
+                    # opening here at 128 over the floor, just over the 110 line, the user's Nchudjak)
+                    for hgt in (20, 50, 110, 140):
                         a_ = (x0, y0, f0 + hgt)
                         d = (x1 - x0, y1 - y0, f1 - f0)
                         ln = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
@@ -2812,10 +2841,14 @@ def _loose_pipes(db, key, K):
     return gone
 
 
-def pipes_hanging(db, m, K):
+PIPE_ALONE = 160              # (nothing at all this far out of a fitting's faces: 3.6% of the game's own fittings)
+
+
+def pipes_hanging(db, m, K, margin=PIPE_ALONE, front_only=False):
     """(the keys of the pipe fittings in place m that hang in the air, the number of fittings): each must meet
-    something that isn't a fitting (the building, a machine, a table), or a fitting joined to one that does.
-    Measured on the game's own Dwemer places too."""
+    something that isn't a fitting (the building, a machine, a table) within margin of its faces, or a fitting
+    joined to one that does. Measured on the game's own Dwemer places: a contact rule (24, front faces) called
+    20-34% of them hanging; nothing within 160, either face, 3.6%."""
     import seethrough
     tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
     if True:
@@ -2841,7 +2874,7 @@ def pipes_hanging(db, m, K):
                     d = [R[0][ax_] * sg, R[1][ax_] * sg, R[2][ax_] * sg]
                     # (front faces only: the game's walls are one-sided, and the fittings over the user's
                     # Nchudjak room met the corridor beside it from outside, from behind its faces)
-                    h = sc._hits((mx, my, mz), tuple(d), half[ax_] + 24, set(skip), True, both=False)
+                    h = sc._hits((mx, my, mz), tuple(d), half[ax_] + margin, set(skip), True, both=not front_only)
                     if h is None:
                         continue
                     k_ = sc.owner(h[1])
@@ -3775,9 +3808,10 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
         cleared += _declip(db, key, K)
         cleared += _in_rock(db, key, K)
         cleared += _floaters(db, key)
-        # (not _loose_pipes: by any contact rule it called a fifth to a third of the game's own fittings
-        # hanging, 3.6% even with nothing within 160; the user's floating length met a corridor beside the
-        # room from outside, which wants a rule about a piece's dressing showing through into the next)
+        # (fittings with nothing at all within PIPE_ALONE: a length of pipe hung in the middle of a corridor, the
+        # user's Nchudjak. Not a contact rule: those called a fifth to a third of the game's own hanging. A
+        # length that meets the corridor beside a room from outside still wants a show-through rule)
+        cleared += _loose_pipes(db, key, K)
         # (last, after everything taken out of the way: what stood on a plank that went comes down to the floor)
         _settle(db, key)
         _orphans(db, key, K)

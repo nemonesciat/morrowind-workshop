@@ -64,8 +64,13 @@ async function ruList(){
   if (RU.tab === 'sound') return ruSoundList();
   const o = RU.opts, list = {faction: o.factions, class: o.classes, race: o.races, birthsign: o.birthsigns,
     skill: o.skills.map((s, n) => ({id: String(n), name: s})), effect: o.effects}[RU.tab];
+  // (the ones the game itself marks "<Deprecated>" or leaves without a name go last, folded away)
+  const unused = x => /deprecated/i.test(x.name || '') || !String(x.name || '').trim();
+  const row = x => `<button class="drow" data-ruo="${esc(x.id)}"><span>${esc(x.name || x.id)}</span><small>${esc(x.id !== x.name ? x.id : '')}</small></button>`;
+  const used = list ? list.filter(x => !unused(x)) : [], old = list ? list.filter(unused) : [];
   $('#rmain').innerHTML = `<div class="wrap" style="max-width:900px"><h1>${RU_TABS.find(t => t[0] === RU.tab)[1]}</h1><p class="lead">${RU_HELP[RU.tab]}</p>
-    ${list ? `<div class="rugrid">${list.map(x => `<button class="drow" data-ruo="${esc(x.id)}"><span>${esc(x.name)}</span><small>${esc(x.id !== x.name ? x.id : '')}</small></button>`).join('')}</div>`
+    ${list ? `<div class="rugrid">${used.map(row).join('')}</div>
+      ${old.length ? `<details class="ru-unused"><summary>${old.length} the game no longer uses (marked "Deprecated" or without a name)</summary><div class="rugrid">${old.map(row).join('')}</div></details>` : ''}`
       : '<div class="msg">Find one on the left, or make a new one.</div>'}</div>`;
   ruBindOpen($('#rmain'));
   if (RU.tab === 'effect') ruMyEffects();

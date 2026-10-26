@@ -295,8 +295,15 @@ class SetupForm : Form
             k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
             k.SetValue("EstimatedSize", (int)BuildInfo.SizeKB, RegistryValueKind.DWord);
         }
+        // Windows keeps the icons of a program it has seen before: the shortcuts, the taskbar and the corner
+        // kept the old small icons after an update (the user, when the icon changed in 2.4.17). Told the icons
+        // changed, it reads them again
+        try { SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero); } catch { }
         Say("Done.", 100);
     }
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);
 
     // Which running programs live in the install folder (the Workshop itself, or something started with
     // its Python, like a test script): named in the error, since "is the Workshop still open?" was not it

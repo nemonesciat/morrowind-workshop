@@ -87,14 +87,37 @@ function docHtml(md){
 const HELP_KEY = s => `<kbd>${s}</kbd>`;
 function helpGo(view){ return `<button class="btn sm" data-gview="${view}">Open ${{world: 'the World map', createv: 'Create', dialog: 'Dialogue', mymod: 'My mod', plugins: 'Load order', settings: 'Settings', chars: 'Characters'}[view] || view}</button>`; }
 
-// ----- the guide
+// ----- Home: where the Workshop opens. What to do first, the places you were in lately, and the guide
+// underneath (Help > Getting started comes here too)
+function homeStart(){ try { return localStorage.getItem('ws-start') !== 'browse'; } catch (e){ return true; } }
+function homeStartSet(on){ try { localStorage.setItem('ws-start', on ? 'home' : 'browse'); } catch (e){} }
 function renderGuide(){
   const s = S.summary || {}, p = s.project;
   try { post('/api/settings', {guide_seen: true}); } catch (e) {}
+  const places = (typeof WP !== 'undefined' ? WP.places : []).slice(0, 8);
+  const card = (k, ic, kick, title, text) => `<button class="ccard" data-home="${k}"><span class="ic">${ic}</span><span class="kick">${kick}</span><b>${title}</b><span class="msg">${text}</span></button>`;
   $('#guidewrap').innerHTML = `
-  <h1>Getting started</h1>
-  <p class="lead">Morrowind Workshop is an easy, modern editor for making Morrowind mods with <b>OpenMW</b>. You build and furnish places,
-    add people, items, books, dialogue and quests, and try it all in the running game, where your changes appear as you make them.</p>
+  <div class="home-hero">
+    <h1>Morrowind Workshop</h1>
+    <p class="lead">Build places, people, quests and dungeons for Morrowind, and walk into them in <b>OpenMW</b> as you make them.
+      Your game files are never changed: everything goes into a mod of your own.</p>
+    <div class="home-proj">${p
+      ? `<span>Working on <b>${esc(p.name)}</b></span><button class="btn sm" data-gview="mymod">My mod</button><button class="btn sm" id="home-switch">Open another…</button>`
+      : `<button class="btn primary" id="home-new">＋ Start a mod</button><span class="msg">Give it a name. It's saved as you work, and Undo (${HELP_KEY('Ctrl+Z')}) takes anything back.</span>`}</div>
+  </div>
+
+  <div class="cgrid home-cards">
+    ${card('tour', '🏠', 'Guided · about 2 minutes', 'Build your first house', 'Lay out a few rooms, let the Workshop build and furnish them from the game\'s own pieces, then look round it in 3D.')}
+    ${card('world', '🗺', 'World map', 'Open a place', 'Any town, house or cave of your game, in 2D or 3D. Move things, drag new ones in, furnish rooms, then Play here.')}
+    ${card('create', '⚒', 'Create', 'Make something new', 'A house, a dungeon or ruin, a person, an item, a spell, a book or a container, each one change you can undo.')}
+    ${card('browse', '🔎', 'Browse', 'Find anything', 'Search every record in your load order by name, ID, dialogue or model, and open it to see and change it.')}
+  </div>
+
+  ${places.length ? `<h2>Where you were lately</h2><div class="home-places">${places.map(pl => `<button class="btn sm" data-homeplace="${pl.i}">${pl.interior ? '🏠' : '🌄'} ${esc(pl.name)}</button>`).join('')}</div>` : ''}
+
+  <label class="msg home-onstart"><input type="checkbox" id="g-onstart" ${homeStart() ? 'checked' : ''}> Open on this page when the Workshop starts</label>
+
+  <details class="home-guide"><summary>How the Workshop works</summary>
 
   <div class="gcards">
     <div class="gcard"><b>1 · It reads your game</b><p>The Workshop reads OpenMW's own settings, so it sees your Morrowind files and the mods you have switched on,
@@ -167,13 +190,32 @@ function renderGuide(){
     <li>Your work is kept in the Workshop's <b>projects</b> folder; the mod file the game loads goes into OpenMW's data folder.</li>
   </ul>
 
-  <div class="actions" style="margin-top:18px">${helpGo('world')}${helpGo('createv')}${helpGo('settings')}
-    <label class="msg" style="display:inline-flex;gap:6px;align-items:center;margin-left:8px"><input type="checkbox" id="g-onstart"> Show this page every time the Workshop starts</label></div>`;
-  api('/api/settings').then(st => { const c = $('#g-onstart'); if (c){ c.checked = st.guide_on_start; c.onchange = () => post('/api/settings', {guide_on_start: c.checked}); } }).catch(() => {});
+  <div class="actions" style="margin-top:18px">${helpGo('world')}${helpGo('createv')}${helpGo('settings')}</div>
+  </details>`;
+  const w = $('#guidewrap');
+  $('#g-onstart').onchange = e => homeStartSet(e.target.checked);
+  const nw = $('#home-new'); if (nw) nw.onclick = () => projectModal();
+  const sw = $('#home-switch'); if (sw) sw.onclick = () => projectModal();
+  w.querySelectorAll('[data-home]').forEach(b => b.onclick = () => {
+    const k = b.dataset.home;
+    if (k === 'tour') coachHouse();
+    else if (k === 'world') showView('world');
+    else if (k === 'create') showView('createv');
+    else { showView('browse'); $('#q').focus(); }
+  });
+  w.querySelectorAll('[data-homeplace]').forEach(b => b.onclick = () => { showView('world'); worldOpenIndex(+b.dataset.homeplace); });
 }
 document.addEventListener('click', e => { const g = e.target.closest('[data-gview]'); if (g) showView(g.dataset.gview); });
+// (the logo, top left, goes Home)
+document.addEventListener('click', e => { if (e.target.closest && e.target.closest('.brand')) showView('guide'); });
 
 // ----- settings
+// the ✦ AI button at the top, for those who'll never use it hidden (Settings, kept for next time; ticking the
+// box again brings it back)
+function aiBtnShown(){ try { return localStorage.getItem('ws-aibtn') !== '0'; } catch (e){ return true; } }
+function aiBtnApply(){ const b = $('#aibtn'); if (b) b.style.display = aiBtnShown() ? '' : 'none'; if (typeof hdrFit === 'function') hdrFit(); }
+aiBtnApply();
+
 async function renderSettings(){
   const w = $('#settingswrap');
   let st, bk;
@@ -196,7 +238,8 @@ async function renderSettings(){
     <div class="actions"><input class="inp" id="st-key" type="password" placeholder="Paste a new key: sk-ant-…" style="max-width:320px" autocomplete="off">
       <button class="btn sm" id="st-savekey">Save key</button>${st.ai_configured && !st.ai_from_env ? '<button class="btn sm danger" id="st-delkey">Remove key</button>' : ''}
       <a class="btn sm" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key</a></div>
-    <p class="msg" style="font-size:12px">The key is stored only on this PC, in the Workshop's folder.</p></section>
+    <p class="msg" style="font-size:12px">The key is stored only on this PC, in the Workshop's folder.</p>
+    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="st-aibtn" ${aiBtnShown() ? 'checked' : ''}> Show the ✦ AI button at the top</label></section>
 
   <section class="card setsec"><h3>Backups of your mod</h3>
     <p class="msg">The Workshop copies your mod's project file when you open it and then regularly while you work, and keeps the newest ones.</p>
@@ -209,7 +252,7 @@ async function renderSettings(){
     <div class="actions"><button class="btn sm" data-open="backups">Open the backups folder</button></div></section>
 
   <section class="card setsec"><h3>Starting up</h3>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="st-guide" ${st.guide_on_start ? 'checked' : ''}> Show the Getting started page every time the Workshop starts (it always opens the first time)</label></section>
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="st-guide" ${homeStart() ? 'checked' : ''}> Open on the Home page (unticked: on Browse). Click the logo at the top left to go Home any time.</label></section>
 
   <section class="card setsec"><h3>Folders</h3>
     <div class="setrow"><span>Your projects</span><span class="msg">${esc(st.projects_folder)}</span></div>
@@ -220,11 +263,12 @@ async function renderSettings(){
   const save = body => post('/api/settings', body).then(() => toast('Saved.')).catch(e => toast(e.message, true));
   $('#st-pick').onclick = async () => { try { toast('Choose OpenMW\'s folder in the window that opens…'); const r = await post('/api/openmw/pick', {}); if (r.ok){ toast('Using OpenMW in ' + r.install + '. Reading your game again…'); setTimeout(poll, 300); } } catch (e){ toast(e.message, true); } };
   const auto = $('#st-auto'); if (auto) auto.onclick = async () => { await post('/api/settings', {openmw_reset: true}); toast('Looking for OpenMW by itself. Reading your game again…'); setTimeout(poll, 300); };
+  $('#st-aibtn').onchange = e => { try { localStorage.setItem('ws-aibtn', e.target.checked ? '1' : '0'); } catch (x) {} aiBtnApply(); };
   $('#st-savekey').onclick = async () => { const k = $('#st-key').value.trim(); if (!k) return; await post('/api/ai/key', {key: k}); AI.configured = true; toast('Key saved.'); renderSettings(); };
   const dk = $('#st-delkey'); if (dk) dk.onclick = async () => { if (!confirm('Remove the saved API key?')) return; await post('/api/ai/key', {key: ''}); AI.configured = false; renderSettings(); };
   $('#st-bmin').onchange = e => save({backup_minutes: +e.target.value});
   $('#st-bkeep').onchange = e => save({backup_keep: +e.target.value});
-  $('#st-guide').onchange = e => save({guide_on_start: e.target.checked});
+  $('#st-guide').onchange = e => { homeStartSet(e.target.checked); toast('Saved.'); };
   w.querySelectorAll('[data-open]').forEach(b => b.onclick = () => post('/api/open_place', {what: b.dataset.open}).catch(e => toast(e.message, true)));
   w.querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
     const f = b.dataset.restore;
@@ -235,10 +279,22 @@ async function renderSettings(){
 }
 
 // ----- report a problem
+// what the page itself saw, for the report: its faults, the problems it showed, and where you were
+function reportPage(){
+  const errs = typeof PAGE_ERRORS !== 'undefined' ? PAGE_ERRORS : [];
+  // (a fault's own message isn't counted twice)
+  const probs = typeof TOASTS !== 'undefined' ? TOASTS.filter(x => x.err && !x.msg.startsWith('Something went wrong in the page:')).slice(-15) : [];
+  return {view: (document.querySelector('.view.on') || {}).id || '', place: typeof W !== 'undefined' ? W.key || '' : '',
+    three_d: typeof V3 !== 'undefined' && !!V3.on, theme: typeof thGet === 'function' ? (thGet().theme || '') : '',
+    window: innerWidth + 'x' + innerHeight, browser: navigator.userAgent.slice(0, 160),
+    errors: errs.map(e => `${e.t} ${e.where ? '(' + e.where + ') ' : ''}${e.msg}`),
+    problems: probs.map(x => `${x.t} ${x.msg}`)};
+}
 function reportModal(){
+  const pg = reportPage(), n = pg.errors.length + pg.problems.length;
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>Report a problem</h2>
-    <div class="msg">This makes a report with what's needed to look into it: the Workshop and OpenMW versions, your setup, and the end of both logs.
+    <div class="msg">This makes a report with what's needed to look into it: the Workshop and OpenMW versions, your setup, ${n ? `<b>the ${n} problem${n === 1 ? '' : 's'} the page showed since it opened</b>, ` : ''}the page you were on, and the end of both logs.
       Your Windows user name is left out, and your API key is never included.</div>
     <label>What happened? What did you do just before?</label>
     <textarea class="inp" id="rp-what" style="min-height:90px" placeholder="e.g. I pressed Auto-furnish in a Dres house and nothing appeared."></textarea>
@@ -248,7 +304,7 @@ function reportModal(){
   $('#rp-close').onclick = () => bg.remove();
   $('#rp-make').onclick = async () => {
     try {
-      const r = await post('/api/report', {what: $('#rp-what').value});
+      const r = await post('/api/report', {what: $('#rp-what').value, page: reportPage()});
       $('#rp-out').innerHTML = `<label>The report (saved as a text file too)</label><textarea class="inp code" id="rp-text" style="min-height:200px;font-size:11.5px" readonly>${esc(r.text)}</textarea>
         <div class="actions"><button class="btn sm primary" id="rp-copy">Copy to clipboard</button><button class="btn sm" id="rp-folder">Open the reports folder</button></div>
         <div class="msg">Read it over, then paste it where you got the Workshop (for example its Nexus Mods bugs page), or send the file.</div>`;
@@ -379,7 +435,8 @@ async function openFromLink(hash){
       const st = await api('/api/settings');
       AI.ack = st.ai_ack;
       if (location.hash.length > 1) await openFromLink(location.hash);
-      else if (!st.guide_seen || st.guide_on_start) showView('guide');
+      else if (!st.guide_seen || homeStart()) showView('guide');
+      setTimeout(() => { if (typeof crPrefetch === 'function') crPrefetch(); }, 4000);
     } catch (e){ console.warn(e); }
   }, 700);
 })();

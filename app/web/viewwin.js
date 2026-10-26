@@ -28,7 +28,7 @@ const VW_HOST = {
   myeff: {title: () => '🪄 Magic effects', render: () => renderMyEffects(), w: 980},
   health: {title: () => '🩺 Health check', render: () => {}, w: 920},
   plugins: {title: () => '☰ Load order', render: () => {}, w: 920},
-  guide: {title: () => 'Getting started', render: () => renderGuide(), w: 900},
+  guide: {title: () => 'Home', render: () => renderGuide(), w: 900},
   settings: {title: () => '⚙ Settings', render: () => renderSettings(), w: 860},
 };
 // the pages at the top, by name (for the menus and Ctrl+K)

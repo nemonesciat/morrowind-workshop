@@ -166,7 +166,25 @@ def _tail(path, n):
         return '(not found)\n'
 
 
-def report(db, link, what=''):
+def _log_errors(path, scan=6000, keep=25):
+    # the faults in the log, wherever they are in it (the last 150 lines often miss the one that matters):
+    # page errors, and each Python traceback's last line (the error itself) with the line that raised it
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()[-scan:]
+    except OSError:
+        return []
+    out = []
+    for n, ln in enumerate(lines):
+        s = ln.rstrip()
+        if s.startswith('page error'):
+            out.append(s[:400])
+        elif re.match(r'^[A-Za-z_][\w.]*(Error|Exception)\b', s) and n and lines[n - 1].startswith('    '):
+            out.append('%s   [at: %s]' % (s[:300], lines[n - 1].strip()[:160]))
+    return out[-keep:]
+
+
+def report(db, link, what='', page=None):
     cfg = db.config or {}
     p = db.project
     lines = ['Morrowind Workshop problem report', '=' * 40,
@@ -182,7 +200,21 @@ def report(db, link, what=''):
              'Mod open: %s' % ((p.name + ' (' + p.plugin + ')') if p else 'none'),
              'Live link: %s' % ('connected' if link.connected() else 'not linked' if link.unlinked_game() else 'off'),
              '', 'What happened (from the person reporting):', (what or '(not filled in)').strip(), '']
+    page = page if isinstance(page, dict) else {}
+    if page:
+        lines += ['--- The page ---',
+                  'On: %s%s%s' % (page.get('view') or '?', (', place ' + str(page.get('place'))) if page.get('place') else '',
+                                  ', in 3D' if page.get('three_d') else ''),
+                  'Theme: %s · window %s' % (page.get('theme') or 'usual', page.get('window') or '?'),
+                  'Browser: %s' % str(page.get('browser') or '?')[:160]]
+        errs = [str(e)[:700] for e in (page.get('errors') or [])[:20]]
+        probs = [str(e)[:500] for e in (page.get('problems') or [])[:15]]
+        lines += ['Faults in the page since it opened: %d' % len(errs)] + ['  ' + e for e in errs]
+        lines += ['Problems it showed (red messages): %d' % len(probs)] + ['  ' + e for e in probs] + ['']
     log = os.path.join(APP_DIR, 'workshop.log')
+    if os.path.isfile(log):
+        errs = _log_errors(log)
+        lines += ['--- Errors in the Workshop log (%d, newest last) ---' % len(errs)] + (errs or ['(none)']) + ['']
     lines += ['--- Workshop log (last 150 lines) ---', _tail(log, 150) if os.path.isfile(log) else
               '(no log file: started from a terminal)\n']
     glog = game_log(cfg)

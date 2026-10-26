@@ -24,7 +24,8 @@ const TH_THEMES = {
   imperial: {label: 'Imperial', about: 'Ivory marble, Septim red and old gold', light: true, v: {
     // (marble rather than parchment: cooler ivory panels with firm warm lines, the Legion's red for what
     // matters and a deep gold for the rest)
-    bg: '#e4dccb', panel: '#f3eee3', panel2: '#e9e1d0', line: '#c9b994', line2: '#a9956a', text: '#221a12', muted: '#5c4d36', faint: '#6c5d45',
+    // (the text darker than at first, 2026-10-26: "the text has to pop a little more", the user)
+    bg: '#e4dccb', panel: '#f3eee3', panel2: '#e9e1d0', line: '#c9b994', line2: '#a9956a', text: '#0f0a05', muted: '#3d3021', faint: '#4d3f2b',
     gold: '#8e1d1d', gold2: '#5f1010', hover: '#e4d9c0', sel: '#e2c9a2', deep: '#faf7f0', bg2: '#dfd5c0', bg3: '#ece5d5', line0: '#d7cbb0', goldline: '#b8902f',
     red: '#9f2d1d', amber: '#9c6a0c', blue: '#2e5d97', green: '#4b7833'}},
   indoril: {label: 'Indoril', about: 'Light: Mournhold grey stone and pale blue panels, with deep Almalexia blue', light: true, v: {
@@ -123,6 +124,12 @@ document.addEventListener('DOMContentLoaded', () => {
   new MutationObserver(() => { if (!pend) pend = setTimeout(() => { pend = 0; thFontAll(); }, 0); }).observe(document.head, {childList: true});
 });
 
+// (the fonts and size chosen for every theme; once only your own theme had them, so its choice is the fallback)
+function thFonts(t){
+  const cu = t.custom || {};
+  return {head: t.head || cu.head || 'cinzel', body: t.body || cu.body || 'inter', size: +t.size || +cu.size || 1};
+}
+
 function thApply(t){
   t = t || thGet();
   const root = document.documentElement, custom = t.theme === 'custom' && t.custom, base = TH_THEMES[t.theme] || TH_THEMES.ashlands;
@@ -158,13 +165,12 @@ function thApply(t){
     'tag-flag-p': `color-mix(in srgb,var(--blue) ${tint[3]}%,var(--panel))`, 'toast-err': 'var(--red)',
     hl: `color-mix(in srgb,var(--gold) ${light ? 18 : 30}%,var(--panel))`});
   if (!cv && base.btn && !t.accent) Object.assign(v, {'btn-primary': base.btn, 'btn-primary-hover': `color-mix(in srgb,${base.btn},var(--text) 12%)`});
-  if (cv){
-    Object.assign(v, {'btn-primary': cv.btn, 'btn-primary-hover': `color-mix(in srgb,${cv.btn},var(--text) 12%)`});
-    const cu = t.custom, h = TH_HEAD_FONTS[cu.head], b = TH_BODY_FONTS[cu.body];
-    if (h && cu.head !== 'cinzel') v['font-head'] = h[1];
-    if (b && cu.body !== 'inter') v['font-body'] = b[1];
-    if (+cu.size && +cu.size !== 1) v.fs = String(Math.max(0.8, Math.min(1.5, +cu.size)));
-  }
+  if (cv) Object.assign(v, {'btn-primary': cv.btn, 'btn-primary-hover': `color-mix(in srgb,${cv.btn},var(--text) 12%)`});
+  // the fonts and text size, whatever the theme ("font should be selectable across all themes", the user)
+  const F = thFonts(t), h = TH_HEAD_FONTS[F.head], b = TH_BODY_FONTS[F.body];
+  if (h && F.head !== 'cinzel') v['font-head'] = h[1];
+  if (b && F.body !== 'inter') v['font-body'] = b[1];
+  if (+F.size && +F.size !== 1) v.fs = String(Math.max(0.8, Math.min(1.5, +F.size)));
   for (const [k, val] of Object.entries(v)) root.style.setProperty('--' + k, val);
   root.dataset.theme = light ? 'light' : 'dark';
   root.classList.toggle('th-calm', !!t.calm);
@@ -192,6 +198,7 @@ fetch('/api/settings').then(r => r.json()).then(s => {
 }).catch(() => {});
 
 // ---------------------------------------------------------------- Settings → Appearance
+const thOpts = (o, cur) => Object.entries(o).map(([k, [l]]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(l)}</option>`).join('');
 function thSection(){
   const t = thGet();
   let in3d = false; try { in3d = localStorage.getItem('ws-3d') === '1'; } catch (e){}
@@ -207,6 +214,10 @@ function thSection(){
     <div class="setrow" style="margin-top:12px"><span>Your own accent colour</span><span><input type="color" id="th-accent" value="${t.accent || '#d2a85a'}"> <button class="btn sm" id="th-accent-x" ${t.accent ? '' : 'disabled'}>Theme's own</button></span></div>
     <div class="setrow"><span>Your own background colour</span><span><input type="color" id="th-bg" value="${t.bg || '#13110d'}"> <button class="btn sm" id="th-bg-x" ${t.bg ? '' : 'disabled'}>Theme's own</button></span></div>
     <div class="msg" style="font-size:12px">The panels, lines and text are worked out from the background, so any colour stays readable. For more, choose ✎ Your own.</div>`}
+    <h4 style="margin:14px 0 4px">Fonts and text size</h4>
+    <div class="setrow"><span>Headings</span><span><select id="th-head" style="width:auto;margin:0">${thOpts(TH_HEAD_FONTS, thFonts(t).head)}</select></span></div>
+    <div class="setrow"><span>Everything else</span><span><select id="th-body" style="width:auto;margin:0">${thOpts(TH_BODY_FONTS, thFonts(t).body)}</select></span></div>
+    <div class="setrow"><span>Text size</span><span><select id="th-size" style="width:auto;margin:0">${TH_SIZES.map(([v, l]) => `<option value="${v}" ${v === thFonts(t).size ? 'selected' : ''}>${l} (${Math.round(v * 100)}%)</option>`).join('')}</select></span></div>
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="th-calm" ${t.calm ? 'checked' : ''}> Calmer: no fades or movement in menus and windows</label>
     <div class="msg" style="font-size:12px;margin-top:8px">Bigger or smaller: hold Ctrl and turn the mouse wheel (Ctrl+0 for the usual size).</div></section>
 
@@ -224,10 +235,7 @@ function thEditor(t){
     <div class="th-edcols"><div>
       <h4>Colours</h4>
       ${TH_KEYS.map(([k, l]) => `<div class="setrow"><span>${esc(l)}</span><span><input type="color" data-thc="${k}" value="${c[k]}"></span></div>`).join('')}
-      <h4>Fonts and text size</h4>
-      <div class="setrow"><span>Headings</span><span><select id="th-head" style="width:auto;margin:0">${opts(TH_HEAD_FONTS, cu.head || 'cinzel')}</select></span></div>
-      <div class="setrow"><span>Everything else</span><span><select id="th-body" style="width:auto;margin:0">${opts(TH_BODY_FONTS, cu.body || 'inter')}</select></span></div>
-      <div class="setrow"><span>Text size</span><span><select id="th-size" style="width:auto;margin:0">${TH_SIZES.map(([v, l]) => `<option value="${v}" ${v === (+cu.size || 1) ? 'selected' : ''}>${l} (${Math.round(v * 100)}%)</option>`).join('')}</select></span></div>
+      <div class="msg" style="font-size:12px;margin-top:6px">Fonts and text size are under Appearance, for every theme.</div>
     </div><div>
       <h4>How it looks</h4>
       <div class="th-prev"><div class="th-prevpanel">
@@ -312,21 +320,22 @@ function thBind(w){
     cu.c = Object.assign({}, thFromPreset(cu.from).c, cu.c);
     // (live while the colour box is open; the custom card's swatches catch up when the page is drawn again)
     w.querySelectorAll('[data-thc]').forEach(inp => inp.oninput = () => { cu.c[inp.dataset.thc] = inp.value; thSave(t); thApply(t); chk.innerHTML = thCheck(cu); });
-    w.querySelector('#th-head').onchange = e => { cu.head = e.target.value; thSave(t); thApply(t); };
-    w.querySelector('#th-body').onchange = e => { cu.body = e.target.value; thSave(t); thApply(t); };
-    w.querySelector('#th-size').onchange = e => { cu.size = +e.target.value; thSave(t); thApply(t); };
     w.querySelector('#th-from').onchange = e => {
       const k = e.target.value;
       if (!confirm(`Start your own theme again from ${TH_THEMES[k].label}? Its colours replace yours (the fonts and text size stay).`)){ e.target.value = cu.from; return; }
       upd({custom: Object.assign(thFromPreset(k), {head: cu.head, body: cu.body, size: cu.size})});
     };
     w.querySelector('#th-reset').onclick = () => {
-      if (!confirm(`Put your own theme back to ${(TH_THEMES[cu.from] || {}).label}'s colours, with the usual fonts and text size?`)) return;
+      if (!confirm(`Put your own theme back to ${(TH_THEMES[cu.from] || {}).label}'s colours? (The fonts and text size stay.)`)) return;
       upd({custom: thFromPreset(cu.from)});
     };
     w.querySelector('#th-export').onclick = () => thExport(t);
     w.querySelector('#th-import').onclick = () => thImport(t, () => upd({}));
   }
+  // (fonts and size for every theme, kept with the look itself)
+  w.querySelector('#th-head').onchange = e => { t.head = e.target.value; thSave(t); thApply(t); };
+  w.querySelector('#th-body').onchange = e => { t.body = e.target.value; thSave(t); thApply(t); };
+  w.querySelector('#th-size').onchange = e => { t.size = +e.target.value; thSave(t); thApply(t); };
   w.querySelector('#th-calm').onchange = e => upd({calm: e.target.checked});
   w.querySelector('#th-3d').onchange = e => { try { localStorage.setItem('ws-3d', e.target.value); } catch (x){} toast(e.target.value === '1' ? 'The World map opens in 3D from now on.' : 'The World map opens flat from now on.'); };
   w.querySelector('#th-keys').onclick = () => cfKeysModal();

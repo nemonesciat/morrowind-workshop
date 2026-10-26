@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Morrowind Workshop</title>
 <link href="/web/vendor/fonts.css" rel="stylesheet">
-<link rel="icon" href="/web/vendor/workshop.ico">
+<!-- (the window's icon in Edge's app window and the taskbar: Edge keeps an icon by its address, so a new icon
+     needs a new one, ?v=; and it takes the biggest offered, the PNG. With the old address the ring stayed) -->
+<link rel="icon" type="image/png" sizes="256x256" href="/web/vendor/workshop-256.png?v=mw2">
+<link rel="icon" sizes="16x16 24x24 32x32 48x48 64x64" href="/web/vendor/workshop.ico?v=mw2">
 <script src="/web/theme.js"></script>
 <style>
 :root{
@@ -48,6 +51,10 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 .hdr-row{container-type:inline-size}
 .hdr-row .hdr-right{margin-left:0;flex-wrap:nowrap;min-width:0}
 .btn.ico{min-width:32px;padding-left:0;padding-right:0;text-align:center}
+/* (no button squeezes: a row too long folds words away instead, one button at a time, hdrFit. Squeezed, Me lost
+   its sides and the reload button ran off the screen with the game linked, the user) */
+.hdr-row .hdr-right > *{flex:none}
+.hdr-right .fold .tl{display:none}
 /* (the jump-to-character button: a pin and a word, so room either side and the two centred on one line) */
 #jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
 #jumpme svg{flex:none;display:block}
@@ -226,6 +233,17 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .setupbtns{display:flex;gap:8px;justify-content:center;margin:16px 0}
 .guide{max-width:900px;line-height:1.65}
 .guide h2{font-family:Cinzel,serif;color:var(--gold2);font-weight:600;font-size:19px;margin:26px 0 8px}
+.home-hero h1{margin-bottom:4px}
+.home-hero .lead{max-width:720px}
+.home-proj{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 22px}
+.cgrid.home-cards{grid-template-columns:repeat(auto-fill,minmax(195px,1fr));max-width:900px}
+.home-cards .ccard{display:flex;flex-direction:column;gap:2px;min-height:150px}
+.home-cards .ccard[data-home="tour"]{border-color:color-mix(in srgb,var(--gold) 60%,var(--line))}
+.home-places{display:flex;gap:6px;flex-wrap:wrap;max-width:900px}
+.home-onstart{display:flex;gap:6px;align-items:center;margin:22px 0 6px}
+.home-guide{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.home-guide>summary{cursor:pointer;font-family:Cinzel,serif;color:var(--gold2);font-size:17px;padding:6px 0;list-style-position:inside}
+.brand{cursor:pointer}
 .gcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:14px 0}
 .gcard{background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:12px 14px}
 .gcard b{color:var(--gold2)} .gcard p{margin:6px 0;color:var(--text);font-size:13.5px}
@@ -282,6 +300,9 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .v3viewwrap{position:relative;display:inline-block}
 .v3viewmenu{position:absolute;top:calc(100% + 4px);left:0;background:color-mix(in srgb,var(--panel) 95%,transparent);border:1px solid var(--line2);border-radius:8px;padding:6px;min-width:170px;z-index:6;box-shadow:0 8px 24px #000a}
 .v3tools .v3viewmenu label{border:0;background:none;padding:4px 6px;color:var(--text)}
+.v3tools .v3snapmenu{min-width:220px}.v3tools .v3snapmenu label{display:flex;gap:10px;align-items:center;justify-content:space-between;white-space:nowrap}
+.v3tools .v3snapmenu label:has(input[type=checkbox]){justify-content:flex-start}
+.v3snapnow{color:var(--muted);font-size:11px}
 #v3land{position:absolute;left:12px;top:56px;width:270px;max-height:calc(100% - 80px);overflow:auto;background:color-mix(in srgb,var(--bg2-b) 94%,transparent);border:1px solid var(--line2);border-radius:9px;padding:10px 12px;z-index:3;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
 #v3land .v3lhead{display:flex;justify-content:space-between;align-items:center;color:var(--text);font-size:13.5px;cursor:move}
 /* (window chrome isn't text to pick up: titles, buttons, labels and the 3D view's own small windows don't
@@ -334,7 +355,18 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 #v3lgrid .v3lt span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 #v3land .v3lnote{font-size:11.5px;line-height:1.45;color:var(--faint)}
 .v3help{position:absolute;left:12px;bottom:12px;background:color-mix(in srgb,var(--bg2-b) 93%,transparent);border:1px solid var(--line2);border-radius:9px;padding:10px 14px;font-size:12.5px;line-height:1.8;z-index:3;max-width:560px}
+.wtools{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.wtools .btn{justify-content:flex-start;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.wtools .wt-wide{grid-column:1/-1;border-color:color-mix(in srgb,var(--gold) 45%,var(--line))}
+.wtools .wt-link{grid-column:1/-1;background:none;border-color:transparent;color:var(--muted);padding-left:2px}
+.wtools .wt-link:hover{color:var(--text)}
 .mapempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--faint);text-align:center;padding:30px}
+.me-card{width:min(440px,92%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px 16px;text-align:left;color:var(--text);box-shadow:0 10px 40px #0005}
+.me-card h3{font-family:Cinzel,serif;color:var(--gold2);font-weight:600;font-size:19px;margin:0 0 10px}
+.me-card .dd{margin-bottom:10px}.me-card .dd .inp{width:100%}
+.me-card .me-h{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin:14px 0 6px}
+.me-card .me-places{display:flex;flex-wrap:wrap;gap:6px}
+.me-card .me-foot{margin-top:14px;font-size:12px}
 .wside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px 16px 40px}
 .wside h3{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:18px 0 8px;font-weight:600}
 .wside h2{font-family:Cinzel,serif;color:var(--gold2);font-size:18px;margin:4px 0 2px;font-weight:600}
@@ -479,7 +511,12 @@ tr.bad td{color:#e08a7a}
 .rutabs button{text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:6px 10px;color:var(--muted);cursor:pointer}
 .rutabs button.on{color:var(--gold2);border-color:var(--line2);background:var(--panel2)}
 .rugrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px}
-.rugrid .drow{text-align:left;background:var(--panel);border:1px solid var(--line);cursor:pointer;color:var(--text)}
+.rugrid .drow{text-align:left;background:var(--panel);border:1px solid var(--line);cursor:pointer;color:var(--text);flex-direction:column;gap:0;align-items:flex-start;justify-content:center}
+.rugrid .drow span{white-space:normal}
+.rugrid .drow{min-height:42px}
+.rugrid .drow small{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.rugrid .drow small:empty{display:none}
+.ru-unused{margin-top:16px}.ru-unused>summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:6px}
 .ruchips{display:flex;flex-wrap:wrap;gap:4px}
 .regsw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:7px;vertical-align:-1px;border:1px solid #0006}
 .regbar{display:flex;height:14px;border-radius:7px;overflow:hidden;border:1px solid var(--line2);margin-bottom:8px;background:var(--panel2)}
@@ -714,12 +751,12 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
   </div>
   <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
-        <button data-help="guide"><b>Getting started</b><small>What the Workshop does and how to make your first mod.</small></button>
+        <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn primary" id="aibtn" title="Assistant">✦<span class="tl"> Assistant</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn primary" id="aibtn" title="Assistant: ask the AI to help you build (it can be hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -820,12 +857,22 @@ const WIN_ID = Math.random().toString(36).slice(2, 10);
 const post = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json', 'X-Workshop-Window': WIN_ID}, body: JSON.stringify(body || {})});
 // A fault in the page itself (a script error, a promise nobody caught): said on screen and written to the
 // Workshop's log, so "nothing happens" never stays silent
-const _said = {};
+const _said = {}, PAGE_ERRORS = [];
 function reportClientError(msg, where){
   const key = String(msg).slice(0, 120);
   if (_said[key]) return;
   _said[key] = true;
-  try { toast('Something went wrong in the page: ' + key + ' (noted in the Workshop log)', true); } catch (e){}
+  // (with a button that opens Report a problem, the fault already in it: one click from seeing it to sending it)
+  PAGE_ERRORS.push({t: new Date().toLocaleTimeString(), msg: String(msg).slice(0, 600), where: String(where || '').slice(0, 200)});
+  if (PAGE_ERRORS.length > 20) PAGE_ERRORS.shift();
+  try {
+    const t = toast('Something went wrong in the page: ' + key, true);
+    if (t && typeof reportModal === 'function'){
+      const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Report it…'; b.style.marginLeft = '10px';
+      b.onclick = e => { e.stopPropagation(); t.remove(); reportModal(); };
+      t.appendChild(b);
+    }
+  } catch (e){}
   try { fetch('/api/clienterror', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({msg: String(msg).slice(0, 2000), where: String(where || '').slice(0, 400), view: (document.querySelector('.view.on') || {}).id || ''})}); } catch (e){}
 }
 window.addEventListener('error', e => reportClientError(e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
@@ -857,6 +904,7 @@ function toast(msg, err){
   t.onmouseenter = () => { hover = true; }; t.onmouseleave = () => { hover = false; left = Math.max(left, 1500); };
   const tick = () => { if (!t.isConnected) return; if (!hover) left -= 250; if (left <= 0) t.remove(); else setTimeout(tick, 250); };
   setTimeout(tick, 250);
+  return t;
 }
 function recentMessages(){
   const bg = document.createElement('div'); bg.className = 'modal-bg';
@@ -937,7 +985,10 @@ function loadProblemsNote(s){
   if (!probs.length || key === _loadProblemsSaid) return;
   if (typeof TW !== 'undefined' && TW.embed) return;       // (a second view inside the Workshop: the main view says it)
   _loadProblemsSaid = key;
-  const t = document.createElement('div'); t.className = 'toast err'; t.style.whiteSpace = 'pre-line'; t.style.maxWidth = '560px';
+  // (said once: the same problems as last time stay quiet at the next start, under Health check and Load order)
+  let seen = null; try { seen = localStorage.getItem('ws-loadprobs'); localStorage.setItem('ws-loadprobs', key); } catch (e){}
+  if (seen === key) return;
+  const t = document.createElement('div'); t.className = 'toast'; t.style.whiteSpace = 'pre-line'; t.style.maxWidth = '560px';
   t.textContent = (probs.length === 1 ? 'A plugin in your load order has a problem:\n' : probs.length + ' plugins in your load order have problems:\n') +
     probs.slice(0, 5).map(p => '• ' + p.plugin + ': ' + p.text).join('\n') + (probs.length > 5 ? '\n…and ' + (probs.length - 5) + ' more' : '') +
     '\n(The rest loaded. Details under Health check and Load order. Click to dismiss.)';
@@ -1340,7 +1391,7 @@ function showView(v){
   if (v !== 'createv' && typeof PL !== 'undefined' && PL && PL.paint) PL.paint = null;     // (the planner's tile mode ends with the page)
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === v));
-  if (v === 'world'){ renderWside(); requestAnimationFrame(() => { sizeMap(); drawMap(); if (W.ext && W.key) recentre(); if (V3.on && V3.scene){ v3Resize(); v3Loop(); } }); }
+  if (v === 'world'){ renderWside(); if (!W.key && typeof qolEmptyMap === 'function') qolEmptyMap(); requestAnimationFrame(() => { sizeMap(); drawMap(); if (W.ext && W.key) recentre(); if (V3.on && V3.scene){ v3Resize(); v3Loop(); } }); }
   if (v === 'mymod') renderMyMod();
   if (v === 'guide') renderGuide();
   if (v === 'settings') renderSettings();
@@ -1775,7 +1826,7 @@ async function renderMyMod(){
   const byType = {};
   P.changes.forEach(c => (byType[c.type] = byType[c.type] || []).push(c));
   let h = `<h1>${esc(p.name)}</h1>
-    <p class="lead">Saved automatically after every change to <span class="path">${esc(P.path)}</span></p>
+    <p class="lead">Saved automatically after every change. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span> (📁 Show folder opens it)</p>
     ${p.source ? `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): this mod <b>is</b> that file, opened as your mod. Its objects keep the numbers the file gave them, its masters stay as the file listed them, and a dated copy of the file as it was is kept beside it (later copies under Backups).${p.plain_esp ? ' A plain .esp holds no Lua scripts: any you write stay in the project and are not written out.' : ''}</p>`
                : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
     <div class="cards">
@@ -2828,9 +2879,12 @@ function renderWside(){
   PNL.badge('world', 'objs', fmtN(refs.length)); PNL.badge('world', 'sel', sel || W.multi.size > 1 ? '●' : '');
   // --- Place
   h += `<div class="wpane on" data-pane="place"><div id="w-placing"></div>
-    <button class="btn sm" id="w-create" style="width:100%;margin-bottom:8px" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
-    <button class="btn sm" id="w-stylepal" style="width:100%;margin-bottom:8px" title="Building pieces, furniture, decor and whole sets sorted by style (Hlaalu, Redoran, Telvanni, Nord, Imperial, Gold Coast...), the way the game's own places use them: see what goes with what, then click or drag to place">🎨 Style palette…</button>
-    ${i.interior ? '<button class="btn sm" id="w-furnish" style="width:100%;margin-bottom:8px" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" style="width:100%;margin-bottom:8px" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" style="width:100%;margin-bottom:8px" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check this place…</button><div id="w-taste"></div>' : ''}<button class="btn sm" id="w-2win" style="width:100%;margin-bottom:8px" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Open in a second window</button><div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
+    <div class="wtools">
+      <button class="btn sm" id="w-create" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
+      <button class="btn sm" id="w-stylepal" title="Building pieces, furniture, decor and whole sets sorted by style (Hlaalu, Redoran, Telvanni, Nord, Imperial, Gold Coast...), the way the game's own places use them: see what goes with what, then click or drag to place">🎨 Style palette…</button>
+      ${i.interior ? '<button class="btn sm wt-wide" id="w-furnish" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check place…</button>' : ''}
+      <button class="btn sm wt-link" id="w-2win" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Open in a second window</button></div>
+    ${i.interior ? '<div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
     <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${paletteHtml()}</div></div>`;
@@ -3562,7 +3616,12 @@ async function renderCreate(){
   }
   // (the item editor may have started CR.opts with only its magic lists: the Create page's own options are still
   // to fetch, else the book form failed on its missing book_kinds, "Create form book: ... reading 'map'")
-  if (!CR.opts || !CR.opts.book_kinds){ wrap.innerHTML = '<h1>Create</h1><p class="lead"><span class="spin"></span>Gathering races, classes, factions and room styles…</p>'; CR.opts = Object.assign({}, CR.opts || {}, await api('/api/create/options')); }
+  if (!CR.opts || !CR.opts.book_kinds){
+    wrap.innerHTML = '<h1>Create</h1><p class="lead"><span class="spin"></span>Gathering races, classes, factions and room styles…</p>';
+    const pre = CR.pre; CR.pre = null;
+    CR.opts = Object.assign({}, CR.opts || {}, await (pre ? pre[0] : api('/api/create/options')));
+    if (pre && !CR.opts.magic) CR.opts.magic = await pre[1];
+  }
   if (!CR.opts.magic) CR.opts.magic = await api('/api/items/options');
   if (CR.kind === 'interior') CR.kind = 'build';       // (the old "New interior + door" lives inside Build from pieces now)
   const card = k => { const c = CR_CARDS[k]; return `<button class="ccard ${CR.kind === k ? 'on' : ''}" data-ck="${k}"><span class="ic">${c[0]}</span>${c[3] ? `<span class="kick">${c[3]}</span>` : ''}<b>${c[1]}</b><span class="msg">${c[2]}</span></button>`; };
@@ -3591,6 +3650,14 @@ async function renderCreate(){
   }
   try { bindForm(); }
   catch (e){ reportClientError('Create form "' + CR.kind + '" (binding): ' + (e.stack || e), 'bindForm'); }
+}
+// the Create page's lists fetched in the background a little after the Workshop starts, so the page opens at
+// once instead of a spinner the first time (a fetch that fails is simply made again when the page opens)
+function crPrefetch(){
+  if (CR.pre || (CR.opts && CR.opts.book_kinds) || !S.summary || !S.summary.project) return;
+  const a = api('/api/create/options'), b = api('/api/items/options');
+  CR.pre = [a, b];
+  Promise.all([a, b]).catch(() => { if (CR.pre && CR.pre[0] === a) CR.pre = null; });
 }
 // (icon, title, what you get, and the kind of thing it is: the cards sit in one grid, new things first in the
 // order you'd make them (a place, who lives there, what they own), then the one card that changes things)
@@ -4187,7 +4254,8 @@ async function createGo(){
       toast(`Created ${label}` + (r.given ? `, given to ${r.given}` : '') + '. Place it from the World map.');
       openRecord(r.i, true); showView('browse');
     } else if (CR.kind === 'build'){
-      toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : 'Furnish it here, then try it with Play here.'));
+      const furnished = CR.bmode !== 'copy' && $('#cr-bfurnish') && $('#cr-bfurnish').checked;
+      toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : furnished ? 'Look round it in 3D, then try it with Play here.' : 'Furnish it here, then try it with Play here.'));
       showView('world'); await worldOpen(r.key);
     } else if (CR.kind === 'ruin'){
       toast(`Made "${label}": ${r.tunnels} tunnel pieces, ${ruinHalls(r.kind, r.halls)}${r.people ? `, ${r.people} ${r.people === 1 ? 'person' : 'people'} living in it` : ''}. Right-click in it for 🎲 Make this again.`);
@@ -4396,5 +4464,7 @@ poll();
 <script src="/web/frombuilding.js"></script>
 <script src="/web/prefabplan.js"></script>
 <script src="/web/twowin.js"></script>
+<script src="/web/coach.js"></script>
+<script src="/web/icons.js"></script>
 </body>
 </html>
