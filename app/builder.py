@@ -176,6 +176,7 @@ STAIR_OPEN_LOW = False  # the room beside a stair's open side: open downstairs t
 #                         Measured (lab, two-floor test houses): walled downstairs, the see-through holes round a Common tall
 #                         stairwell fall from 8 to 1, Gold Coast 4 to 3, Hlaalu 8 to 7; never worse
 COLUMN_WORDS_RE = re.compile(r'post|pillar|column')
+HALL_IN_ROOM = 6    # a stair block's cost for each of its hall pieces standing in a room, not a corridor (0: the old choice)
 COLUMNS = True       # columns standing free in big rooms, where the game's own places of the style have them (layoutsurvey.py)
 WINDOWS = True       # window props on outside walls, as often as the game's own places of the style have them (layoutsurvey.py)
 ALCOVES = True       # stairs with the game's own pieces round them (the stair block), where the style's places show how
@@ -190,6 +191,15 @@ COPLANAR = True      # a piece whose face would lie in a neighbour's plane (floo
 def _family(pid):
     """'hall' for a style's corridor pieces, 'room' for the rest."""
     return 'hall' if 'hall' in pid.lower() else 'room'
+
+
+def _corridors(grid):
+    """The corridors: rooms with no two-by-two block of tiles anywhere in them."""
+    tiles_of = {}
+    for t, ra in grid.items():
+        tiles_of.setdefault(ra, set()).add(t)
+    return {ra for ra, ts in tiles_of.items()
+            if not any({(x + 1, y, f), (x, y + 1, f), (x + 1, y + 1, f)} <= ts for x, y, f in ts)}
 
 
 def _storey_ok(p, need):
@@ -1679,7 +1689,8 @@ def _alcove(grid, used, piece, shape, s0, up, f, g):
         if t in walled:
             walled.remove(t)
     return {'carve': carve, 'land': land, 'lo': lo, 'hi': hi, 'needs': needs, 'vcarve': carve + walled,
-            'cuts': cuts, 'open': rot_open, 'block': set(block), 'ways': ways}
+            'cuts': cuts, 'open': rot_open, 'block': set(block), 'ways': ways,
+            'rooms_of': {t: room_of(t) for t in block}, 'pids': {t: v[1] for t, v in block.items()}}
 
 
 def _carve_ctx(grid, doors_):
@@ -1835,6 +1846,7 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
     cands = []
     whole = [p for p in info['pieces'] if abs(p['rise'] - H) < 8 and p.get('len', 1) == 1]
     ctx = _carve_ctx(grid, doors_)
+    corridor = _corridors(grid)
     # (a stairwell of the game's pieces stands within two tiles of the rooms it is carved from)
     near = {(t[0] + dx, t[1] + dy) for t in grid if t[2] in (f, g) for dx in (-2, -1, 0, 1, 2) for dy in (-2, -1, 0, 1, 2)}
     for piece in info['pieces']:
@@ -1957,13 +1969,18 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
                             # closet under the upper landing is a hall_end piece; the rooms must still
                             # hold together)
                             nooks = _carve_check(grid, alc['vcarve'], doors_, (lo, hi), ctx)
-                            if nooks is None:
-                                continue
+                            if nooks is None or alc['block'] & ctx['keep']:
+                                continue          # (nor over a doorway put in an exact spot: no wall for it in the block)
                             rooms_lo = grid[lo] if lo in grid else land[0][1]
                             rooms_hi = grid[hi] if hi in grid and hi not in carve else land[-1][1]
                             side_n = sum(1 for lv in (f, g) for sd in (LEFT_OF[up], OPPOSITE[LEFT_OF[up]])
                                          if nb((bx, by, lv), sd) in grid and nb((bx, by, lv), sd) not in carve)
                             cost = len(carve) * 2 + len(land) * 6 + side_n * 1.5 + alc['cuts'] * 3 - 3
+                            # (a stairwell of hall pieces in a room, not a corridor: the hall corners' posts
+                            # stand in the room's floor, the user's "misplaced Hlaalu columns" in a Hall 2
+                            # tiles wide, 2026-10-25. The style's room stair, with room pieces round it, there)
+                            cost += HALL_IN_ROOM * sum(1 for t_, pid in alc['pids'].items()
+                                                       if _family(pid) == 'hall' and alc['rooms_of'].get(t_) not in corridor)
                             cost += _stair_cost(info, piece, want, len(carve), len(land), rooms_lo, rooms_hi, bx, by, xs, ys)
                             cost += _near_cost(want, bx, by, up)
                             cands.append((cost, len(cands), piece, up, [s0], lo, hi, carve, land, alc['open'], alc, False))
@@ -2820,7 +2837,9 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         if not e:
             raise EditError('Rooms "%s" and "%s" don\'t touch, so there is no wall to put a door in.' % (rooms[a].get('name'), rooms[b].get('name')))
         # (not through the closed-in corners of a stair's alcove, when there is wall elsewhere)
-        e = [(t, s) for t, s in e if t not in alcove_tiles and nb(t, s) not in alcove_tiles] or e
+        # (a doorway put in an exact spot stays there: the alcove's needs reach the tiles beside its block)
+        if not d.get('at'):
+            e = [(t, s) for t, s in e if t not in alcove_tiles and nb(t, s) not in alcove_tiles] or e
         # (nor through a two-storey hall's open middle, which has no wall piece to put a doorway in; a hall of
         # two-storey pieces has its archways, and the one under the bridge's upper door first)
         e2 = [(t, s) for t, s in e if t not in wells and nb(t, s) not in wells]
@@ -3249,12 +3268,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
     under = {}
     for t, s, way in learned_edges + ([(exit_tile, exit_side, exit_way)] if exit_how == 'learned' else []):
         under.setdefault(t, []).append((s, way))
-    # corridors: rooms with no two-by-two block of tiles anywhere in them
-    tiles_of = {}
-    for t, ra in grid.items():
-        tiles_of.setdefault(ra, set()).add(t)
-    corridor = {ra for ra, ts in tiles_of.items()
-                if not any({(x + 1, y, f), (x, y + 1, f), (x + 1, y + 1, f)} <= ts for x, y, f in ts)}
+    corridor = _corridors(grid)
     has_halls = any(_family(p['id']) == 'hall' for p in kp['pieces']) and any(_family(p['id']) == 'room' for p in kp['pieces'])
     # the pieces the game itself stands round this style's stairs, and how it turns them (a Hall_Corner
     # on either side of an Indoril stair, facing each other): laid the same way here, where the tile

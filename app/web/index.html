@@ -74,7 +74,7 @@ nav button.on svg{stroke:var(--gold)}
 nav #hbadge{position:absolute;top:5px;right:8px;line-height:0}
 nav .badge{display:inline-block;min-width:17px;padding:0 4px;border-radius:9px;background:var(--red);color:#1b0f0b;font:600 10.5px/17px Inter,sans-serif;text-align:center}
 .search{flex:1;max-width:640px;position:relative}
-.search input{width:100%;padding:9px 12px 9px 36px;border-radius:9px;border:1px solid var(--line2);background:var(--deep);color:var(--text);font:inherit;outline:none}
+.search input{width:100%;padding:9px 34px 9px 36px;text-overflow:ellipsis;border-radius:9px;border:1px solid var(--line2);background:var(--deep);color:var(--text);font:inherit;outline:none}
 .search input:focus{border-color:var(--gold)}
 .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);opacity:.6}
 .search kbd{position:absolute;right:10px;top:50%;transform:translateY(-50%);font:11px var(--mono);color:var(--faint);border:1px solid var(--line2);border-radius:4px;padding:1px 5px}
@@ -396,10 +396,10 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .olist div:hover{background:var(--hover)}
 .olist div.sel{background:var(--sel);color:var(--gold2)}
 .olist small{color:var(--faint);white-space:nowrap}
-.linkdot{font-size:12px;border-radius:14px;padding:3px 10px;border:1px solid #3d5a2e;color:#a9dc8f;background:#1c2716;cursor:pointer}
+/* (the theme's own green over its own panel: a fixed dark green box hid its dark text in the light themes) */
+.linkdot{font-size:12px;border-radius:14px;padding:3px 10px;border:1px solid color-mix(in srgb,var(--green) 50%,var(--panel));color:var(--green);background:color-mix(in srgb,var(--green) 14%,var(--panel));cursor:pointer}
 .linkdot.wait{border-color:var(--line2);color:var(--muted);background:var(--panel2)}
-.linkbox{border:1px solid #3d5a2e;background:#161d12;border-radius:9px;padding:7px 10px;margin-top:10px;font-size:12.5px}
-.linkbox summary{cursor:pointer;color:var(--faint);font-size:12px;margin-top:4px}
+.linkbox{border:1px solid color-mix(in srgb,var(--green) 50%,var(--panel));background:color-mix(in srgb,var(--green) 10%,var(--panel));color:var(--text);border-radius:9px;padding:7px 10px;margin-top:10px;font-size:12.5px}.linkbox summary{cursor:pointer;color:var(--faint);font-size:12px;margin-top:4px}
 .linkbox.wait{border-color:var(--line2);background:var(--panel2)}
 .linkbox kbd{font:11px var(--mono);border:1px solid var(--line2);border-radius:4px;padding:0 4px;color:var(--gold2)}
 .mv{height:250px;background:radial-gradient(circle at 50% 40%,#2a241b,#0d0c0a);border:1px solid var(--line);border-radius:9px;overflow:hidden;position:relative}
@@ -704,7 +704,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   <div class="hdr-top">
   <div class="search">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input id="q" placeholder="Search anything: names, IDs, dialogue, meshes…  e.g. hlaalu desk" autocomplete="off" spellcheck="false">
+    <input id="q" placeholder="Search names, IDs, dialogue, meshes…" autocomplete="off" spellcheck="false">
     <kbd>/</kbd>
   </div>
   <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
@@ -2465,7 +2465,7 @@ async function groupAction(path, body, msg){
     for (const k of r.cells || []) await worldReloadCell(k);
     toast(msg); await afterChange();
     return r;
-  } catch (err){ toast(err.message, true); for (const k of Object.keys(W.cells)) if (W.cells[k].exists) worldReloadCell(k); return null; }
+  } catch (err){ toast(err.message, true); for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) worldReloadCell(k); return null; }
 }
 function selRefsBody(){ return selectionRefs().map(([cell, r]) => ({cell, ref: r.k})); }
 async function groupDo(a){
@@ -2563,7 +2563,7 @@ function linkHtml(){
               : 'The game is paused while you work here. Your latest edits are waiting and will appear as soon as you switch back to it.')
     : (synced ? 'Your edits show up in game within about a second.' : '<span class="spin"></span>Sending your latest changes…');
   const pend = S.summary && S.summary.project && S.summary.project.plugin_pending;
-  return `<div class="linkbox"><b style="color:#a9dc8f">● Game linked</b> <span class="msg">${state}</span>
+  return `<div class="linkbox"><b style="color:var(--green)">● Game linked</b> <span class="msg">${state}</span>
     ${(LINK.waiting || []).length ? `<div class="msg" style="margin:6px 0;color:var(--amber)">Needs a game restart to appear: ${LINK.waiting.slice(0, 4).map(esc).join(', ')}${LINK.waiting.length > 4 ? ' and ' + (LINK.waiting.length - 4) + ' more' : ''}. Quit the game and press Play here again.</div>` : ''}
     <label style="display:flex;gap:6px;align-items:center;margin:6px 0 0"><input type="checkbox" id="w-follow" ${followPlayer ? 'checked' : ''}> Follow my character</label>
     ${followPlayer && !LINK.player ? '<div class="msg" style="margin:4px 0 0">Waiting for the game to say where you are. Walk a step in game.</div>' : ''}
@@ -4167,7 +4167,8 @@ async function refreshAfterEdits(remote){
   if (V3.on && W.ext && typeof v3GrassReload === 'function') v3GrassReload();
   if ($('#dialog').classList.contains('on') && !typing){ D.qstages = null; if (D.mode) await dOpen(D.mode, D.key); else renderDialog(); }
   if (W.key && W.ext){ W.lands = {}; v3LandsReload(); await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL)); }
-  if (W.key){ for (const k of Object.keys(W.cells)) if (W.cells[k].exists) await worldReloadCell(k); W.sel = W.sel && findRef(W.sel.cell, W.sel.k) ? W.sel : null; renderWside(); drawMap(); }
+  // (a cell may be dropped while an earlier one reloads: the map lets go of cells scrolled far off)
+  if (W.key){ for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k); W.sel = W.sel && findRef(W.sel.cell, W.sel.k) ? W.sel : null; renderWside(); drawMap(); }
   if (S.cur && $('#browse').classList.contains('on') && !typing){
     const r = await api('/api/search?' + new URLSearchParams({q: S.cur.id, types: S.cur.type, limit: 30}));
     const hit = r.rows.find(x => x.id.toLowerCase() === S.cur.id.toLowerCase());

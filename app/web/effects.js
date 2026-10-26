@@ -97,7 +97,7 @@ function mxDoesRow(d, n){
   const K = MX.data.does.find(x => x.kind === d.kind) || {};
   let inner = '';
   // (when, whom, how likely: every step has them; some kinds only make sense at one time)
-  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', resurrect: 'land', summon: 'land', aura: 'second', leech: 'second'}[d.kind];
+  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', resurrect: 'land', summon: 'land', quake: 'land', aura: 'second', leech: 'second'}[d.kind];
   if (!d.when) d.when = fixedWhen || (['health', 'magicka', 'fatigue'].includes(d.kind) ? (d.per === 'once' ? 'land' : 'second') : 'land');
   const common = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;width:100%;margin-top:4px">
       ${fixedWhen ? `<span class="msg">${esc(MX_WHEN[fixedWhen])}${d.kind === 'scale' || d.kind === 'calm' || d.kind === 'frenzy' ? ', undone as it ends' : ''}</span>` : mxSel('when', n, MX_WHEN, d.when)}
@@ -120,6 +120,11 @@ function mxDoesRow(d, n){
       <span class="msg">within</span>${mxNum('feet', n, d.feet || 15, 70)}<span class="msg">feet stand up again, at</span>${mxNum('health', n, d.health || 100, 60)}<span class="msg">% health,</span>
       ${mxSel('side', n, {own: 'as they were', ally: 'on the caster\'s side, following'}, d.side || 'own')}
       <span class="msg" style="width:100%">Cast it on Self (the game's magic doesn't land on the dead): it raises those lying near you. They come back with what was left on them; what you looted stays taken.</span>`;
+  } else if (d.kind === 'quake'){
+    // (2026-10-25, the user: "don't want all the furniture and whatnot flying off the shelves")
+    inner = `<span class="msg">the ground shakes within</span>${mxNum('feet', n, d.feet || 30, 70)}<span class="msg">feet, strength</span>${mxNum('strength', n, d.strength || 5, 60)}
+      <span class="msg">(1 a tremor, 10 a hard quake), for</span>${mxNum('seconds', n, d.seconds || 10, 60)}<span class="msg">seconds</span>
+      <span class="msg" style="width:100%">Where it lands is the middle of it (cast on Self: around you). Your view shakes if you're near, the game's rumble plays, people and creatures stagger and some fall, and up to 50 small loose things (cups, books, candles, small baskets) hop and settle a few units from where they lay. Furniture, building pieces, plants and anything hung stay put.</span>`;
   } else if (d.kind === 'calm' || d.kind === 'frenzy' || d.kind === 'swap'){
     inner = `<span class="msg">${esc(K.what || '')}</span>`;
   } else if (d.kind === 'cast'){
@@ -207,7 +212,7 @@ function mxDraw(){
   mxLookBind(f);
   box.querySelectorAll('[data-mxd]').forEach(el => el.oninput = el.onchange = () => {
     const d = f.does[+el.dataset.n], k = el.dataset.mxd;
-    d[k] = ['sign', 'x', 'y', 'z', 'value', 'chance', 'factor', 'count'].includes(k) ? +el.value : k === 'feet' ? (el.value === '' ? '' : +el.value) : el.value;
+    d[k] = ['sign', 'x', 'y', 'z', 'value', 'chance', 'factor', 'count', 'strength', 'seconds'].includes(k) ? +el.value : k === 'feet' ? (el.value === '' ? '' : +el.value) : el.value;
     if (k === 'when' && el.tagName === 'SELECT') mxDraw();
   });
   box.querySelectorAll('[data-mxp]').forEach(el => el.oninput = () => { f.does[+el.dataset.n].pairs[+el.dataset.i][el.dataset.mxp] = el.value; });
@@ -229,7 +234,7 @@ function mxDraw(){
     keep(); const k = b.dataset.mxadd;
     f.does.push(['health', 'magicka', 'fatigue'].includes(k) ? {kind: k, sign: -1, when: 'second'} : k === 'teleport' ? {kind: k, cell: '', x: 0, y: 0, z: 0}
       : k === 'scale' ? {kind: k, factor: 2} : k === 'aura' ? {kind: k, sign: -1, stat: 'health', feet: 10} : k === 'leech' ? {kind: k, stat: 'health'}
-      : k === 'weather' ? {kind: k, weather: 'thunderstorm'} : k === 'transmute' ? {kind: k, pairs: [{from: '', to: ''}], count: 1} : k === 'summon' ? {kind: k, count: 1} : {kind: k});
+      : k === 'weather' ? {kind: k, weather: 'thunderstorm'} : k === 'transmute' ? {kind: k, pairs: [{from: '', to: ''}], count: 1} : k === 'summon' ? {kind: k, count: 1} : k === 'quake' ? {kind: k, feet: 30, strength: 5, seconds: 10} : {kind: k});
     mxDraw();
   });
   box.querySelectorAll('[data-mxhere]').forEach(b => b.onclick = () => {

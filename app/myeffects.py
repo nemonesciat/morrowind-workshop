@@ -22,6 +22,9 @@ works on (anyone, NPCs, creatures, undead, Daedra, the player, anyone but the pl
                                following the caster
   cast                         a spell of the game's (or yours) cast on them: chains and combos
   weather                      the region's weather changes (a storm, ash, blight, snow...)
+  quake                        the ground shakes where it lands for so many seconds: the player's view shakes, the
+                               game's rumble plays, people stagger (some fall) and small loose things hop and
+                               settle a little apart (Settle's rules: never furniture or anything hung)
   teleport / spawn / global / message   as before
   lua                          your own code, with helpers (ctx.push, ctx.launch, ctx.scale, ctx.change...)
 
@@ -63,6 +66,9 @@ DOES = [
                   'what was left on them: what was looted stays taken. As they were, or on your side, following you.'),
     ('cast', 'Cast a spell on them', 'Another spell (the game\'s, or one of yours) cast on them: for chains and combos.'),
     ('weather', 'Change the weather', 'The region\'s weather turns to a storm, ash, blight, snow, rain or clear skies.'),
+    ('quake', 'Quake', 'The ground shakes where it lands, for so many seconds: the player\'s view shakes and the game\'s rumble plays, '
+              'people and creatures stagger (some fall), and small loose things on tables and shelves hop about and settle a little '
+              'apart. Furniture, building pieces and anything hung stay put.'),
     ('transmute', 'Transmute', 'One of the first item it finds in their inventory, of the pairs you list (iron ore into silver, silver into gold...), becomes the next.'),
     ('teleport', 'Teleport', 'Send the one it lands on to a place: a cell and a spot in it.'),
     ('summon', 'Summon', 'A creature or person (or one from a random creature list) appears beside the caster, follows and fights for them, '
@@ -75,6 +81,10 @@ DOES = [
 # (where each kind is done: on the actor itself, or by the global script for what only the world can do)
 WORLD = ('teleport', 'spawn', 'summon', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
 FT = 22.1                     # (game units to a foot, as Tamriel Data's Blink reckons it)
+# (a quake's rumble: the first of the game's own the load order has, looped; the end game's Red Mountain rumble
+# first. Falling stones now and then, from the regions' rock sounds)
+RUMBLES = ('endrumble', 'volcano rumble', 'rumble1', 'rumble2', 'rumble3', 'rumble4')
+ROCKS = tuple('rocks%d' % i for i in range(1, 9))
 
 
 def _script(db, name):
@@ -255,6 +265,15 @@ def _step(db, d):
         if w not in WEATHERS:
             raise EditError('Change the weather: pick one of %s.' % ', '.join(WEATHERS))
         out['weather'] = w
+    elif k == 'quake':
+        # (2026-10-25, the user: "don't want all the furniture and whatnot flying off the shelves": only small
+        # loose things move, a few units, and rest on what is under them)
+        out['feet'] = max(5.0, min(300.0, _num(d.get('feet'), label + ': the radius', 30.0)))
+        out['strength'] = max(1.0, min(10.0, _num(d.get('strength'), label + ': the strength', 5.0)))
+        out['seconds'] = max(1.0, min(120.0, _num(d.get('seconds'), label + ': how long', 10.0)))
+        out['sound'] = next((s for s in RUMBLES if db.resolve_id(s) is not None), '')
+        out['rocks'] = [s for s in ROCKS if db.resolve_id(s) is not None]
+        out['when'] = 'land'
     elif k == 'transmute':
         # (pairs, tried in order: the first whose "from" they carry is the one changed, one at a time, as
         # Oblivion's and Skyrim's Transmute turn iron ore into silver and silver into gold)
@@ -484,8 +503,20 @@ def _write(db, lst):
         if steps:
             rows.append('  [%s] = {\n%s\n  },' % (_lua(e['id'].lower()), '\n'.join(steps)))
     _put(db, ACTOR, 'NPC, CREATURE, PLAYER', (ACTOR_LUA % ('\n'.join(fns), '\n'.join(rows))) if rows else None)
-    _put(db, GLOBAL, 'GLOBAL', GLOBAL_LUA if rows else None)
-    _put(db, PLAYER, 'PLAYER', PLAYER_LUA if (rows and (msgs or any(d['kind'] in ('lua', 'transmute', 'resurrect') for e in lst for d in e['does']))) else None)
+    quake = any(d['kind'] == 'quake' for e in lst for d in e['does'])
+    _put(db, GLOBAL, 'GLOBAL', GLOBAL_LUA.replace('local HUNG = {}', 'local HUNG = %s' % _hung(db) if quake else 'local HUNG = {}') if rows else None)
+    _put(db, PLAYER, 'PLAYER', PLAYER_LUA if (rows and (msgs or quake or any(d['kind'] in ('lua', 'transmute', 'resurrect') for e in lst for d in e['does']))) else None)
+
+
+def _hung(db):
+    """The models the game hangs (hangsurvey: clear of anything under them in most of its places), as a Lua set
+    for a quake's loose things; those its name rules leave out anyway (furniture, building pieces, plants) are
+    left out of the list. While the survey isn't done yet, the names alone (it starts in the background)."""
+    import hangsurvey
+    S = hangsurvey.ready(db)
+    skip = re.compile(r'(^|/)(in_|ex_)|furn|flora|_in_|_ex_')
+    hung = sorted(m for m, st in ((S or {}).get('models') or {}).items() if st.get('hung', 0) >= 0.6 and not skip.search(m))
+    return '{\n%s\n}' % ''.join('  [%s] = true,\n' % _lua(m) for m in hung).rstrip('\n') if hung else '{}'
 
 
 # The actor script: on every actor near the player, it reads the spells working on it each frame (as Tamriel
@@ -629,6 +660,9 @@ local function run(d, st, dt, phase)
     st.summoned = true
   elseif k == 'resurrect' then
     world('resurrect', { feet = d.feet, which = d.which, health = d.health, side = d.side, caster = st.caster or self.object })
+  elseif k == 'quake' then
+    -- (where it lands is the middle of it: on Self, the caster; the world finds the loose things, the player's script shakes them)
+    world('quake', { feet = d.feet, strength = d.strength, seconds = d.seconds, sound = d.sound, rocks = d.rocks, caster = st.caster })
   elseif k == 'lua' then
     if d.fn then
       local ok, err = pcall(d.fn, ctxFor(st, dt, phase))
@@ -698,6 +732,16 @@ return {
   },
   eventHandlers = {
     WS_MyEffectStat = function(data) change(data.stat, data.amount) end,
+    -- a quake under their feet, once a second: tired out (enough of it and they fall, as from a fatigue drain)
+    -- and knocked a step or two any way, stopping at walls
+    WS_MyEffectStagger = function(data)
+      local s = data.strength or 5
+      change('fatigue', -s * 8 * (0.5 + math.random()) * (data.fade or 1))
+      if math.random() < 0.6 then
+        local a = math.random() * 2 * math.pi
+        moveBy(util.vector3(math.cos(a), math.sin(a), 0), s * (2 + math.random() * 6) * (data.fade or 1), 6, 0.25)
+      end
+    end,
     -- raised from the dead (the global script made this one where the corpse lay): back on their feet with
     -- what the corpse had on, at the health asked for, and on the caster's side if asked
     WS_MyEffectRaised = function(data)
@@ -733,8 +777,53 @@ local world = require('openmw.world')
 local moving = {}          -- actor id -> { actor, from, to, arc, t, time }
 local scaled = {}          -- actor id -> the scale it had
 local summoned = {}        -- actor:spell key -> { caster, eff, objects, told }
+local hopping = {}         -- thing id -> { obj, from, to, rot, yaw, arc, t, time }: a quake's loose things
+local quakes = {}          -- { pos, cell, reach, at }: an area spell landing on five people starts one quake
 
 local function player() return world.players[1] end
+
+-- what a quake may shake loose, as Settle reckons it (settle.loose): an item, a candle or small lamp standing on
+-- something, a small container or bit of clutter; never furniture, a building piece, a plant, a door, a person,
+-- or a model the game hangs (hangsurvey, written in by the Workshop) or whose name says it hangs
+local HUNG = {}
+local HANG_WORDS = { 'anchor', 'hanging', 'hang_', '_hang', 'chain', 'cage', 'chandelier', 'lantern', 'sconce' }
+local PLANT_WORDS = { 'flora', 'plant', 'kelp', 'mushroom', 'shrub', 'grass', 'lilypad', 'moss', 'vine', 'ivy', 'root_', 'roots' }
+local BUILT = { '_in_', '_ex_', '_i_', '_x_', 'furn' }
+local LOOSE_TYPES = { types.Miscellaneous, types.Book, types.Potion, types.Ingredient, types.Apparatus, types.Weapon, types.Armor,
+                      types.Clothing, types.Lockpick, types.Probe, types.Repair, types.Light, types.Container, types.Activator, types.Static }
+local MAX_LOOSE = 50
+
+local function has(s, words)
+  for _, w in ipairs(words) do if s:find(w, 1, true) then return true end end
+  return false
+end
+
+local function sizeOf(o)
+  local ok, b = pcall(function() return o:getBoundingBox() end)
+  if not ok or not b then return nil end
+  return math.max(b.halfSize.x, b.halfSize.y, b.halfSize.z) * 2
+end
+
+local function looseThing(o, T)
+  if o.count == 0 or o.enabled == false then return false end
+  local id = tostring(o.recordId):lower()
+  if has(id, PLANT_WORDS) then return false end
+  local okR, rec = pcall(function() return T.record(o) end)
+  if not (okR and rec) then return false end
+  local model = string.lower(rec.model or ''):gsub('\\\\', '/'):gsub('^meshes/', '')
+  if HUNG[model] or has(model .. ' ' .. id, HANG_WORDS) or (id:find('bell', 1, true) and not id:find('belly', 1, true)) then return false end
+  if T == types.Light then
+    local size = sizeOf(o)
+    return rec.isCarriable == true and size ~= nil and size <= 40
+  end
+  if T == types.Ingredient then return not id:find('flor', 1, true) end
+  if T == types.Container or T == types.Activator or T == types.Static then
+    if id:sub(1, 3) == 'in_' or id:sub(1, 3) == 'ex_' or has(id, BUILT) then return false end
+    local size = sizeOf(o)
+    return size ~= nil and size <= 140
+  end
+  return true
+end
 
 -- the game's own summoning flash, where it has one
 local function flash(id, pos)
@@ -875,6 +964,42 @@ local DO = {
       n:sendEvent('WS_MyEffectRaised', { equip = equip, health = d.health, side = d.side, caster = d.caster })
     end
   end,
+  -- a quake where it landed: the loose things within reach (the nearest MAX_LOOSE) handed to the player's
+  -- script, which shakes the view, plays the rumble, staggers people and hops the things (it can cast rays)
+  quake = function(a, d)
+    local now = core.getSimulationTime()
+    local reach = (d.feet or 30) * ''' + str(FT) + '''
+    for i = #quakes, 1, -1 do
+      local q = quakes[i]
+      if now - q.at > 2 then table.remove(quakes, i)
+      elseif q.cell == a.cell and (q.pos - a.position):length() < q.reach then return end
+    end
+    quakes[#quakes + 1] = { pos = a.position, cell = a.cell, reach = reach, at = now }
+    local cells = { a.cell }
+    if a.cell.isExterior then
+      pcall(function() local all = {}; for _, c in ipairs(world.activeCells) do all[#all + 1] = c end; if #all > 0 then cells = all end end)
+    end
+    local near = {}
+    for _, c in ipairs(cells) do
+      for _, T in ipairs(LOOSE_TYPES) do
+        for _, o in ipairs(c:getAll(T)) do
+          local dist = (o.position - a.position):length()
+          if dist <= reach and looseThing(o, T) then near[#near + 1] = { o = o, dist = dist } end
+        end
+      end
+    end
+    table.sort(near, function(x, y) return x.dist < y.dist end)
+    local things = {}
+    for i = 1, math.min(MAX_LOOSE, #near) do things[i] = near[i].o end
+    player():sendEvent('WS_MyEffectQuake', { pos = a.position, ext = a.cell.isExterior, cellName = a.cell.name, reach = reach,
+                                             strength = d.strength or 5, seconds = d.seconds or 10, sound = d.sound, rocks = d.rocks,
+                                             things = things, caster = d.caster })
+  end,
+  -- one of a quake's loose things hops a few units and lands where the player's script found a surface
+  hop = function(a, d)
+    if a.cell == nil then return end
+    hopping[a.id] = { obj = a, from = a.position, to = d.to, rot = a.rotation, yaw = d.yaw or 0, arc = d.arc or 0, t = 0, time = d.time or 0.12 }
+  end,
   cast = function(a, d)
     local rec = core.magic.spells.records[d.id]
     if not rec then return end
@@ -896,6 +1021,17 @@ return {
           local p = m.from + (m.to - m.from) * f + util.vector3(0, 0, math.sin(f * math.pi) * m.arc)
           local ok = pcall(function() m.actor:teleport(m.actor.cell, p) end)
           if not ok or m.t >= m.time then moving[id] = nil end
+        end
+      end
+      for id, h in pairs(hopping) do
+        if not h.obj:isValid() or h.obj.count == 0 or h.obj.cell == nil then
+          hopping[id] = nil          -- (picked up mid-hop)
+        else
+          h.t = math.min(h.time, h.t + dt)
+          local f = h.t / h.time
+          local p = h.from + (h.to - h.from) * f + util.vector3(0, 0, math.sin(f * math.pi) * h.arc)
+          local ok = pcall(function() h.obj:teleport(h.obj.cell, p, util.transform.rotateZ(h.yaw * f) * h.rot) end)
+          if not ok or h.t >= h.time then hopping[id] = nil end
         end
       end
       for key, s in pairs(summoned) do
@@ -928,14 +1064,133 @@ return {
 }
 '''
 
-PLAYER_LUA = '''-- Made by Morrowind Workshop: the messages your own magic effects show (Create > New magic effect).
+PLAYER_LUA = '''-- Made by Morrowind Workshop: the messages your own magic effects show, and their quakes (Create > New magic effect).
+local ambient = require('openmw.ambient')
+local camera = require('openmw.camera')
+local core = require('openmw.core')
+local nearby = require('openmw.nearby')
+local self = require('openmw.self')
+local types = require('openmw.types')
 local ui = require('openmw.ui')
+local util = require('openmw.util')
+
+local quakes = {}          -- the quakes going on: { pos, reach, s, T, t, things, ... }
+local shake = { p = 0, y = 0, r = 0 }          -- (the view's jitter now: added to what other mods set, and taken off again)
+local RAY = nearby.COLLISION_TYPE.World + nearby.COLLISION_TYPE.HeightMap
+
+local function setShake(p, y, r)
+  pcall(function() camera.setExtraPitch(camera.getExtraPitch() - shake.p + p) end)
+  pcall(function() camera.setExtraYaw(camera.getExtraYaw() - shake.y + y) end)
+  pcall(function() camera.setExtraRoll(camera.getExtraRoll() - shake.r + r) end)
+  shake.p, shake.y, shake.r = p, y, r
+end
+
+-- the surface under a point (a table top, a shelf's board, the floor), the thing itself left out
+local function surfaceUnder(p, obj)
+  local hit = nearby.castRay(p + util.vector3(0, 0, 2), p - util.vector3(0, 0, 40), { ignore = obj, collisionType = RAY })
+  if hit.hit and hit.hitPos then return hit.hitPos.z end
+  return nil
+end
+
+local function here(q)
+  if q.ext then return self.cell.isExterior end
+  return self.cell.name == q.cellName
+end
+
+local function start(d)
+  local q = { pos = d.pos, ext = d.ext, cellName = d.cellName, reach = d.reach, s = d.strength or 5, T = d.seconds or 10, t = 0,
+              caster = d.caster, sound = d.sound, rocks = d.rocks or {}, things = {}, beat = 0, moment = 0, stones = 2, jt = 0,
+              aim = { p = 0, y = 0, r = 0 }, cur = { p = 0, y = 0, r = 0 } }
+  -- each thing as it lies: where, and how far its middle is above what holds it (kept, so it lands as it lay)
+  for _, o in ipairs(d.things or {}) do
+    if o:isValid() and o.count > 0 then
+      local z = surfaceUnder(o.position, o)
+      if z then q.things[#q.things + 1] = { obj = o, home = o.position, z0 = z, off = o.position.z - z } end
+    end
+  end
+  local dist = (self.position - q.pos):length()
+  if q.sound and q.sound ~= '' and here(q) and dist <= q.reach * 2 then
+    q.playing = pcall(ambient.playSound, q.sound, { loop = true, volume = math.min(1, 0.4 + q.s * 0.06) })
+  end
+  quakes[#quakes + 1] = q
+end
+
+local function stop(q)
+  if q.playing then pcall(ambient.stopSound, q.sound) end
+end
+
+-- each moment, about a third of the loose things hop: a few units at most from where they lay, onto the same
+-- surface (one with an edge or a step under the new spot hops straight up instead), turned a hair
+local function jostle(q, fade)
+  local j = 0.5 * q.s
+  for _, th in ipairs(q.things) do
+    local o = th.obj
+    if o:isValid() and o.count > 0 and o.cell ~= nil and math.random() < 0.35 then
+      local x = th.home.x + (math.random() * 2 - 1) * j * 1.5
+      local y = th.home.y + (math.random() * 2 - 1) * j * 1.5
+      local z = surfaceUnder(util.vector3(x, y, o.position.z), o)
+      if not z or math.abs(z - th.z0) > 3 then x, y, z = o.position.x, o.position.y, th.z0 end
+      core.sendGlobalEvent('WS_MyEffectWorld', { kind = 'hop', actor = o, to = util.vector3(x, y, z + th.off),
+                                                 yaw = (math.random() * 2 - 1) * q.s * 0.006, arc = (0.5 + q.s * 0.35) * fade, time = 0.12 })
+    end
+  end
+end
+
+local function stagger(q, fade)
+  for _, a in ipairs(nearby.actors) do
+    if a ~= q.caster and (a.position - q.pos):length() <= q.reach and not types.Actor.isDead(a) then
+      a:sendEvent('WS_MyEffectStagger', { strength = q.s, fade = fade })
+    end
+  end
+end
 
 return {
+  engineHandlers = {
+    onUpdate = function(dt)
+      if dt <= 0 or #quakes == 0 then return end
+      local p, y, r = 0, 0, 0
+      for i = #quakes, 1, -1 do
+        local q = quakes[i]
+        q.t = q.t + dt
+        if q.t >= q.T then
+          stop(q)
+          table.remove(quakes, i)
+        else
+          -- (up to full in half a second, full until six tenths through, then dying away)
+          local fade = math.min(1, q.t / 0.5) * math.min(1, (q.T - q.t) / (q.T * 0.4))
+          q.beat = q.beat + dt
+          if q.beat >= 1 then q.beat = q.beat - 1; stagger(q, fade) end
+          q.moment = q.moment + dt
+          if q.moment >= 0.15 then q.moment = 0; jostle(q, fade) end
+          local dist = (self.position - q.pos):length()
+          if here(q) and dist <= q.reach * 1.5 then
+            -- the view: a new aim every few hundredths of a second, eased into, smaller further from the middle
+            local amp = q.s * 0.0025 * fade * (1 - dist / (q.reach * 1.5))
+            q.jt = q.jt - dt
+            if q.jt <= 0 then
+              q.jt = 0.04
+              q.aim = { p = (math.random() * 2 - 1) * amp, y = (math.random() * 2 - 1) * amp, r = (math.random() * 2 - 1) * amp * 0.6 }
+            end
+            local k = math.min(1, dt * 25)
+            for _, n in ipairs({ 'p', 'y', 'r' }) do q.cur[n] = q.cur[n] + (q.aim[n] - q.cur[n]) * k end
+            p, y, r = p + q.cur.p, y + q.cur.y, r + q.cur.r
+            -- now and then stones falling somewhere
+            q.stones = q.stones - dt
+            if q.stones <= 0 and #q.rocks > 0 then
+              q.stones = 2 + math.random() * 3
+              pcall(ambient.playSound, q.rocks[math.random(#q.rocks)], { volume = 0.5 * fade + 0.2 })
+            end
+          end
+        end
+      end
+      setShake(p, y, r)
+    end,
+  },
   eventHandlers = {
     WS_MyEffectMessage = function(data)
       ui.showMessage(data.text)
     end,
+    WS_MyEffectQuake = function(data) start(data) end,
   },
 }
 '''

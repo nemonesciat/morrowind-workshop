@@ -81,6 +81,7 @@ KINDS = [
     ('gap', 'Gaps', 'An open side looking out onto nothing.'),
     ('doorway', 'Doorways to nowhere', 'A doorway that leads nowhere, or a stairwell landing boxed in with no doorway out of it.'),
     ('stairend', 'Stairs with a closed end', 'The foot or head of a staircase meets a wall, or comes out onto nothing.'),
+    ('openpost', 'Posts in the open', 'A hall piece\'s posts standing in the open floor of the room beside it (a hall piece where the room carries on), more often than in the game\'s own places of the style.'),
     ('sunk', 'Posts inside walls', 'A post or column standing more than half inside a wall piece or a door frame.'),
     ('ceiling', 'Missing ceilings', 'No ceiling over this spot.'),
     ('jambend', 'Door frames with bare ends', 'A door jamb whose end meets the wall with no post over the join (the style covers it with one).'),

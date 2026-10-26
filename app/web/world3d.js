@@ -342,6 +342,7 @@ function v3ApplyWeather(){
     // dim, from the other side)
     const D = V3.day, span = (D.sunset + D.sunset_len / 2) - (D.sunrise + D.sunrise_len / 2);
     let a = Math.PI * (V3.hour - (D.sunrise + D.sunrise_len / 2)) / Math.max(1, span);
+    V3.skyArc = a;                                       // (the sky's sun and moons: v3SkyApply)
     const night = a < 0 || a > Math.PI;
     if (night) a = ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
     V3.sun.position.set(Math.cos(a), -0.35, Math.max(0.15, Math.sin(a)) * 1.5);
@@ -358,6 +359,7 @@ function v3ApplyWeather(){
     V3.sun.color.set(w.tint || 0xfff0d8); V3.hemi.color.set(w.tint || 0xfff4e0);
   }
   V3.hemiBase = V3.hemi.intensity;
+  v3SkyApply();
   // falling things: one set of points that follows the camera
   if (V3.fall){ V3.scene.remove(V3.fall); V3.fall.geometry.dispose(); V3.fall.material.dispose(); V3.fall = null; }
   if (!w.fall) return;
@@ -423,6 +425,129 @@ function v3WeatherTick(dt, t){
     const f = V3.flashOn && t - V3.flashOn < 180 ? 1 : 0;
     V3.hemi.intensity = (V3.hemiBase != null ? V3.hemiBase : w.hemi) + f * 1.2;
   }
+}
+// ----- the sky outdoors, from the game's own: the cloud dome (meshes\sky_clouds_01.nif) with each weather's
+// cloud picture (fallback=Weather_..._Cloud_Texture) drifting at its cloud speed, the stars of sky_night_01.nif,
+// the sun and the two moons, over air that goes from the sky's colour overhead to the fog's at the horizon (what
+// sky_atmosphere.nif's vertex colours do). Its own little scene, drawn first round a camera that only turns, so
+// it is always behind everything and costs a few hundred triangles. Without the game's sky: the plain colour.
+function v3SkyLoad(){
+  if (V3.skyAsked) return;
+  V3.skyAsked = true;
+  Promise.all([api('/api/sky'), v3Daylight()]).then(([d]) => {
+    if (!d || d.error || !d.dome) return;
+    V3.skyData = d; v3SkyBuild(); v3SkyApply();
+  }).catch(() => {});
+}
+function v3SkyShapes(shapes, mat){
+  const T = THREE, g = new T.Group();
+  for (const s of shapes || []){
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.Float32BufferAttribute(s.p, 3));
+    if (s.uv && s.uv.length) geo.setAttribute('uv', new T.Float32BufferAttribute(s.uv, 2));
+    geo.setIndex(s.i);
+    const m = mat(s); g.add(new T.Mesh(geo, m));
+  }
+  return g;
+}
+function v3SkyBuild(){
+  const T = THREE, D = V3.skyData;
+  const S = V3.sky = {scene: new T.Scene(), cam: new T.PerspectiveCamera(60, 1, 10, 20000), off: 0, kind: null,
+                      top: new T.Color(), horizon: new T.Color(), tint: new T.Color(1, 1, 1), speed: 1};
+  S.cam.up.set(0, 0, 1);
+  const flat = {depthWrite: false, depthTest: false, fog: false};
+  S.atm = new T.Mesh(new T.SphereGeometry(4000, 32, 16), new T.ShaderMaterial(Object.assign({side: T.BackSide,
+    uniforms: {top: {value: S.top}, horizon: {value: S.horizon}},
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform vec3 top, horizon; varying vec3 vP; void main(){ gl_FragColor = vec4(mix(horizon, top, smoothstep(0.0, 0.45, normalize(vP).z)), 1.0); }'}, flat)));
+  S.atm.renderOrder = 0; S.scene.add(S.atm);
+  // (the stars, each picture added on: they are white on black)
+  S.starMats = [];
+  S.night = v3SkyShapes(D.night, s => {
+    const m = new T.MeshBasicMaterial(Object.assign({color: 0x000000, transparent: true, blending: T.AdditiveBlending, side: T.DoubleSide}, flat));
+    if (s.tex) v3Tex(s.tex, t => { m.map = t; m.needsUpdate = true; });
+    S.starMats.push(m); return m;
+  });
+  S.night.renderOrder = 1; S.night.traverse(o => { o.renderOrder = 1; }); S.night.visible = false; S.scene.add(S.night);
+  // the sun with its glow, and Masser and Secunda (sized as Moons_..._Size has them, against each other)
+  const sprite = (path, size, add, order) => {
+    const m = new T.SpriteMaterial(Object.assign({color: 0xffffff, transparent: true, opacity: 0, blending: add ? T.AdditiveBlending : T.NormalBlending}, flat));
+    const sp = new T.Sprite(m); sp.scale.set(size, size, 1); sp.renderOrder = order; sp.visible = false;
+    if (path) v3Tex(path, t => { m.map = t; m.needsUpdate = true; sp.userData.ok = true; });
+    S.scene.add(sp); return sp;
+  };
+  S.masser = sprite(D.masser, 3600 * 0.3 * (D.masser_size || 94) / 94, false, 2);
+  S.secunda = sprite(D.secunda, 3600 * 0.3 * (D.secunda_size || 40) / 94, false, 2);
+  S.sun = sprite(D.sun, 3600 * 0.2, true, 3);
+  // the clouds: the picture's own see-through parts, fading out towards the dome's rim, tinted with the
+  // fog's colour as the game does
+  S.cloudU = {map: {value: null}, tint: {value: S.tint}, off: {value: 0}, fade: {value: 1}, lo: {value: 0}, hi: {value: 1}};
+  S.clouds = v3SkyShapes(D.dome, () => new T.ShaderMaterial(Object.assign({transparent: true, side: T.DoubleSide, uniforms: S.cloudU,
+    vertexShader: 'varying vec2 vUv; varying float vZ; void main(){ vUv = uv; vZ = position.z; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform sampler2D map; uniform vec3 tint; uniform float off, fade, lo, hi; varying vec2 vUv; varying float vZ;\n' +
+      'void main(){ vec4 c = texture2D(map, vUv + vec2(0.0, off)); gl_FragColor = vec4(c.rgb * tint, c.a * fade * smoothstep(lo, hi, vZ)); }'}, flat)));
+  // (the rim: the lowest third of the dome, which the game fades out with its vertex alpha)
+  let zl = 1e9, zh = -1e9;
+  for (const s of D.dome) for (let i = 2; i < s.p.length; i += 3){ zl = Math.min(zl, s.p[i]); zh = Math.max(zh, s.p[i]); }
+  S.cloudU.lo.value = zl; S.cloudU.hi.value = zl + (zh - zl) * 0.35;
+  S.clouds.traverse(o => { o.renderOrder = 4; }); S.clouds.scale.set(3, 3, 3); S.clouds.visible = false; S.scene.add(S.clouds);
+  S.night.scale.set(1.8, 1.8, 1.8);
+}
+// the sky's colours, clouds and sun for the weather and hour now (from v3ApplyWeather)
+function v3SkyApply(){
+  if (!W.ext) return;
+  if (!V3.skyData){ v3SkyLoad(); return; }
+  const S = V3.sky; if (!S) return;
+  const T = THREE, D = V3.skyData, wi = V3.weather == null ? 0 : V3.weather, kind = V3_KINDS[wi], K = D.kinds[kind] || {};
+  const rgb = a => new T.Color(a[0] / 255, a[1] / 255, a[2] / 255);
+  S.horizon.copy(V3.scene.fog ? V3.scene.fog.color : V3.scene.background);
+  const timed = V3.hour != null && V3.day, G = V3.day && (V3.day.kinds[kind] || V3.day.kinds.Clear);
+  let light = 1, sun;
+  if (timed){
+    const d = v3DayAt(kind, V3.hour);
+    S.top.copy(d.sky); S.tint.copy(d.fog); light = d.light;
+    const a = V3.skyArc != null ? V3.skyArc : Math.PI / 2;
+    sun = new T.Vector3(Math.cos(a), -0.35, Math.sin(a)).normalize();
+  } else {
+    // (the plain preview: the game's day colours, the sun where the plain light comes from)
+    S.top.copy(G ? rgb(G.Sky[1]) : new T.Color(V3_WEATHER[wi].sky).multiplyScalar(0.85));
+    S.tint.copy(G ? rgb(G.Fog[1]) : new T.Color(1, 1, 1));
+    sun = new T.Vector3(0.6, -0.8, 1.5).normalize();
+  }
+  // clouds: this weather's picture
+  S.speed = K.speed || 1;
+  if (K.clouds !== S.kind){
+    S.kind = K.clouds; S.clouds.visible = false;
+    if (K.clouds) v3Tex(K.clouds, t => { if (S.kind !== K.clouds) return; S.cloudU.map.value = t; S.clouds.visible = true; });
+  }
+  // the sun: through clear skies (Glare_View), redder towards sunset (Sun_Disc_Sunset_Color)
+  const glare = K.glare != null ? K.glare : 1, low = Math.min(1, Math.max(0, (1 - light) * 1.6));
+  S.sun.position.copy(sun).multiplyScalar(3600);
+  S.sun.material.color.setRGB(1, 1, 1).lerp(rgb(K.disc || [255, 255, 255]), low);
+  S.sun.material.opacity = glare * Math.min(1, Math.max(0, (sun.z + 0.03) / 0.1));
+  // the night: stars and moons as the light goes
+  const night = timed ? Math.min(1, Math.max(0, (0.55 - light) / 0.55)) : 0;
+  S.night.visible = night > 0.01;
+  for (const m of S.starMats) m.color.setScalar(night);
+  const n = V3.skyArc != null ? ((V3.skyArc - Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) : 0;
+  const moon = (sp, a, tilt) => {
+    const v = new T.Vector3(Math.cos(a), tilt, Math.sin(a)).normalize();
+    sp.position.copy(v).multiplyScalar(3600);
+    sp.material.opacity = night * Math.min(1, Math.max(0, v.z / 0.1));
+  };
+  moon(S.masser, n * 0.85 + 0.2, 0.7);
+  moon(S.secunda, n * 0.8 + 0.45, 1.2);
+}
+// each frame: the sky turns with the camera and the clouds drift (OpenMW: speed × 0.003 of the picture a second)
+function v3SkyTick(dt){
+  const S = V3.sky; if (!S) return false;
+  S.off = (S.off + dt * S.speed * 0.003) % 1;
+  S.cloudU.off.value = S.off;
+  // (a sun or moon shows once its picture is here: a sprite without one is a white square)
+  for (const sp of [S.sun, S.masser, S.secunda]) sp.visible = !!sp.userData.ok && sp.material.opacity > 0.01;
+  S.cam.quaternion.copy(V3.camera.quaternion);
+  if (S.cam.fov !== V3.camera.fov || S.cam.aspect !== V3.camera.aspect){ S.cam.fov = V3.camera.fov; S.cam.aspect = V3.camera.aspect; S.cam.updateProjectionMatrix(); }
+  return true;
 }
 // up to 12 nearby lights as real point lights (a fixed set, so materials never need rebuilding)
 function v3PointLights(strength){
@@ -1102,7 +1227,7 @@ async function v3StrokeEnd(){
     toast((cells.some(c => c.h) ? 'Reshaped the ground' : cells.some(c => c.t) ? 'Painted the ground' : 'Tinted the ground') +
           (n > 1 ? ` in ${n} cells` : '') + (r.moved ? ` (${r.moved} objects followed it)` : '') + '. Ground changes show in game after a restart.');
     W.lands = {};
-    if (r.moved) for (const k of Object.keys(W.cells)) if (W.cells[k].exists) await worldReloadCell(k);
+    if (r.moved) for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
     await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL));
     // what's on screen is already right; just remember the names of the textures painted
     for (const c of cells){ const L = V3.lands[c.gx + ',' + c.gy] && V3.lands[c.gx + ',' + c.gy].L; if (L && c.t) L.origId = c.t; }
@@ -1396,7 +1521,7 @@ async function v3ScatterEnd(S_){
       msg = `Scattered ${S_.add.length} ${set ? set.label.toLowerCase() : 'things'}`;
     }
     toast(msg + '. Undo takes the whole stroke back.');
-    for (const k of Object.keys(W.cells)) if (W.cells[k].exists) await worldReloadCell(k);
+    for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
     afterChange(); v3Refresh();
   } catch (e){ toast(e.message, true); }
 }
@@ -1572,7 +1697,7 @@ function v3Bind(el){
   window.addEventListener('keydown', e => {
     if (!V3.on || !$('#world').classList.contains('on') || v3Typing(e)) return;
     const k = (e.key || '').toLowerCase(), mv = v3MoveKey(e);
-    if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){ V3.keys[mv] = true; e.preventDefault(); }
+    if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){ V3.keys[mv] = true; (V3.keyAt = V3.keyAt || {})[mv] = performance.now(); e.preventDefault(); }
     if (e.key === 'Shift') V3.keys.shift = true;
     if (e.key === 'Escape') V3.keys = {};
     // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
@@ -2062,7 +2187,18 @@ function v3Loop(){
   const step = t => {
     if (!V3.on || !$('#world').classList.contains('on')){ V3.looping = false; return; }
     const dt = Math.min(0.1, (t - (v3Last || t)) / 1000); v3Last = t;
+    // (3D left on from last time and no place open yet: no camera until one opens. Without this the first
+    // frame threw, the loop stopped for good, and the place opened next never showed)
+    if (!V3.pos){
+      if (W.key && W.info && V3.homeFor !== W.key) v3Reset();
+      if (!V3.pos){ requestAnimationFrame(step); return; }
+    }
     // fly with WASD (Q/E down/up, Shift faster)
+    // (a key held down repeats its keydown many times a second; one that hasn't for 0.7 s was let go where
+    // the page didn't hear it, a menu or a dialog of the window's own: the camera "that wouldn't stop",
+    // the user, still now and then after the blur and Windows-key fixes)
+    const now_ = performance.now();
+    for (const k of 'wasdqe') if (V3.keys[k] && V3.keyAt && now_ - (V3.keyAt[k] || 0) > 700) V3.keys[k] = false;
     const sp = (V3.keys.shift ? 2600 : 700) * dt, d = v3Dir(), flat = new THREE.Vector3(d.x, d.y, 0).normalize(),
           right = new THREE.Vector3(flat.y, -flat.x, 0);
     if (V3.keys.w) V3.pos.addScaledVector(d, sp);
@@ -2098,7 +2234,14 @@ function v3Loop(){
       if (cellKeyAt(x, y) !== W.key || Math.hypot(x - W.cam.x, y - W.cam.y) > CELL){ W.cam.x = x; W.cam.y = y; recentre(); }
       v3Terrain();
     }
-    V3.renderer.render(V3.scene, V3.camera);
+    // (outdoors with the game's sky: the sky first, then the place over it; a colour background would
+    // clear the sky away again, so the place is drawn without it)
+    const R = V3.renderer;
+    if (W.ext && v3SkyTick(dt)){
+      const bg = V3.scene.background;
+      R.autoClear = false; R.clear(); R.render(V3.sky.scene, V3.sky.cam); R.clearDepth();
+      V3.scene.background = null; R.render(V3.scene, V3.camera); V3.scene.background = bg; R.autoClear = true;
+    } else R.render(V3.scene, V3.camera);
     requestAnimationFrame(step);
   };
   requestAnimationFrame(step);

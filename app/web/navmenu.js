@@ -99,6 +99,6 @@ const NAV_MENU = {
 document.querySelectorAll('nav button[data-view]').forEach(b => b.addEventListener('contextmenu', e => {
   const f = NAV_MENU[b.dataset.view]; if (!f) return;
   e.preventDefault();
-  const items = f().filter(it => it === '-' || it.label);
+  const items = f().concat(typeof vwNavItems === 'function' ? vwNavItems(b.dataset.view) : []).filter(it => it === '-' || it.label);
   pnlMenu({x: e.clientX, y: e.clientY}, items);
 }));

@@ -6,6 +6,8 @@
 // lantern, a sword on its pegs) stay fixed. Nothing is saved while it runs: Keep where they lie writes every
 // moved thing back as one Undo; Put them back leaves the mod as it was.
 const PH = {on: false, R: null, world: null, bodies: new Map(), fixed: [], acc: 0, drag: null, panel: null, loading: false, centre: null, reach: 700};
+// (the reach is the panel's slider, 1 to 1000, kept for next time)
+try { const r = +localStorage.getItem('ph_reach'); if (r >= 1 && r <= 1000) PH.reach = r; } catch (e) {}
 const PH_G = 706;              // (9.81 m/s² in game units: 72 units to the metre)
 const PH_SMALL = 140;
 const PH_SUNK = /flora|plant|kelp|mushroom|shrub|grass|lilypad|moss|vine|ivy|root_|roots/;
@@ -38,7 +40,8 @@ function phChosen(){
 
 async function phToggle(on){
   if (on === PH.on || PH.loading) return;
-  if (!on){ return phAsk(); }
+  // (off again with the button, or Esc: put back, nothing saved; Keep where they lie is the panel's)
+  if (!on){ return phStop(false); }
   if (!V3.on || !V3.scene) return toast('Physics works in the 3D view: open it first.', true);
   PH.loading = true; toast('Starting physics…');
   try {
@@ -53,7 +56,7 @@ async function phToggle(on){
     phBuild();
     PH.on = true;
     phPanel();
-    toast(`Physics on: ${PH.bodies.size} loose things can fall and be pushed (${PH.held} hung ones stay put). Drag one to push the others.`);
+    toast(`Physics on: ${PH.bodies.size} loose things can fall and be pushed (${PH.held} hung ones stay put). Drag one to push the others; Esc puts them back.`);
   } catch (e){ toast('Physics could not start: ' + e.message, true); phClear(); }
   PH.loading = false;
   v3Tools();
@@ -134,6 +137,7 @@ function phBuild(){
   // (the solid world has to be in place before asking what's under each loose thing)
   PH.world.step();
   PH.held = 0;
+  PH.t0 = performance.now();          // (the gentle start: see phCalm)
   for (const [key, o] of loose){
     const g = o.g, mine = PH.chosen && PH.chosen.has(key);
     inv.copy(g.matrixWorld).invert();
@@ -151,7 +155,10 @@ function phBuild(){
     let cx = 0, cy = 0;
     for (let i = 0; i < pts.length; i += 3){ cx += pts[i]; cy += pts[i + 1]; }
     cx /= pts.length / 3; cy /= pts.length / 3;
-    for (let i = 0; i < pts.length; i += 3){ pts[i] = cx + (pts[i] - cx) * 0.97; pts[i + 1] = cy + (pts[i + 1] - cy) * 0.97; }
+    // (books in a row overlap a little as laid: slimmer still, or the engine pushed the whole row apart at once,
+    // the user: "they spring out like a system under compression")
+    const shrink = o.r.type === 'BOOK' ? 0.94 : 0.97;
+    for (let i = 0; i < pts.length; i += 3){ pts[i] = cx + (pts[i] - cx) * shrink; pts[i + 1] = cy + (pts[i + 1] - cy) * shrink; }
     // hung: what the game hangs (hangsurvey.py, through Settle's report), or a thing with nothing near under
     // it that touches a wall or a ceiling (a sword on its pegs, a picture, a sign). A thing in open air with
     // nothing under it falls: that's what the user switched physics on for
@@ -161,6 +168,14 @@ function phBuild(){
     const touches = () => [[1, 0, 0, half.x], [-1, 0, 0, half.x], [0, 1, 0, half.y], [0, -1, 0, half.y], [0, 0, 1, half.z]]
       .some(([dx, dy, dz, h]) => PH.world.castRay(new R.Ray({x: c.x, y: c.y, z: c.z}, {x: dx, y: dy, z: dz}), h + 10, true));
     const hung = (PH.hung && PH.hung.has(key)) || (!hit && !mine && touches());
+    // (sunk into the board under it, as the game lays books and much else: started inside a thin shelf, the
+    // engine pushed it out downwards, through the board, the user's video. Lifted onto it, a hair above)
+    let lift = 0;
+    if (hit && !hung){
+      const surf = c.z - (hit.timeOfImpact ?? hit.toi ?? 0), sunk = surf - box.min.z;
+      if (sunk > 0.05 && sunk < 12) lift = sunk + 0.3;
+    }
+    if (lift){ g.position.z += lift; g.updateMatrixWorld(true); }
     const desc = (hung ? R.RigidBodyDesc.fixed() : R.RigidBodyDesc.dynamic().setLinearDamping(0.6).setAngularDamping(2.0).setCcdEnabled(true))
       .setTranslation(g.position.x, g.position.y, g.position.z)
       .setRotation({x: g.quaternion.x, y: g.quaternion.y, z: g.quaternion.z, w: g.quaternion.w});
@@ -197,7 +212,7 @@ function phTick(dt){
   PH.acc = Math.min(PH.acc + dt, 2 / 60);
   let n = 0;
   const t0 = performance.now();
-  while (PH.acc >= 1 / 60 && n < 2){ PH.world.step(); PH.acc -= 1 / 60; n++; if (performance.now() - t0 > 12) { PH.acc = 0; break; } }
+  while (PH.acc >= 1 / 60 && n < 2){ PH.world.step(); phCalm(D); PH.acc -= 1 / 60; n++; if (performance.now() - t0 > 12) { PH.acc = 0; break; } }
   if (!n) return;
   let awake = 0;
   for (const [key, b] of PH.bodies){
@@ -221,9 +236,45 @@ function phTick(dt){
   phPanelCount();
 }
 
+// no springing: what overlaps as laid is pushed apart by the engine all at once. For the first two seconds
+// every body is held to a crawl, so leftovers ease apart; after that nothing may shoot upwards faster than
+// a hop (falling and being pushed sideways are left alone; Jiggle's hop of 40-60 is under it).
+const PH_CALM_S = 2.0;
+function phCalm(D){
+  const R = PH.R, early = (performance.now() - (PH.t0 || 0)) / 1000 < PH_CALM_S;
+  for (const [key, b] of PH.bodies){
+    if (D && D.key === key) continue;
+    const body = b.body;
+    if (body.isSleeping()) continue;
+    const v = body.linvel(), w = body.angvel();
+    let vx = v.x, vy = v.y, vz = v.z;
+    if (early){
+      const sp = Math.hypot(vx, vy, Math.max(0, vz)), cap = 30;
+      if (sp > cap){ const k = cap / sp; vx *= k; vy *= k; if (vz > 0) vz *= k; }
+      const ws = Math.hypot(w.x, w.y, w.z);
+      if (ws > 1.5){ const k = 1.5 / ws; body.setAngvel({x: w.x * k, y: w.y * k, z: w.z * k}, false); }
+    } else if (vz > 120) vz = 120;
+    if (vx !== v.x || vy !== v.y || vz !== v.z) body.setLinvel({x: vx, y: vy, z: vz}, false);
+    // (at rest: the engine's own sleep is set for metres, and in the game's units a leaning row of books crept
+    // a unit every few seconds and never slept, each waking its neighbours. Slower than this for most of a
+    // second, it is held still by heavy damping until a drag or a Jiggle lets everything go again: phLoosen)
+    if (!b.calm && Math.hypot(vx, vy, vz) < 4 && Math.hypot(w.x, w.y, w.z) < 0.15){
+      b.still = (b.still || 0) + 1;
+      if (b.still > 45){ body.setLinearDamping(40); body.setAngularDamping(40); b.calm = true; }
+    } else if (!b.calm) b.still = 0;
+  }
+}
+function phLoosen(){
+  for (const b of PH.bodies.values()){
+    if (!b.calm) continue;
+    b.body.setLinearDamping(0.6); b.body.setAngularDamping(2.0); b.calm = false; b.still = 0;
+  }
+}
+
 function phDragStart(){
   if (!PH.on || !V3.drag || V3.drag.group) return;
   const b = PH.bodies.get(V3.drag.key); if (!b) return;
+  phLoosen();
   b.body.setBodyType(PH.R.RigidBodyType.KinematicPositionBased, true);
   PH.drag = {key: V3.drag.key, body: b.body, o: b.o};
 }
@@ -281,28 +332,64 @@ async function phStop(keep){
     toast(keep ? 'Nothing moved.' : 'Put back where they were.');
   }
 }
-function phAsk(){
-  const n = phMoves().length;
-  if (!n) return phStop(false);
-  pnlMenu({x: innerWidth / 2, y: innerHeight / 3}, [
-    {label: `✔ Keep where they lie (${n} moved; one Undo)`, act: () => phStop(true)},
-    {label: '↶ Put them back as they were', act: () => phStop(false)},
-    {label: 'Keep physics on', act: () => {}}]);
+// the reach changed: the bodies again round the same spot, those still in reach where they lie now, those
+// left out back where they were saved (Keep only writes what takes part)
+function phSetReach(r){
+  PH.reach = Math.max(1, Math.min(1000, Math.round(r)));
+  try { localStorage.setItem('ph_reach', String(PH.reach)); } catch (e) {}
+  if (!PH.on || !PH.world) return;
+  const old = new Map(PH.bodies);
+  phRebuildKeep();
+  for (const [k, b] of old){
+    if (PH.bodies.has(k)) continue;
+    b.o.g.position.copy(b.start.p); b.o.g.quaternion.copy(b.start.q); b.o.g.updateMatrixWorld(true);
+  }
+  phPanelCount();
 }
+
+// Esc while physics is on: off, put back, nothing saved (not while typing in a box)
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !PH.on || PH.loading) return;
+  const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) && !(PH.panel && PH.panel.contains(t))) return;
+  e.preventDefault(); e.stopPropagation();
+  phStop(false);
+}, true);
 
 function phPanel(){
   if (PH.panel) PH.panel.remove();
   const p = document.createElement('div'); p.id = 'phpanel';
   p.style.cssText = 'position:absolute;left:12px;bottom:12px;z-index:25;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:8px 10px;max-width:320px;box-shadow:0 4px 16px #0007';
-  p.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><b>🧲 Physics on</b><span class="msg" id="phcount"></span></div>
-    <div class="msg" style="margin:4px 0 6px;line-height:1.4">Loose things fall and rest; drag one to push the others. Hung things and the building stay put. Nothing is saved until you keep it.</div>
+  p.innerHTML = `<div data-ph="grip" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none" title="Drag to move this panel"><b>🧲 Physics on</b><span class="msg" id="phcount"></span>
+      <button class="btn sm" data-ph="close" style="margin-left:auto;padding:0 6px" title="Turn physics off and put everything back (Esc)">✕</button></div>
+    <div class="msg" style="margin:4px 0 6px;line-height:1.4">Loose things fall and rest; drag one to push the others. Hung things and the building stay put. Nothing is saved until you keep it; Esc or the Physics button puts them back.</div>
+    <label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="How far from the spot you looked at loose things take part">Reach
+      <input type="range" min="1" max="1000" step="1" value="${PH.reach}" data-ph="reach" style="flex:1"><span data-ph="reachv" style="min-width:3.2em;text-align:right">${PH.reach}</span></label>
     <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-ph="keep">✔ Keep where they lie</button><button class="btn sm" data-ph="back">↶ Put back</button>
     <button class="btn sm" data-ph="jiggle" title="A little shake: everything loose wakes and settles again">〰 Jiggle</button></div>`;
   ($('#v3wrap') || document.body).appendChild(p);
   PH.panel = p;
   p.querySelector('[data-ph=keep]').onclick = () => phStop(true);
   p.querySelector('[data-ph=back]').onclick = () => phStop(false);
+  p.querySelector('[data-ph=close]').onclick = () => phStop(false);
+  const rs = p.querySelector('[data-ph=reach]'), rv = p.querySelector('[data-ph=reachv]');
+  rs.oninput = () => { rv.textContent = rs.value; };
+  rs.onchange = () => phSetReach(+rs.value);           // (on letting go: a rebuild takes a moment)
+  // (moved by its title row, kept inside the view)
+  const grip = p.querySelector('[data-ph=grip]');
+  grip.onmousedown = e => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    e.preventDefault();
+    const host = p.parentElement.getBoundingClientRect(), r0 = p.getBoundingClientRect(), dx = e.clientX - r0.left, dy = e.clientY - r0.top;
+    const mv = ev => {
+      const x = Math.max(0, Math.min(host.width - r0.width, ev.clientX - host.left - dx));
+      const y = Math.max(0, Math.min(host.height - r0.height, ev.clientY - host.top - dy));
+      p.style.left = x + 'px'; p.style.top = y + 'px'; p.style.bottom = 'auto';
+    };
+    const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  };
   p.querySelector('[data-ph=jiggle]').onclick = () => {
+    phLoosen();
     for (const b of PH.bodies.values()){
       // (a hop of a few units and a little turn, whatever it weighs)
       b.body.setLinvel({x: (Math.random() - 0.5) * 30, y: (Math.random() - 0.5) * 30, z: 40 + Math.random() * 20}, true);

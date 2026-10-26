@@ -186,7 +186,7 @@ def rule(db, rid):
 
 
 CHAPEL = re.compile(r'setchapel|chapel_|_chapel')
-DUNMER = ('furn_shrine', 't_de_', 'furn_velothi', 'furn_de_', 't_dreu')
+DUNMER = ('furn_shrine', 't_de_', 'furn_velothi', 'furn_de_')
 IMPERIAL = ('furn_imp', 't_imp_', 'furn_c_', 'furn_com', 't_com', 't_nor', 't_bre', 't_cyr')
 
 
@@ -211,7 +211,7 @@ def allowed(db, rid, theme='house', culture=None):
         # one: "a good choice for homes, often decorated with various items found in the world")
         if CHAPEL.search(low) and tall:
             return False
-        if re.search(r'dng|dungeon|barrow|tomb|crypt', low):
+        if re.search(r'dng|dungeon|barrow|tomb|crypt|^t_dreu_|dreugh', low):
             return False                  # (a dungeon's altar, a Breton cellar's or a Nord barrow's)
         if re.match(r'^(pc_m|tr_m|tr_q|ac_|sky_m)', low):
             return False                  # (a quest's own shrine, made for one place)

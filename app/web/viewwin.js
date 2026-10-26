@@ -5,7 +5,9 @@
 // puts the page back where it was, unsaved edits and all. Each window can be dragged by its title bar
 // and sized from its corner, comes to the front when clicked, remembers where it was left, and closes
 // with Esc. "✚ Create here…" on the view's right-click menu opens a Create form with the clicked spot as
-// where the new thing goes.
+// where the new thing goes. The other pages at the top (Browse, Scripts, Rules, Library, My mod, Health
+// check, Load order) are windows too: on the World map their buttons open them over it, several at once,
+// so the map never has to be left (Shift+click, or right-click → "Open as a page", for the page itself).
 const VW = {wins: {}, pos: {}, want: null, inWin: false, nav: false};
 try { VW.pos = JSON.parse(localStorage.getItem('ws-vwin-pos') || '{}') || {}; } catch (e){}
 
@@ -16,17 +18,39 @@ const VW_HOST = {
   itemed: {title: () => '✎ ' + (IE.data ? (IE.data.name || IE.data.id) : 'Edit an item, spell or enchantment'), render: () => renderItemEd(), w: 900},
   chars: {title: () => '👤 ' + (C.data ? (C.data.name || C.data.id) : 'Characters'), render: () => renderChars(), w: 1000},
   dialog: {title: () => '💬 Dialogue', render: () => renderDialog(), w: 1040},
+  // (the rest of the pages at the top, and the pages they lead to: each one the page itself, in a window)
+  browse: {title: () => '🔎 Browse' + (S.q ? ': "' + S.q + '"' : '') + (S.cur ? ' · ' + (S.cur.name || S.cur.id) : ''), render: () => {}, w: 1180},
+  scripts: {title: () => '⟨⟩ ' + (SC.id ? 'Script ' + SC.id : 'Scripts'), render: () => renderScripts(), w: 1060},
+  rules: {title: () => { const t = (typeof RU_TABS !== 'undefined' && RU_TABS.find(x => x[0] === RU.tab)) || ['', '📘 Rules']; return t[1] + (RU.id ? ' · ' + RU.id : ''); }, render: () => renderRules(), w: 1040},
+  library: {title: () => '🖼 Library', render: () => renderLibrary(), w: 980},
+  mymod: {title: () => '📦 My mod' + (S.summary && S.summary.project ? ': ' + S.summary.project.name : ''), render: () => renderMyMod(), w: 900},
+  release: {title: () => '📦 Get ready to share', render: () => renderRelease(), w: 980},
+  myeff: {title: () => '🪄 Magic effects', render: () => renderMyEffects(), w: 980},
+  health: {title: () => '🩺 Health check', render: () => {}, w: 920},
+  plugins: {title: () => '☰ Load order', render: () => {}, w: 920},
+  guide: {title: () => 'Getting started', render: () => renderGuide(), w: 900},
+  settings: {title: () => '⚙ Settings', render: () => renderSettings(), w: 860},
 };
+// the pages at the top, by name (for the menus and Ctrl+K)
+const VW_NAMES = {browse: 'Browse', createv: 'Create', library: 'Library', chars: 'Characters', dialog: 'Dialogue', scripts: 'Scripts',
+  rules: 'Rules', mymod: 'My mod', health: 'Health check', plugins: 'Load order'};
+// on the World map, the buttons at the top open their page as a window over it (Shift+click: as a page)
+function vwPref(){ try { return localStorage.getItem('ws-vwin-pages') !== '0'; } catch (e){ return true; } }
+function vwSetPref(on){ try { localStorage.setItem('ws-vwin-pages', on ? '1' : '0'); } catch (e){} toast(on ? 'On the World map, the pages at the top now open as windows over it (Shift+click: as a page).' : 'The pages at the top open as pages again (right-click one: "Open as a window").'); }
 
 function vwCss(){
   if (typeof owCss === 'function') owCss();          // (the object window's look: title bar, border, shadow)
   if ($('#vw-css')) return;
   const c = document.createElement('style'); c.id = 'vw-css';
   c.textContent = `
-  .vwin{resize:both;min-width:360px;min-height:220px}
+  #world .mapwrap{isolation:isolate}
+  .vwin{resize:both;min-width:360px;min-height:220px;outline:none}
   .vwbody{position:relative;flex:1;min-height:0}
   .vwbody > .view{display:grid !important;position:absolute;inset:0;overflow:auto}
-  .vwbody > #createv,.vwbody > #itemed{display:block !important}
+  .vwbody > #createv,.vwbody > #itemed,.vwbody > #myeff,.vwbody > #library,.vwbody > #mymod,.vwbody > #release,.vwbody > #health,.vwbody > #plugins,.vwbody > #guide,.vwbody > #settings{display:block !important}
+  .vwbody > .view > .wrap{padding:8px 20px 30px}
+  .vwbody > #browse{overflow:hidden}
+  nav button.vwopen{box-shadow:inset 0 -2px 0 var(--gold)}
   .vwbody #createwrap{max-width:none;padding:6px 18px 30px}
   .vwbody #createwrap > h1,.vwbody #createwrap > .lead,.vwbody #createwrap > .cgroups{display:none}
   .vwbody #createwrap .cform{margin-top:6px}
@@ -36,6 +60,10 @@ function vwCss(){
   .owhead .vwpage:hover{color:var(--gold2)}`;
   document.head.appendChild(c);
 }
+
+// (the windows stack among themselves inside the map, so a dialog, menu or message opened from one, such as
+// "+ New quest", comes up over all of them and dims them with the map, instead of hiding under the window)
+vwCss();
 
 const vwHosting = v => !!(VW.wins[v] && VW.wins[v].el.isConnected);
 function vwBox(){ return $('#world .mapwrap'); }
@@ -54,14 +82,16 @@ function vwOpen(v){
     <div class="vwbody"></div>`;
   box.appendChild(el);
   const w = {v, el, home: page.parentNode};
-  VW.wins[v] = w;
+  VW.wins[v] = w; vwNavMark();
   el.querySelector('.vwbody').appendChild(page);
   el.querySelector('[data-vwclose]').onclick = () => vwClose(v);
   el.querySelector('.vwpage').onclick = () => { vwClose(v); VW.nav = true; try { showView(v); } finally { VW.nav = false; } };
   // (a click in here that opens another of these pages opens it as a window too)
   el.addEventListener('click', () => { VW.inWin = true; setTimeout(() => VW.inWin = false, 0); }, true);
-  el.addEventListener('pointerdown', () => vwFront(el), true);
-  el.addEventListener('keydown', e => { if (e.key !== 'Escape') e.stopPropagation(); });
+  // (a click in here takes the keys from the 3D view: arrows go through Browse's results, W isn't flying)
+  el.tabIndex = -1;
+  el.addEventListener('pointerdown', e => { vwFront(el); if (!e.target.closest('input, textarea, select, button, [contenteditable], [tabindex]:not(.vwin)')) setTimeout(() => { if (!el.contains(document.activeElement)) el.focus({preventScroll: true}); }, 0); }, true);
+  el.addEventListener('keydown', e => { if (e.key !== 'Escape'){ if (v === 'browse') vwBrowseKey(e); e.stopPropagation(); } });
   vwDrag(el, v);
   const p = VW.pos[v] || {};
   const n = Object.keys(VW.wins).length - 1;
@@ -83,9 +113,23 @@ function vwClose(v){
   delete VW.wins[v];
   const page = $('#' + v);
   if (page && w.home) w.home.appendChild(page);      // (back among the pages; which one shows is showView's business)
-  w.el.remove();
+  w.el.remove(); vwNavMark();
   if (v === 'createv') CR.at = null;
   if (typeof PL !== 'undefined' && PL && PL.paint && v === 'createv') PL.paint = null;
+}
+// the buttons at the top whose page is open in a window get a line under them (their size stays as it is)
+const VW_NAVOF = {itemed: 'createv', lists: 'createv', myeff: 'createv', release: 'mymod'};
+function vwNavMark(){
+  const open = new Set(Object.keys(VW.wins).map(v => VW_NAVOF[v] || v));
+  document.querySelectorAll('nav button[data-view]').forEach(b => b.classList.toggle('vwopen', open.has(b.dataset.view)));
+}
+// Browse in a window: ↑ ↓ go through the results, Alt+← → back and forward (as on the page)
+function vwBrowseKey(e){
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || S.editing) return;
+  if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')){ e.preventDefault(); goHist(e.key === 'ArrowLeft' ? -1 : 1); return; }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const n = S.rows.findIndex(r => r.i === S.sel) + (e.key === 'ArrowDown' ? 1 : -1);
+  if (S.rows[n]){ e.preventDefault(); openRecord(S.rows[n].i, true); document.querySelector(`.row[data-i="${S.rows[n].i}"]`)?.scrollIntoView({block: 'nearest'}); }
 }
 function vwKeep(v, o){ VW.pos[v] = Object.assign(VW.pos[v] || {}, o); try { localStorage.setItem('ws-vwin-pos', JSON.stringify(VW.pos)); } catch (e){} }
 function vwPlace(w){
@@ -142,23 +186,25 @@ function vwRun(v, fn){
   try { return fn(); } finally { VW.want = null; }
 }
 
-// showView: a page that's a window (or asked for as one, from a window or from vwRun) is drawn there;
-// going to it with the buttons at the top puts it back on its own page
+// showView: on the World map, a page is drawn in a window over it (when it already is one, when asked for
+// as one from a window or vwRun, or always, while "pages as windows" is on); Shift+click on the buttons at
+// the top, or "⤢ As a page", puts it back on its own page
 (function(){
   const orig = showView;
   showView = function(v){
-    if (VW_HOST[v] && !VW.nav && cfWorldOn() && (vwHosting(v) || VW.want === v || VW.inWin)){ vwRender(v); return; }
+    if (VW_HOST[v] && !VW.nav && cfWorldOn() && (vwHosting(v) || VW.want === v || VW.inWin || vwPref())){ vwRender(v); return; }
     if (VW.wins[v]) vwClose(v);
     return orig(v);
   };
   const nav = document.querySelector('nav');
-  if (nav) nav.addEventListener('click', () => { VW.nav = true; setTimeout(() => VW.nav = false, 0); }, true);
+  if (nav) nav.addEventListener('click', e => { VW.nav = e.shiftKey || !vwPref(); setTimeout(() => VW.nav = false, 0); }, true);
 })();
 // Esc closes the window in front (an open list or menu first; the object window looks after itself)
 window.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const top = vwTop(); if (!top || !top.classList.contains('vwin')) return;
   if (document.querySelector('.modal-bg, .pmenu')) return;
+  if (document.activeElement === $('#q')) return;          // (Esc in the search box at the top empties it)
   e.preventDefault(); e.stopPropagation();
   const open = top.querySelector('.ddlist[style*="block"]');
   if (open){ open.style.display = 'none'; return; }
@@ -240,6 +286,17 @@ for (const k of ['build', 'npc', 'container', 'item', 'book', 'spell', 'effect',
   CF_ACT.push({id: 'vwcreate-' + k, label: 'Create in a window: ' + CR_CARDS[k][1], keys: [], world: true, run: () => vwCreate(k, null)});
 CF_ACT.push({id: 'vwcreate', label: 'Create… (a window over the World map)', keys: [], world: true,
   run: () => { const b = $('#v3tools [data-v3="create"]') || $('#w-create'); const r = b ? b.getBoundingClientRect() : {left: 300, bottom: 160}; vwCreateMenu({x: r.left, y: r.bottom + 4}, null); }});
+// each page at the top, as a window (Ctrl+K), and the switch for the buttons at the top
+for (const v of Object.keys(VW_NAMES)) CF_ACT.push({id: 'vwpage-' + v, label: 'Open ' + VW_NAMES[v] + ' in a window over the World map', keys: [], run: () => vwRun(v, () => showView(v))});
+CF_ACT.push({id: 'vwpref', label: 'Pages at the top open as windows over the World map (on/off)', keys: [], run: () => vwSetPref(!vwPref())});
+// (the right-click menu on a button at the top ends with these: navmenu.js)
+function vwNavItems(v){
+  if (!VW_HOST[v]) return [];
+  const asPage = () => { if (VW.wins[v]) vwClose(v); VW.nav = true; try { showView(v); } finally { VW.nav = false; } };
+  return ['-', {label: '⧉ Open as a window over the World map', act: () => vwRun(v, () => showView(v))},
+    {label: '⤢ Open as a page', act: asPage},
+    {label: (vwPref() ? '☑' : '☐') + ' On the World map, the pages here open as windows', act: () => vwSetPref(!vwPref())}];
+}
 // the Place panel's "✚ Create new…" and the 3D toolbar's "✚ Create" (both drawn in index.html / world3d.js)
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('#w-create, #v3tools [data-v3="create"]'); if (!b) return;

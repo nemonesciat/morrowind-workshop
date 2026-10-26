@@ -844,6 +844,10 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/daylight':
                 import daylight
                 self._json(daylight.table())
+            elif u.path == '/api/sky':
+                # the game's sky pictures and meshes, for the 3D view's sky
+                import daylight
+                self._json(daylight.sky(db))
             elif u.path == '/api/assets/record':
                 import assets
                 self._json(assets.for_record(db, int(q['i'])))
@@ -2089,12 +2093,12 @@ class Handler(BaseHTTPRequestHandler):
                                                    entrance=body.get('entrance'), outside_door=body.get('door') or None,
                                                    seed=body.get('seed') if body.get('seed') not in (None, '') else None,
                                                    occupants=got('occupants', 'auto'), kind=body.get('kind') or 'dwemer',
-                                                   water=got('water', 'none')))
+                                                   water=got('water', 'none'), entry_piece=got('entry', None), final_hall=got('final', None)))
                 if u.path == '/api/ruin/preview':
                     # the layout those choices make, for the Dungeon tool's plan (nothing is written)
                     import dwemer
                     return self._json(dwemer.preview(db, body.get('kind') or 'dwemer', body.get('size') or 'medium', body.get('levels') or 'some',
-                                                     body.get('twist') or 'branching', body.get('seed')))
+                                                     body.get('twist') or 'branching', body.get('seed'), entry=body.get('entry'), final=body.get('final')))
                 if u.path == '/api/ruin/again':
                     import dwemer
                     return self._json(dwemer.again(db, body['cell'], body.get('seed') if body.get('seed') not in (None, '') else None))

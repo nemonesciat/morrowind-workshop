@@ -46,7 +46,7 @@ const DT_SEG = {
 // so arbitrary"): creatures and loot in % of what the game's own pieces like these hold, lived in as the
 // chance someone has moved in (starting at the kind's own share), water as the share of the floors under it
 const DT_SLIDE = {
-  water: {id: 'dt-water', max: 90, step: 5, def: 0, label: 'Water'},
+  water: {id: 'dt-water', max: 100, step: 5, def: 0, label: 'Water'},
   crea: {id: 'dt-crea', max: 300, step: 10, def: 100, label: 'Creatures'},
   loot: {id: 'dt-loot', max: 300, step: 10, def: 100, label: 'Loot'},
   occ: {id: 'dt-occ', max: 100, step: 1, def: null, label: 'Lived in'},
@@ -57,8 +57,23 @@ const DT_LIVED = {dwemer: 0.47, tomb: 0.2, daedric: 0.5, cave_mold: 0.55, cave_m
 function dtSlideSay(k){
   const el = $('#' + DT_SLIDE[k].id); if (!el) return '';
   const v = +el.value, G = (DT.lay && DT.lay.game) || null;
-  if (k === 'water') return v ? `Up ${v}% of the way from the lowest floor to the way in, which stays dry` : 'Dry';
-  if (k === 'occ'){ const g = dtLivedDef(); return `${v}% chance someone lives here${v === g ? ' (as the game\'s own)' : ` (the game's own: ${g}%)`}`; }
+  if (k === 'water'){
+    if (!v) return 'Dry';
+    // (the way in goes under past this layout's own mark: a front door near the bottom leaves little room)
+    const dry = DT.lay && DT.lay.dry_to != null ? Math.round(DT.lay.dry_to * 100) : null;
+    const tail = dry == null ? '' : v > dry ? ` · the way in is under water (it stays dry up to ${dry}%)` : dry >= 100 ? ' · the way in stays dry' : ` · the way in stays dry up to ${dry}%`;
+    return `Up ${v}% of the way from the lowest floor to the highest${tail}`;
+  }
+  if (k === 'occ'){
+    // (a density: up to the game's own share the chance of one camp, past it more halls with camps of their
+    // own, every one but the last at the top; the user: "campers and bandits in each major cove")
+    const g = dtLivedDef(), word = (DT.lay && DT.lay.hall_word) || 'hall';
+    const others = Math.max(0, ((DT.lay && DT.lay.halls) || 1) - 2);
+    if (!v) return 'Nobody lives here';
+    if (v <= g) return `${v}% chance of a camp${v === g ? ' (as the game\'s own)' : ` (the game's own: ${g}%)`}`;
+    const extra = (v - g) / Math.max(1, 100 - g), n = 1 + Math.round(others * extra);
+    return `A camp for sure${others ? `, about ${n} in all (one in ${Math.round(extra * 100)}% of the other ${word}s)` : ''}`;
+  }
   const what = k === 'crea' ? 'creatures' : 'things to take';
   const n = G ? (k === 'crea' ? G.creatures : G.loot) : null;
   if (!v) return k === 'crea' ? 'No creatures' : 'Nothing to take';
@@ -112,6 +127,31 @@ function ruinFormHtml(what){
 }
 
 const DT_HIST = [];
+// picking on the plan (the user: "assign the way in, and the last one"): a dead end can become the way in, a
+// hall the last one; the layout is grown the same (its seed), only those two moved. Any other change of the
+// choices grows a fresh layout and the picks go
+DT.entry = null; DT.final = null;
+function dtPickAt(p, e){
+  const box = $('#dt-pick'); if (box) box.remove();
+  if (!p || !DT.lay) return;
+  const acts = [];
+  if (p[6] === 'dead end' && p[7] == null && DT.lay.entry_pickable) acts.push(['entry', '▲ Way in here', 'The front door moves to this dead end; the old way in is closed off']);
+  if (p[7] != null && p[7] !== DT.lay.final) acts.push(['final', '★ The last one', 'The prize, its guardian (and a Daedric shrine) go in this ' + DT.lay.hall_word]);
+  if (DT.entry != null || DT.final != null) acts.push(['reset', '↺ As grown', 'The way in and the last one back where the layout had them']);
+  if (!acts.length) return;
+  const wrap = $('#dt-cv').parentNode, r = wrap.getBoundingClientRect();
+  const d = document.createElement('div'); d.id = 'dt-pick'; d.className = 'dt-pick';
+  d.style.left = Math.min(r.width - 190, e.clientX - r.left + 8) + 'px'; d.style.top = Math.min(r.height - 90, e.clientY - r.top + 8) + 'px';
+  d.innerHTML = acts.map(([k, l, t]) => `<button type="button" class="btn sm" data-pk="${k}" title="${esc(t)}">${l}</button>`).join('');
+  d.onclick = ev => {
+    const b = ev.target.closest('[data-pk]'); if (!b) return;
+    if (b.dataset.pk === 'entry') DT.entry = p[9];
+    else if (b.dataset.pk === 'final') DT.final = p[7];
+    else { DT.entry = null; DT.final = null; }
+    d.remove(); dtPreview(true);
+  };
+  wrap.appendChild(d);
+}
 function dtStart(){
   dtCss();
   const cv = $('#dt-cv'); if (!cv) return;
@@ -121,8 +161,12 @@ function dtStart(){
     cv.addEventListener('wheel', e => { e.preventDefault(); const V = DT.view; if (!V) return;
       const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, f = e.deltaY < 0 ? 1.18 : 1 / 1.18;
       V.ox = mx - (mx - V.ox) * f; V.oy = my - (my - V.oy) * f; V.s *= f; DT.user = true; dtDraw(); }, {passive: false});
-    cv.addEventListener('pointerdown', e => { DT.drag = {x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2}; cv.setPointerCapture(e.pointerId); });
-    cv.addEventListener('pointerup', () => { DT.drag = null; });
+    cv.addEventListener('pointerdown', e => { DT.drag = {x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2, x0: e.clientX, y0: e.clientY}; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointerup', e => {
+      // (a click, not a drag: the piece under it picked, for the way in or the last one)
+      const D = DT.drag; DT.drag = null;
+      if (D && e.button === 0 && Math.hypot(e.clientX - D.x0, e.clientY - D.y0) < 4) dtPickAt(DT.hover, e);
+    });
     cv.addEventListener('contextmenu', e => { if (DT.mode === '3d') e.preventDefault(); });
     cv.addEventListener('pointermove', e => {
       const V = DT.view; if (!V) return;
@@ -152,19 +196,23 @@ function dtStart(){
   dtPreview();
 }
 
-async function dtPreview(){
+async function dtPreview(keepPicks){
   const v = id => (($('#' + id) || {}).value || '');
   const seq = ++DT.seq;
+  if (!keepPicks){ DT.entry = null; DT.final = null; const pb = $('#dt-pick'); if (pb) pb.remove(); }
   const sd = parseInt(v('ru-seed'), 10);
   DT.seed = isFinite(sd) ? sd : DT.seed;
   const msg = $('#dt-msg');
   for (let n = 0; n < 120; n++){
     let r;
-    try { r = await post('/api/ruin/preview', {kind: v('ru-kind'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), seed: DT.seed}); }
+    try { r = await post('/api/ruin/preview', {kind: v('ru-kind'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), seed: DT.seed, entry: DT.entry, final: DT.final}); }
     catch (e){ if (msg) msg.textContent = e.message; return; }
     if (seq !== DT.seq) return;
     if (r.learning){ DT.lay = null; const st0 = $('#dt-stat'); if (st0) st0.textContent = ''; const cv0 = $('#dt-cv'); if (cv0) cv0.getContext('2d').clearRect(0, 0, cv0.width, cv0.height); if (msg) msg.innerHTML = `<span class="spin"></span>Learning ${esc(r.learning.join(', '))} first (once, under a minute)…`; await new Promise(res => setTimeout(res, 2500)); continue; }
     if (msg) msg.textContent = '';
+    // (a pick the layout couldn't take, a dead end with no room for the old way in's cap: dropped, and said)
+    if (DT.entry != null && !(r.picked && r.picked.entry === DT.entry)){ DT.entry = null; toast('That dead end can\'t be the way in here: no room to close off the old one.', true); }
+    if (DT.final != null && r.final !== DT.final) DT.final = null;
     const kindChanged = !DT.lay || DT.lay.kind !== r.kind;
     DT.lay = r;
     if (kindChanged || !DT.user) DT.view = null;
@@ -335,6 +383,7 @@ function dtCss(){
   .dt-seg button{flex:1;padding:4px 0;background:none;border:0;border-right:1px solid var(--line);color:var(--muted);cursor:pointer;font:inherit}
   .dt-seg button:last-child{border-right:0}.dt-seg button:hover{background:#ffffff0d}.dt-seg button.on{background:#d2a85a24;color:var(--gold2)}
   .dt-grid{display:grid;grid-template-columns:70px 1fr;gap:4px 6px;align-items:center;margin-top:6px}
+  .dt-pick{position:absolute;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--panel, #1b1712);border:1px solid var(--line2);border-radius:6px;box-shadow:0 4px 14px #0008;z-index:2}
   .dt-sl{display:grid;grid-template-columns:70px 1fr;gap:0 6px;align-items:center;margin-top:2px}
   .dt-sl input[type=range]{width:100%;min-width:0;accent-color:var(--gold2);margin:2px 0}
   .dt-slv{grid-column:1 / -1;font-size:11px;color:var(--faint);min-height:14px;line-height:1.25}
@@ -397,12 +446,13 @@ function ruinWhat(where){
   const v = id => (($('#' + id) || {}).value || '');
   const name = v('cr-name').trim();
   const K = ruinKind(v('ru-kind'));
-  const pct = (id, what) => { const n = +v(id); return n === 100 ? `as many ${what} as the game's own` : n ? `${n}% of the game's ${what}` : `no ${what}`; };
-  const occ = +v('dt-occ'), water = +v('dt-water');
+  const pct = (id, what) => { const n = +v(id); return n === 100 ? `${what} as in the game's own` : n ? `${n}% of the game's ${what}` : `no ${what}`; };
+  const occ = +v('dt-occ'), water = +v('dt-water'), g = typeof dtLivedDef === 'function' ? dtLivedDef() : 47;
   return `<b>Make it</b> builds the plan shown as ${name ? `"${esc(name)}"` : 'a new place'}, dressed as the game's own ${esc(K[1].replace('Cave: ', 'caves of ').toLowerCase().replace('dwemer ruin', 'Dwemer ruins').replace('velothi tomb', 'Velothi tombs').replace('daedric ruin', 'Daedric ruins'))}, ` +
     `with ${pct('dt-crea', 'creatures')} and ${pct('dt-loot', 'loot')}` +
-    (occ >= 100 ? ', someone living in it' : occ <= 0 ? ', nobody living in it' : `, a ${occ}% chance someone lives in it`) +
-    (water ? `, ${water}% of its floors under water` : '') +
+    (occ >= 100 ? `, a camp in every ${(DT.lay && DT.lay.hall_word) || 'hall'} but the last` : occ <= 0 ? ', nobody living in it'
+      : occ > g ? ', a camp for sure and more in some of its halls' : `, a ${occ}% chance of a camp`) +
+    (water ? `, water ${water}% of the way up` : '') +
     (where ? `, its front door linked to a door ${where}` : '') + '. One Undo takes it back.';
 }
 
@@ -411,7 +461,8 @@ async function ruinGo(msg){
   // (the sliders as shares: 1 is the game's own; lived in as a chance, or 'auto' when left at the kind's own)
   const n = (id, d) => { const x = parseFloat(v(id)); return isFinite(x) ? x / 100 : d; };
   const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), creatures: n('dt-crea', 1),
-    loot: n('dt-loot', 1), occupants: DT.lived == null ? 'auto' : n('dt-occ', 'auto'), water: n('dt-water', 0), seed: v('ru-seed').trim() || null, entrance: placeValue()};
+    loot: n('dt-loot', 1), occupants: DT.lived == null ? 'auto' : n('dt-occ', 'auto'), water: n('dt-water', 0), seed: v('ru-seed').trim() || null, entrance: placeValue(),
+    entry: DT.entry, final: DT.final};
   // (the first of each kind waits for the survey of the game's own, 15-20 s once; the survey process learns it)
   for (let n = 0; n < 120; n++){
     const r = await post('/api/ruin/build', body);

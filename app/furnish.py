@@ -71,11 +71,14 @@ NOT = {'table': ('tablet',), 'bed': ('bedroll',), 'shelf': ('bookshelf', 'bookca
                   # (an altar is of its culture, like the rest of the furniture: a dreugh altar belongs in a
                   # grotto, a daedric one in a daedric ruin, never in a house; the user's "a Hlaalu home isn't
                   # supposed to have a dreugh altar")
-                  'dreugh', 'daedric', 'dae_', 'dwemer', 'dwrv', 'sixth', '6th', 'ashland', 'cave', 'ruin', 'grotto', 'sacrific'),
+                  'dreugh', 'dreu_', 'daedric', 'dae_', 'dwemer', 'dwrv', 'sixth', '6th', 'ashland', 'cave', 'ruin', 'grotto', 'sacrific'),
        'bath': ('tube', 'bathroom', 'marker', 'in_', 'ex_'), 'rack': ('wine', 'bottle', 'scroll', 'spice', 'coat', 'hat'), 'target': ('targeting', 'marker')}
 # (a bare stone piece: an altar base, a block, a slab, a plinth, a pedestal with nothing on it. Never
 # furniture in a house, whatever family a name puts it in: the user's "white stone block" by a tapestry)
 BARE_STONE = re.compile(r'(altar|shrine)[^a-z]*(base|block|slab|plinth|pedestal|step|platform)|pedestal|plinth|podium|_slab|stoneblock|stone_block|marbleblock')
+# (the dreugh's own make, Tamriel Data's t_dreu_ altars and furniture: only in a dreugh's grotto, never
+# in a house; the user's "Dreugh altars and furniture don't go in land based dwellings")
+DREUGH_MAKE = re.compile(r'^t_dreu_|dreugh')
 HANGING_KINDS = ('shelf',)      # the only furniture put up on a wall (at the height the game hangs it)
 BED_OFF_THE_WAY = True          # a bed in a small room never across the line from its doorway to its middle (for the lab: off to compare)
 WORK_TABLE_REACH = 300          # a kitchen's hearth has a table or counter this near (the game's median 249): 0 to leave it to the recipe
@@ -2101,6 +2104,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         if shell:
             top = max(shell, key=shell.get)
             rough = ROUGH.get(top)
+    # (a dreugh's grotto, by its name or its own dreugh-made building pieces: the only place for their altars)
+    grotto = 'dreugh' in ((mapdata.cell_info(db, cell_key) or {}).get('name') or cell_key).lower() \
+        or any(r['id'].lower().startswith('t_dreu_') and '_furn_' not in r['id'].lower() for r in mapdata.cellmap(db, cell_key).get('refs', []))
     if rough:
         for rm in info['rooms']:
             if re.match(r'^room \d+$', (rm['name'] or '').lower()) or not rm['name']:
@@ -2407,6 +2413,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 return None
         if tag in ('STAT', 'ACTI') and theme != 'temple' and BARE_STONE.search(rid.lower()):
             return None                      # (a bare stone block, slab or pedestal: never furniture in a house, by any path)
+        if tag in ('STAT', 'ACTI', 'CONT') and not grotto and DREUGH_MAKE.search(rid.lower()):
+            last_trace.append((room, 'set', rid, "the dreugh's make outside a dreugh grotto: left out"))
+            return None
         if RIDER_ONLY.search(rid.lower()) and not on_top and at_z is None:
             # (a bath's water sheet, a flame: only ever inside the piece it belongs to, a tub or a hearth
             # standing here already with the sheet's middle over it)

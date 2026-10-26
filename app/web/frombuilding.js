@@ -24,7 +24,7 @@ async function gfFit(cell, ref){
   if (o.changed){
     // (the ground and what followed it, read again, as the ground brush does)
     W.lands = {};
-    for (const k of Object.keys(W.cells)) if (W.cells[k].exists) await worldReloadCell(k);
+    for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
     if (typeof v3LandsReload === 'function') v3LandsReload();
     if (typeof afterChange === 'function') afterChange();
     drawMap(); if (V3.on) v3Refresh();

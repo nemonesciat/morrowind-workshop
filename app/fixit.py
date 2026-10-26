@@ -1713,6 +1713,76 @@ def end_rates(db, prefix, limit=20):
     return res
 
 
+# a hall piece's posts on an open side towards a room piece that has none of its own there: the posts
+# stand in the room's floor (the user's "misplaced Hlaalu columns", the stair block of hall corners in a
+# Hall 2 tiles wide, 2026-10-25). The game's own places per floor piece, 2834 places measured: Hlaalu
+# 0.0076, Velothi (small) 0.0004, Vivec 0.0014, Indoril 0.0008, every other style none; the user's house
+# 0.036. Shown above twice the style's rate, like the other kinds
+OPEN_POST_RATE = {'in_hlaalu': 0.0076, 'in_v_s_int': 0.0014, 'in_velothismall': 0.0004, 't_de_setind_i': 0.0008}
+OPEN_POST_SLACK = 3         # in a style whose places have them: this many in a place, or twice the rate, is the game's way
+OPEN_POST_COVER = 0.1      # how much of a side's width a piece's posts there take, at least (kits.measure 'cover')
+
+
+def _open_posts(db, m, tiles):
+    """Hall pieces whose posts stand in the open floor of the room piece beside them ('openpost'). The
+    fix swaps the hall piece for the room piece the builder would lay there."""
+    import builder
+    at = {}
+    for t in tiles:
+        at[(int(round(t['x'] / t['T'])), int(round(t['y'] / t['T'])), int(round(t['floor'] / 32.0)))] = t
+    out = []
+    for (i, j, f), t in sorted(at.items()):
+        if builder._family(t['id']) != 'hall' or t.get('tall'):
+            continue
+        pat = t.get('spot') or t['pat']
+        cov = kits.rotate(t['piece']['pattern'], t['q'])['cover']
+        sides = []
+        for s in kits.SIDES:
+            if pat[s] != 'open' or cov.get(s, 0) < OPEN_POST_COVER:
+                continue
+            n = at.get((i + STEP[s][0], j + STEP[s][1], f))
+            if not n or builder._family(n['id']) != 'room' or (n.get('spot') or n['pat'])[OPPOSITE[s]] != 'open':
+                continue
+            if kits.rotate(n['piece']['pattern'], n['q'])['cover'].get(OPPOSITE[s], 0) >= OPEN_POST_COVER:
+                continue                  # (the room piece has its own posts there: a threshold, as the game has them)
+            sides.append(s)
+        if not sides:
+            continue
+        rooms_kp = {'pieces': [p for p in t['kit']['pieces'] if builder._family(p['id']) == 'room'], 'walls': t['kit']['walls']}
+        piece, q, missing, _p = builder._pick(rooms_kp, {s: pat[s] for s in kits.SIDES}, 'room')
+        fixes = []
+        # (a room piece with the same walls; where none has them, a hall_center's two walls, a second room
+        # piece on the same spot turned to the walls the first lacks, as the game stacks two pieces, before
+        # loose walls: those left slits at the ends of the user's hall_center swapped for a side, 2 holes)
+        swap = [{'op': 'swap', 'ref': t['ref'], 'id': piece['id'], 'rz': q * math.pi / 2}] + \
+            [{'op': 'delete', 'ref': r} for r in t.get('mates', [])] if piece else []
+        if piece and builder._family(piece['id']) == 'room' and not missing:
+            fixes.append({'label': 'Swap for %s' % piece['id'], 'ops': swap})
+        elif piece and builder._family(piece['id']) == 'room':
+            # (the plainest piece for it: a room_door1 has the walls too, but its posts on the open sides again)
+            st = None
+            for p_ in rooms_kp['pieces']:
+                for q_ in range(4):
+                    r_ = kits.rotate(p_['pattern'], q_)
+                    if any(r_[s] != 'wall' for s in missing) or any(r_[s] != 'open' for s in kits.SIDES if s not in missing):
+                        continue
+                    score = (round(sum(r_['cover'].get(s, 0) for s in kits.SIDES if s not in missing), 2), -p_['uses'])
+                    if st is None or score < st[3]:
+                        st = (p_, q_, r_, score)
+            if st:
+                fixes.append({'label': 'Swap for %s, with a %s on the same spot for the other wall' % (piece['id'], st[0]['id']),
+                              'ops': swap + [{'op': 'place', 'id': st[0]['id'], 'p': [t['x'], t['y'], t['z'], 0, 0, round(st[1] * math.pi / 2, 4)]}]})
+            wf = _wall_fix(db, t, missing)
+            if wf:
+                fixes.append({'label': 'Swap for %s and add walls' % piece['id'], 'ops': swap + wf['ops']})
+        for s in sides:
+            x0, y0, x1, y1 = _edge(t, s)
+            out.append({'kind': 'openpost', 'side': s, 'ref': t['ref'], 'id': t['id'], 'x': (x0 + x1) / 2, 'y': (y0 + y1) / 2,
+                        'z': t['floor'] + 110, 'text': 'A hall piece\'s posts standing in the open floor of the room beside it',
+                        'fixes': fixes})
+    return out
+
+
 def _sunk_posts(db, m, tiles):
     """Posts and columns standing more than half inside a loose wall or a door frame ('sunk'): the
     user's half column at the cellar landing, 2026-10-23. The fix takes the post out."""
@@ -2199,8 +2269,16 @@ def scan(db, cell_key, everything=False, clashes=False, gate=('gap', 'doorway', 
             m_ = mapdata.cellmap(db, cell_key)
             n_posts = sum(1 for r in m_['refs'] if r['type'] == 'STAT' and COLUMN_WORDS.search(r['id'].lower()))
             n_stairs = sum(1 for r in m_['refs'] if r['type'] == 'STAT' and re.search(r'stair|ramp', r['id'].lower()))
-            for kind, base, rate in (('sunk', n_posts, rates.get('sunk')), ('stairend', n_stairs, rates.get('stairend'))):
+            for kind, base, rate in (('sunk', n_posts, rates.get('sunk')), ('stairend', n_stairs, rates.get('stairend')),
+                                     ('openpost', tiles, OPEN_POST_RATE.get(res['prefix'], 0.0))):
                 n = sum(1 for i in res['issues'] if i['kind'] == kind)
+                # (posts in the open: the game's Hlaalu places have one now and then, so a single one in a
+                # style that has them at all is the game's way too: they come in twos and threes, as at a
+                # Hlaalu manor's stair, and 80 of the game's Hlaalu places have no more than 3)
+                if kind == 'openpost' and n and rate and n <= max(OPEN_POST_SLACK, 2 * rate * base):
+                    res['issues'] = [i for i in res['issues'] if i['kind'] != kind]
+                    res['hidden_kinds'][kind] = n
+                    continue
                 if n and rate is not None and base and n / float(base) <= 2 * rate:
                     res['issues'] = [i for i in res['issues'] if i['kind'] != kind]
                     res['hidden_kinds'][kind] = n
@@ -2343,6 +2421,8 @@ def _scan(db, cell_key):
     issues += _landing_issues(db, m, tiles, floors, door_spots)
     # a post more than half inside a loose wall or a door frame
     issues += _sunk_posts(db, m, tiles)
+    # a hall piece's posts in the open floor of a room
+    issues += _open_posts(db, m, tiles)
     # edges where what stands is not what the game stands in that situation (joints.py: the joint survey)
     try:
         import joints
