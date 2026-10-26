@@ -1581,8 +1581,8 @@ SHRINE_FACES = 270
 
 
 def _shrine(db, c, S, lay, rng, key=None):
-    """One of the game's shrines laid in the last room, as a whole: its statue in the room's middle, all
-    round it as the game had it (the user: "usually it has a shrine and a statue, an altar, gemstones and
+    """One of the game's shrines laid in the last room, as a whole: its statue where the game's stand in their
+    rooms (SHRINE_BACK), all round it as the game had it (the user: "usually it has a shrine and a statue, an altar, gemstones and
     cups"; 59 of the game's 112 Daedric ruins have one). Of a few shrines and the four quarter turns, the
     one that leaves least of itself outside the room, its statue facing the room's way in. The room's own
     dressing is taken out of the shrine's footprint first (the user saw a shrine "clip into that platform
@@ -1590,10 +1590,12 @@ def _shrine(db, c, S, lay, rng, key=None):
     hp = [p for p in lay['pieces'] if p.get('hall') == lay['final'] and not p.get('gone') and p.get('box')]
     if not hp:
         return False
-    x0, y0 = min(p['box'][0] for p in hp) + 40, min(p['box'][1] for p in hp) + 40
-    x1, y1 = max(p['box'][3] for p in hp) - 40, max(p['box'][4] for p in hp) - 40
+    # (the room's middle from its tiles' own bounds: the middle of the floor found by rays was pulled to one
+    # side by the side tiles' half walls, "it's not centered in room", the user's Zajamima, 2026-10-26)
+    bx0, by0 = min(p['box'][0] for p in hp), min(p['box'][1] for p in hp)
+    bx1, by1 = max(p['box'][3] for p in hp), max(p['box'][4] for p in hp)
     fz = min(p['p'][2] for p in hp)
-    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    mx, my = (bx0 + bx1) / 2, (by0 + by1) / 2
     # (the way in: the room's entry piece, else the piece of the room nearest the front door's side)
     K = lay.get('K') or {}
     way = next((p for p in hp if p['id'] in _entries(K)), None) or min(hp, key=lambda p: p.get('depth', 0))
@@ -1601,13 +1603,30 @@ def _shrine(db, c, S, lay, rng, key=None):
     # (the floor inside the room's walls, found by rays across it from the middle: the tiles' boxes run out to
     # the walls' outer faces, and a statue, its platform and steps went through the room's corner and side
     # pieces, "completely discombobulated", the user's Zarathustra, 2026-10-26)
-    x0, y0, x1, y1 = _inner_rect(db, hp, mx, my, fz, (x0 - 40, y0 - 40, x1 + 40, y1 + 40))
-    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    x0, y0, x1, y1 = _inner_rect(db, hp, mx, my, fz, (bx0, by0, bx1, by1))
+    # (and the room's ceiling over it, its roofs with it: the statue's head ran up into it, the user's Zajamima)
+    roof_sc = None
+    if key:
+        import seethrough
+        struct = re.compile(K.get('tube', '^$') + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['roofs']) if K.get('roofs') else ''))
+        roof_sc = seethrough.Scene()
+        for r in mapdata.cellmap(db, key)['refs']:
+            if r.get('ri') is not None and struct.match(r['id'].lower()) and bx0 - 64 <= r['p'][0] <= bx1 + 64 and by0 - 64 <= r['p'][1] <= by1 + 64:
+                mo = db.recs[r['ri']][5]
+                if mo:
+                    roof_sc.add_model(seethrough.model_tris(db, mo), r['p'], r['s'])
 
-    def footprint(rid, lx, ly, s, q, drz):
-        """An item's box from above, turned as it would stand: (x0, y0, x1, y1), or None if it has none."""
+    def ceiling(x, y):
+        h = roof_sc.nearest_any((x, y, fz + 20), (0.0, 0.0, 1.0), 4000) if roof_sc else None
+        return fz + 20 + h[0] if h else None
+
+    def bounds(rid):
         ri = db.resolve_id(rid)
-        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        return mapdata.object_bounds(db, ri) if ri is not None else None
+
+    def footprint(rid, lx, ly, s, q, drz, sx, sy):
+        """An item's box from above, turned as it would stand with the statue at (sx, sy): (x0, y0, x1, y1)."""
+        b = bounds(rid)
         if not b:
             return None
         wx, wy = _rot(lx, ly, q)
@@ -1615,23 +1634,45 @@ def _shrine(db, c, S, lay, rng, key=None):
         for bx in (b[0], b[3]):
             for by in (b[1], b[4]):
                 rx_, ry_ = _rot(bx * s, by * s, (q + drz) % (2 * math.pi))
-                xs.append(mx + wx + rx_)
-                ys.append(my + wy + ry_)
+                xs.append(sx + wx + rx_)
+                ys.append(sy + wy + ry_)
         return min(xs), min(ys), max(xs), max(ys)
 
     best = None
     for sh in rng.sample(S['shrines'], len(S['shrines'])):
         if db.resolve_id(sh['statue']) is None:
             continue
+        items = _shrine_items(db, sh)
+        parts = [(sh['statue'], 0, 0, sh.get('s') or 1.0, 0.0, sh['z'])] + [(it[0], it[2], it[3], it[8], it[7], it[4]) for it in items]
         for q in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2):
-            # (every piece of it, the statue first, wholly inside the walls: a shrine that doesn't fit is
-            # left out, not cut down, as the game puts its big shrines only in rooms big enough for them)
-            parts = [(sh['statue'], 0, 0, sh.get('s') or 1.0, 0.0)] + [(it[0], it[2], it[3], it[8], it[7]) for it in sh['items'] if db.resolve_id(it[0]) is not None]
-            fits = True
-            for rid, lx, ly, s, drz in parts:
-                f = footprint(rid, lx, ly, s, q, drz)
-                if f and (f[0] < x0 - 8 or f[1] < y0 - 8 or f[2] > x1 + 8 or f[3] > y1 + 8):
-                    fits = False
+            # (where the game's own stand: across the room on its middle line (42 off, p50 of 36 game shrines),
+            # and along the way the statue faces three quarters of the way from the wall behind it to the
+            # room's middle, its back to that wall; nearer the middle when that doesn't fit)
+            back = _rot(0.0, 1.0, q)
+            ax = abs(back[0]) > abs(back[1])
+            half = ((x1 - x0) if ax else (y1 - y0)) / 2
+            for frac in (SHRINE_BACK, SHRINE_BACK / 2, 0.0):
+                sx, sy = mx + back[0] * frac * half, my + back[1] * frac * half
+                # (every piece of it, the statue first, wholly inside the walls and under the ceiling: a shrine
+                # that doesn't fit is left out, not cut down, as the game puts its big shrines only in rooms
+                # big enough for them)
+                fits = True
+                for rid, lx, ly, s, drz, lz in parts:
+                    f = footprint(rid, lx, ly, s, q, drz, sx, sy)
+                    if not f:
+                        continue
+                    if f[0] < x0 - 8 or f[1] < y0 - 8 or f[2] > x1 + 8 or f[3] > y1 + 8:
+                        fits = False
+                        break
+                    top = fz + lz + bounds(rid)[5] * s
+                    for px, py in ((f[0], f[1]), (f[2], f[1]), (f[0], f[3]), (f[2], f[3]), ((f[0] + f[2]) / 2, (f[1] + f[3]) / 2)):
+                        cz = ceiling(px, py)
+                        if cz is not None and top > cz - SHRINE_HEADROOM:
+                            fits = False
+                            break
+                    if not fits:
+                        break
+                if fits:
                     break
             if not fits:
                 continue
@@ -1639,34 +1680,105 @@ def _shrine(db, c, S, lay, rng, key=None):
             # the world's plus q)
             la = math.degrees(wa + q) % 360
             off = abs((la - SHRINE_FACES + 180) % 360 - 180)
-            score = (round(off / 45),)
+            score = (round(off / 45), frac != SHRINE_BACK)
             if best is None or score < best[0]:
-                best = (score, sh, q)
+                best = (score, sh, q, sx, sy, items)
     if best is None:
         return False
-    _score, sh, q = best
-    refs = [(sh['statue'], (mx, my, fz + sh['z'], 0, 0, q), [], sh.get('s') or 1.0)]
-    for rid, t, lx, ly, lz, rx, ry, drz, s in sh['items']:
-        if db.resolve_id(rid) is None:
-            continue
+    _score, sh, q, sx, sy, items = best
+    refs = [(sh['statue'], (sx, sy, fz + sh['z'], 0, 0, q), [], sh.get('s') or 1.0)]
+    for rid, t, lx, ly, lz, rx, ry, drz, s in items:
         wx, wy = _rot(lx, ly, q)
-        refs.append((rid, (mx + wx, my + wy, fz + lz, rx, ry, (q + drz) % (2 * math.pi)), [], s))
+        refs.append((rid, (sx + wx, sy + wy, fz + lz, rx, ry, (q + drz) % (2 * math.pi)), [], s))
     if key:
-        # the room's own dressing out of the shrine's footprint (its things' spread, and a hand round it)
-        xs = [p[1][0] for p in refs]
-        ys = [p[1][1] for p in refs]
-        fx0, fy0, fx1, fy1 = min(xs) - 64, min(ys) - 64, max(xs) + 64, max(ys) + 64
-        struct = re.compile(K.get('tube', '^$') + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['roofs']) if K.get('roofs') else ''))
+        # the room's own dressing out of the shrine's footprint: anything whose box reaches into the shrine's
+        # things' boxes and a hand round them; and every other platform, stair and statue in the room (the
+        # user's Zajamima had a room tile's own platform standing beside the shrine's: "the platform is
+        # duplicated")
+        fp = [f for f in (footprint(rid, 0, 0, s, pos[5], 0.0, pos[0], pos[1]) for rid, pos, _e, s in refs) if f]
+        fx0, fy0 = min(f[0] for f in fp) - 64, min(f[1] for f in fp) - 64
+        fx1, fy1 = max(f[2] for f in fp) + 64, max(f[3] for f in fp) + 64
+        shrine_re = re.compile(SHRINE_STAND + ('|' + K['shrine'] if K.get('shrine') else ''))
         for r in mapdata.cellmap(db, key)['refs']:
             i = r['id'].lower()
             if r['type'] in ('DOOR', 'NPC_') or struct.match(i) or i == K.get('jamb'):
                 continue
             x, y, z = r['p'][:3]
-            if fx0 <= x <= fx1 and fy0 <= y <= fy1 and fz - 60 <= z <= fz + 700:
+            if not (fz - 60 <= z <= fz + 900):
+                continue
+            if shrine_re.search(i) and bx0 <= x <= bx1 and by0 <= y <= by1:
+                c['refs'].pop(r['k'], None)
+                continue
+            b = r.get('b')
+            s = r.get('s') or 1.0
+            if b:
+                xs_, ys_ = [], []
+                for ex in (b[0], b[3]):
+                    for ey in (b[1], b[4]):
+                        rx_, ry_ = _rot(ex * s, ey * s, r['p'][5])
+                        xs_.append(x + rx_)
+                        ys_.append(y + ry_)
+                hit = min(xs_) < fx1 and max(xs_) > fx0 and min(ys_) < fy1 and max(ys_) > fy0
+            else:
+                hit = fx0 <= x <= fx1 and fy0 <= y <= fy1
+            if hit:
                 c['refs'].pop(r['k'], None)
     _write_refs(db, c, refs)
     db.sync_project()
     return True
+
+
+# (where in its room a shrine's statue stands, along the way it faces: this share of the way from the room's
+# middle to the wall behind it; the game's own, from their rooms' tiles: 0.24, p25-p75 0.08-0.35, 16 shrines;
+# scratch j_gshrine3.py, 2026-10-26. Made ones stand at 0.19, the walls' own depth taken off)
+SHRINE_BACK = 0.23
+SHRINE_HEADROOM = 40       # (over the statue's head to the ceiling: the game's own least, 41 of 36 shrines)
+SHRINE_STAND = r'platform|stair|step'
+
+
+def _shrine_items(db, sh):
+    """A shrine's things, without the platforms and stairs that only stood near it in the game's place: kept,
+    the platforms under the statue and those and the stairs joined to them, and what stands on them; the
+    survey took everything within 700 of the statue, and a second platform beside the shrine looked doubled."""
+    stand = re.compile(SHRINE_STAND)
+
+    def box(it):
+        ri = db.resolve_id(it[0])
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if not b:
+            return None
+        s = it[8]
+        xs, ys = [], []
+        for bx in (b[0], b[3]):
+            for by in (b[1], b[4]):
+                rx_, ry_ = _rot(bx * s, by * s, it[7])
+                xs.append(it[2] + rx_)
+                ys.append(it[3] + ry_)
+        return min(xs), min(ys), max(xs), max(ys)
+    live = [it for it in sh['items'] if db.resolve_id(it[0]) is not None]
+    plats = [(it, box(it)) for it in live if stand.search(it[0].lower()) and box(it)]
+    kept = [(it, b) for it, b in plats if b[0] <= 0 <= b[2] and b[1] <= 0 <= b[3]]
+    grew = True
+    while grew:
+        grew = False
+        for it, b in plats:
+            if any(it is k[0] for k in kept):
+                continue
+            if any(b[0] <= k[2] + 24 and b[2] >= k[0] - 24 and b[1] <= k[3] + 24 and b[3] >= k[1] - 24 for _i, k in kept):
+                kept.append((it, b))
+                grew = True
+    dropped = [b for it, b in plats if not any(it is k[0] for k in kept)]
+    out = []
+    for it in live:
+        if stand.search(it[0].lower()):
+            if any(it is k[0] for k in kept):
+                out.append(it)
+            continue
+        # (what stood on a platform left out goes with it)
+        if it[4] > 30 and any(b[0] <= it[2] <= b[2] and b[1] <= it[3] <= b[3] for b in dropped):
+            continue
+        out.append(it)
+    return out
 
 
 def _inner_rect(db, hp, mx, my, fz, box):
@@ -1739,10 +1851,11 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
     mine = bool(lay.get('mine'))
     out = []
     uniq = set(S.get('uniques') or [])
-    # (as a share of the game's own: under 1 some of each are left out, over 1 the fuller of the game's
-    # sets are drawn, empty barrels come full and more of the kind's creatures roam)
+    # (as a share of the game's own: under 1 some of each are left out; over 1 empty barrels and crates come
+    # full, tables are laid fuller and more of the kind's creatures roam; the sets themselves stay the game's)
     loot_x, crea_x = amount('loot', loot), amount('creatures', creatures)
     keep_loot, keep_crea = min(1.0, loot_x), min(1.0, crea_x)
+    rich_rng = random.Random(rng.random())
     is_loot = lambda t: t not in ('CREA', 'LEVC', 'LIGH', 'STAT', 'ACTI')
     more = K.get('more')
     n_crea = 0
@@ -1758,9 +1871,10 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
         same = [st for st in sets if isinstance(st, dict) and set(st['u']) == used_]
         more_ = [st for st in sets if isinstance(st, dict) and set(st['u']) >= used_]
         pool_ = same or more_ or sets
-        # (richer: the most loot of a few draws, one more draw for each whole step over the game's)
-        draws = 1 + int(max(0.0, loot_x - 1.0) * 2 + rng.random())
-        chosen = max((_set_items(rng.choice(pool_)) for _ in range(draws)), key=lambda d: sum(1 for row in d if is_loot(row[1])))
+        # (one draw, whatever the loot: the most-loot of several draws brought the fullest sets, statues,
+        # platforms and machines with them, and a doubled shrine platform in the user's Zajamima. "It should just
+        # make more valuable loot and better loot in chests": richer fills what's there, below)
+        chosen = _set_items(rng.choice(pool_))
         x, y, z, rz = p['p'][0], p['p'][1], p['p'][2], p['p'][5]
         for rid, t, lx, ly, lz, rx, ry, drz, s in chosen:
             low = rid.lower()
@@ -1774,6 +1888,9 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
                 continue
             if low.endswith('_empty') and rng.random() < loot_x - 1.0 and db.resolve_id(rid[:-6]) is not None:
                 rid = rid[:-6]                     # (a full barrel where the game had an empty one)
+            # (its own dice: on the main ones, raising Loot changed which sets every piece drew)
+            if loot_x > 1.0 and t in RICHER_TYPES and rich_rng.random() < min(0.7, (loot_x - 1.0) * 0.6):
+                rid, lz = _richer(db, S, rid, t, lz, s, rich_rng)
             n_crea += t in ('CREA', 'LEVC')
             wx, wy = _rot(lx, ly, rz)
             # (rubble and debris lying flat at the piece's own height share the floor's face and flicker: the
@@ -1793,6 +1910,58 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
             x, y, z = p['p'][0], p['p'][1], p['p'][2]
             out.append((more, (x, y, z - (100 if K['kind'] == 'dwemer' else 0), 0, 0, rng.random() * 6.28), [], 1.0))
     return out
+
+
+RICHER_TYPES = ('MISC', 'ALCH', 'INGR', 'APPA', 'BOOK')
+RICHER_NOT = re.compile(r'^gold_|key|_uni|unique|_q_|quest|soulgem')
+_RICH_POOL = {}
+
+
+def _rich_pool(db, S):
+    """The kind's own loose things, from every set its game places hold: (id, type, value, size, bottom)."""
+    k = id(S)
+    if k not in _RICH_POOL:
+        import shelfsurvey
+        seen, pool = set(), []
+        for sets in (S.get('dress') or {}).values():
+            for st in sets or []:
+                for row in _set_items(st):
+                    rid, t = row[0], row[1]
+                    low = rid.lower()
+                    if t not in RICHER_TYPES or low in seen or RICHER_NOT.search(low):
+                        continue
+                    seen.add(low)
+                    ri = db.resolve_id(rid)
+                    ob = mapdata.object_bounds(db, ri) if ri is not None else None
+                    if not ob:
+                        continue
+                    val = shelfsurvey.value_of(db, rid)[1]
+                    pool.append((rid, t, val, max(ob[3] - ob[0], ob[4] - ob[1], ob[5] - ob[2]), ob[2]))
+        _RICH_POOL[k] = pool
+    return _RICH_POOL[k]
+
+
+def _richer(db, S, rid, t, lz, s, rng):
+    """(id, height) of a pricier thing of the same kind and about the same size, from the kind's own sets, in
+    place of rid, its bottom where rid's was: raised Loot leaves richer things on the shelves and tables ("loot
+    setting should affect the kind of decoration and clutter in some capacity, what is left on shelves", the
+    user); the same rid when there is none."""
+    import shelfsurvey
+    if RICHER_NOT.search(rid.lower()):
+        return rid, lz
+    ri = db.resolve_id(rid)
+    ob = mapdata.object_bounds(db, ri) if ri is not None else None
+    if not ob:
+        return rid, lz
+    val = shelfsurvey.value_of(db, rid)[1]
+    size = max(ob[3] - ob[0], ob[4] - ob[1], ob[5] - ob[2])
+    # (a step up, not a fortune: 1.5 to 4 times its worth; one swap made a tomb's clutter worth 54,000 gold)
+    cand = [c for c in _rich_pool(db, S) if c[1] == t and max(val * 1.5, val + 5) < c[2] <= max(val * 4, val + 40)
+            and 0.7 * size <= c[3] <= 1.3 * size]
+    if not cand:
+        return rid, lz
+    c = rng.choice(cand)
+    return c[0], lz + (ob[2] - c[4]) * (s or 1.0)
 
 
 def preview(db, kind='dwemer', size='medium', levels='some', twist='branching', seed=None, entry=None, final=None, way='down'):
@@ -2548,10 +2717,76 @@ def _door_fronts(db, key, K):
             a, w = (lx, ly) if thin == 0 else (ly, lx)
             if abs(a) < DOOR_FRONT and w0 - 10 < w < w1 + 10 and d['p'][2] + b[2] - 40 < r['p'][2] < d['p'][2] + b[5]:
                 out.add(r['k'])
+    out |= _door_walk(db, m, K, doors)
     for k_ in out:
         c['refs'].pop(k_, None)
     db.sync_project()
     return len(out)
+
+
+def _door_walk(db, m, K, doors):
+    """The dressing a person walking straight through a doorway would run into: rays through each door frame,
+    along its thin side from DOOR_FRONT before it to DOOR_FRONT past it, at knee, waist and head height over its
+    sill and across the middle of its width. Pipes count here (a pipe hung down the middle of a Dwemer door,
+    "looks cool, but the character cannot run through", the user's Nchudzamn); the building, doors and lights
+    don't. The keys met."""
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    jamb = (K.get('jamb') or '').lower()
+    frames = [d for d in doors if d['type'] != 'DOOR']        # (a door's own point is at its hinge: the frame's middle)
+    if not frames:
+        return set()
+    sc = _thing_scene(db, m['refs'])
+    byk = {r['k']: r for r in m['refs']}
+    keep = lambda r: (tube.match(r['id'].lower()) or r['id'].lower() == jamb or r['type'] in ('DOOR', 'LIGH')
+                      or DOORWAY.search(r['id'].lower()) or re.search(r'rug|mist|web|marker', r['id'].lower()))
+    met = set()
+    for d in frames:
+        b, s = d['b'], d.get('s') or 1.0
+        R = seethrough_matrix(d['p'][3], d['p'][4], d['p'][5])
+        ext = [(b[3] - b[0]) * s, (b[4] - b[1]) * s]
+        thin = 0 if ext[0] <= ext[1] else 1
+        wide = 1 - thin
+        mid = [(b[0] + b[3]) / 2 * s, (b[1] + b[4]) / 2 * s]
+        sill = b[2] * s
+        here = set()
+        for f in (-0.25, 0.0, 0.25):
+            for hgt in (40, 90, 120, 150):
+                lo = [0.0, 0.0, sill + hgt]
+                lo[wide] = mid[wide] + f * ext[wide]
+                lo[thin] = mid[thin] - DOOR_FRONT
+                o = tuple(d['p'][i] + sum(R[i][j] * lo[j] for j in range(3)) for i in range(3))
+                dv = tuple(R[i][thin] for i in range(3))
+                skip = set()
+                for _ in range(6):                       # (past what may stay, to what's behind it)
+                    # (a copy each time: the search adds every triangle it tries to the set it's given)
+                    h = sc._hits(o, dv, 2 * DOOR_FRONT, set(skip), True, both=True)
+                    if h is None:
+                        break
+                    k_ = sc.owner(h[1])
+                    r = byk.get(k_)
+                    if r is None or keep(r):
+                        a_, b_ = sc.of_ref.get(k_, (h[1], h[1] + 1))
+                        skip |= set(range(a_, b_))
+                        continue
+                    here.add(k_)
+                    break
+        met |= here
+        # (a pipe met in the doorway takes the rest of its run in the opening with it: the user's Nchudzamn door
+        # had five fittings across it, a bar and a drop down the middle, and one alone gone left the others hanging)
+        if any(LOOSE_PIPE.search(byk[k_]['id'].lower()) for k_ in here if k_ in byk):
+            for r in m['refs']:
+                if r['k'] in met or not r.get('b') or not LOOSE_PIPE.search(r['id'].lower()) or keep(r):
+                    continue
+                dx, dy, dz = (r['p'][i] - d['p'][i] for i in range(3))
+                lp = [sum(R[i][j] * v for i, v in enumerate((dx, dy, dz))) for j in range(3)]   # (into the frame's own axes)
+                if abs(lp[thin] - mid[thin]) < 60 and abs(lp[wide] - mid[wide]) < ext[wide] / 2 + 10 and sill - 10 < lp[2] < b[5] * s + 10:
+                    met.add(r['k'])
+    return met
+
+
+def seethrough_matrix(rx, ry, rz):
+    import seethrough
+    return seethrough._matrix(rx, ry, rz)
 
 
 LOOSE_PIPE = re.compile(r'fitting|pipe')
