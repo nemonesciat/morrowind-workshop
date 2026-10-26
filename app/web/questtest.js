@@ -165,7 +165,7 @@ function qtVals(){
 
 // called every second by the live-link poll
 function qtTick(){
-  if (!$('#dialog').classList.contains('on')) return;
+  if (!pageOn('dialog')) return;
   qtPanel();
   if (LINK.connected) qtRefresh(false);
   qtQuestBar();

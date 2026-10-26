@@ -94,14 +94,14 @@ function qolAfterRender(){
     d.querySelector('#q-changes').onclick = () => PNL.show('world', 'changes');
     const u = d.querySelector('#q-unhide'); if (u) u.onclick = () => cfRun('unhide');
   }
-  // the test setup used by Play, beside God mode
-  const god = $('#w-god');
-  if (god && !$('#q-setup')){
+  // the test setup used by Play (God mode is in it, and shows on the button when on), after Pick a spot
+  const spot = $('#w-playspot');
+  if (spot && !$('#q-setup')){
     const b = document.createElement('button'); b.className = 'btn sm'; b.id = 'q-setup';
-    b.title = 'What you start with when Play starts the game: items, spells, quest stages, variables';
-    b.textContent = '🧪 ' + (QOL.setupOn || 'Test setup…');
+    b.title = 'What you start with when Play starts the game: items, spells, quest stages, variables, and God mode';
     b.onclick = () => qolSetups();
-    god.closest('label').after(b);
+    spot.after(b);
+    qolSetupLabel();
     // who you play as: a new character, or one of yours from their latest save
     const a = document.createElement('button'); a.className = 'btn sm'; a.id = 'q-playas';
     a.title = 'Play here as a new character, or as one of yours (from their latest save)';
@@ -461,7 +461,7 @@ function qolReplace(from){
 
 // ---------------------------------------------------------------- test setups for Play
 async function qolLoadSetups(){
-  try { const s = await api('/api/testsetups'); QOL.setups = s; QOL.setupOn = s.on; const b = $('#q-setup'); if (b) b.textContent = '🧪 ' + (s.on || 'Test setup…'); return s; }
+  try { const s = await api('/api/testsetups'); QOL.setups = s; QOL.setupOn = s.on; qolSetupLabel(); return s; }
   catch (e){ return {list: [], on: ''}; }
 }
 // (the Test setups window itself: setups.js)
@@ -494,3 +494,10 @@ CF_ACT.push(
     return false;
   }},
 );
+
+// the Test setup button: the setup in use, and God mode when it's on (God mode lives in Test setups)
+try { if (W.god === undefined) W.god = localStorage.getItem('ws-god') === '1'; } catch (e){}
+function qolSetupLabel(){
+  const b = $('#q-setup'); if (!b) return;
+  b.textContent = '🧪 ' + (QOL.setupOn || 'Test setup…') + (W.god ? ' · god' : '');
+}

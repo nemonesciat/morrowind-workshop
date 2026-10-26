@@ -669,10 +669,21 @@ class LiveLink:
             except Exception as e:
                 print('live link:', e)
 
+    # what the game may no longer do to your mod: the in-game building keys were taken out after 2.4.11
+    # (Shift is the run key: running with J for the journal placed things, Shift+Z undid the Workshop's
+    # own last change). A game still running an older link script is ignored for these, with a note
+    EDIT_EVENTS = ('placeat', 'placebrush', 'placeprefab', 'libarm', 'arm', 'move', 'del', 'undo', 'lightcolor')
+
     def _event(self, f):
         self.last_seen = self.last_event = time.time()
         self.run_linked = True
         kind = f[0]
+        if kind in self.EDIT_EVENTS:
+            if not getattr(self, '_told_old', False):
+                self._told_old = True
+                self._note('The game asked to change your mod (an older link script): ignored. Build in the Workshop; '
+                           'restart the game from the Workshop to load the new link.')
+            return
         # stand-in records the game made for Library models: the Workshop knows them by their real ids
         aliases = self.__dict__.setdefault('aliases', {})
         if kind in ('pick', 'move', 'del', 'lightcolor') and len(f) > 1:
@@ -693,7 +704,6 @@ class LiveLink:
             self.player = {'kind': f[1], 'name': f[2], 'gx': int(f[3]), 'gy': int(f[4]), 'x': float(f[5]),
                            'y': float(f[6]), 'z': float(f[7]), 'yaw': float(f[8]),
                            'cell': self._key_for(f[1], f[2], float(f[5]), float(f[6]))}
-            self._maybe_palette()
         elif kind in ('applied', 'received') and len(f) >= 2:
             setattr(self, kind, int(f[1]))
         elif kind == 'pick' and len(f) >= 9:

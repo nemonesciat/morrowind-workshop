@@ -5,9 +5,12 @@
 const FB = {on: false, cell: null, ref: null, door: null, res: null, panel: null, floor: null};
 const FB_COL = ['#f0cd87', '#7fd1c7', '#c79bf0'];
 
+// (the land's own big pieces count as architecture but are no building: a rock got "Build an interior inside
+// this building" and "Fit the ground", both refused, in the crawl test)
+const FB_NOT_BUILDING = /terrain|rock|boulder|cliff|mount|flora|tree|stump|log_|kelp|grass|lava|_dune|shore|cave_ent/i;
 function fbMenuItem(ck, r){
   // (outdoors only: a building piece or a door)
-  if (!ck || !ck.startsWith('#') || !(r.arch || r.type === 'DOOR')) return null;
+  if (!ck || !ck.startsWith('#') || !(r.arch || r.type === 'DOOR') || FB_NOT_BUILDING.test(r.id)) return null;
   return {label: '🏠 Build an interior inside this building…', act: () => fbOpen(ck, r.k)};
 }
 

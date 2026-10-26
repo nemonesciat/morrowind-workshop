@@ -13,7 +13,7 @@ function pnlCss(){
   c.textContent = `
   .pspace{position:absolute;inset:0;min-height:0}
   .pspace:not(.view),.view.pspace.on{display:flex}
-  .pcenter{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+  .pcenter{flex:1;display:flex;flex-direction:column;min-width:min(300px, 34%);min-height:0}
   .pcenter > .pmain{flex:1;min-height:0;position:relative}
   .pdock{display:flex;min-width:0;min-height:0;background:var(--panel);position:relative}
   .pdock[data-dock=left],.pdock[data-dock=right]{flex-direction:column}
@@ -58,6 +58,8 @@ function pnlCss(){
   .prs.se{right:-3px;bottom:-3px;width:14px;height:14px;cursor:nwse-resize}.prs.sw{left:-3px;bottom:-3px;width:14px;height:14px;cursor:nesw-resize}
   .psplit{flex:none;background:transparent;z-index:5;position:relative}
   .psplit:hover,.psplit.drag{background:var(--gold)}
+  .pdock > .psplit.v{z-index:50}
+  .pdock > .psplit.v::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:28px;margin:-14px 0 0 -1.5px;border-radius:2px;background:var(--line2);opacity:.8}
   .psplit.v{width:5px;margin:0 -2px;cursor:ew-resize}.psplit.h{height:5px;margin:-2px 0;cursor:ns-resize}
   .pdrop{position:absolute;pointer-events:none;background:#d9b26a33;border:2px dashed var(--gold);border-radius:8px;z-index:60;display:none}
   .pdragging .pgroup *{pointer-events:none}
@@ -164,9 +166,9 @@ function pnlDraw(sp){
     dock.innerHTML = '';
     const gs = L[d].groups;
     if (!gs.length){ dock.style.width = dock.style.height = ''; continue; }
-    // (on a small screen the docks give way, so the middle keeps some room)
-    const both = L.left.groups.length && L.right.groups.length;
-    if (d === 'bottom') dock.style.height = `min(${L[d].size}px, 45%)`; else dock.style.width = `min(${L[d].size}px, ${both ? 36 : 60}%)`;
+    // (on a small screen the docks give way, so the middle keeps some room: .pcenter's own minimum width
+    // makes the docks shrink; a fixed 36% cap with both docks open undid a wider record on every redraw)
+    if (d === 'bottom') dock.style.height = `min(${L[d].size}px, 45%)`; else dock.style.width = `min(${L[d].size}px, 60%)`;
     gs.forEach((g, i) => {
       if (i) dock.appendChild(pnlSplitter(sp, d, i));
       const el = pnlGroupEl(sp, g, d);
@@ -177,8 +179,9 @@ function pnlDraw(sp){
     const edge = document.createElement('div');
     edge.className = 'psplit ' + (d === 'bottom' ? 'h' : 'v');
     edge.style.position = 'absolute';
-    if (d === 'left'){ Object.assign(edge.style, {right: '-3px', top: 0, bottom: 0, margin: 0}); }
-    if (d === 'right'){ Object.assign(edge.style, {left: '-3px', top: 0, bottom: 0, margin: 0}); }
+    // (a wide edge, over the list's scrollbar beside it: a 5 px one was hard to find, "no way to expand the middle")
+    if (d === 'left'){ Object.assign(edge.style, {right: '-5px', top: 0, bottom: 0, margin: 0, width: '9px'}); }
+    if (d === 'right'){ Object.assign(edge.style, {left: '-5px', top: 0, bottom: 0, margin: 0, width: '9px'}); }
     if (d === 'bottom'){ Object.assign(edge.style, {top: '-3px', left: 0, right: 0, margin: 0}); }
     edge.onpointerdown = e => pnlDockResize(sp, d, e, edge);
     dock.appendChild(edge);
@@ -363,11 +366,19 @@ function pnlDockResize(sp, d, e, edge){
   edge.classList.add('drag');
   const move = ev => {
     const delta = d === 'left' ? ev.clientX - sx : d === 'right' ? sx - ev.clientX : sy - ev.clientY;
-    const max = d === 'bottom' ? R.height * 0.7 : R.width * 0.6;
+    // (the middle keeps 300 across whatever the other side holds: the left dock widened over a 38% record
+    // squeezed the Browse list to nothing and its rows ran over the record, the user's video)
+    const other = d === 'left' ? sp.els.right : d === 'right' ? sp.els.left : null;
+    const ow = other && sp.layout[d === 'left' ? 'right' : 'left'].groups.length ? other.getBoundingClientRect().width : 0;
+    const max = d === 'bottom' ? R.height * 0.7 : Math.max(220, Math.min(R.width * 0.6, R.width - ow - 300));
     L.size = Math.round(Math.min(max, Math.max(d === 'bottom' ? 110 : 220, s0 + delta)));
     if (d === 'bottom') sp.els[d].style.height = L.size + 'px'; else sp.els[d].style.width = L.size + 'px';
   };
-  const up = () => { edge.classList.remove('drag'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); pnlSave(sp); };
+  // (let go: back to giving way when the room shrinks, as pnlDraw sets it: a window made narrower afterwards
+  // still leaves the middle some room)
+  const up = () => { edge.classList.remove('drag'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    if (d === 'bottom') sp.els[d].style.height = `min(${L.size}px, 45%)`; else sp.els[d].style.width = `min(${L.size}px, 60%)`;
+    pnlSave(sp); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
 

@@ -338,6 +338,7 @@ def save_as(db, name, ext, overwrite=False):
         p.order = []                       # (written in the Workshop's own order, new things after)
     # the Undo history would put objects back under the old name: it starts afresh, as after a merge
     p.undo_stack = []
+    p.redo_stack = []
     for e in p.log:
         e.pop('diff', None)
     p.note('Saved as %s%s' % (new_file, ' (was %s)' % old_file if old_file.lower() != new_low else ''))

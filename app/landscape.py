@@ -4,6 +4,7 @@ Each exterior cell has a 65 x 65 grid of heights (128 units apart) and 16 x 16 g
 Ground textures are numbered per plugin, so when your mod changes a cell's ground it also carries
 its own copies of the texture entries (LTEX) that cell uses."""
 import math
+import re
 import struct
 
 import editing
@@ -14,6 +15,10 @@ from project import join_subs, ref_info, set_ref_pos, unb64, zs
 
 N = 65
 CELL = 8192
+# rocks, trees and plants: the ground's own dressing, which moves with it at any size (buildings and doors don't)
+# (the Telvanni coast's menhirs are rock spires, named ex_t_menhir: 114 of 388 held pieces in Sheogorad, 2026-10-26)
+NATURAL = re.compile(r'rock|tree|flora|plant|stump|cliff|terrain_|boulder|mushroom|kelp|coral|grass|bush|shrub|_log_?\d|'
+                     r'menhir|barnacle|spire|stalag')
 
 
 def _winner(db, gx, gy):
@@ -151,12 +156,23 @@ def _encode_heights(h):
     return struct.pack('<f', float(first)) + bytes(deltas) + b'\0\0\0', [v * 8 for v in q]
 
 
-def _normals(h):
+def _normals(h, around=None):
+    """VNML from 65*65 heights. around(x, y): the height just over the cell's edge (x or y -1 or 65), or None;
+    with it the border points lean the way the land beyond does, and the light has no seam at the edge."""
+    def at(x, y):
+        if 0 <= x < N and 0 <= y < N:
+            return h[y * N + x]
+        v = around(x, y) if around else None
+        return h[min(N - 1, max(0, y)) * N + min(N - 1, max(0, x))] if v is None else v
     out = bytearray(N * N * 3)
     for y in range(N):
         for x in range(N):
-            hx = h[y * N + min(x + 1, N - 1)] - h[y * N + max(x - 1, 0)]
-            hy = h[min(y + 1, N - 1) * N + x] - h[max(y - 1, 0) * N + x]
+            if 0 < x < N - 1 and 0 < y < N - 1:
+                hx = h[y * N + x + 1] - h[y * N + x - 1]
+                hy = h[(y + 1) * N + x] - h[(y - 1) * N + x]
+            else:
+                hx = at(x + 1, y) - at(x - 1, y)
+                hy = at(x, y + 1) - at(x, y - 1)
             nx, ny, nz = -hx, -hy, 256.0
             ln = math.sqrt(nx * nx + ny * ny + nz * nz)
             o = (y * N + x) * 3
@@ -166,9 +182,25 @@ def _normals(h):
     return bytes(out)
 
 
-def write(db, gx, gy, heights=None, tex=None, colors=None):
+def _wnam(h):
+    """WNAM, the 9 x 9 heights the in-game world map is drawn from (OpenMW draws it from these alone; a
+    landscape without them is see-through on the map). Learnt from Morrowind.esm's 1,292 (2026-10-25): each
+    of the 81 is the highest point of its ninth of the cell, over 128 above the sea and over 16 below it
+    (OpenMW-CS's divisors), rounded down; the closest of the rules tried to what the game has, within one
+    step at 45% of its points and 2.5 steps off on average (its own were made from heights changed since)."""
+    out = bytearray(81)
+    cut = [int(k * N / 9) for k in range(10)]
+    for j in range(9):
+        for i in range(9):
+            top = max(h[y * N + x] for y in range(cut[j], cut[j + 1]) for x in range(cut[i], cut[i + 1]))
+            v = math.floor(top / 128.0) if top >= 0 else math.floor(top / 16.0)
+            out[j * 9 + i] = max(-128, min(127, v)) & 0xFF
+    return bytes(out)
+
+
+def write(db, gx, gy, heights=None, tex=None, colors=None, around=None):
     """Put changed heights (65*65 list), ground textures (16*16 LTEX ids) and/or vertex colours (65*65*3 bytes)
-    into the mod."""
+    into the mod. around(x, y): the heights just beyond the cell's edges, for its normals (_normals)."""
     _require_project(db)
     w = _winner(db, gx, gy)
     if w is None:
@@ -203,7 +235,7 @@ def write(db, gx, gy, heights=None, tex=None, colors=None):
                     vt[n] = grid[(y1 * 4 + y2) * 16 + x1 * 4 + x2]
                     n += 1
     vtex = struct.pack('<256H', *vt)
-    new = {'VHGT': vhgt, 'VNML': _normals(heights), 'VTEX': vtex}
+    new = {'VHGT': vhgt, 'VNML': _normals(heights, around), 'VTEX': vtex, 'WNAM': _wnam(heights)}
     if colors is not None:
         colors = bytes(colors)
         if len(colors) != N * N * 3:
@@ -219,11 +251,12 @@ def write(db, gx, gy, heights=None, tex=None, colors=None):
             out.append((t, struct.pack('<I', (struct.unpack_from('<I', d)[0] if len(d) >= 4 else 0) | 1 | 4 | (2 if 'VCLR' in new else 0))))
         else:
             out.append((t, d))
-    for t in ('VNML', 'VHGT', 'VCLR', 'VTEX'):
+    for t in ('VNML', 'VHGT', 'WNAM', 'VCLR', 'VTEX'):
         if t in new and t not in done:
-            if t == 'VCLR':
-                # (vertex colours go before the textures, where the game keeps them)
-                at = next((n for n, (s, _d) in enumerate(out) if s == 'VTEX'), len(out))
+            if t in ('WNAM', 'VCLR'):
+                # (the game's order: INTV DATA VNML VHGT WNAM VCLR VTEX)
+                later = ('VCLR', 'VTEX') if t == 'WNAM' else ('VTEX',)
+                at = next((n for n, (s, _d) in enumerate(out) if s in later), len(out))
                 out.insert(at, (t, new[t]))
             else:
                 out.append((t, new[t]))
@@ -239,15 +272,17 @@ def edit(db, cells, keep_objects=True, note=None, skip=()):
     if not cells:
         raise EditError('Nothing to change.')
     moved = 0
+    new_h = {(int(c['gx']), int(c['gy'])): c['h'] for c in cells if c.get('h')}
     for c in cells:
         gx, gy = int(c['gx']), int(c['gy'])
         before = mapdata.land(db, gx, gy).get('h') if keep_objects and c.get('h') else None
         cols = c.get('c')
         if isinstance(cols, str):
             cols = base64.b64decode(cols)
-        after = write(db, gx, gy, c.get('h'), c.get('t'), cols)
+        after = write(db, gx, gy, c.get('h'), c.get('t'), cols, around=around_of(db, gx, gy, new_h))
         if before:
             moved += _follow_ground(db, gx, gy, before, after, skip)
+            _follow_paths(db, gx, gy, before, after)
     db.sync_project()
     did = []
     if any(c.get('h') for c in cells):
@@ -259,6 +294,89 @@ def edit(db, cells, keep_objects=True, note=None, skip=()):
     commit(db, note or 'Ground %s in %d cell%s%s' % (' and '.join(did) or 'changed', len(cells), '' if len(cells) == 1 else 's',
                                                     (' (%d objects followed it)' % moved) if moved else ''))
     return {'moved': moved}
+
+
+def around_of(db, gx, gy, new_h=None):
+    """around(x, y) for _normals: the heights over a cell's edges, from the cells being changed with it
+    (new_h: {(gx, gy): heights}) or else the land as it is."""
+    memo = {}
+
+    def heights(cx, cy):
+        if (cx, cy) in (new_h or {}):
+            return new_h[(cx, cy)]
+        if (cx, cy) not in memo:
+            memo[(cx, cy)] = mapdata.land(db, cx, cy).get('h')
+        return memo[(cx, cy)]
+
+    def around(x, y):
+        cx, cy = gx, gy
+        if x < 0:
+            cx, x = gx - 1, x + 64
+        elif x > 64:
+            cx, x = gx + 1, x - 64
+        if y < 0:
+            cy, y = gy - 1, y + 64
+        elif y > 64:
+            cy, y = gy + 1, y - 64
+        h = heights(cx, cy)
+        return h[y * N + x] if h else None
+    return around
+
+
+def new_land(db, gx, gy, region='', sync=True):
+    """Land for an outdoor cell that has none: the game's sea bed (-2048, what OpenMW stands in for a cell with no
+    landscape), and the cell itself if no plugin has it (unnamed, in the region given). Nothing committed.
+    sync=False: the caller syncs the project once after making many."""
+    _require_project(db)
+    if _winner(db, gx, gy) is not None:
+        return False
+    key = '#%d,%d' % (gx, gy)
+    if not db.by_key.get(('CELL', key)) and key not in db.project.cells:
+        # (as the game's unnamed outdoor cells: NAME empty, DATA flags 2, the region)
+        hdr = [('NAME', b'\0'), ('DATA', struct.pack('<iii', 2, gx, gy))]
+        if region:
+            hdr.append(('RGNN', zs(region)))
+        c = db.project.cell(key, hdr, 0)
+        c['props'] = True
+    h = [-2048.0] * (N * N)
+    vhgt, h = _encode_heights(h)
+    subs = [('INTV', struct.pack('<ii', gx, gy)), ('DATA', struct.pack('<I', 1 | 4)), ('VNML', _normals(h)),
+            ('VHGT', vhgt), ('WNAM', _wnam(h)), ('VTEX', bytes(512))]
+    db.project.set_record('LAND', '%d,%d' % (gx, gy), 0, join_subs(subs), created=True)
+    if sync:
+        db.sync_project()
+    return True
+
+
+def _follow_paths(db, gx, gy, before, after):
+    """The cell's walking-path points that stood on the ground move up or down with it."""
+    key = '#%d,%d' % (gx, gy)
+    lst = [v for v in db.by_key.get(('PGRD', key), []) if v not in db.dead]
+    if not lst:
+        return 0
+    r = db.recs[lst[-1]]
+    _t, _f, data = db.files[r[3]].record_at(r[4])
+    subs = [(t, bytes(d)) for t, d in iter_subrecords(data)]
+    moved = 0
+    for n, (t, d) in enumerate(subs):
+        if t != 'PGRP':
+            continue
+        b = bytearray(d)
+        for o in range(0, len(b) - 15, 16):
+            x, y, z = struct.unpack_from('<iii', b, o)
+            wx, wy = gx * CELL + x, gy * CELL + y
+            old = _height_at(before, gx, gy, wx, wy)
+            if abs(z - old) > 64:
+                continue                        # (on a bridge, a roof, a ledge: not on the ground)
+            dz = _height_at(after, gx, gy, wx, wy) - old
+            if abs(dz) >= 1:
+                struct.pack_into('<i', b, o + 8, int(round(z + dz)))
+                moved += 1
+        subs[n] = (t, bytes(b))
+    if moved:
+        had = any(db.recs[v][3] != db.proj_pidx for v in lst)
+        db.project.set_record('PGRD', key, 0, join_subs(subs), created=not had)
+    return moved
 
 
 def _height_at(h, gx, gy, x, y):
@@ -286,13 +404,18 @@ def _follow_ground(db, gx, gy, before, after, skip=()):
             continue
         b = r.get('b') or [0, 0, 0, 0, 0, 0]
         bottom = r['p'][2] + b[2] * (r['s'] or 1)
+        top = r['p'][2] + b[5] * (r['s'] or 1)
         old = _height_at(before, gx, gy, x, y)
-        if abs(bottom - old) > 60 and not r.get('arch'):
-            continue                                # not standing on the ground
-        if r.get('arch') and abs(bottom - old) > 400:
+        natural = bool(NATURAL.search(r['id'].lower()))
+        if not r.get('arch') or natural:
+            # (standing on the ground: its bottom at it, or its model through it, as the game sinks its rocks and
+            # trees; rocks, trees and plants follow at any size, 2026-10-26)
+            if not (bottom - 60 <= old <= top + 30):
+                continue
+        elif abs(bottom - old) > 400:
             continue
-        if r.get('arch') and max(b[3] - b[0], b[4] - b[1]) * (r['s'] or 1) > 1000:
-            continue                                # buildings and walls stay put (rocks and trees follow)
+        elif max(b[3] - b[0], b[4] - b[1]) * (r['s'] or 1) > 1000:
+            continue                                # buildings and walls stay put (land shaping holds the ground)
         dz = _height_at(after, gx, gy, x, y) - old
         if abs(dz) < 0.5:
             continue

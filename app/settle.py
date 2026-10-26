@@ -76,9 +76,10 @@ def _up_facing(sc, n):
     return nz * seethrough.FRONT / ln > 0.7
 
 
-def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0):
+def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False):
     """{'moves': [{cell, ref, p, s}], 'report': {...}}: what in the spot (at, within radius; or the refs
-    given, ref keys) settles, and where to."""
+    given, ref keys) settles, and where to. tip: also tip over what can't stand where it is (its weight's
+    middle outside what it stands on, nothing beside it to lean on), onto its side, at rest (_tip)."""
     m = mapdata.cellmap(db, cell)
     if not m.get('exists'):
         return {'moves': [], 'report': {'note': 'There is no place called %s.' % cell}}
@@ -196,7 +197,20 @@ def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0):
             break
         if dz is None and not moved:
             rep['left'] += 1
-        if moved and (abs(p[0] - r['p'][0]) > 0.05 or abs(p[1] - r['p'][1]) > 0.05 or abs(p[2] - r['p'][2]) > 0.05):
+        if tip and dz is not None and r['type'] not in TIP_TYPES_NEVER:
+            # (books lean on their neighbours the way the game leans them; weapons, armour, clothes and
+            # ingredients are leant or draped on purpose: 20 of the 34 tipped in 59 of the game's places)
+            # (again from where it came to rest: a bottle tipped onto its shoulder goes on onto its side)
+            for _t in range(3):
+                t_ = _tip(sc, own_tris, r, p, max_drop, land, falling=_t > 0)
+                if not t_:
+                    break
+                p = t_
+                moved = True
+                if _t == 0:
+                    rep['tipped'] = rep.get('tipped', 0) + 1
+        if moved and (abs(p[0] - r['p'][0]) > 0.05 or abs(p[1] - r['p'][1]) > 0.05 or abs(p[2] - r['p'][2]) > 0.05 or
+                      any(abs(p[i] - r['p'][i]) > 0.001 for i in (3, 4, 5))):
             moves.append({'cell': cell, 'ref': r['k'], 'p': [round(v, 2) if i < 3 else v for i, v in enumerate(p)], 's': r.get('s') or 1.0})
         # (what is settled now holds what comes after it)
         sc.add_model(own_tris, p, r.get('s') or 1.0)
@@ -312,6 +326,176 @@ def _drop(sc, own_tris, r, p, max_drop, land, may_rise=True):
     cy0, cy1 = min(c[1] for c in contacts) - 2, max(c[1] for c in contacts) + 2
     over_air = not (cx0 <= centre[0] <= cx1 and cy0 <= centre[1] <= cy1)
     return -rest, contacts, centre, over_air
+
+
+TIP_MARGIN = 0.08       # the weight's middle may lie this share of the thing's size outside what it stands on
+TIP_MIN = math.radians(15)   # a smaller turn is the game's own slight tilt (a chest, a coin laid a few degrees off), not a fall
+TIP_STEP = math.radians(3)
+TIP_MAX = math.radians(120)
+# (laid as they lie, on purpose: coins, a quill in its ink, cloth, a tomb's bones and broken urns, blood,
+# poles and lutes leant in a corner, a lantern; 19 of the 27 still tipped in 59 of the game's places)
+TIP_NEVER = ('gold_', 'quill', 'misc_de_foldedcloth', 'clothbolt', 'skeleton', 'bone', 'blood', 'broken', 'pole', 'lute', 'lantern')
+TIP_TYPES_NEVER = ('BOOK', 'WEAP', 'ARMO', 'CLOT', 'INGR')
+_TIPLOG = []            # (id, why it stayed standing) for the lab
+
+
+def _euler(M):
+    """The game's (rx, ry, rz) for a turn matrix made as seethrough._matrix makes it."""
+    b = math.asin(max(-1.0, min(1.0, -M[2][0])))
+    a = math.atan2(M[2][1], M[2][2])
+    c = math.atan2(M[1][0], M[0][0])
+    return (-a) % (2 * math.pi), (-b) % (2 * math.pi), (-c) % (2 * math.pi)
+
+
+def _hull(pts):
+    """The convex hull of 2D points, counter-clockwise."""
+    pts = sorted(set((round(x, 2), round(y, 2)) for x, y in pts))
+    if len(pts) <= 2:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lo, hi = [], []
+    for q in pts:
+        while len(lo) >= 2 and cross(lo[-2], lo[-1], q) <= 0:
+            lo.pop()
+        lo.append(q)
+    for q in reversed(pts):
+        while len(hi) >= 2 and cross(hi[-2], hi[-1], q) <= 0:
+            hi.pop()
+        hi.append(q)
+    return lo[:-1] + hi[:-1]
+
+
+def _outside(hull, c):
+    """How far c lies outside the hull, and the hull's nearest point (0 and c itself when inside)."""
+    if len(hull) >= 3:
+        inside = all((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) >= 0
+                     for a, b in zip(hull, hull[1:] + hull[:1]))
+        if inside:
+            return 0.0, c
+    best = None
+    segs = list(zip(hull, hull[1:] + hull[:1])) if len(hull) > 1 else [(hull[0], hull[0])]
+    for a, b in segs:
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = dx * dx + dy * dy
+        t = 0.0 if L == 0 else max(0.0, min(1.0, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / L))
+        q = (a[0] + t * dx, a[1] + t * dy)
+        d = math.hypot(c[0] - q[0], c[1] - q[1])
+        if best is None or d < best[0]:
+            best = (d, q)
+    return best
+
+
+def _weight_middle(own_tris, p, s):
+    """The middle of its weight, roughly: its surface's middle, each triangle by its area (a bottle's neck
+    counts for little, its belly for much)."""
+    me = seethrough.Scene()
+    me.add_model(own_tris, p, s)
+    W = sx = sy = sz = 0.0
+    for x0, y0, z0, ax, ay, az, bx, by, bz in me.tris:
+        area = 0.5 * math.sqrt((ay * bz - az * by) ** 2 + (az * bx - ax * bz) ** 2 + (ax * by - ay * bx) ** 2)
+        W += area
+        sx += area * (x0 + (ax + bx) / 3)
+        sy += area * (y0 + (ay + by) / 3)
+        sz += area * (z0 + (az + bz) / 3)
+    if not W:
+        return None
+    # (halfway to the middle of its box: by surface alone a broom's bristles weighed nearly all of it and a
+    # broom stood at 30 degrees kept standing in the lab)
+    xs = [v for t in me.tris for v in (t[0], t[0] + t[3], t[0] + t[6])]
+    ys = [v for t in me.tris for v in (t[1], t[1] + t[4], t[1] + t[7])]
+    zs = [v for t in me.tris for v in (t[2], t[2] + t[5], t[2] + t[8])]
+    bx, by, bz = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2
+    return ((sx / W + bx) / 2, (sy / W + by) / 2, (sz / W + bz) / 2)
+
+
+def _tip(sc, own_tris, r, p, max_drop, land, falling=False):
+    """It can't stand where it is: its weight's middle lies outside what it stands on (by more than
+    TIP_MARGIN of its size), and nothing beside it holds it up (a wall, a neighbour it leans on). Then it tips
+    about the edge it stands on, towards its weight, until another side meets the surface, and settles there.
+    The new place and turn, or None when it stands (or would fall off its surface: Settle never throws
+    things off a table)."""
+    s = r.get('s') or 1.0
+    if any(w in r['id'].lower() for w in TIP_NEVER):
+        return None
+    _dz, contacts, _c, _air = _drop(sc, own_tris, r, p, max_drop, land, may_rise=False)
+    if not contacts:
+        return None
+    verts = _verts(own_tris, p, s)
+    zb = min(v[2] for v in verts)
+    size = max(max(v[0] for v in verts) - min(v[0] for v in verts), max(v[1] for v in verts) - min(v[1] for v in verts),
+               max(v[2] for v in verts) - zb)
+    cm = _weight_middle(own_tris, p, s)
+    if not cm:
+        return None
+    hull = _hull(contacts)
+    out, q = _outside(hull, (cm[0], cm[1]))
+    if out <= TIP_MARGIN * size + 2.0:
+        _TIPLOG.append((r['id'], 'stands', round(out, 1), round(size, 1), len(contacts)))
+        return None
+    d = ((cm[0] - q[0]) / out, (cm[1] - q[1]) / out)
+    # (leaning on something: just past its own side, the way it would fall, at a few heights, is a wall, a
+    # shelf's side or a neighbour; the game leans swords, spears, bones and brooms so)
+    zt = max(v[2] for v in verts)
+    for frac in (0.3, 0.55, 0.8, 0.97):
+        z = zb + frac * (zt - zb)
+        band = [v for v in verts if abs(v[2] - z) <= max(2.0, 0.08 * (zt - zb))] or verts
+        for ang in (0.0, 0.5, -0.5):
+            dd = (d[0] * math.cos(ang) - d[1] * math.sin(ang), d[0] * math.sin(ang) + d[1] * math.cos(ang))
+            ext = max((v[0] - cm[0]) * dd[0] + (v[1] - cm[1]) * dd[1] for v in band)
+            if sc.nearest_any((cm[0], cm[1], z), (dd[0], dd[1], 0.0), max(0.0, ext) + 4.0) is not None:
+                _TIPLOG.append((r['id'], 'leans', frac))
+                return None
+    pivot = (q[0], q[1], zb)
+    axis = (-d[1], d[0], 0.0)
+
+    def rot(v, th, ax=axis):
+        # Rodrigues: v turned th about the unit axis ax
+        c, s_ = math.cos(th), math.sin(th)
+        kx, ky, kz = ax
+        dot = kx * v[0] + ky * v[1] + kz * v[2]
+        cx = ky * v[2] - kz * v[1]
+        cy = kz * v[0] - kx * v[2]
+        cz = kx * v[1] - ky * v[0]
+        return (v[0] * c + cx * s_ + kx * dot * (1 - c), v[1] * c + cy * s_ + ky * dot * (1 - c), v[2] * c + cz * s_ + kz * dot * (1 - c))
+    # (which way round falls towards its weight: the weight's middle must go down)
+    rel = (cm[0] - pivot[0], cm[1] - pivot[1], cm[2] - pivot[2])
+    if rot(rel, TIP_STEP)[2] > rel[2]:
+        axis = (-axis[0], -axis[1], 0.0)
+    th, rested = 0.0, None
+    relv = [(v[0] - pivot[0], v[1] - pivot[1], v[2] - pivot[2]) for v in verts]
+    while th < TIP_MAX:
+        th += TIP_STEP
+        moved = [rot(v, th) for v in relv]
+        # another side meets the surface: a corner beyond the edge comes down to its height
+        far = [m for m in moved if m[0] * d[0] + m[1] * d[1] > 1.5]
+        if far and min(m[2] for m in far) <= 0.3:
+            rested = th
+            break
+    # (the first tip must be a real fall; once falling, it goes on however little is left)
+    if rested is None or (rested < TIP_MIN and not falling):
+        _TIPLOG.append((r['id'], 'small turn' if rested else 'no rest', rested and round(math.degrees(rested))))
+        return None
+    # its new turn and place: turned about the pivot
+    R = seethrough._matrix(p[3], p[4], p[5])
+    c_, s_ = math.cos(rested), math.sin(rested)
+    kx, ky, kz = axis
+    K = [[0, -kz, ky], [kz, 0, -kx], [-ky, kx, 0]]
+    K2 = [[sum(K[i][k] * K[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    A = [[(1 if i == j else 0) + s_ * K[i][j] + (1 - c_) * K2[i][j] for j in range(3)] for i in range(3)]
+    M = [[sum(A[i][k] * R[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    rx, ry, rz = _euler(M)
+    o = rot((p[0] - pivot[0], p[1] - pivot[1], p[2] - pivot[2]), rested)
+    np_ = [pivot[0] + o[0], pivot[1] + o[1], pivot[2] + o[2], rx, ry, rz]
+    # (then at rest on what is under it; nothing under it: it would fall off, so it stays standing)
+    dz, contacts2, _c2, _a2 = _drop(sc, own_tris, r, np_, max_drop, land, may_rise=True)
+    if dz is None or not contacts2:
+        _TIPLOG.append((r['id'], 'would fall off'))
+        return None
+    np_[2] += dz
+    _TIPLOG.append((r['id'], 'tipped', round(math.degrees(rested))))
+    return [round(v, 2) if i < 3 else round(v, 5) for i, v in enumerate(np_)]
 
 
 def _land_at(db):

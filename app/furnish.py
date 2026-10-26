@@ -1938,7 +1938,11 @@ def room_info(db, cell_key, at=None, room=None):
             continue
         if _rs2.family_of(db, r['id'], r['type']) in PIECE_KINDS + ('bed', 'chest', 'crate', 'barrel', 'bench'):
             n_pieces += 1
+    # (planned: built with Build from pieces, so the room plan knows it and Remove this room can take it out;
+    # a game place's room has tiles too, and the menu offered Remove there only to refuse it)
+    pc = (db.project.cells or {}).get(cell_key) if db.project else None
     return {'room': rm['id'], 'name': rm['name'], 'purpose': rm['purpose'], 'tiles': rm['tiles'], 'traced': bool(rm.get('traced')),
+            'planned': bool(pc and (pc.get('plan') or {}).get('rooms')),
             'furnished': len(room_refs(db, cell_key, rm, info['tile'] or 256)), 'purposes': list(RECIPES), 'pieces': n_pieces}
 
 

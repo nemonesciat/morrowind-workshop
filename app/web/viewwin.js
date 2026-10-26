@@ -38,6 +38,8 @@ const VW_NAMES = {browse: 'Browse', createv: 'Create', library: 'Library', chars
 function vwPref(){ try { return localStorage.getItem('ws-vwin-pages') !== '0'; } catch (e){ return true; } }
 function vwSetPref(on){ try { localStorage.setItem('ws-vwin-pages', on ? '1' : '0'); } catch (e){} toast(on ? 'On the World map, the pages at the top now open as windows over it (Shift+click: as a page).' : 'The pages at the top open as pages again (right-click one: "Open as a window").'); }
 
+// (a page in a window drops the page's own margins, 22 over and 60 under it: they made a window scroll on into
+// empty space when all of it fitted, the user's Dungeon window)
 function vwCss(){
   if (typeof owCss === 'function') owCss();          // (the object window's look: title bar, border, shadow)
   if ($('#vw-css')) return;
@@ -49,10 +51,12 @@ function vwCss(){
   .vwbody > .view{display:grid !important;position:absolute;inset:0;overflow:auto}
   .vwbody > #createv,.vwbody > #itemed,.vwbody > #myeff,.vwbody > #library,.vwbody > #mymod,.vwbody > #release,.vwbody > #health,.vwbody > #plugins,.vwbody > #guide,.vwbody > #settings{display:block !important}
   .vwbody > .view > .wrap{padding:8px 20px 30px}
+  .vwbody > .view{padding-top:0 !important;padding-bottom:0 !important}
+  .vwbody #createwrap{padding-bottom:10px !important}
   .vwbody > #browse{overflow:hidden}
   nav button.vwopen{box-shadow:inset 0 -2px 0 var(--gold)}
   .vwbody #createwrap{max-width:none;padding:6px 18px 30px}
-  .vwbody #createwrap > h1,.vwbody #createwrap > .lead,.vwbody #createwrap > .cgroups{display:none}
+  .vwbody #createwrap > h1,.vwbody #createwrap > .lead,.vwbody #createwrap:has(.cform) > .cgroups{display:none}
   .vwbody #createwrap .cform{margin-top:6px}
   .vwbody #itemed > .wrap{max-width:none;padding:6px 18px 30px}
   .vwbody .pp-btn{display:none}
@@ -105,6 +109,16 @@ function vwOpen(v){
     let down = false;
     el.addEventListener('pointerdown', () => { down = true; window.addEventListener('pointerup', () => { down = false; }, {once: true}); });
     new ResizeObserver(() => { if (down && el.isConnected && el.offsetWidth) vwKeep(v, {w: el.offsetWidth, h: el.offsetHeight}); }).observe(el);
+    // (a Create form comes up whole when there's room for it over the map: the window grows to it, never
+    // shrinks, so a size it's dragged to stays; the Dungeon form wanted scrolling in a window it nearly fitted)
+    const inner = page.firstElementChild;
+    // (in the next frame: sized from inside the observer, the browser reported a "ResizeObserver loop")
+    if (v === 'createv' && inner) new ResizeObserver(() => requestAnimationFrame(() => {
+      if (down || !el.isConnected) return;
+      const body = el.querySelector('.vwbody'), need = el.offsetHeight - body.clientHeight + page.scrollHeight;
+      const room = box.clientHeight - (parseFloat(el.style.top) || 0) - 12;
+      if (need > el.offsetHeight) el.style.height = Math.min(need, Math.max(el.offsetHeight, room)) + 'px';
+    })).observe(inner);
   }
   return w;
 }

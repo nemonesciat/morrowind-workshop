@@ -21,7 +21,7 @@ const RUIN_KINDS = [
 const RUIN_OPTS = {
   kind: RUIN_KINDS.map(k => [k[0], k[1]]),
   size: [['small', 'Small (about 20 pieces, one hall)'], ['medium', 'Medium (about 45 pieces, two halls)'], ['large', 'Large (about 80 pieces, three halls)']],
-  levels: [['flat', 'All on one level'], ['some', 'Some ramps up and down (as the game\'s)'], ['steep', 'Many ramps: up and down a lot']],
+  levels: [['flat', 'All on one level'], ['some', 'Some ramps (as the game\'s)'], ['steep', 'Many ramps, no further than the game\'s own go']],
   twist: [['linear', 'One long winding way through'], ['branching', 'Branching, with side passages (as the game\'s)'], ['maze', 'A maze of crossroads and dead ends']],
   creatures: [['none', 'None'], ['few', 'A few'], ['usual', 'As in the game\'s own'], ['many', 'Many']],
   loot: [['sparse', 'Picked over'], ['usual', 'As in the game\'s own'], ['rich', 'Rich (full barrels, a chest more)']],
@@ -39,7 +39,10 @@ const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆
 const DT_ROCK = {cave_mold: '#8c8f93', cave_mud: '#8a6d4f', cave_py: '#c9c1ad', cave_lava: '#3b3533'};
 const DT_SEG = {
   size: [['small', 'Small', 'about 20 pieces, one hall'], ['medium', 'Medium', 'about 45 pieces, two halls'], ['large', 'Large', 'about 80 pieces, three halls']],
-  levels: [['flat', 'Flat', 'all on one level'], ['some', 'Some', 'some ramps up and down, as the game\'s'], ['steep', 'Steep', 'up and down a lot']],
+  // (the way in is always the highest point and the way goes down as you go in: dgrules.py)
+  levels: [['flat', 'Flat', 'all on one level'], ['some', 'Some', 'some ramps, as the game\'s'], ['steep', 'Steep', 'a lot of ramps, no further than the game\'s own go']],
+  // (down from the way in as most of the game's own go, or up from it as a few do: a tower; the user)
+  way: [['down', 'Down', 'goes down from the door, as most of the game\'s own'], ['up', 'Up', 'climbs up from the door, as a tower']],
   twist: [['linear', 'Winding', 'one long winding way through'], ['branching', 'Branching', 'side passages, as the game\'s'], ['maze', 'Maze', 'crossroads and dead ends']],
 };
 // the amounts, as sliders measured against the game's own places of the kind (the user: "trinary choices feel
@@ -102,6 +105,7 @@ function ruinFormHtml(what){
         <span class="dt-ki" ${DT_ROCK[k[0]] ? `style="color:${DT_ROCK[k[0]]}"` : ''}>${DT_ICON[k[0]]}</span>${esc(k[1].replace('Cave: ', 'Cave, '))}</button>`).join('')}</div>
       <div class="dt-h">Size</div>${seg('size', 'medium')}
       <div class="dt-h">Levels</div>${seg('levels', 'some')}
+      <div class="dt-h">From the door</div>${seg('way', 'down')}
       <div class="dt-h">Layout</div>${seg('twist', 'branching')}
       <div class="dt-h">How much, against the game's own</div>
       ${dtSlideHtml('crea')}${dtSlideHtml('loot')}${dtSlideHtml('occ')}${dtSlideHtml('water')}
@@ -122,8 +126,11 @@ function ruinFormHtml(what){
       <div class="dt-legend"><span><i style="background:var(--dt-tun)"></i>tunnel</span><span><i style="background:var(--dt-ramp)"></i>ramp or stairs</span>
         <span><i style="background:var(--dt-hall)"></i><span id="dt-hw">hall</span></span><span><i style="background:var(--dt-dead)"></i>dead end</span>
         <span><b style="color:var(--gold2)">★</b> the last one</span><span><b>▲</b> way in</span><span class="dt-hov" id="dt-hov">Lighter is higher. Drag to move, wheel to zoom.</span></div>
+      <div class="dt-what">${what}</div>
     </div>
-  </div><div class="dt-what">${what}</div>`;
+  </div>`;
+// (what Make it does, under the plan: the plan gives way to it. Under the whole tool it made the form taller
+// than the window over the map on a 1080p screen, the user's Dungeon window)
 }
 
 const DT_HIST = [];
@@ -135,7 +142,12 @@ function dtPickAt(p, e){
   const box = $('#dt-pick'); if (box) box.remove();
   if (!p || !DT.lay) return;
   const acts = [];
-  if (p[6] === 'dead end' && p[7] == null && DT.lay.entry_pickable) acts.push(['entry', '▲ Way in here', 'The front door moves to this dead end; the old way in is closed off']);
+  // (only a dead end up top: the way in is always the highest point; a lower one says why it can't be)
+  if (p[6] === 'dead end' && p[7] == null && DT.lay.entry_pickable){
+    if (!DT.lay.entry_ok || DT.lay.entry_ok.includes(p[9])) acts.push(['entry', '▲ Way in here', 'The front door moves to this dead end; the old way in is closed off']);
+    else acts.push(['low', '▲ Not the way in', DT.lay.way === 'up' ? 'This dead end is higher than the way in: in a place that climbs, the way in is the lowest point'
+      : 'This dead end is lower than the way in: the way in is always the highest point']);
+  }
   if (p[7] != null && p[7] !== DT.lay.final) acts.push(['final', '★ The last one', 'The prize, its guardian (and a Daedric shrine) go in this ' + DT.lay.hall_word]);
   if (DT.entry != null || DT.final != null) acts.push(['reset', '↺ As grown', 'The way in and the last one back where the layout had them']);
   if (!acts.length) return;
@@ -145,6 +157,8 @@ function dtPickAt(p, e){
   d.innerHTML = acts.map(([k, l, t]) => `<button type="button" class="btn sm" data-pk="${k}" title="${esc(t)}">${l}</button>`).join('');
   d.onclick = ev => {
     const b = ev.target.closest('[data-pk]'); if (!b) return;
+    if (b.dataset.pk === 'low'){ d.remove(); return toast(DT.lay.way === 'up' ? 'That dead end is higher than the way in, and in a place that climbs the way in is the lowest point. Pick one at the bottom (the darkest).'
+      : 'That dead end is lower than the way in, and the way in is always the highest point. Pick one up top (the lightest).', true); }
     if (b.dataset.pk === 'entry') DT.entry = p[9];
     else if (b.dataset.pk === 'final') DT.final = p[7];
     else { DT.entry = null; DT.final = null; }
@@ -203,15 +217,20 @@ async function dtPreview(keepPicks){
   const sd = parseInt(v('ru-seed'), 10);
   DT.seed = isFinite(sd) ? sd : DT.seed;
   const msg = $('#dt-msg');
+  // (each layout is checked against the rules before it is shown: a second or two for a large one)
+  const st1 = $('#dt-stat'); if (st1) st1.textContent = 'Laying out…';
   for (let n = 0; n < 120; n++){
     let r;
-    try { r = await post('/api/ruin/preview', {kind: v('ru-kind'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), seed: DT.seed, entry: DT.entry, final: DT.final}); }
-    catch (e){ if (msg) msg.textContent = e.message; return; }
+    try { r = await post('/api/ruin/preview', {kind: v('ru-kind'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), way: v('ru-way'), seed: DT.seed, entry: DT.entry, final: DT.final}); }
+    catch (e){ if (seq !== DT.seq) return; if (msg) msg.textContent = e.message; if (st1) st1.textContent = ''; return; }
     if (seq !== DT.seq) return;
     if (r.learning){ DT.lay = null; const st0 = $('#dt-stat'); if (st0) st0.textContent = ''; const cv0 = $('#dt-cv'); if (cv0) cv0.getContext('2d').clearRect(0, 0, cv0.width, cv0.height); if (msg) msg.innerHTML = `<span class="spin"></span>Learning ${esc(r.learning.join(', '))} first (once, under a minute)…`; await new Promise(res => setTimeout(res, 2500)); continue; }
-    if (msg) msg.textContent = '';
-    // (a pick the layout couldn't take, a dead end with no room for the old way in's cap: dropped, and said)
-    if (DT.entry != null && !(r.picked && r.picked.entry === DT.entry)){ DT.entry = null; toast('That dead end can\'t be the way in here: no room to close off the old one.', true); }
+    // (what the rules changed of what was asked, one line each: the way in moved up top, the depth kept to the game's)
+    if (msg) msg.textContent = (r.said || []).join(' ');
+    // (a pick the rules moved is kept where they put it; one the layout couldn't take, a dead end with no room
+    // for the old way in's cap, is dropped and said)
+    if (DT.entry != null && r.picked && r.picked.entry != null) DT.entry = r.picked.entry;
+    else if (DT.entry != null){ DT.entry = null; if (!(r.said || []).length) toast('That dead end can\'t be the way in here: no room to close off the old one.', true); }
     if (DT.final != null && r.final !== DT.final) DT.final = null;
     const kindChanged = !DT.lay || DT.lay.kind !== r.kind;
     DT.lay = r;
@@ -219,6 +238,13 @@ async function dtPreview(keepPicks){
     const st = $('#dt-stat');
     if (st) st.textContent = `${r.tunnels} tunnel pieces, ${r.halls} ${r.hall_word}${r.halls === 1 ? '' : 's'}${r.open_left ? `, ${r.open_left} left open` : ''}`;
     const hw = $('#dt-hw'); if (hw) hw.textContent = r.hall_word;
+    // (how many of the game's own of the kind climb from their door; a kind none of whose climbs isn't offered)
+    const upB = document.querySelector('.dt-seg[data-seg=way] button[data-v=up]'), cl = r.climbers || [0, 0];
+    if (upB){
+      upB.title = `climbs up from the door, as a tower: ${cl[0]} of the game's ${cl[1]} of the kind do`;
+      upB.disabled = !cl[0];
+      if (!cl[0]){ upB.title = `None of the game's ${cl[1]} of the kind climb from their door`; if ($('#ru-way').value === 'up'){ $('#ru-way').value = 'down'; upB.classList.remove('on'); upB.previousElementSibling.classList.add('on'); } }
+    }
     // (the lived-in slider at the kind's own share until it is moved by hand; the readouts in this layout's numbers)
     const occ = $('#dt-occ'); if (occ && DT.lived == null) occ.value = dtLivedDef();
     dtSlideAll();
@@ -374,7 +400,7 @@ function dtCss(){
   c.textContent = `
   .dtool{display:grid;grid-template-columns:232px 1fr;gap:12px;min-height:520px;--dt-bg:#0f0d0a;--dt-grid:#ffffff08;--dt-tun:#7d7466;--dt-ramp:#c08a3e;--dt-hall:#4f8a6a;--dt-dead:#4a4038;--dt-edge:#00000080}
   .dt-side{display:flex;flex-direction:column;gap:4px;font-size:12.5px}
-  .dt-h{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:6px 0 1px}
+  .dt-h{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:3px 0 1px}
   .dt-kinds{display:flex;flex-direction:column;border:1px solid var(--line2);border-radius:6px;overflow:hidden}
   .dt-k{display:flex;gap:8px;align-items:center;text-align:left;padding:4px 8px;background:none;border:0;border-bottom:1px solid var(--line);color:var(--text);cursor:pointer;font:inherit}
   .dt-k:last-child{border-bottom:0}.dt-k:hover{background:#ffffff0d}.dt-k.on{background:#d2a85a24;color:var(--gold2)}
@@ -460,7 +486,7 @@ async function ruinGo(msg){
   const v = id => (($('#' + id) || {}).value || '');
   // (the sliders as shares: 1 is the game's own; lived in as a chance, or 'auto' when left at the kind's own)
   const n = (id, d) => { const x = parseFloat(v(id)); return isFinite(x) ? x / 100 : d; };
-  const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), creatures: n('dt-crea', 1),
+  const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), way: v('ru-way') || 'down', creatures: n('dt-crea', 1),
     loot: n('dt-loot', 1), occupants: DT.lived == null ? 'auto' : n('dt-occ', 'auto'), water: n('dt-water', 0), seed: v('ru-seed').trim() || null, entrance: placeValue(),
     entry: DT.entry, final: DT.final};
   // (the first of each kind waits for the survey of the game's own, 15-20 s once; the survey process learns it)
@@ -483,7 +509,7 @@ async function ruinAgain(key){
     const r = await post('/api/ruin/again', {cell: key});
     await afterChange();
     await worldOpen(r.key);
-    toast(`A new layout: ${r.tunnels} tunnel pieces, ${ruinHalls(r.kind, r.halls)}${r.people ? `, ${r.people} living in it` : ''}. Undo brings the last one back.`);
+    toast(`A new layout: ${r.tunnels} tunnel pieces, ${ruinHalls(r.kind, r.halls)}${r.people ? `, ${r.people} living in it` : ''}. Undo brings the last one back.${(r.said || []).length ? ' ' + r.said.join(' ') : ''}`);
   } catch (e){ toast(e.message, true); }
 }
 

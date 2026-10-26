@@ -1333,7 +1333,21 @@ def model_textures(db, rec_i):
     """The textures an object's model uses, for the retexture window."""
     r = db.recs[rec_i]
     from esm import iter_subrecords, zstr
-    _t, _f, data = db.files[r[3]].record_at(r[4])
+    # (a record number the page kept from before an Undo can name a version of your mod's record that is
+    # gone: the one in use now, by its ID; the crawl test's KeyError on Retexture after Undos)
+    if rec_i in db.dead:
+        ri = db.resolve_id(r[1])
+        if ri is None:
+            raise EditError('"%s" is no longer in your load order.' % r[1])
+        r = db.recs[ri]
+    try:
+        _t, _f, data = db.files[r[3]].record_at(r[4])
+    except KeyError:
+        ri = db.resolve_id(r[1])
+        if ri is None or ri == rec_i:
+            raise EditError('"%s" changed meanwhile: look at it again.' % r[1])
+        r = db.recs[ri]
+        _t, _f, data = db.files[r[3]].record_at(r[4])
     model = next((zstr(d) for t, d in iter_subrecords(data) if t == 'MODL'), None)
     raw = db.meshes.read('meshes/' + model.lower().replace('\\', '/')) if model else None
     if not raw:

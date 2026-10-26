@@ -152,6 +152,7 @@ class Project:
         self.lua = d.get('lua', [])             # Lua scripts: [{name, kind, attach: [ids], text}]
         self.lua_files = d.get('lua_files', [])  # the Lua files last written, so old ones can be cleared
         self.grass = d.get('grass', {})         # groundcover: cell key -> [[id, x, y, z, rz, scale]] (own plugin)
+        self.land = d.get('land', {})           # land shaping: {'marks': ['gx,gy', ...]} the cells marked on the land map
         # a plugin opened as the mod itself (adopt.py): the file it is saved into, the masters its header
         # listed (names and sizes, kept in that order so its objects' indices stay what saved games know),
         # its header's format version, and the dated copy made of it beside it when it was opened
@@ -201,6 +202,8 @@ class Project:
              'description': self.description, 'records': self.records, 'cells': self.cells,
              'next_ref': self.next_ref, 'log': self._log_to_keep(), 'release': self.release,
              'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass}
+        if self.land:
+            d['land'] = self.land
         if self.source:
             d.update({'source': self.source, 'masters': self.masters, 'tes3_version': self.tes3_version,
                       'plugin_backup': self.plugin_backup, 'order': self.order, 'hedr': self.hedr_raw})

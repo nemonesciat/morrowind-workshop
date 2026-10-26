@@ -575,6 +575,7 @@ def sketch(db, cell_key, ref=None, at=None, w=3, h=3, shift=0, name=None, kind=N
     db.sync_project()
     out = []
     depth, nlog, last = editing.undo_depth(db), len(p.log), p.last_state
+    redo = (list(getattr(p, 'redo_stack', [])), list(getattr(p, 'redo_together', [])))
     try:
         ops = [{'op': 'place', 'id': g['id'], 'p': g['p']} for g in o['ghost'] if not g.get('swap')]
         fixit.apply(db, tmp_key, ops, None, commit=False)
@@ -598,6 +599,7 @@ def sketch(db, cell_key, ref=None, at=None, w=3, h=3, shift=0, name=None, kind=N
             stack.pop()
         del p.log[nlog:]
         p.last_state = last
+        p.redo_stack, p.redo_together = redo       # (a sketch is no change: Redo still has what it had)
         p.cells.pop(tmp_key, None)
         db.sync_project()
     return {'furniture': out, 'purpose': purpose, 'note': None}

@@ -34,7 +34,7 @@ function luNewForm(){
 }
 async function luOpen(name){
   if (LU.data && JSON.stringify(LU.data) !== LU.orig && !confirm('Leave your unsaved changes?')) return;
-  if (!$('#scripts').classList.contains('on')) showView('scripts');
+  if (!pageOn('scripts')) showView('scripts');
   SC.id = null;
   try { LU.data = await api('/api/lua/script?name=' + encodeURIComponent(name)); }
   catch (e){ return toast(e.message, true); }

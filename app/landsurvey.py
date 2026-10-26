@@ -26,7 +26,7 @@ from collections import Counter, defaultdict
 from esm import iter_subrecords, zstr
 from project import ref_info
 
-VERSION = 1
+VERSION = 2                    # (2: textures by shore distance too, and each region's textures a cell)
 N = 65
 SLOPES = (10, 20, 30, 45)                 # slope bands, degrees: under 10, 10-20, 20-30, 30-45, 45 and over
 HEIGHTS = (0, 500, 1500, 4000)            # height bands: under the sea, shore, low, hills, mountains
@@ -37,11 +37,15 @@ _cache = {}
 
 def sig(db):
     """The plugins whose land the survey reads, with their sizes (the mod being made left out)."""
+    if _cache.get('sig', (None,))[0] is db.recs:
+        return _cache['sig'][1]
     plugins = db.plugins or []
     holders = {r[3] for r in db.recs if r is not None and r[0] == 'LAND'}
     parts = sorted('%s:%s' % (plugins[i]['name'].lower(), plugins[i].get('size') or 0)
                    for i in holders if i != db.proj_pidx and i < len(plugins))
-    return hashlib.md5('|'.join(parts).encode('utf-8')).hexdigest()[:12]
+    out = hashlib.md5('|'.join(parts).encode('utf-8')).hexdigest()[:12]
+    _cache['sig'] = (db.recs, out)
+    return out
 
 
 def _disk(db):
@@ -83,6 +87,72 @@ def survey(db):
     except Exception:
         pass
     return out
+
+
+# ---------- the land map ----------
+
+OFFICIAL = ('morrowind.esm', 'tribunal.esm', 'bloodmoon.esm')
+# a settlement: this many doors into interiors, or building pieces (2026-10-25, the game's 3,939 cells above the sea:
+# a town's cells have 10-40 doors and 70-190 pieces, Seyda Neen 19 and 121; a tomb, a cave or a lone farm 1 or 2
+# doors; 694 cells pass, 18%)
+SETTLED_DOORS, SETTLED_BUILD = 3, 40
+
+
+def level(c):
+    """How freely a cell may be shaped (packaging/terrain-shaping-proposal.md §8.2): 'sea' (sea bed only),
+    'wild' (nothing built), 'light' (a few pieces, a tomb or a cave mouth, a named spot), 'settled' (a town's
+    doors or building pieces)."""
+    if c['doors'] >= SETTLED_DOORS or c['build'] >= SETTLED_BUILD or (c['name'] and c['doors'] >= 2):
+        return 'settled'
+    if c['k'] == 'sea' and not c['build']:
+        return 'sea'
+    if c['build'] or c['doors'] or c['name']:
+        return 'light'
+    return 'wild'
+
+
+def landmap(db):
+    """For the World map's land map: {'learning', 'plugins', 'cells': {'gx,gy': [level, kind, lo, hi, plugin,
+    other mod's, region, name, refs, build, doors, actors]}, 'own': {'gx,gy': 'new' or 'changed'}, 'marks'}.
+    Cells missing from 'cells' have no land in any plugin (the open sea at -2048)."""
+    s = ready(db)
+    plugins, pidx = [], {}
+    cells = {}
+    for k, c in ((s or {}).get('cells') or {}).items():
+        p = c['plugin']
+        if p not in pidx:
+            pidx[p] = len(plugins)
+            plugins.append(p)
+        cells[k] = [level(c), c['k'], c['lo'], c['hi'], pidx[p], p.lower() not in OFFICIAL, c['region'], c['name'],
+                    c['refs'], c['build'], c['doors'], c['actors']]
+    own = {}
+    p = db.project
+    if p:
+        for rk, rec in p.records.items():
+            if rk.startswith('LAND|'):
+                own[rec['key']] = 'new' if rec.get('created') else 'changed'
+    marks = list((getattr(p, 'land', None) or {}).get('marks') or []) if p else []
+    plan = (getattr(p, 'land', None) or {}).get('plan') if p else None
+    return {'learning': s is None, 'plugins': plugins, 'cells': cells, 'own': own, 'marks': marks, 'plan': plan}
+
+
+def set_marks(db, add=(), remove=(), clear=False):
+    """Mark cells for shaping, or unmark them; kept in the project (not an Undo step: a plan, like a selection)."""
+    from editing import _require_project
+    _require_project(db)
+    p = db.project
+    cur = [] if clear else list((p.land or {}).get('marks') or [])
+    have = set(cur)
+    for k in add:
+        k = '%d,%d' % tuple(int(v) for v in str(k).split(','))
+        if k not in have:
+            cur.append(k)
+            have.add(k)
+    gone = {'%d,%d' % tuple(int(v) for v in str(k).split(',')) for k in remove}
+    cur = [k for k in cur if k not in gone]
+    p.land = dict(p.land or {}, marks=cur)
+    p.save()
+    return {'marks': cur}
 
 
 # ---------- reading one landscape ----------
@@ -166,7 +236,7 @@ def _built(db, key, tags):
 # ---------- the survey ----------
 
 def _survey(db):
-    cells, lands = {}, {}
+    cells, lands, grids = {}, {}, {}
     tags = {}
     names, wh = {}, Counter()
     # exterior cells: name, region, water height
@@ -210,6 +280,7 @@ def _survey(db):
             continue
         h, grid, col = d
         lands[(gx, gy)] = h
+        grids[(gx, gy)] = grid
         ck = '#%d,%d' % (gx, gy)
         name, region = names.get(ck, ('', ''))
         R = reg[region or '(none)']
@@ -300,6 +371,9 @@ def _survey(db):
                         s = R['shore'][k + PROFILE]
                         s[0] += z
                         s[1] += 1
+    # textures by slope, height and how far from the water (v2): the waterline in 512-unit patches, then every
+    # patch's distance from it in patches, at most SHORE_REACH
+    tex3 = _shore_textures(lands, grids, cells, reg)
     # inland water: points under the sea (every 4th) not joined to the open sea, which is any cell with no land
     water = _inland_water(lands, cells)
     regions = {}
@@ -317,6 +391,9 @@ def _survey(db):
             'steep': {str(d): round(sum(1 for s in R['slope'] if s > d) / max(1, len(R['slope'])), 4) for d in (30, 45, 60, 70)},
             'rough': {str(lag * 128): round(math.sqrt(a[0] / a[1])) for lag, a in zip(LAGS, R['lag']) if a[1]},
             'textures': tex,
+            'textures3': {band: {'n': sum(c.values()), 'top': [[t or 'default', round(n / sum(c.values()), 3)] for t, n in c.most_common(6)]}
+                          for band, c in (tex3.get(name) or {}).items()},
+            'tex_per_cell': _pct([c['tex'] for c in cells.values() if (c['region'] or '(none)') == name and c['k'] != 'sea'], (10, 25, 50, 75, 90)),
             'shade': {k: [round(s[0] / s[1], 3), s[1]] for k, s in sorted(R['shade'].items(), key=lambda kv: int(kv[0])) if s[1] >= 30},
             'shore': [round(s[0] / s[1]) if s[1] else None for s in R['shore']], 'shore_n': R['shore'][PROFILE][1]}
         lr = [(math.log(lag), math.log(math.sqrt(a[0] / a[1]))) for lag, a in zip(LAGS, R['lag']) if a[1] and a[0] > 0]
@@ -326,6 +403,65 @@ def _survey(db):
     return {'version': VERSION, 'cells': cells, 'regions': regions, 'water': water,
             'water_heights': {str(k): n for k, n in wh.most_common(12)},
             'extent': {p: {'x0': e[0], 'y0': e[1], 'x1': e[2], 'y1': e[3], 'cells': e[4]} for p, e in extent.items()}}
+
+
+SHORE_BANDS = (1, 2, 4)        # patches from the water: at it (0), within 512 (1), within 2048 (2-3), inland (4+)
+
+
+def shore_band(d):
+    return _band(d, SHORE_BANDS)
+
+
+def _shore_textures(lands, grids, cells, reg):
+    """{region: {'slope,height,shore': Counter(texture)}} at every 512-unit patch of the game's land above the sea."""
+    from collections import deque
+    wet, dist = set(), {}
+    for (gx, gy), h in lands.items():
+        for py in range(16):
+            for px in range(16):
+                if h[(py * 4 + 2) * N + px * 4 + 2] < 0:
+                    wet.add((gx * 16 + px, gy * 16 + py))
+    # (a cell with no land is the open sea: its patches next to land count as water)
+    for (gx, gy) in lands:
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if (gx + dx, gy + dy) not in lands:
+                for k in range(16):
+                    p = (gx * 16 + (16 if dx == 1 else -1 if dx == -1 else k), gy * 16 + (16 if dy == 1 else -1 if dy == -1 else k))
+                    wet.add(p)
+    q = deque()
+    for p in wet:
+        dist[p] = 0
+        q.append(p)
+    reach = SHORE_BANDS[-1]
+    while q:
+        p = q.popleft()
+        d = dist[p]
+        if d >= reach:
+            continue
+        for nb in ((p[0] + 1, p[1]), (p[0] - 1, p[1]), (p[0], p[1] + 1), (p[0], p[1] - 1)):
+            if nb not in dist:
+                dist[nb] = d + 1
+                q.append(nb)
+    out = defaultdict(lambda: defaultdict(Counter))
+    for (gx, gy), h in lands.items():
+        c = cells.get('%d,%d' % (gx, gy))
+        if not c or c['k'] == 'sea':
+            continue
+        region = c['region'] or '(none)'
+        grid = grids[(gx, gy)]
+        for py in range(16):
+            for px in range(16):
+                y, x = py * 4 + 2, px * 4 + 2
+                v = y * N + x
+                z = h[v]
+                if z < -64:
+                    continue
+                gxs = (h[v + 1] - h[v - 1]) / 256.0
+                gys = (h[v + N] - h[v - N]) / 256.0
+                sl = math.degrees(math.atan(math.hypot(gxs, gys)))
+                d = dist.get((gx * 16 + px, gy * 16 + py), reach)
+                out[region]['%d,%d,%d' % (_band(sl, SLOPES), _band(z, HEIGHTS), shore_band(d))][grid[py * 16 + px]] += 1
+    return out
 
 
 def _alone(grid, x, y):

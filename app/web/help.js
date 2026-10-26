@@ -100,7 +100,7 @@ function renderGuide(){
     <div class="gcard"><b>1 · It reads your game</b><p>The Workshop reads OpenMW's own settings, so it sees your Morrowind files and the mods you have switched on,
       in the same order as the game. It never changes your game files: your work goes into a mod file of your own.</p></div>
     <div class="gcard"><b>2 · Start a mod</b><p>Press <b>＋ Start a mod</b> at the top and give it a name. Everything you make or change from then on
-      is saved into it straight away. There's no Save button, and <b>Undo</b> (${HELP_KEY('Ctrl+Z')}) takes back the last change.</p>
+      is saved into it straight away. There's no Save button, and <b>Undo</b> (${HELP_KEY('Ctrl+Z')}) takes back the last change and <b>Redo</b> (${HELP_KEY('Ctrl+Y')}) puts it back.</p>
       ${p ? `<p class="msg">You're working on <b>${esc(p.name)}</b>.</p>` : '<button class="btn sm primary" onclick="projectModal()">＋ Start a mod</button>'}</div>
     <div class="gcard"><b>3 · Try it in the game</b><p><b>▶ OpenMW → Start the game</b> at the top, or <b>Play here</b> on the World map, starts OpenMW
       with your mod and the <b>live link</b>: what you change in the Workshop appears in the game within a second.</p></div>
@@ -147,8 +147,7 @@ function renderGuide(){
     <li>Edits you make in the Workshop appear in the game. Brand-new places and records need a restart of the game.</li>
     <li><b>Me</b>, with the map pin (jump to my character) shows where you are on the map; <b>Follow my character</b> on the map keeps up with you.</li>
     <li>On the Dialogue page you can set quest stages, give items and change variables in the running game, and see which conditions are true right now.</li>
-    <li>In the game, hold ${HELP_KEY('Shift')}: ${HELP_KEY('B')} build menu · ${HELP_KEY('J')} place the chosen object · ${HELP_KEY('G')} grab and move what you look at (mouse wheel turns it) ·
-      ${HELP_KEY('K')} select it in the Workshop · ${HELP_KEY('Delete')} remove it · ${HELP_KEY('Z')} undo · ${HELP_KEY('X')} cancel.</li>
+    <li>You build in the Workshop; the game only shows it. Nothing you do in game changes your mod, so you can play normally while it's linked.</li>
     <li>A game started from OpenMW's own Launcher isn't linked (the top says <b>○ Game not linked</b>): start it from the Workshop instead.</li>
   </ul>
 

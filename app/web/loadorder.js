@@ -69,7 +69,9 @@ function loRender(){
   const save = $('#lo-save'); if (save) save.onclick = loSave;
   const rev = $('#lo-revert'); if (rev) rev.onclick = loadPlugins;
   const fix = $('#lo-fix'); if (fix) fix.onclick = async () => {
-    const r = await post('/api/loadorder/check', {order: LO.order});
+    let r;
+    try { r = await post('/api/loadorder/check', {order: LO.order}); }
+    catch (e){ toast(e.loading ? 'Still loading the game files: try again in a moment.' : e.message, !e.loading); return; }
     LO.order = r.sorted; loChanged();
   };
 }

@@ -22,7 +22,7 @@ function renderLists(){
 }
 function lvNew(){
   LV.newOpen = true; LV.id = null; LV.data = null;
-  if (!$('#lists').classList.contains('on')) showView('lists'); else lvNewForm();
+  if (!pageOn('lists')) showView('lists'); else lvNewForm();
 }
 function lvNewForm(){
   LV.newOpen = true;
@@ -53,7 +53,7 @@ function lvNewForm(){
 async function lvOpen(id){
   if (LV.data && JSON.stringify(LV.data) !== LV.orig && !confirm('Leave the changes to ' + LV.id + ' unsaved?')) return;
   LV.opening = true;
-  if (!$('#lists').classList.contains('on')) showView('lists');
+  if (!pageOn('lists')) showView('lists');
   LV.opening = false;
   $('#lmain').innerHTML = '<div class="msg" style="padding:30px"><span class="spin"></span>Loading…</div>';
   try { LV.data = await api('/api/lev?id=' + encodeURIComponent(id)); }

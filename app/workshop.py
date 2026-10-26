@@ -949,6 +949,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(npc.autocalc(db, q.get('race', ''), q.get('cls', ''), int(q.get('level') or 1), q.get('female') == '1'))
             elif u.path == '/api/land/textures':
                 self._json(landscape.textures(db))
+            elif u.path == '/api/landmap':
+                # every outdoor cell by how freely it may be shaped, and the cells marked (landsurvey.py)
+                import landsurvey
+                self._json(landsurvey.landmap(db))
             elif u.path == '/api/land/shadeinfo':
                 # what the game's shading near this cell is like (landshade.py)
                 import landshade
@@ -1379,6 +1383,10 @@ class Handler(BaseHTTPRequestHandler):
         except editing.EditError as e:
             self._json({'error': str(e)}, 400)
         except Exception as e:
+            if db.state != 'ready' or 'mmap closed' in str(e):
+                # (a request still running when a reload began reads files the reload closed: the crawl test's
+                # "ValueError: mmap closed or invalid" from Grow grass during Undo my changes. Say "still loading")
+                return self._json({'error': 'Still loading, try again in a moment.'}, 503)
             import traceback
             traceback.print_exc()
             self._json({'error': '%s: %s' % (type(e).__name__, e)}, 500)
@@ -1878,7 +1886,39 @@ class Handler(BaseHTTPRequestHandler):
                     # back to be made as one Undo (/api/group/move)
                     import settle
                     return self._json(settle.settle(db, body.get('cell') or '', body.get('at'), float(body.get('radius') or 200),
-                                                    body.get('refs') or None, float(body.get('max_drop') or 48)))
+                                                    body.get('refs') or None, float(body.get('max_drop') or 48), bool(body.get('tip'))))
+                if u.path == '/api/land/marks':
+                    import landsurvey
+                    return self._json(landsurvey.set_marks(db, body.get('add') or [], body.get('remove') or [], bool(body.get('clear'))))
+                if u.path == '/api/land/raise':
+                    # the marked cells raised into land as one piece (landrange.py)
+                    import landrange
+                    return self._json(landrange.raise_land(db, body.get('cells') or [], body.get('height', 512), body.get('coast', 6144),
+                                                           body.get('rough', 1.0), body.get('paint', True) is not False,
+                                                           body.get('region') or '', body.get('seed')))
+                if u.path == '/api/land/plan':
+                    # the shapes drawn on the land map, kept in the project (landshapes.py)
+                    import landshapes
+                    return self._json(landshapes.save_plan(db, body.get('plan') or {}))
+                if u.path == '/api/land/plan/preview':
+                    import landshapes
+                    return self._json(landshapes.preview(db, body.get('cells') or [], body.get('plan') or {}))
+                if u.path == '/api/land/plan/apply':
+                    import landshapes
+                    return self._json(landshapes.apply(db, body.get('cells') or [], body.get('plan') or {}))
+                if u.path == '/api/land/heightmap/export':
+                    # cells as a 16-bit greyscale PNG (heightmap.py); the page saves it
+                    import heightmap
+                    return self._json(heightmap.export_png(db, int(body['x0']), int(body['y0']), int(body['x1']), int(body['y1'])))
+                if u.path == '/api/land/heightmap/info':
+                    import heightmap
+                    return self._json(heightmap.info(body.get('png') or ''))
+                if u.path == '/api/land/heightmap/import':
+                    import heightmap
+                    return self._json(heightmap.import_png(db, body.get('png') or '', int(body['gx']), int(body['gy']), body.get('across'),
+                                                           float(body.get('black', -2048)), float(body.get('white', 4096)),
+                                                           float(body.get('blend', 2048)), bool(body.get('allow_settled')),
+                                                           bool(body.get('paint'))))
                 if u.path == '/api/land/shade':
                     import landshade
                     return self._json(landshade.shade(db, body.get('cells') or [], body.get('mode') or 'seams', body.get('strength', 1.0)))
@@ -2093,12 +2133,14 @@ class Handler(BaseHTTPRequestHandler):
                                                    entrance=body.get('entrance'), outside_door=body.get('door') or None,
                                                    seed=body.get('seed') if body.get('seed') not in (None, '') else None,
                                                    occupants=got('occupants', 'auto'), kind=body.get('kind') or 'dwemer',
-                                                   water=got('water', 'none'), entry_piece=got('entry', None), final_hall=got('final', None)))
+                                                   water=got('water', 'none'), entry_piece=got('entry', None), final_hall=got('final', None),
+                                                   way=body.get('way') or 'down'))
                 if u.path == '/api/ruin/preview':
                     # the layout those choices make, for the Dungeon tool's plan (nothing is written)
                     import dwemer
                     return self._json(dwemer.preview(db, body.get('kind') or 'dwemer', body.get('size') or 'medium', body.get('levels') or 'some',
-                                                     body.get('twist') or 'branching', body.get('seed'), entry=body.get('entry'), final=body.get('final')))
+                                                     body.get('twist') or 'branching', body.get('seed'), entry=body.get('entry'), final=body.get('final'),
+                                                     way=body.get('way') or 'down'))
                 if u.path == '/api/ruin/again':
                     import dwemer
                     return self._json(dwemer.again(db, body['cell'], body.get('seed') if body.get('seed') not in (None, '') else None))
@@ -2162,11 +2204,16 @@ class Handler(BaseHTTPRequestHandler):
                     # the last n changes become one named Undo step (the object window's Save: the record,
                     # the spot and the ownership go through their own routes, then fold into one)
                     e = editing.fold(db, int(body.get('n', 0)), body.get('note') or 'Edited an object')
-                    return self._json({'ok': True, 'depth': editing.undo_depth(db), 'note': e['text'] if e else None})
+                    return self._json({'ok': True, 'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db),
+                                       'note': e['text'] if e else None})
                 if u.path == '/api/undo':
                     undone = editing.undo(db, body.get('to'))
                     return self._json({'ok': True, 'undone': [editing.note_label(db.project, n) for n in undone],
-                                       'depth': editing.undo_depth(db)})
+                                       'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db)})
+                if u.path == '/api/redo':
+                    redone = editing.redo(db)
+                    return self._json({'ok': True, 'redone': editing.note_label(db.project, redone),
+                                       'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db)})
                 if u.path in ('/api/project/new', '/api/project/open', '/api/project/adopt'):
                     _end_together()
                     editing.flush(db)       # (the mod being left is written out first)
@@ -2338,6 +2385,10 @@ class Handler(BaseHTTPRequestHandler):
         except editing.EditError as e:
             self._json({'error': str(e)}, 400)
         except Exception as e:
+            if db.state != 'ready' or 'mmap closed' in str(e):
+                # (a request still running when a reload began reads files the reload closed: the crawl test's
+                # "ValueError: mmap closed or invalid" from Grow grass during Undo my changes. Say "still loading")
+                return self._json({'error': 'Still loading, try again in a moment.'}, 503)
             import traceback
             traceback.print_exc()
             self._json({'error': '%s: %s' % (type(e).__name__, e)}, 500)

@@ -62,6 +62,7 @@ const CF_ACT = [
   {id: 'keys', label: 'Keyboard shortcuts', keys: ['Ctrl+/'], any: true, run: () => cfKeysModal()},
   {id: 'search', label: 'Search box at the top', keys: ['/'], run: () => { $('#q').focus(); $('#q').select(); }},
   {id: 'undo', label: 'Undo', keys: ['Ctrl+Z'], run: () => doUndo()},
+  {id: 'redo', label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doRedo()},
   {id: 'delete', label: 'Delete what\'s selected', keys: ['Delete', 'Backspace'], world: true, run: () => W.multi.size > 1 ? groupDo('delete') : W.sel ? selAction('delete') : false},
   {id: 'copy', label: 'Copy what\'s selected', keys: ['Ctrl+C'], world: true, run: () => W.sel && !String(window.getSelection() || '') ? groupDo('copy') : false},
   {id: 'paste', label: 'Paste (then click where it goes)', keys: ['Ctrl+V'], world: true, run: () => W.clip ? startGroupPlace(W.clip.items, W.clip.label) : false},
@@ -236,6 +237,7 @@ function cfMenuAt(e, hit, at, locked){
       {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⟲ Turn 90° the other way', act: () => groupDo('turnback')},
       {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⤡ Tilt them…', act: () => cfRun('tilt')},
       {label: '🫳 Settle them (let them fall into place)', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0]}, `${W.multi.size} objects`)},
+      {label: '🫳 Settle them, tipping over what can\'t stand', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0], tip: true}, `${W.multi.size} objects`)},
       {label: '⇄ Replace them with…', act: () => cfRun('replace')},
       {label: '🧩 Save as a prefab…', act: () => { const f = $('#g-prefabname'); if (f) f.value = ''; groupDo('prefab'); }});
     if (W.clip) items.push(cfPasteItem(null));
@@ -260,8 +262,10 @@ function cfMenuAt(e, hit, at, locked){
     if (V3.on) items.push({label: '⤓ Set it down on what\'s below', act: () => v3DropToFloor()});
     // (gravity for a moment: the thing itself, or a piece of furniture and everything lying on it; settle.py)
     if (['STAT', 'ACTI', 'CONT'].includes(r.type) && !r.arch && r.b && Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) > 140)
-      items.push({label: '🫳 Settle everything on it (let it fall into place)', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20}, 'what lies on ' + (r.name || r.id))});
-    else if (!r.arch) items.push({label: '🫳 Settle it (let it fall into place)', act: () => cfSettle({cell: ck, refs: [r.k]}, r.name || r.id)});
+      items.push({label: '🫳 Settle everything on it (let it fall into place)', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20}, 'what lies on ' + (r.name || r.id))},
+        {label: '🫳 Settle everything on it, tipping over what can\'t stand', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20, tip: true}, 'what lies on ' + (r.name || r.id))});
+    else if (!r.arch) items.push({label: '🫳 Settle it (let it fall into place)', act: () => cfSettle({cell: ck, refs: [r.k]}, r.name || r.id)},
+      {label: '🫳 Settle it, tipping it over if it can\'t stand', act: () => cfSettle({cell: ck, refs: [r.k], tip: true}, r.name || r.id)});
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
     items.push({label: `Select all the ${r.name || r.id} here`, act: () => cfSelectLike(r)});
@@ -307,8 +311,9 @@ function cfMenuAt(e, hit, at, locked){
     // (Extend mode from this piece: its open faces lit, the game's candidates for each; extend.js)
     if (r.arch && W.info && W.info.interior && typeof extendMode === 'function') items.push({label: '⬚ Extend from here (piece by piece)…', act: () => extendMode(true, ck, {ref: r.k})});
     // (outdoors, a building's piece or door: the interior built inside it; frombuilding.js)
-    if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb) items.push(fb, gfMenuItem(ck, r)); }
-    if (r.arch) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
+    // (Fit the ground for the building piece itself, not for its door: a trapdoor was "not a building piece")
+    if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb){ items.push(fb); if (r.arch) items.push(gfMenuItem(ck, r)); } }
+    if (r.arch && !(typeof FB_NOT_BUILDING !== 'undefined' && FB_NOT_BUILDING.test(r.id))) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
     if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(r.type) && typeof asShow === 'function') items.push({label: '🧩 Model & textures…', act: () => asShow(r.ri, (r.name || r.id) + ': model & textures')});
     if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(r.type)) items.push({label: '🎨 Retexture…', act: () => selAction('retex')});
     // (a new piece of this kind with the game's numbers for its material; forge.js)
@@ -373,7 +378,7 @@ function cfMenuAt(e, hit, at, locked){
       // between one piece and a whole house: every dressable piece in the room, one Undo
       if (ri.pieces && typeof dressRoom === 'function') items.push({label: `🪄 Dress everything in the ${nm} (${ri.pieces} pieces, the game's way)`, act: () => dressRoom(rck, ri.room, nm)});
       // (a room the plan knows comes out whole, its pieces and furniture, the wall closing again; extend.js)
-      if (ri.tiles && !ri.traced && typeof extendRemoveRoom === 'function') items.push({label: `✂ Remove the ${nm} (its pieces and furniture; the wall closes again)`, act: () => extendRemoveRoom(rck, ri.room, nm)});
+      if (ri.tiles && !ri.traced && ri.planned && typeof extendRemoveRoom === 'function') items.push({label: `✂ Remove the ${nm} (its pieces and furniture; the wall closes again)`, act: () => extendRemoveRoom(rck, ri.room, nm)});
     } else {
       const p = roomProbe(rck, spot);
       // (the menu drawn again with everything it was given: the locked wall under the mouse too, or its
@@ -415,14 +420,20 @@ async function cfSettle(q, what){
     const r = await post('/api/settle', Object.assign({cell: W.key}, q));
     const R_ = r.report || {};
     if (!r.moves.length) return toast(R_.note || `Everything there rests as it is (${R_.n || 0} looked at).`);
-    const bits = [R_.dropped && `${R_.dropped} dropped`, R_.raised && `${R_.raised} lifted out of what they were sunk in`, R_.nudged && `${R_.nudged} nudged back over what holds them`, R_.apart && `${R_.apart} moved apart`].filter(Boolean);
+    const bits = [R_.dropped && `${R_.dropped} dropped`, R_.raised && `${R_.raised} lifted out of what they were sunk in`, R_.nudged && `${R_.nudged} nudged back over what holds them`, R_.apart && `${R_.apart} moved apart`,
+      R_.tipped && `${R_.tipped} tipped over`].filter(Boolean);
     await groupAction('/api/group/move', {moves: r.moves}, `Settled ${r.moves.length} of ${R_.n} things (${bits.join(', ')})`);
   } catch (e){ toast(e.message, true); }
 }
-// how far round the spot to settle
+// how far round the spot to settle; and the same, tipping over what can't stand where it is (a bottle on its
+// side, a broom stood up on nothing): settle.py's tip, which leaves what the game leans or lays on purpose
 function cfSettleAsk(at){
   const sizes = [['A small spot (a table top)', 90], ['This corner (2 m)', 200], ['The room around (5 m)', 500], ['The whole place', 99999]];
-  pnlMenu(QOL_PT || {x: innerWidth / 2, y: innerHeight / 2}, sizes.map(([l, rad]) => ({label: l, act: () => cfSettle({at: [at[0], at[1], V3.on && at[2] != null ? at[2] : null], radius: rad}, l.toLowerCase())})));
+  const spot = [at[0], at[1], V3.on && at[2] != null ? at[2] : null];
+  pnlMenu(QOL_PT || {x: innerWidth / 2, y: innerHeight / 2}, [
+    ...sizes.map(([l, rad]) => ({label: l, act: () => cfSettle({at: spot, radius: rad}, l.toLowerCase())})),
+    {label: 'Tipping over what can\'t stand:', disabled: true, head: true},
+    ...sizes.map(([l, rad]) => ({label: '↘ ' + l, act: () => cfSettle({at: spot, radius: rad, tip: true}, l.toLowerCase())}))]);
 }
 function cfRun(id){ const a = CF_ACT.find(x => x.id === id); if (a) a.run(); }
 
@@ -479,7 +490,7 @@ function cfStatus(){
     parts.push(`<span><b>${esc(i.name || i.region || (i.interior ? i.key : 'Wilderness'))}</b>${i.interior ? '' : ` <span title="The cell">(${i.gx}, ${i.gy})</span>`}</span>`);
   } else parts.push('<span>No place open</span>');
   if (W.mode){
-    const what = {place: 'Placing ' + (W.placeName || ''), group: 'Placing ' + ((W.groupPlace || {}).label || 'a group'), play: 'Pick where to play', arrive: 'Pick the arrival spot', region: 'Painting regions'}[W.mode] || W.mode;
+    const what = {place: 'Placing ' + (W.placeName || ''), group: 'Placing ' + ((W.groupPlace || {}).label || 'a group'), play: 'Pick where to play', arrive: 'Pick the arrival spot', region: 'Painting regions', landmap: 'Marking cells for shaping', landshape: 'Drawing a land shape'}[W.mode] || W.mode;
     parts.push(`<span class="mode">${esc(what)} · Esc stops</span>`);
   }
   if (V3.on && V3.pos){

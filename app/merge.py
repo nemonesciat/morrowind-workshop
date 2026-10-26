@@ -338,6 +338,7 @@ def merge(db, name, resolve=None):
     note = 'Merged %s into %s: %s' % (other['name'], p.name, ', '.join(bits))
     commit(db, note)
     p.undo_stack = []                      # (Undo starts afresh after a merge; the backup holds the state before)
+    p.redo_stack = []
     for e in p.log:
         e.pop('diff', None)                # (and the per-change undo of earlier changes goes with it)
     return {'ok': True, 'note': note, 'plugin': other['plugin'], 'in_load_order': pl['in_load_order'],

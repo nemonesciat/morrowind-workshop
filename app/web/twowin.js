@@ -215,7 +215,8 @@ function twObjectItems(ck, r){
 function twPlaceItems(){
   // (the plain "Open a second window here" is in every right-click menu: twHereItem)
   const out = [];
-  if (W.info && !TW.orig) out.push({label: '↗ Open the game\'s version (without your mod) in a second window', act: () => twOpen(W.key, null, true)});
+  // (not for a place your mod made: the game has no version of it to show)
+  if (W.info && !TW.orig && !W.info.own) out.push({label: '↗ Open the game\'s version (without your mod) in a second window', act: () => twOpen(W.key, null, true)});
   if (!twOthers()) return out;
   out.push({label: (TW.follow ? '✓ ' : '') + '🧭 Follow doors picked in the other view', act: () => { TW.follow = !TW.follow; toast(TW.follow ? 'Pick a door in the other view and this one goes where it leads.' : 'Not following the other view any more.'); }});
   out.push({label: (TW.syncSel ? '✓ ' : '') + '⇆ Select what the other view selects (same place)', act: () => { TW.syncSel = !TW.syncSel; }});
@@ -341,7 +342,8 @@ v3DragEnd = async function(){
 // an object (an ID) is clicked in another view and comes back to the one that asked
 TW.syncSel = true; TW.asks = {};
 function twAsk(kind, what){
-  if (!twOthers()){ toast('Open a second window first (right-click a place: ↗ Open in a second window).', true); return Promise.resolve(null); }
+  // (a hint, not an error: nothing went wrong, the other window just isn't open yet)
+  if (!twOthers()){ toast('This picks from a second window: right-click a place, ↗ Open in a second window, then click it there.'); return Promise.resolve(null); }
   const id = Math.random().toString(36).slice(2, 10);
   return new Promise(res => {
     TW.asks[id] = res;

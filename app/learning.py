@@ -121,6 +121,12 @@ def prewarm(db):
         stylesurvey.ready(db)
     except Exception:
         pass
+    # (the game's outdoor land, for the land map and shaping, landsurvey.py: last, about a minute, 2026-10-25)
+    try:
+        import landsurvey
+        landsurvey.ready(db)
+    except Exception:
+        pass
     # (the style list's own work, every kit's pieces and the Gold Coast dressings, about 4 s: done once
     # here in a thread of the server's, so the list comes in a fraction of a second whenever Create is opened)
     try:

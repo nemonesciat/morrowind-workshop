@@ -135,7 +135,8 @@ async function qolSetups(){
     const x = sel();
     bg.innerHTML = `<div class="modal qs-modal" style="width:min(860px,96vw);max-height:92vh;overflow:auto"><h2>Test setups</h2>
       <div class="msg">What you get on top when <b>Play here</b> starts the game, so you can try something without playing up to it. Pick one with the round button.</div>
-      <div class="msg" style="margin-top:6px">Playing as: <b>${esc(QOL.playAs || 'a new character')}</b> <button class="btn sm" id="qs-as">👤 Change…</button></div>
+      <div class="msg" style="margin-top:6px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">Playing as: <b>${esc(QOL.playAs || 'a new character')}</b> <button class="btn sm" id="qs-as">👤 Change…</button>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Start invincible (god mode)"><input type="checkbox" id="qs-god" ${W.god ? 'checked' : ''}> God mode</label></div>
       <div class="qol-setups" style="margin-top:12px"><div class="qs-side">
         <div data-pick="none" class="${!on ? 'on' : ''}"><input type="radio" name="qs-on" ${!on ? 'checked' : ''}> Nothing extra</div>
         <h4>Your setups</h4>
@@ -152,6 +153,9 @@ async function qolSetups(){
     const $$ = s => bg.querySelector(s);
     $$('#qs-x').onclick = close; $$('#qs-save').onclick = save;
     $$('#qs-as').onclick = () => { keep(); qsPlayAs(); };
+    // (God mode lives here with the rest of how you start, out of the Place panel's row: it spilled the
+    // buttons into a third row)
+    $$('#qs-god').onchange = e => { W.god = e.target.checked; try { localStorage.setItem('ws-god', W.god ? '1' : '0'); } catch (x){} qolSetupLabel(); };
     $$('#qs-new').onclick = () => { keep(); list.push(blank('My setup ' + (list.length + 1))); cur = {kind: 'mine', n: list.length - 1}; draw(); };
     bg.querySelectorAll('[data-pick],[data-r],[data-m]').forEach(d => d.onclick = e => {
       keep();
@@ -206,7 +210,7 @@ async function qolSetups(){
     keep();
     try {
       const r = await post('/api/testsetups', {list, on});
-      QOL.setups = r; QOL.setupOn = r.on; const b = $('#q-setup'); if (b) b.textContent = '🧪 ' + (r.on || 'Test setup…');
+      QOL.setups = r; QOL.setupOn = r.on; qolSetupLabel();
       close(); toast(r.on ? `Play here now starts with "${r.on}".` : 'Saved. Play here starts as usual.');
     } catch (e){ toast(e.message, true); }
   };

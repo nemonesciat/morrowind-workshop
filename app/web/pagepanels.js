@@ -89,7 +89,7 @@ function ppBrowse(){
   PNL.space('browse', root, list, {presets: {Standard: L(true, true), 'Record and list': L(false, true),
     'Compare records': {left: {size: 230, groups: [{tabs: ['cats'], on: 'cats', grow: 1}]}, right: {size: W40, groups: [{tabs: ['detail'], on: 'detail', grow: 1}]}, bottom: {size: 300, groups: []}, floats: []}}, start: 'Standard'});
   PNL.define('browse', 'cats', {title: 'Categories', home: 'left', init: it => it.el.appendChild($('#side'))});
-  PNL.define('browse', 'detail', {title: 'Record', init: it => it.el.appendChild($('#detail'))});
+  PNL.define('browse', 'detail', {title: 'Record', home: 'right', init: it => it.el.appendChild($('#detail'))});
   // a record pinned in its own panel: what it looked like when pinned (↻ looks again)
   PNL.define('browse', 'rec', {title: 'Record', icon: '📌', hidden: true, multi: true, home: 'float', w: 400, h: 520,
     titleFor: it => it.state.name || 'Record', render: ppRenderPin});
@@ -119,6 +119,7 @@ function ppFillPin(it, html){
 // (drawing a record means using the Record panel for a moment: it is put back as it was right after)
 async function ppRenderPin(it, again){
   if (it.el.querySelector('.detail') && !again) return;
+  if (!$('#detail')) PNL.show('browse', 'detail');          // (drawn through the Record panel: it must be in the page)
   it.el.innerHTML = '<div class="msg" style="padding:14px"><span class="spin"></span></div>';
   try {
     const d = await api('/api/record?i=' + it.state.i);
@@ -136,6 +137,10 @@ async function ppRenderPin(it, again){
 // a 📌 button on every record, to pin it
 const ppRenderDetail = renderDetail;
 renderDetail = function(d){
+  // (the Record panel closed: its body is out of the page, and a record clicked in the list had nowhere to
+  // go, "Cannot set properties of null (setting 'innerHTML')"; it opens again on the right)
+  if (!$('#detail') && typeof PNL !== 'undefined' && PNL.spaces.browse) PNL.show('browse', 'detail');
+  if (!$('#detail')) return;
   ppRenderDetail(d);
   if (PP.rendering) return;
   const top = $('#detail .navbtns');

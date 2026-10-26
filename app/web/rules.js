@@ -57,7 +57,7 @@ async function ruList(){
     $('#rmain').innerHTML = `<div class="wrap" style="max-width:900px"><h1>🌦 Regions & weather</h1><p class="lead">${RU_HELP.region}</p>
       <div class="actions" style="margin-bottom:10px"><button class="btn sm" id="ru-regmap">🗺 Show regions on the World map</button></div>
       <div class="rugrid">${r.regions.map(x => `<button class="drow" data-ruo="${esc(x.id)}"><span><i class="regsw" style="background:rgb(${x.color.join(',')})"></i>${esc(x.name)}</span><small>${x.cells} cell${x.cells === 1 ? '' : 's'}${x.mine ? ' · ✎' : ''}</small></button>`).join('')}</div></div>`;
-    $('#rmain').querySelectorAll('[data-ruo]').forEach(b => b.onclick = () => ruOpen(b.dataset.ruo));
+    ruBindOpen($('#rmain'));
     $('#ru-regmap').onclick = () => regionsOnMap();
     return;
   }
@@ -67,8 +67,14 @@ async function ruList(){
   $('#rmain').innerHTML = `<div class="wrap" style="max-width:900px"><h1>${RU_TABS.find(t => t[0] === RU.tab)[1]}</h1><p class="lead">${RU_HELP[RU.tab]}</p>
     ${list ? `<div class="rugrid">${list.map(x => `<button class="drow" data-ruo="${esc(x.id)}"><span>${esc(x.name)}</span><small>${esc(x.id !== x.name ? x.id : '')}</small></button>`).join('')}</div>`
       : '<div class="msg">Find one on the left, or make a new one.</div>'}</div>`;
-  $('#rmain').querySelectorAll('[data-ruo]').forEach(b => b.onclick = () => ruOpen(b.dataset.ruo));
+  ruBindOpen($('#rmain'));
   if (RU.tab === 'effect') ruMyEffects();
+}
+// (a list's entries open as the kind the list was made for: clicked just after switching to another tab,
+// before its list came, a faction opened as a game setting, "400 for every faction" in the crawl test)
+function ruBindOpen(root){
+  const tab = RU.tab;
+  root.querySelectorAll('[data-ruo]').forEach(b => b.onclick = () => { if (RU.tab === tab) ruOpen(b.dataset.ruo); });
 }
 // (your own effects, made in Create > New magic effect: listed here too, each opening the effect maker)
 async function ruMyEffects(){
@@ -93,11 +99,15 @@ async function ruMyEffects(){
 }
 async function ruOpen(id){
   if (RU.data && JSON.stringify(RU.data) !== RU.orig && !confirm('Leave your unsaved changes?')) return;
-  if (!$('#rules').classList.contains('on')){ RU.id = id; RU.data = null; showView('rules'); return; }
+  if (!pageOn('rules')){ RU.id = id; RU.data = null; showView('rules'); return; }
   $('#rmain').innerHTML = '<div class="msg" style="padding:30px"><span class="spin"></span>Loading…</div>';
-  try { RU.data = await api(ruGetUrl(id)); }
-  catch (e){ $('#rmain').innerHTML = `<div class="msg err" style="padding:30px">${esc(e.message)}</div>`; return; }
-  RU.id = RU.data.id; RU.orig = JSON.stringify(RU.data); ruRender();
+  // (another tab picked while this one loads: it isn't drawn by that tab's editor, "reading 'map'" in a test)
+  const tab = RU.tab;
+  let d;
+  try { d = await api(ruGetUrl(id)); }
+  catch (e){ if (RU.tab === tab) $('#rmain').innerHTML = `<div class="msg err" style="padding:30px">${esc(e.message)}</div>`; return; }
+  if (RU.tab !== tab) return;
+  RU.data = d; RU.id = RU.data.id; RU.orig = JSON.stringify(RU.data); ruRender();
 }
 async function ruNew(){
   if (!await needProject()) return;
@@ -391,7 +401,7 @@ async function ruSoundList(){
       <td>${Math.round(s.volume / 2.55)}%</td><td>${s.min || s.max ? `${s.min}–${s.max}` : 'everywhere'}</td><td><small style="color:var(--faint)">${esc(s.src)}</small></td></tr>`).join('')}</table>
     ${list.length > 400 ? `<div class="msg">Showing the first 400: type more of the name to narrow it down.</div>` : ''}</div>`;
   let t; $('#ru-sq').oninput = e => { clearTimeout(t); t = setTimeout(() => { RU.sq = e.target.value; const pos = e.target.selectionStart; ruSoundList(); const i2 = $('#ru-sq'); if (i2){ i2.focus(); i2.setSelectionRange(pos, pos); } }, 200); };
-  m.querySelectorAll('[data-ruo]').forEach(b => b.onclick = () => ruOpen(b.dataset.ruo));
+  ruBindOpen(m);
   m.querySelectorAll('[data-splay]').forEach(b => b.onclick = () => ruPlayFile(b.dataset.splay));
   $('#ru-crea2').onclick = () => ruCreature('');
 }

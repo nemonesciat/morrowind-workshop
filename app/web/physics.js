@@ -16,12 +16,17 @@ const PH_ITEMS = new Set(['WEAP', 'ARMO', 'CLOT', 'MISC', 'BOOK', 'ALCH', 'INGR'
 // (furniture's clutter, laid loose: scrap wood, a plank, a log, bones; the user's plank in mid-air didn't fall)
 const PH_CLUTTER = /scrap|plank|_log|debris|rubble|bone|skull|broken|shard|_wood_?\d/;
 const PH_CLUTTER_SIZE = 320;
+// (furniture that things rest in or on)
+const PH_HOLDER = /shelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|drawers|rack|counter|table|desk|bar_|_bar|altar|planter/;
 
 function phLoose(r, chosen){
   if (!r || r.arch || !r.b || ['NPC_', 'CREA', 'LEVC', 'LEVI', 'DOOR'].includes(r.type)) return false;
   const low = r.id.toLowerCase(), s = r.s || 1, size = Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1], r.b[5] - r.b[2]) * s;
   if (PH_SUNK.test(low) || (r.type === 'INGR' && low.includes('flor'))) return false;
-  // (what you picked takes part, furniture too, as Settle it does: up to a big crate's size)
+  // (what you picked takes part, furniture too, as Settle it does: up to a big crate's size; but not furniture
+  // that holds things: a body is a wrapped solid, so a bookshelf picked before Physics lost its boards and the
+  // books in it fell through, 13 of 14 on the user's T_Imp_FurnM_Bookshelf_02. It stays solid by its own boards)
+  if (['CONT', 'STAT', 'ACTI'].includes(r.type) && PH_HOLDER.test(low)) return false;     // (a small wall shelf too)
   if (chosen && ['CONT', 'STAT', 'ACTI', 'LIGH'].includes(r.type) && size <= PH_CLUTTER_SIZE) return true;
   if (r.type === 'LIGH') return size <= 40 && !/chandelier|lantern|hang|chain|sconce/.test(low);
   if (PH_ITEMS.has(r.type)) return true;

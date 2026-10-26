@@ -1027,9 +1027,9 @@ class Database:
         p = self.project
         if not p:
             return None
+        import editing
         stack = getattr(p, 'undo_stack', None)
         if stack:
-            import editing
             last = stack[-1]
             undo_note = editing.note_label(p, last[1], last[2] if len(last) > 2 else None)
         else:
@@ -1040,6 +1040,8 @@ class Database:
                 'undo_depth': len(stack or []),
                 'plugin_pending': bool(getattr(p, 'pending_write', None)),
                 'undo_note': undo_note,
+                'redo_depth': editing.redo_depth(self),
+                'redo_note': editing.redo_note(self),
                 # a plugin opened as the mod itself (adopt.py): saved into that file; a plain .esp takes no Lua
                 'source': getattr(p, 'source', None), 'plain_esp': not p.lua_allowed(),
                 'enabled_in_cfg': p.plugin.lower() in [c.lower() for c in getattr(self, 'cfg_content_all', [])]}

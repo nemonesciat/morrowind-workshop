@@ -52,7 +52,7 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 #jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
 #jumpme svg{flex:none;display:block}
 @container (max-width:720px){#togetherbtn .tl{display:none}}
-@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl{display:none}}
+@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl,#redobtn .tl{display:none}}
 @container (max-width:500px){#aibtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
@@ -94,7 +94,10 @@ main{min-height:0;position:relative}
 .tbtn span:last-child{font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
 .tbtn.zero{opacity:.4}
 select{width:calc(100% - 16px);margin:4px 8px;background:var(--deep);color:var(--text);border:1px solid var(--line2);border-radius:7px;padding:6px}
-.list{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+.list{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;border-right:1px solid var(--line)}
+.listsearch{padding:8px 12px 0}
+.listsearch .inp{width:100%;box-sizing:border-box}
+.listhead > .btn,.listhead > b{white-space:nowrap;flex:none}
 .listhead{padding:9px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12.5px;display:flex;gap:10px;align-items:center}
 .listhead b{color:var(--text);font-weight:600}
 .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line2);border-radius:20px;padding:1px 8px;font-size:11.5px;color:var(--muted);background:var(--panel2)}
@@ -350,6 +353,7 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .whead{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:0}
 .playrow{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .playrow label{display:flex;gap:4px;align-items:center;font-size:12px;color:var(--faint);margin-left:auto;cursor:pointer}
+.playrow .btn,.playrow label{white-space:nowrap}
 .wtabs{display:flex;gap:2px;margin:10px -16px 12px;padding:0 12px;border-bottom:1px solid var(--line);position:sticky;top:-14px;background:var(--panel);z-index:4}
 .wtabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;color:var(--faint);padding:8px 2px 7px;cursor:pointer;font:inherit;font-size:12.5px;white-space:nowrap}
 .wtabs button:hover{color:var(--muted)}
@@ -715,7 +719,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn primary" id="aibtn" title="Assistant">✦<span class="tl"> Assistant</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn primary" id="aibtn" title="Assistant">✦<span class="tl"> Assistant</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -729,6 +733,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   <div class="view on" id="browse">
     <aside class="side" id="side"></aside>
     <div class="list">
+      <div class="listsearch"><input class="inp" id="q2" placeholder="Search names, IDs, dialogue, meshes…" autocomplete="off" spellcheck="false"></div>
       <div class="listhead" id="listhead"></div>
       <div class="rows" id="rows"></div>
     </div>
@@ -789,6 +794,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 <script src="/web/lists.js"></script>
 <script src="/web/rules.js"></script>
 <script src="/web/regions.js"></script>
+<script src="/web/landmap.js"></script>
 <script src="/web/itemed.js"></script>
 <script src="/web/luaed.js"></script>
 <script src="/web/questtest.js"></script>
@@ -796,7 +802,18 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const api = async (p, opt) => { const r = await fetch(p, opt); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
+// (while the Workshop reloads, after a load order change, a mod switch or an Undo of either, it answers 503
+// "still loading": a read waits and asks again, up to two minutes; an action fails with a plain "still
+// loading" that the page says calmly, not as a fault: the crawl test's five "Something went wrong" toasts)
+const api = async (p, opt) => {
+  const read = !opt || !opt.method || opt.method === 'GET';
+  for (let n = 0; ; n++){
+    const r = await fetch(p, opt); const j = await r.json();
+    if (r.status === 503 && read && n < 80){ await new Promise(res => setTimeout(res, 1500)); continue; }
+    if (!r.ok){ const e = new Error(j.error || r.status); if (r.status === 503) e.loading = true; throw e; }
+    return j;
+  }
+};
 const fmtN = n => Number(n).toLocaleString();
 // (which window an edit came from, so a second window reloads only what another one changed: twowin.js)
 const WIN_ID = Math.random().toString(36).slice(2, 10);
@@ -812,7 +829,21 @@ function reportClientError(msg, where){
   try { fetch('/api/clienterror', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({msg: String(msg).slice(0, 2000), where: String(where || '').slice(0, 400), view: (document.querySelector('.view.on') || {}).id || ''})}); } catch (e){}
 }
 window.addEventListener('error', e => reportClientError(e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
-window.addEventListener('unhandledrejection', e => reportClientError((e.reason && (e.reason.stack || e.reason.message)) || e.reason, 'promise'));
+// Esc closes the dialog in front by its own Close / Cancel / ✕ button (Auto-furnish, Play as and the rest only
+// closed with the mouse); a dialog with keys of its own (data-ownkeys, the key rebinding) and one with no such
+// button are left alone, so nothing typed in a form is lost without its own way out
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const bgs = [...document.querySelectorAll('.modal-bg')]; const top = bgs[bgs.length - 1];
+  if (!top || top.querySelector('[data-ownkeys]') || top.id === 'cf-keys') return;
+  const btn = [...top.querySelectorAll('button')].reverse().find(b => b.offsetParent && /^(close|cancel|✕|×|not now|done)$/i.test((b.textContent || '').trim()));
+  if (!btn) return;
+  e.preventDefault(); e.stopPropagation(); btn.click();
+}, true);
+window.addEventListener('unhandledrejection', e => {
+  if (e.reason && e.reason.loading){ e.preventDefault(); try { toast('The Workshop is still loading: try again in a moment.'); } catch (x){} return; }
+  reportClientError((e.reason && (e.reason.stack || e.reason.message)) || e.reason, 'promise');
+});
 // (every message is kept, the last 60, for Help > Recent messages: the user's "I see occasional error messages
 // at the bottom ... but it's too long for me to read in time". A message stays while the mouse is over it,
 // and a problem stays 15 s)
@@ -926,9 +957,12 @@ async function poll(){
     loadProblemsNote(s);
     s.types.forEach(g => g.types.forEach(t => S.typeLabels[t.tag] = t.label));
     buildSide(); runSearch(); loadHealth(); if (typeof loadPlugins === 'function') loadPlugins(); else addEventListener('load', () => loadPlugins()); renderProjectPill();
+    // (after any reload, a mod switch or a load order change, records are numbered afresh: the record on
+    // show is found again by its ID, not by its old number, which can now be another record)
+    if (!S.reopen && S.cur && S.cur.id && S.cur.type) S.reopen = {id: S.cur.id, type: S.cur.type};
     if (S.reopen) reopenAfterReload();
     if (W.key) worldOpen(W.key, true);
-    if ($('#mymod').classList.contains('on')) renderMyMod();
+    if (pageOn('mymod')) renderMyMod();
     return;
   }
   $('#loading').style.display = 'flex';
@@ -997,12 +1031,15 @@ function buildSide(){
 
 // ---------- search ----------
 let searchTimer, searchSeq = 0;
-$('#q').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { S.q = $('#q').value; showView('browse'); runSearch(); }, 140); });
+$('#q').addEventListener('input', () => { $('#q2').value = $('#q').value; clearTimeout(searchTimer); searchTimer = setTimeout(() => { S.q = $('#q').value; showView('browse'); runSearch(); }, 140); });
+// (Browse's own search box, the same search as the one at the top: there in its window over the map too)
+$('#q2').addEventListener('input', () => { $('#q').value = $('#q2').value; clearTimeout(searchTimer); searchTimer = setTimeout(() => { S.q = $('#q2').value; runSearch(); }, 140); });
+$('#q2').addEventListener('keydown', e => { if (e.key === 'Escape' && $('#q2').value){ e.stopPropagation(); $('#q2').value = $('#q').value = ''; S.q = ''; runSearch(); } });
 document.addEventListener('keydown', e => {
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
   // (Undo, the search box, the command palette and others: shortcuts you can change, in comfort.js)
   if ($('#world').classList.contains('on') && !typing){ worldKey(e); return; }
-  if (typing && document.activeElement !== $('#q') && e.key !== 'Escape') return;
+  if (typing && document.activeElement !== $('#q') && document.activeElement !== $('#q2') && e.key !== 'Escape') return;
   if (e.key === 'Escape' && document.activeElement === $('#q')) { $('#q').value=''; S.q=''; runSearch(); }
   if (e.altKey && e.key === 'ArrowLeft') goHist(-1);
   if (e.altKey && e.key === 'ArrowRight') goHist(1);
@@ -1016,6 +1053,7 @@ document.addEventListener('keydown', e => {
 async function runSearch(){
   const seq = ++searchSeq;
   S.offset = 0;
+  if ($('#q2') && document.activeElement !== $('#q2')) $('#q2').value = S.q || '';     // (however the search was set: a link, history)
   const p = new URLSearchParams({q:S.q, types:S.types.join(','), plugin:S.plugin, offset:0, limit:200, sort:S.sort || ''});
   const r = await api('/api/search?' + p);
   if (seq !== searchSeq) return;
@@ -1051,7 +1089,7 @@ function renderRows(append){
   head.push(`<b>${fmtN(S.total)}</b> ${S.total===1?'record':'records'}`);
   if (S.types.length) head.push(`<span class="chip">${esc(S.typeLabels[S.types[0]]||S.types[0])}<button data-x="type">✕</button></span>`);
   if (S.plugin !== '') head.push(`<span class="chip">only ${esc(S.summary.plugins[S.plugin].name)}<button data-x="plugin">✕</button></span>`);
-  if (S.plugin === '') head.push(`<span style="margin-left:auto;color:var(--faint)">showing the version active in game</span>`);
+  if (S.plugin === '') head.push(`<span style="margin-left:auto;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0" title="Showing the version active in game">showing the version active in game</span>`);
   head.push(`<button class="btn sm" id="lh-table" style="${S.plugin === '' ? '' : 'margin-left:auto'}" title="A table with columns you choose and sort">${S.table ? '☰ List' : '▦ Table'}</button>`);
   if (S.table) head.push(`<button class="btn sm" id="lh-cols" title="Choose the columns">Columns ▾</button>`);
   $('#listhead').innerHTML = head.join(' ');
@@ -1168,7 +1206,12 @@ function renderDetail(d){
       if (E && f.edit) return `<dt>${esc(f.label)}</dt><dd>${fieldInput(f, fi(f))}</dd>`;
       let v = f.kind === 'color' ? `<span style="display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:7px;border:1px solid var(--line2);background:${esc(f.value)}"></span>${esc(f.value)}` : f.kind === 'path' ? `<span class="path">${esc(f.value)}</span>` : f.kind === 'raw' ? `<span class="raw">${esc(f.value)}</span>` : linkOr(f.value, f.link);
       return `<dt>${esc(f.label)}</dt><dd>${v || '<span style="color:var(--faint)">(empty)</span>'}</dd>`;
-    }).join('') + `</dl></section>`;
+    }).join('') + `</dl>` +
+      // (fields this form can't change, an enchantment's or a spell's effects above all: where they are changed,
+      // the user's "despite being in edit mode I can't actually edit this enchantment")
+      (E && IE_TYPES.split(',').includes(d.type) && plain.some(f => !f.edit) ?
+        `<div class="actions" style="margin-top:8px"><span class="msg">${d.type === 'ENCH' || d.type === 'SPEL' || d.type === 'ALCH' ? 'Effects' : 'The fields shown as text'} are changed in the editor:</span>
+          <button class="btn sm primary" data-act="itemed">✎ ${d.type === 'SPEL' ? 'Spell' : d.type === 'ENCH' ? 'Enchantment' : 'Item'} editor</button></div>` : '') + `</section>`;
   }
   const statCell = f => `<div><span>${esc(f.label)}</span>${E && f.edit ? `<input class="inp" data-fi="${fi(f)}" value="${esc(f.value)}">` : `<span>${esc(f.value)}</span>`}</div>`;
   if (stats.length) h += `<section class="box"><h3>Attributes</h3><div class="statgrid">${stats.map(statCell).join('')}</div></section>`;
@@ -1263,7 +1306,7 @@ async function detailAction(act){
       const r = await post('/api/revert', {i: d.i});
       toast(d.created ? 'Deleted from your mod' : 'Changes undone');
       await afterChange();
-      if (r.i != null) openRecord(r.i, true); else $('#detail').innerHTML = '<div class="empty"><h3>Removed</h3></div>';
+      if (r.i != null) openRecord(r.i, true); else if ($('#detail')) $('#detail').innerHTML = '<div class="empty"><h3>Removed</h3></div>';
     }
   } catch (err){
     const m = $('#editmsg'); if (m){ m.textContent = err.message; m.className = 'msg err'; } else toast(err.message, true);
@@ -1272,7 +1315,7 @@ async function detailAction(act){
 async function afterChange(){
   try { S.summary = await api('/api/status'); } catch(e){}
   renderProjectPill(); runSearch();
-  if ($('#mymod').classList.contains('on')) renderMyMod();
+  if (pageOn('mymod')) renderMyMod();
 }
 $('#detail').addEventListener('keydown', e => { if (e.target.id === 'newid' && e.key === 'Enter') detailAction('docopy'); });
 $('#detail').addEventListener('click', e => {
@@ -1290,6 +1333,9 @@ $('#detail').addEventListener('input', e => {
 });
 
 // ---------- views ----------
+// a page is showing when it's the page on screen or in its window over the World map (viewwin.js: a page in a
+// window has no "on", so a page that checked only "on" called showView again and again and froze the Workshop)
+function pageOn(v){ const e = $('#' + v); return !!e && (e.classList.contains('on') || (typeof vwHosting === 'function' && vwHosting(v))); }
 function showView(v){
   if (v !== 'createv' && typeof PL !== 'undefined' && PL && PL.paint) PL.paint = null;     // (the planner's tile mode ends with the page)
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
@@ -1391,6 +1437,9 @@ function renderProjectPill(){
   const ub = $('#undobtn');
   ub.disabled = !(p && p.undo_depth);
   ub.title = p && p.undo_depth ? 'Undo: ' + p.undo_note + ' (Ctrl+Z)' : 'Nothing to undo';
+  const rb = $('#redobtn');
+  rb.disabled = !(p && p.redo_depth);
+  rb.title = p && p.redo_depth ? 'Redo: ' + p.redo_note + ' (Ctrl+Y)' : 'Nothing to redo';
   if (!p){ el.className = 'proj none'; el.innerHTML = '＋ Start a mod'; el.title = 'Create a plugin to save your edits into'; }
   else { el.className = 'proj'; el.innerHTML = `✎ <b>${esc(p.plugin)}</b> · ${fmtN(p.changes)} change${p.changes === 1 ? '' : 's'}`; el.title = 'Open "My mod"'; }
 }
@@ -1547,8 +1596,8 @@ function mergeModal(){
             + (r.disable_error ? `. It could not be switched off in the load order: ${r.disable_error}` : ''), !!r.missing_files.length || !!r.disable_error);
       if (r.disabled){ if (typeof poll === 'function') setTimeout(poll, 300); return; }
       await refreshAfterEdits();
-      if ($('#mymod').classList.contains('on')) renderMyMod();
-      if ($('#createv').classList.contains('on')) renderCreate();
+      if (pageOn('mymod')) renderMyMod();
+      if (pageOn('createv')) renderCreate();
     } catch (e){ err.textContent = e.message; ok.disabled = false; }
   };
 }
@@ -1876,9 +1925,12 @@ function prepCell(m){
 }
 function fitCell(m){
   sizeMap();
+  // (a map squeezed to no height by the panels, or not on screen yet, fits as if it were a small one: a zoom
+  // of 0 made the map's edges infinite and its grid, or the land loading round it, never finished)
+  const mw = Math.max(W.w || 0, 320), mh = Math.max(W.h || 0, 240);
   if (!m.interior){
     W.cam.x = (m.gx + 0.5) * CELL; W.cam.y = (m.gy + 0.5) * CELL;
-    W.cam.z = Math.min(W.w, W.h) / (CELL * 1.05);
+    W.cam.z = Math.min(mw, mh) / (CELL * 1.05);
     return;
   }
   if (!m.refs.length){ W.cam = {x:0, y:0, z:0.3}; return; }
@@ -1891,7 +1943,7 @@ function fitCell(m){
   const xs = main.map(r => r.p[0]), ys = main.map(r => r.p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   W.cam.x = (x0 + x1) / 2; W.cam.y = (y0 + y1) / 2;
-  W.cam.z = Math.min(3, Math.min(W.w / (x1 - x0 + 600), W.h / (y1 - y0 + 600)));
+  W.cam.z = Math.min(3, Math.min(mw / (x1 - x0 + 600), mh / (y1 - y0 + 600)));
 }
 // ----- outdoors: load what's on screen. The ground comes in batches (coarser when zoomed out);
 // objects only for cells near the middle once they're big enough on screen to see.
@@ -1900,7 +1952,7 @@ const MAP_OBJECTS_R = 4;          // ...and at most this many cells from the mid
 function mapStep(){ const px = CELL * W.cam.z; return px >= 130 ? 1 : px >= 65 ? 2 : px >= 30 ? 4 : 8; }
 function viewCells(margin){
   if (!W.w) sizeMap();
-  if (!W.w){                                  // (map not on screen yet: just the cells around the middle)
+  if (!W.w || !W.h || !(W.cam.z > 0)){        // (map not on screen yet, or squeezed flat: just the cells around the middle)
     const cx = Math.floor(W.cam.x / CELL), cy = Math.floor(W.cam.y / CELL), m = margin + 1;
     return [cx - m, cy - m, cx + m, cy + m];
   }
@@ -2080,6 +2132,7 @@ function drawMap(){
       g.drawImage(L.img, sx, sy, size, size);
     }
     regDraw(g);                                  // regions, when shown
+    if (typeof lmDraw === 'function') lmDraw(g);  // the land map, when shown (landmap.js)
     if (CELL * z < 160){
       // zoomed out: a faint grid, and the names of places (once per place, in the middle of its cells)
       if (CELL * z >= 24){
@@ -2123,8 +2176,11 @@ function drawMap(){
     const step = z > 0.25 ? 128 : 512;
     g.strokeStyle = '#ffffff0a'; g.lineWidth = 1;
     const [wx0, wy1] = toWorld(0, 0), [wx1, wy0] = toWorld(W.w, W.h);
-    for (let x = Math.floor(wx0 / step) * step; x < wx1; x += step){ const [sx] = toScreen(x, 0); g.beginPath(); g.moveTo(sx, 0); g.lineTo(sx, W.h); g.stroke(); }
-    for (let y = Math.floor(wy0 / step) * step; y < wy1; y += step){ const [, sy] = toScreen(0, y); g.beginPath(); g.moveTo(0, sy); g.lineTo(W.w, sy); g.stroke(); }
+    // (at most a few hundred lines: a bad zoom never turns this into a loop without end)
+    if ([wx0, wx1, wy0, wy1].every(Number.isFinite) && (wx1 - wx0) / step < 400 && (wy1 - wy0) / step < 400){
+      for (let x = Math.floor(wx0 / step) * step; x < wx1; x += step){ const [sx] = toScreen(x, 0); g.beginPath(); g.moveTo(sx, 0); g.lineTo(sx, W.h); g.stroke(); }
+      for (let y = Math.floor(wy0 / step) * step; y < wy1; y += step){ const [, sy] = toScreen(0, y); g.beginPath(); g.moveTo(0, sy); g.lineTo(W.w, sy); g.stroke(); }
+    }
   }
   // zoomed far out, objects are just noise over the land (and hide the place names)
   const showRefs = !W.ext || CELL * z >= MAP_OBJECTS_PX * 0.6;
@@ -2280,7 +2336,6 @@ function setMode(m, data){
   if (m === 'place'){
     const again = W.placeId === data.id;
     W.placeId = data.id; W.placeName = data.name || data.id; W.placeType = data.type;
-    // (the game only gets it ready too when you ask: "Place it in game too" in the link box)
     if (!again) rememberRecent(data.id, W.placeName, data.type);
     renderLinkBits();
     if (V3.on) v3PlaceHint();
@@ -2305,6 +2360,9 @@ cv.addEventListener('wheel', e => {
 cv.addEventListener('mousedown', e => {
   if (!W.key || e.button !== 0) return;
   if (W.mode === 'region'){ regDown(e); return; }
+  if (W.mode === 'landmap'){ lmDown(e); return; }
+  if (W.mode === 'landshape'){ lsDown(e); return; }
+  if (typeof lmHandleDown === 'function' && lmHandleDown(e)) return;     // a point of the picked land shape
   if (typeof extendMapClick === 'function' && extendMapClick(e)) return;      // Extend mode: a strip picked
   const hit = W.mode ? null : hitTest(e.offsetX, e.offsetY);
   if (hit && e.shiftKey){ toggleMulti(hit[0], hit[1].k); return; }
@@ -2320,6 +2378,9 @@ cv.addEventListener('mousedown', e => {
 });
 cv.addEventListener('mousemove', e => {
   if (W.mode === 'region' && REG.drag){ regMove(e); return; }
+  if (W.mode === 'landmap'){ if (!lmMove(e)) lmHover(e); return; }
+  if (W.mode === 'landshape'){ lsMoveMouse(e); return; }
+  if (typeof LM !== 'undefined' && LM.hdrag){ lmHandleMove(e); return; }
   const D = W.drag;
   if (D){
     const dx = e.offsetX - D.sx, dy = e.offsetY - D.sy;
@@ -2337,11 +2398,15 @@ cv.addEventListener('mousemove', e => {
     return;
   }
   const hit = hitTest(e.offsetX, e.offsetY), tip = $('#maptip');
+  tip.style.whiteSpace = ''; tip.style.maxWidth = ''; tip.style.width = '';
+  if (!hit && typeof LM !== 'undefined' && LM.show && lmHover(e)) return;
   if (hit){ const r = hit[1]; tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10) + 'px'; tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>${r.to ? ' → ' + esc(r.to.cell || r.to.label || 'outdoors') : ''}`; }
   else tip.style.display = 'none';
 });
 window.addEventListener('mouseup', async e => {
   if (REG.drag){ regUp(); return; }
+  if (typeof LM !== 'undefined' && LM.drag){ lmUp(); return; }
+  if (typeof LM !== 'undefined' && LM.hdrag){ lmHandleUp(); return; }
   const D = W.drag; W.drag = null; cv.classList.remove('dragging');
   if (!D) return;
   if (D.kind === 'obj' && D.moved && D.to){
@@ -2415,8 +2480,14 @@ let recentreT;
 function recentre(){
   clearTimeout(recentreT);
   recentreT = setTimeout(async () => {
+    // (outdoors only, and only if nothing else opened meanwhile: a recentre still on its way when an interior
+    // opened, through a door or the place box, put the outdoor cell back with W.ext still false, and the
+    // indoor tools showed outdoors, the crawl test's Populate and Find gaps refused at #-1,0)
+    if (!W.ext) return;
+    const was = W.key;
     const gx = Math.floor(W.cam.x / CELL), gy = Math.floor(W.cam.y / CELL), k = extKey(gx, gy);
     await loadAround(gx, gy);
+    if (!W.ext || W.key !== was) return;
     if (W.cells[k] && W.cells[k].exists && k !== W.key){ W.key = k; W.info = W.cells[k]; renderWside(); }
     drawMap();
   }, 150);
@@ -2558,7 +2629,10 @@ function linkHtml(){
   if (!LINK.session && !LINK.connected) return '';
   if (!LINK.connected) return `<div class="linkbox wait"><span class="spin"></span>Waiting for the game… The link connects once you're in game (not at the main menu); a big load order takes a minute or two to start.</div>`;
   const synced = LINK.received >= LINK.version;
-  const state = LINK.paused
+  // (a game the Workshop has no session for: started before the Workshop restarted, or with another mod
+  // open. It is seen, but nothing is sent to it, and "Sending your latest changes" span for ever)
+  const state = !LINK.session ? 'This game was started before the Workshop restarted, or with another mod open: it shows where you are, but your edits reach it only after you quit it and press <b>Play here</b> again.'
+    : LINK.paused
     ? (synced ? 'The game is paused while you work here. Your edits appear as soon as you switch back to it.'
               : 'The game is paused while you work here. Your latest edits are waiting and will appear as soon as you switch back to it.')
     : (synced ? 'Your edits show up in game within about a second.' : '<span class="spin"></span>Sending your latest changes…');
@@ -2567,20 +2641,10 @@ function linkHtml(){
     ${(LINK.waiting || []).length ? `<div class="msg" style="margin:6px 0;color:var(--amber)">Needs a game restart to appear: ${LINK.waiting.slice(0, 4).map(esc).join(', ')}${LINK.waiting.length > 4 ? ' and ' + (LINK.waiting.length - 4) + ' more' : ''}. Quit the game and press Play here again.</div>` : ''}
     <label style="display:flex;gap:6px;align-items:center;margin:6px 0 0"><input type="checkbox" id="w-follow" ${followPlayer ? 'checked' : ''}> Follow my character</label>
     ${followPlayer && !LINK.player ? '<div class="msg" style="margin:4px 0 0">Waiting for the game to say where you are. Walk a step in game.</div>' : ''}
-    ${LINK.armed ? `<div class="msg" style="margin:6px 0 0">In game you're placing <b>${esc(LINK.armed.name)}</b> (Shift+J).
-        <button class="btn sm" id="w-disarm" title="Take the preview away in game">Stop placing in game</button></div>`
-      : W.mode === 'place' && W.placeId ? `<div style="margin:6px 0 0"><button class="btn sm" id="w-arm" title="Show a preview of it in game that follows your crosshair; press Shift+J there to place it">🎮 Place <b>${esc(W.placeName)}</b> in game too</button></div>` : ''}
-    <details ${W.linkOpen ? 'open' : ''} id="w-linkmore"><summary>In-game keys and details</summary>
+    <details ${W.linkOpen ? 'open' : ''} id="w-linkmore"><summary>Details</summary>
     ${pend ? '<div class="msg" style="margin:4px 0">Your changes are saved. The game keeps your mod file open, so the file itself gets updated the moment you close the game.</div>' : ''}
     ${(LINK.spares || []).length ? `<div class="msg" style="margin:6px 0">New rooms you can visit right away: ${LINK.spares.map(s => esc(s.name)).join(', ')}. Until the next restart the game calls ${LINK.spares.length > 1 ? 'them' : 'it'} "${esc(LINK.spares[0].spare)}"${LINK.spares.length > 1 ? ' etc.' : ''}. Lighting is plain until then.</div>` : ''}
-    <div style="line-height:1.7;margin-top:4px">In game (hold Shift):<br>
-      <kbd>Shift+B</kbd> build menu: search, suggestions, your Library, prefabs and brushes<br>
-      <span class="msg">With a brush: Shift+J paints a patch where you aim, PageUp/PageDown make it bigger or smaller.</span><br>
-      <kbd>Shift+J</kbd> place ${LINK.armed ? `<b>${esc(LINK.armed.name)}</b>` : 'the chosen object'} where its preview stands<br>
-      <span class="msg">To place something you chose here in game too, press "Place it in game too" above. Shift+X in game stops placing.</span><br>
-      <kbd>Shift+G</kbd> grab &amp; move (wheel turns it, <kbd>Ctrl</kbd>+wheel or <kbd>+</kbd>/<kbd>-</kbd> resizes) · <kbd>Shift+X</kbd> cancel<br>
-      <kbd>Shift+L</kbd> on a light: change its colour or brightness<br>
-      <kbd>Shift+K</kbd> select here · <kbd>Shift+Del</kbd> remove · <kbd>Shift+Z</kbd> undo</div></details>
+    <div class="msg" style="line-height:1.6;margin-top:4px">You build here; the game only shows it. Nothing you do in game changes your mod, so playing (running with Shift, the journal on J) is safe while it's linked.</div></details>
     ${(LINK.messages || []).filter(m => !LINK_HIDDEN.has(m)).map(m => `<div class="msg err" style="margin-top:4px;display:flex;gap:6px;align-items:flex-start"><span style="flex:1">${esc(m)}</span><button class="xbtn" data-msgx="${esc(m)}" title="Dismiss">✕</button></div>`).join('')}</div>`;
 }
 function renderLinkBits(){
@@ -2597,9 +2661,6 @@ function renderLinkBits(){
       box.innerHTML = html; box.dataset.html = html;
       const f = $('#w-follow'); if (f) f.onchange = () => { followPlayer = f.checked; if (followPlayer) followTick(); };
       const d = $('#w-linkmore'); if (d) d.ontoggle = () => { W.linkOpen = d.open; box.dataset.html = ''; };
-      const linkArm = body => post('/api/link/arm', body).then(s => { LINK = s; box.dataset.html = ''; renderLinkBits(); }).catch(e => toast(e.message, true));
-      const a = $('#w-arm'); if (a) a.onclick = () => { linkArm({id: W.placeId, name: W.placeName}); toast('Ready in game: aim and press Shift+J there.'); };
-      const da = $('#w-disarm'); if (da) da.onclick = () => linkArm({});
       box.querySelectorAll('[data-msgx]').forEach(x => x.onclick = () => { LINK_HIDDEN.add(x.dataset.msgx); box.dataset.html = ''; renderLinkBits(); });
     }
   }
@@ -2762,8 +2823,7 @@ function renderWside(){
   const refs = (W.cells[W.key] || {refs: []}).refs;
   const sel = W.sel && findRef(W.sel.cell, W.sel.k);
   h += `<div class="whead"><h2>${esc(i.name || i.region || 'Wilderness')}</h2><div class="msg">${i.interior ? 'Interior' : `Outdoors · ${i.gx}, ${i.gy}${i.region ? ' · ' + esc(i.region) : ''}`} · <span class="lnk" data-cellrec="${i.i}">details</span></div>
-    <div class="playrow"><button class="btn sm primary" id="w-play" title="${LINK.connected ? 'The game is running: teleports you there' : 'Starts OpenMW here with a quick test character, your whole load order and your mod. Your normal saves are untouched.'}">▶ ${LINK.connected ? 'Go here in game' : 'Play here'}</button><button class="btn sm" id="w-playspot" title="Click a spot on the map to start or teleport there">Pick a spot</button>
-      <label title="Start invincible (god mode)"><input type="checkbox" id="w-god" ${W.god ? 'checked' : ''}> God mode</label></div>
+    <div class="playrow"><button class="btn sm primary" id="w-play" title="${LINK.connected ? 'Go here in game: the game is running, this teleports you there' :'Starts OpenMW here with a quick test character, your whole load order and your mod. Your normal saves are untouched.'}">▶ ${LINK.connected ? 'Go here' : 'Play here'}</button><button class="btn sm" id="w-playspot" title="Click a spot on the map to start or teleport there">Pick a spot</button></div>
     <div id="w-link"></div></div>`;
   PNL.badge('world', 'objs', fmtN(refs.length)); PNL.badge('world', 'sel', sel || W.multi.size > 1 ? '●' : '');
   // --- Place
@@ -2819,7 +2879,7 @@ function renderWside(){
   // --- View
   h += `<div class="wpane on" data-pane="view"><h3 style="margin-top:4px">Show</h3><div class="legend">${LAYERS.map((L, n) => `<label><input type="checkbox" data-layer="${n}" ${W.hidden.has(n) ? '' : 'checked'}><i style="background:${L[2]}"></i>${L[0]}</label>`).join('')}</div>
     <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="w-lock" ${W.lockArch ? 'checked' : ''}> Lock walls &amp; buildings (so you can't move them by accident)</label>
-    ${i.interior ? `<h3>Lighting &amp; settings</h3><div id="w-placeset"></div>` : regViewHtml(i)}`;
+    ${i.interior ? `<h3>Lighting &amp; settings</h3><div id="w-placeset"></div>` : regViewHtml(i) + (typeof lmViewHtml === 'function' ? lmViewHtml(i) : '')}`;
   if (i.interior && refs.length){
     const zs = refs.map(r => r.p[2]), lo = Math.floor(Math.min(...zs)), hi = Math.ceil(Math.max(...zs));
     if (hi - lo > 300) h += `<h3>Floors</h3><label class="msg">Hide everything above height: <b id="w-cutv">${W.cut == null ? 'show all' : Math.round(W.cut)}</b></label>
@@ -2837,7 +2897,7 @@ function renderWside(){
   renderOList(refs);
   renderRecent(); renderPlacing(); renderPrefabs();
   bindWside();
-  if (i.interior) renderPlaceSettings(i); else regViewBind(i);
+  if (i.interior) renderPlaceSettings(i); else { regViewBind(i); if (typeof lmViewBind === 'function') lmViewBind(i); }
   if (typeof refPropsRender === 'function') refPropsRender();
   if (sel) dressProbe(W.sel.cell, sel);
   disposeViews('sel');
@@ -2989,7 +3049,6 @@ function bindWside(){
   }
   const p = $('#w-play'); if (p) p.onclick = () => playHere({cell: W.key});
   const ps = $('#w-playspot'); if (ps) ps.onclick = () => setMode('play');
-  const gd = $('#w-god'); if (gd) gd.onchange = () => W.god = gd.checked;
   document.querySelectorAll('[data-wtab]').forEach(b => b.onclick = () => wsTab(b.dataset.wtab));
   document.querySelectorAll('[data-layer]').forEach(c => c.onchange = () => { c.checked ? W.hidden.delete(+c.dataset.layer) : W.hidden.add(+c.dataset.layer); drawMap(); });
   const wf = $('#w-filter'); if (wf) wf.oninput = () => { W.filter = wf.value; renderOList(W.cells[W.key].refs); };
@@ -3109,7 +3168,10 @@ async function furnishDialog(cellKey){
   let info;
   try { info = await api('/api/furnish/rooms?key=' + encodeURIComponent(cellKey)); } catch (e){ return toast(e.message, true); }
   if (!info.rooms.length) return toast('No rooms found here: no floor a person could stand on was found in this place\'s building pieces.', true);
-  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  // (one at a time: opened twice, a click while the rooms were being read, the second copy's buttons took
+  // the first's ids and neither Cancel closed its own, the crawl test's two Auto-furnish dialogs stuck open)
+  document.querySelectorAll('.modal-bg[data-fu]').forEach(x => x.remove());
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.fu = '1';
   const opts = [...info.purposes, 'none'];
   bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Auto-furnish</h2>
     <div class="msg">Furniture and clutter from similar places in your load order: beds and shelves against the walls, a table with chairs, things on the tables. It all goes in as <b>one change</b>, so one Undo takes it back.</div>
@@ -3304,6 +3366,8 @@ W.roomInfo = W.roomInfo || {}; W.roomAsk = W.roomAsk || {};
 function roomKey(ck, at){ return ck + '|' + Math.round(at[0] / 128) + ',' + Math.round(at[1] / 128) + ',' + (at[2] == null ? '' : Math.round(at[2] / 64)); }
 function roomProbe(ck, at){
   const key = roomKey(ck, at);
+  // (outdoors there are no rooms: every right-click there asked, and the server said 400)
+  if (!ck || ck.startsWith('#')){ W.roomInfo[key] = {room: null}; return null; }
   if (key in W.roomInfo && W.roomInfo[key] !== null) return null;
   if (W.roomAsk[key]) return W.roomAsk[key];
   W.roomInfo[key] = null;
@@ -3477,7 +3541,7 @@ function placeOptions(required, noneLabel){
   const opts = [];
   // (the form opened in a window over the 3D view from a right-click: the spot clicked comes first; viewwin.js)
   if (CR.at && typeof vwHosting === 'function' && vwHosting('createv')) opts.push(['click', 'At the spot you clicked (' + esc(crAtName()) + ')']);
-  if (!required) opts.push(['none', noneLabel || "Don't place it yet (place it from the map or in game with Shift+J)"]);
+  if (!required) opts.push(['none', noneLabel || "Don't place it yet (place it from the World map later)"]);
   if (W.key) opts.push(['map', 'In the middle of the World map view (' + esc(W.info ? (W.info.name || W.info.region || W.info.id) : W.key) + ')']);
   if (LINK.connected && LINK.player) opts.push(['player', 'Where my character is standing in game']);
   if (!opts.length) return '<span class="msg err">Open a place on the World map first (or start the game with Play here), so the Workshop knows where to put it.</span>';
@@ -3590,7 +3654,7 @@ function crWhat(){
   } else if (CR.kind === 'item'){
     const tpl = CR.itTplInfo, ench = $('#it-ench') && $('#it-ench').checked && tpl && tpl.can_enchant, give = val('it-give');
     t = tpl ? `<b>Create item</b> makes ${q(val('cr-name')) || 'an item with the name you give it'} looking like ${esc(tpl.name || tpl.id)}, with the stats above${ench ? ' and its own enchantment' : ''}` +
-        (give ? `, given to ${esc(give)}` : where ? `, placed ${where}` : ', not placed yet (place it from the World map, or in game with Shift+J)') + '. One Undo takes it back.'
+        (give ? `, given to ${esc(give)}` : where ? `, placed ${where}` : ', not placed yet (place it from the World map)') + '. One Undo takes it back.'
       : '<b>Create item</b> needs an item to start from: pick one above.';
   } else if (CR.kind === 'spell'){
     const n = (CR.spEffects || []).length, kind = (optText('sp-type') || 'spell').toLowerCase(), give = val('sp-give');
@@ -3600,7 +3664,7 @@ function crWhat(){
   } else if (CR.kind === 'book'){
     const words = val('cr-text').split(/\s+/).filter(Boolean).length, give = val('bk-give');
     t = `<b>Create</b> makes the ${esc((radio('cr-bk') || 'note').toLowerCase())} ${q(val('cr-name')) || 'with the title you give it'}, ${words ? words + ' words' : 'no text yet'}` +
-        (give ? `, given to ${esc(give)}` : where ? `, placed ${where}` : ', not placed yet (place it from the World map, or in game with Shift+J)') + '. One Undo takes it back.';
+        (give ? `, given to ${esc(give)}` : where ? `, placed ${where}` : ', not placed yet (place it from the World map)') + '. One Undo takes it back.';
   } else if (CR.kind === 'container'){
     const lock = +val('cr-lock') || 0, owner = val('cr-owner'), n = CR.items.length;
     t = `<b>Create container</b> makes a ${esc((radio('cr-ck') || 'chest').toLowerCase())} called ${q(val('cr-name') || ((CR.opts.container_examples || {})[radio('cr-ck')] || {}).name || radio('cr-ck'))} holding ${n ? n + ' kind' + (n === 1 ? '' : 's') + ' of things' : 'nothing (add things above, or leave it empty)'}` +
@@ -4120,7 +4184,7 @@ async function createGo(){
       toast(`Created ${label} (${r.cost} magicka)` + (r.given ? `, known by ${r.given}` : '') + '.');
       openRecord(r.i, true); showView('browse');
     } else if (CR.kind === 'item' && !r.placed){
-      toast(`Created ${label}` + (r.given ? `, given to ${r.given}` : '') + '. Place it from the World map, or in game with Shift+J.');
+      toast(`Created ${label}` + (r.given ? `, given to ${r.given}` : '') + '. Place it from the World map.');
       openRecord(r.i, true); showView('browse');
     } else if (CR.kind === 'build'){
       toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : 'Furnish it here, then try it with Play here.'));
@@ -4139,7 +4203,7 @@ async function createGo(){
       showView('world'); await worldOpen(r.placed.cell); selectRef(r.placed.cell, r.placed.ref);
       const ref = findRef(r.placed.cell, r.placed.ref); if (ref) centerOn(ref);
     } else {
-      toast('Created ' + label + '. Place it from the World map, or in game with Shift+J after restarting the game.');
+      toast('Created ' + label + '. Place it from the World map.');
       setMode('place', {id: r.id, name: label});
       if (r.i != null) openRecord(r.i, true);
     }
@@ -4159,20 +4223,30 @@ async function doUndo(to){
   } catch (err){ toast(err.message, true); }
 }
 $('#undobtn').onclick = () => doUndo();
+async function doRedo(){
+  const p = S.summary && S.summary.project;
+  if (!p || !p.redo_depth) return;
+  try {
+    const r = await post('/api/redo', {});
+    toast('Redone: ' + r.redone);
+    await refreshAfterEdits();
+  } catch (err){ toast(err.message, true); }
+}
+$('#redobtn').onclick = () => doRedo();
 // (remote: another view's change, twowin.js; what you're typing here is left alone)
 async function refreshAfterEdits(remote){
   const typing = remote && (S.editing || (document.activeElement && document.activeElement.matches('input,textarea,select,[contenteditable]')));
   await afterChange();
   if (REG.data){ try { await regLoad(true); } catch (e){} }
   if (V3.on && W.ext && typeof v3GrassReload === 'function') v3GrassReload();
-  if ($('#dialog').classList.contains('on') && !typing){ D.qstages = null; if (D.mode) await dOpen(D.mode, D.key); else renderDialog(); }
+  if (pageOn('dialog') && !typing){ D.qstages = null; if (D.mode) await dOpen(D.mode, D.key); else renderDialog(); }
   if (W.key && W.ext){ W.lands = {}; v3LandsReload(); await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL)); }
   // (a cell may be dropped while an earlier one reloads: the map lets go of cells scrolled far off)
   if (W.key){ for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k); W.sel = W.sel && findRef(W.sel.cell, W.sel.k) ? W.sel : null; renderWside(); drawMap(); }
-  if (S.cur && $('#browse').classList.contains('on') && !typing){
+  if (S.cur && pageOn('browse') && !typing){
     const r = await api('/api/search?' + new URLSearchParams({q: S.cur.id, types: S.cur.type, limit: 30}));
     const hit = r.rows.find(x => x.id.toLowerCase() === S.cur.id.toLowerCase());
-    if (hit) openRecord(hit.i, false); else $('#detail').innerHTML = '<div class="empty"><h3>Removed</h3></div>';
+    if (hit) openRecord(hit.i, false); else if ($('#detail')) $('#detail').innerHTML = '<div class="empty"><h3>Removed</h3></div>';
   }
 }
 
@@ -4199,7 +4273,7 @@ function aiContext(){
   const ctx = {cell: W.key};
   if (W.sel) ctx.sel = W.sel.k; else if (W.key) ctx.focus = [W.cam.x, W.cam.y];
   if (!W.ext && W.cut != null) ctx.cut = W.cut;
-  if ($('#dialog').classList.contains('on') && D.mode){
+  if (pageOn('dialog') && D.mode){
     if (D.mode === 'npc') ctx.npc = D.key; else if (D.mode === 'quest') ctx.quest = D.key; else ctx.topic = D.key;
   }
   return ctx;

@@ -67,6 +67,8 @@ def commit(db, note=None, reverts=None):
         stack = p.__dict__.setdefault('undo_stack', [])
         stack.append((before, note or 'change', entry['id'] if entry else None))
         del stack[:-100]
+        p.redo_stack = []                   # (a new change after an Undo: what was undone can't come back)
+        p.redo_together = []
         # big projects (lots of grass) make big undo steps: keep the history within ~300 MB
         total = sum(len(s[0]) for s in stack)
         while len(stack) > 5 and total > 300_000_000:
@@ -188,6 +190,36 @@ def undo_depth(db):
     return len(getattr(db.project, 'undo_stack', [])) if db.project else 0
 
 
+def redo_depth(db):
+    p = db.project
+    if not p:
+        return 0
+    try:
+        import together
+        if together.active():
+            return len(getattr(p, 'redo_together', []))
+    except ImportError:
+        pass
+    return len(getattr(p, 'redo_stack', []))
+
+
+def redo_note(db):
+    """What Redo would put back, as the lists show it ('' when nothing)."""
+    p = db.project
+    if not p:
+        return ''
+    try:
+        import together
+        if together.active():
+            ids = getattr(p, 'redo_together', [])
+            e = next((x for x in p.log if ids and x.get('id') == ids[-1]), None)
+            return note_label(p, e['text'][len('Undid: '):]) if e and e['text'].startswith('Undid: ') else ''
+    except ImportError:
+        pass
+    stack = getattr(p, 'redo_stack', [])
+    return note_label(p, stack[-1][1], stack[-1][2]) if stack else ''
+
+
 # A whole furnish or build reads as one named step wherever changes are listed (My mod's activity
 # list, Undo's tooltip, the Undo toast): "Furnished Bleeding Abcess (636 things)", "Built Bleeding
 # Abcess from pieces (412 pieces)". The label is composed here from the change's own note and what
@@ -237,7 +269,9 @@ def undo(db, to_depth=None):
             e = together.own_last(p)
             if not e:
                 raise EditError('Nothing of yours to undo.')
-            undo_entry(db, e['id'])
+            keep = list(getattr(p, 'redo_together', []))
+            new = undo_entry(db, e['id'])
+            p.redo_together = keep + [new['id']]       # (Redo takes back this "Undid" step, as My mod's list does)
             return [e['text']]
     except ImportError:
         pass
@@ -245,11 +279,15 @@ def undo(db, to_depth=None):
     if not stack:
         raise EditError('Nothing to undo.')
     target = len(stack) - 1 if to_depth is None else max(0, int(to_depth))
-    undone, ids = [], []
+    undone, ids, redo = [], [], []
     before = p.last_state
+    cur = p.state()
     while len(stack) > target:
         item = stack.pop()
         state, note = item[0], item[1]
+        # (Redo puts back the state as it was before this Undo, step by step: the earliest step on top)
+        redo.append((cur, note, item[2] if len(item) > 2 else None))
+        cur = state
         p.restore(state)
         undone.append(note)
         if len(item) > 2 and item[2]:
@@ -260,11 +298,55 @@ def undo(db, to_depth=None):
     entry = p.note('Undid: ' + '; '.join(undone[:5]) + (' (+%d more)' % (len(undone) - 5) if len(undone) > 5 else ''),
                    state_diff(before, after))
     entry['reverts'] = ids
+    p.__dict__.setdefault('redo_stack', []).extend(r + (entry['id'],) for r in redo)
     p.last_state = after
     db.sync_project()
     _write_soon(db)
     _notify(db, entry)
     return undone
+
+
+def redo(db):
+    """Put back the last change Undo took back, exactly as it was. Returns its note."""
+    _require_project(db)
+    p = db.project
+    try:
+        import together
+        if together.active():
+            # building together: take back your own last "Undid" step (later changes by others are kept)
+            ids = list(getattr(p, 'redo_together', []))
+            if not ids:
+                raise EditError('Nothing to redo.')
+            e = next((x for x in p.log if x.get('id') == ids[-1]), None)
+            if not e or e.get('undone'):
+                p.redo_together = []
+                raise EditError('Nothing to redo.')
+            undo_entry(db, ids[-1])
+            p.redo_together = ids[:-1]
+            return e['text'][len('Undid: '):] if e['text'].startswith('Undid: ') else e['text']
+    except ImportError:
+        pass
+    redo_stack = getattr(p, 'redo_stack', [])
+    if not redo_stack:
+        raise EditError('Nothing to redo.')
+    state, note, orig, undid = redo_stack.pop()
+    before = p.last_state
+    stack = p.__dict__.setdefault('undo_stack', [])
+    stack.append((p.state(), note, orig))
+    p.restore(state)
+    if orig:
+        _set_active(p, orig, True)
+    u = next((x for x in p.log if x.get('id') == undid), None)
+    if u and all(not x.get('undone') for x in p.log if x.get('id') in u.get('reverts', [])):
+        u['undone'] = True                 # (every step that Undo took back is in effect again)
+    after = p.state()
+    entry = p.note('Redid: ' + note, state_diff(before, after))
+    entry['reverts'] = [undid] if undid else []
+    p.last_state = after
+    db.sync_project()
+    _write_soon(db)
+    _notify(db, entry)
+    return note
 
 
 def fold(db, n, note):

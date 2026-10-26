@@ -14,6 +14,7 @@ on top of what is there. Strength 0-1 mixes the result with the colours already 
 import base64
 import math
 import struct
+from collections import defaultdict
 
 import mapdata
 from editing import EditError, commit, _require_project
@@ -143,8 +144,49 @@ def learn(db, gx, gy):
     return out
 
 
-def shade(db, cells, mode='seams', strength=1.0):
-    """cells: ['gx,gy' or [gx, gy]]. mode 'texture' or 'seams'. Writes the new colours into the mod, one step."""
+def learn_near(db, gx, gy, region=''):
+    """learn() at the cell, or (land far out in the sea, with no game landscapes round it) at the middle cell of the
+    region it takes after (landsurvey's cells)."""
+    L = learn(db, gx, gy)
+    if L['cells'] >= 8 or not region:
+        return L
+    import landsurvey
+    s = landsurvey.ready(db)
+    ks = [k for k, c in ((s or {}).get('cells') or {}).items() if c['region'] == region.lower() and c['k'] != 'sea' and c['vclr']]
+    if not ks:
+        return L
+    xs = sorted(int(k.split(',')[0]) for k in ks)
+    ys = sorted(int(k.split(',')[1]) for k in ks)
+    mx, my = xs[len(xs) // 2], ys[len(ys) // 2]
+    best = min(ks, key=lambda k: (int(k.split(',')[0]) - mx) ** 2 + (int(k.split(',')[1]) - my) ** 2)
+    return learn(db, *(int(v) for v in best.split(',')))
+
+
+def hollow_shades(db, region):
+    """{curvature bin: brightness against level ground} for the region (landsurvey 'shade': the game's vertex
+    colours at hollows (+) and crests (-), over each texture's own colour); the game's mean if the region has none."""
+    import landsurvey
+    s = landsurvey.ready(db)
+    regs = (s or {}).get('regions') or {}
+    R = regs.get(region or '')
+    tab = (R or {}).get('shade') or {}
+    if '0' not in tab or len(tab) < 3:
+        acc = defaultdict(lambda: [0.0, 0])
+        for r in regs.values():
+            for k, (v, n) in (r.get('shade') or {}).items():
+                acc[k][0] += v * n
+                acc[k][1] += n
+        tab = {k: [a[0] / a[1], a[1]] for k, a in acc.items() if a[1]}
+    if '0' not in tab:
+        return {}
+    level = tab['0'][0]
+    return {int(k): v / level for k, (v, _n) in tab.items()}
+
+
+def shade(db, cells, mode='seams', strength=1.0, note=True, region=''):
+    """cells: ['gx,gy' or [gx, gy]]. mode 'texture', 'seams' or 'hollows' (darker in the hollows, lighter on the
+    crests, by as much as the game's are in the region). Writes the new colours into the mod, one step (note=False:
+    no step of its own, for a bigger change that makes one; no error when there is nothing to shade either)."""
     import landscape
     _require_project(db)
     strength = max(0.0, min(1.0, float(strength)))
@@ -155,44 +197,93 @@ def shade(db, cells, mode='seams', strength=1.0):
         if w is None:
             continue
         grid, col = _land_of(db, w)
-        L = learn(db, gx, gy)
-        cur = bytearray(col) if col else bytearray(b'\xff' * (N * N * 3))
-        new = bytearray(cur)
-        for y in range(N):
-            for x in range(N):
-                m = _mix(grid, x, y)
-                o = (y * N + x) * 3
-                if mode == 'texture':
-                    known = [(t, wt) for t, wt in m.items() if t in L['tint']]
-                    tw = sum(wt for _t, wt in known)
-                    if tw < 0.5:
-                        continue
-                    want = [sum(L['tint'][t][i] * wt for t, wt in known) / tw for i in range(3)]
-                else:
-                    if len(m) < 2:
-                        continue
-                    top = sorted(m.items(), key=lambda kv: -kv[1])[:2]
-                    (a, wa), (b, wb) = sorted(top)
-                    if min(wa, wb) < 0.15:
-                        continue
-                    k = L['seam'].get((a, b)) or L['seam_any']
-                    # (strongest where the two are half and half, fading out as one takes over)
-                    f = min(1.0, min(wa, wb) / 0.5)
-                    want = [cur[o + i] * (1 + (k[i] - 1) * f) for i in range(3)]
-                for i in range(3):
-                    v = cur[o + i] + (want[i] - cur[o + i]) * strength
-                    new[o + i] = max(0, min(255, int(round(v))))
-        if new == cur and col is not None:
+        new, n = colours(db, gx, gy, mode, strength, region, grid, col)
+        if new is None:
             continue
-        landscape.write(db, gx, gy, None, None, bytes(new))
+        landscape.write(db, gx, gy, None, None, new)
         done += 1
-        notes.append(L['cells'])
+        if mode != 'hollows':
+            notes.append(n)
+    if not note:
+        return {'cells': done, 'learnt_from': min(notes) if notes else 0}
     if not done:
         raise EditError('Nothing to shade here: %s' % ('no texture here has a tint the game uses nearby.' if mode == 'texture'
+                                                      else 'no ground above the water here.' if mode == 'hollows'
                                                       else 'there are no seams between textures in this cell.'))
     db.sync_project()
     commit(db, 'Shaded the ground %s in %d cell%s' % ('by texture' if mode == 'texture' else 'at the seams', done, '' if done == 1 else 's'))
     return {'cells': done, 'learnt_from': min(notes) if notes else 0}
+
+
+def mixes(grid):
+    """Every point's {texture: weight}, for colours() to share between its modes."""
+    return [_mix(grid, x, y) for y in range(N) for x in range(N)]
+
+
+def colours(db, gx, gy, mode, strength, region, grid, col, H=None, around=None, mix=None):
+    """(the cell's new colours as bytes, or None where shade() would leave the cell as it is; how many cells the
+    tints were learnt from). grid: texture file per patch; col: its colours now (None: none yet); H, around: its
+    heights and the heights round it, for 'hollows' (read from the land when not given); mix: mixes(grid)."""
+    import landscape
+    L = learn_near(db, gx, gy, region) if mode != 'hollows' else {'cells': 0}
+    cur = bytearray(col) if col else bytearray(b'\xff' * (N * N * 3))
+    new = bytearray(cur)
+    if mode == 'hollows':
+        import mapdata
+        hs = hollow_shades(db, region or ((mapdata.cell_info(db, '#%d,%d' % (gx, gy)) or {}).get('region') or '').lower())
+        if not hs:
+            return None, 0
+        if H is None:
+            H = mapdata.land(db, gx, gy)['h']
+        if around is None:
+            around = landscape.around_of(db, gx, gy)
+        def at(x, y):
+            if 0 <= x < N and 0 <= y < N:
+                return H[y * N + x]
+            v = around(x, y)
+            return H[min(N - 1, max(0, y)) * N + min(N - 1, max(0, x))] if v is None else v
+        for y in range(N):
+            for x in range(N):
+                z = H[y * N + x]
+                if z < 0:
+                    continue
+                lap = (at(x - 1, y) + at(x + 1, y) + at(x, y - 1) + at(x, y + 1) - 4 * z) / 4.0
+                b = max(-4, min(4, lap / 32.0))
+                lo = math.floor(b)
+                f0, f1 = hs.get(lo, 1.0), hs.get(lo + 1, 1.0)
+                k = f0 + (f1 - f0) * (b - lo)
+                o = (y * N + x) * 3
+                for i in range(3):
+                    v = cur[o + i] + (cur[o + i] * k - cur[o + i]) * strength
+                    new[o + i] = max(0, min(255, int(round(v))))
+        return (bytes(new) if new != cur else None), 0
+    for y in range(N):
+        for x in range(N):
+            m = mix[y * N + x] if mix else _mix(grid, x, y)
+            o = (y * N + x) * 3
+            if mode == 'texture':
+                known = [(t, wt) for t, wt in m.items() if t in L['tint']]
+                tw = sum(wt for _t, wt in known)
+                if tw < 0.5:
+                    continue
+                want = [sum(L['tint'][t][i] * wt for t, wt in known) / tw for i in range(3)]
+            else:
+                if len(m) < 2:
+                    continue
+                top = sorted(m.items(), key=lambda kv: -kv[1])[:2]
+                (a, wa), (b, wb) = sorted(top)
+                if min(wa, wb) < 0.15:
+                    continue
+                k = L['seam'].get((a, b)) or L['seam_any']
+                # (strongest where the two are half and half, fading out as one takes over)
+                f = min(1.0, min(wa, wb) / 0.5)
+                want = [cur[o + i] * (1 + (k[i] - 1) * f) for i in range(3)]
+            for i in range(3):
+                v = cur[o + i] + (want[i] - cur[o + i]) * strength
+                new[o + i] = max(0, min(255, int(round(v))))
+    if new == cur and col is not None:
+        return None, L['cells']
+    return bytes(new), L['cells']
 
 
 def summary(db, gx, gy):

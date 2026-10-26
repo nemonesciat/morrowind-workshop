@@ -198,10 +198,13 @@ function v3Refresh(){
 }
 
 function v3Sync(){
-  if (!W.key) return;
+  // (not before the place's own info is here: v3Reset needs it for the camera, and marking the place as set up
+  // without one left the 3D view with no camera, "reading 'x'")
+  if (!W.key || !W.info) return;
   // a new place was opened (flying into the next cell outdoors keeps the view)
   if (!V3.homeFor || (!W.ext && V3.homeFor !== W.key) || W.ext !== V3.homeFor.startsWith('#')) v3Reset();
   V3.homeFor = W.key;
+  if (!V3.pos) return;
   const want = new Map();
   for (const [ck, r] of visibleRefs()) want.set(ck + '|' + r.k, [ck, r]);
   for (const [key, o] of V3.objs) if (!want.has(key)){ V3.root.remove(o.g); V3.objs.delete(key); }
@@ -1276,7 +1279,8 @@ async function v3LandPanel(){
       <label class="v3lrow">Colour <input type="color" id="v3lcol" value="${esc(B.tint || '#b4a078')}"> <span class="faint">Shift+click the ground to pick one</span></label>
       <div class="faint" style="margin:8px 0 4px"><b>Shade automatically</b>, the way the game shades the ground near here:</div>
       <div class="v3lrow"><button class="btn sm" data-shade="seams" title="Darken or tint where two textures meet, by as much as the game does at that pair, so the join doesn't show as a hard edge">Where textures meet</button>
-        <button class="btn sm" data-shade="texture" title="Give each texture the tint the game gives it near here (grass, roads, rock...), blended as the textures blend">By texture</button></div>
+        <button class="btn sm" data-shade="texture" title="Give each texture the tint the game gives it near here (grass, roads, rock...), blended as the textures blend">By texture</button>
+        <button class="btn sm" data-shade="hollows" title="Darker in the hollows and gullies, lighter on the crests, by as much as the game's own land is in this region (6 to 14% darker)">Hollows</button></div>
       <div class="v3lrow"><label title="Only the cell under the camera, or it and the eight around it"><input type="checkbox" id="v3lshade9" ${B.shade9 ? 'checked' : ''}> and the cells around</label></div>
       <label class="v3lrow">Amount <input type="range" id="v3lshadek" min="10" max="100" step="5" value="${B.shadeK || 100}"><span>${B.shadeK || 100}%</span></label>
       <div class="faint" id="v3lshadeinfo"></div>
@@ -1312,7 +1316,7 @@ async function v3TintPanel(){
     b.disabled = true; toast('Learning how the game shades the ground near here…');
     try {
       const r = await post('/api/land/shade', {cells, mode: b.dataset.shade, strength: (B.shadeK || 100) / 100});
-      toast(`Shaded ${r.cells} cell${r.cells === 1 ? '' : 's'} ${b.dataset.shade === 'texture' ? 'by texture' : 'where textures meet'}, learnt from ${r.learnt_from} cells of the game nearby. Undo takes it back. Ground changes show in game after a restart.`);
+      toast(`Shaded ${r.cells} cell${r.cells === 1 ? '' : 's'} ${b.dataset.shade === 'texture' ? 'by texture' : b.dataset.shade === 'hollows' ? 'darker in the hollows, as the region\'s land is' : 'where textures meet'}${b.dataset.shade === 'hollows' ? '' : `, learnt from ${r.learnt_from} cells of the game nearby`}. Undo takes it back. Ground changes show in game after a restart.`);
       afterChange(); W.lands = {}; v3LandsReload();
     } catch (e){ toast(e.message, true); }
     b.disabled = false;
@@ -2026,6 +2030,7 @@ function v3Tools(){
           <input type="range" id="v3fov" min="40" max="110" step="5" value="${V3.fov || 60}" style="width:100%"></label>
         ${W.ext ? `<label><input type="checkbox" data-v3v="ground" ${V3.view.ground ? 'checked' : ''}> Ground</label>
         <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>
+        <label title="The game's sky: clouds for the weather, the sun, the stars and the moons. Off: a plain sky colour"><input type="checkbox" data-v3v="sky" ${V3.view.sky !== false ? 'checked' : ''}> Sky</label>
         <label title="How far you can see outdoors: the cells loaded round the camera. Further is slower in towns."
           style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
           <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
@@ -2064,7 +2069,7 @@ function v3Tools(){
   $('#v3rest').onchange = e => { V3.rest = e.target.checked; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} };
 }
 
-// ----- the View menu: grid, cell borders, wireframe, ground and water
+// ----- the View menu: grid, cell borders, wireframe, ground, water and sky (the sky is the render loop's: off, the plain colour)
 function v3ApplyView(){
   if (!V3.scene) return;
   const wire = !!V3.view.wire;
@@ -2237,7 +2242,7 @@ function v3Loop(){
     // (outdoors with the game's sky: the sky first, then the place over it; a colour background would
     // clear the sky away again, so the place is drawn without it)
     const R = V3.renderer;
-    if (W.ext && v3SkyTick(dt)){
+    if (W.ext && V3.view.sky !== false && v3SkyTick(dt)){
       const bg = V3.scene.background;
       R.autoClear = false; R.clear(); R.render(V3.sky.scene, V3.sky.cam); R.clearDepth();
       V3.scene.background = null; R.render(V3.scene, V3.camera); V3.scene.background = bg; R.autoClear = true;

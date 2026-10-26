@@ -424,7 +424,7 @@ async function packOpen(file){
 // a sound from the Library, playing where a selected object stands (an unseen sound source placed on it)
 async function libAttachSound(sel, cell){
   const snds = (await api('/api/library')).items.filter(i => i.type === 'sound' && i.ok);
-  if (!snds.length) return toast('There are no sounds in your Library yet: drop some .wav, .mp3 or .ogg files on the Library page first.', true);
+  if (!snds.length) return toast('There are no sounds in your Library yet: drop some .wav, .mp3 or .ogg files on the Library page first.');     // (a hint, not a fault)
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>🔊 A sound for ${esc(sel.name || sel.id)}</h2>
     <div class="msg">It plays over and over where this stands, and gets louder as you come closer. Listen, then pick one.</div>
