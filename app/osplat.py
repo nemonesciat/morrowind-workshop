@@ -315,6 +315,28 @@ def find_ci(folder, rel):
     return cur
 
 
+def walk(top):
+    """os.walk that goes into linked folders too, each real folder once. Linux mod setups often link a mod's
+    folders into place (ln -s, mod managers), and OpenMW reads through the links; os.walk alone skipped them,
+    so their models were missing from the 3D view (freeman141, Tamriel Rebuilt outdoors). A link back up to a
+    folder it is already inside is not followed, so it never goes round and round; the same folder linked in
+    twice under two names is read under both, as the game does."""
+    real_of = {}
+    for root, dirs, files in os.walk(top, followlinks=True):
+        real = os.path.realpath(root)
+        up, loop = os.path.dirname(root), False
+        while up and up in real_of:
+            if real_of[up] == real:
+                loop = True
+                break
+            up = os.path.dirname(up)
+        if loop:
+            dirs[:] = []
+            continue
+        real_of[root] = real
+        yield root, dirs, files
+
+
 def to_trash(paths):
     """Move files and folders to the bin, where they can be restored. Raises OSError when that fails."""
     paths = [os.path.abspath(p) for p in paths if os.path.exists(p)]

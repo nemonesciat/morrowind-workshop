@@ -24,6 +24,11 @@ const COACH_STEPS = [
    next: true},
   {at: () => $('#cr-go'), title: 'Build it',
    text: '"Furnish the rooms" is ticked, so it comes furnished too. It takes a moment, then the house opens on the World map.',
+   // (once pressed: what is happening and how far it is, here in the tip; the page's own note beside the button
+   // was under the tip, so the tour looked stuck for the minutes a big house takes)
+   busy: () => pageOn('createv') && $('#cr-go') && $('#cr-go').disabled, busyAt: () => $('#cr-msg'),
+   busyTitle: 'Building your house…',
+   busyText: 'The walls, floors, doors and stairs go up first, then the furnisher fills every room, floor by floor. A big house takes a minute or two; the first time, the Workshop also learns from the game\'s own places once. The house opens on the World map by itself when it\'s done.',
    start: () => { COACH.key = W.key; },
    done: () => pageOn('world') && W.key && W.key !== COACH.key && W.cells[W.key]},
   {at: () => $('[data-view3d="1"]'), title: 'See it in 3D',
@@ -49,6 +54,7 @@ function coachHouse(){
     .coach-tip{position:fixed;z-index:9991;width:320px;background:var(--panel);color:var(--text);border:1px solid var(--gold);border-radius:12px;
       padding:13px 15px 11px;box-shadow:0 12px 40px #000a;font-size:13.5px;line-height:1.5;transition:left .25s ease,top .25s ease}
     .coach-tip b{display:block;font-family:Cinzel,serif;color:var(--gold2);font-size:16px;margin-bottom:3px}
+    .coach-tip .coach-prog{font-size:12.5px} .coach-tip .coach-prog b{display:inline;font-family:inherit;font-size:inherit;color:var(--text-b);margin:0}
     .coach-tip .foot{display:flex;align-items:center;gap:8px;margin-top:10px}
     .coach-tip .foot .msg{margin-right:auto;font-size:12px}`;
   document.head.appendChild(css);
@@ -75,7 +81,8 @@ function coachNext(){
   const s = COACH_STEPS[COACH.n];
   if (!s) return coachEnd(true);
   if (s.start) s.start();
-  COACH.seen = null;                     // (what it points at is scrolled into view once it's there)
+  COACH.busy = false;
+  COACH.seen = null;                   // (what it points at is scrolled into view once it's there)
   const shown = COACH.n + 1 - COACH.skipped, all = COACH_STEPS.length - COACH.skipped;
   COACH.tip.innerHTML = `<b>${esc(s.title)}</b><div>${esc(s.text)}</div>
     <div class="foot"><span class="msg">${shown} of ${all}</span>
@@ -87,7 +94,20 @@ function coachTick(){
   if (!COACH.on) return;
   const s = COACH_STEPS[COACH.n];
   if (s && s.done && s.done()) return coachNext();
+  if (s && s.busy) coachBusy(s, s.busy());
   coachPlace();
+}
+
+// a step's "working on it" state: its own words and a copy of the page's progress (with its bar), kept up to date
+function coachBusy(s, on){
+  if (on === !!COACH.busy && !on) return;
+  COACH.busy = on;
+  const shown = COACH.n + 1 - COACH.skipped, all = COACH_STEPS.length - COACH.skipped;
+  if (!on){ COACH.n--; return coachNext(); }      // (back to the step as it was: the build stopped with an error)
+  const src = s.busyAt && s.busyAt(), prog = src ? src.innerHTML : '';
+  COACH.tip.innerHTML = `<b>${esc(s.busyTitle)}</b><div>${esc(s.busyText)}</div>
+    <div class="coach-prog" style="margin-top:8px">${prog || '<span class="spin"></span>Working…'}</div>
+    <div class="foot"><span class="msg">${shown} of ${all}</span><button class="btn sm" data-coach="skip">Skip the tour</button></div>`;
 }
 
 // the ring round the button to press, and the tip beside it (below it if there's room, else above; with
@@ -95,7 +115,8 @@ function coachTick(){
 function coachPlace(){
   if (!COACH.on) return;
   const s = COACH_STEPS[COACH.n]; if (!s) return;
-  const el = s.at && s.at(), tip = COACH.tip, ring = COACH.ring;
+  // (while it works: no ring on the button, and the tip low in the middle, clear of the page's own note)
+  const el = COACH.busy ? null : s.at && s.at(), tip = COACH.tip, ring = COACH.ring;
   if (el && el !== COACH.seen && el.offsetParent !== null){ COACH.seen = el; el.scrollIntoView({block: 'nearest'}); }
   const r = el && el.offsetParent !== null ? el.getBoundingClientRect() : null;
   const tw = tip.offsetWidth, th = tip.offsetHeight, W0 = innerWidth, H0 = innerHeight;

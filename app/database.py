@@ -10,6 +10,8 @@ import time
 import zlib
 from collections import defaultdict
 
+import osplat
+
 from esm import PluginFile, bsa_entries, iter_subrecords, read_openmw_config, zstr
 from nif import MeshIndex
 
@@ -321,7 +323,7 @@ class Database:
                     continue
                 root_len = len(d) + 1
                 is_mesh = sub.lower() in ('meshes', 'textures', 'sound')     # (sounds too, to play them)
-                for root, _dirs, fnames in os.walk(os.path.join(d, sub)):
+                for root, _dirs, fnames in osplat.walk(os.path.join(d, sub)):     # (linked folders too)
                     rel = root[root_len:].replace('\\', '/').lower()
                     for fn in fnames:
                         rp = rel + '/' + fn.lower()

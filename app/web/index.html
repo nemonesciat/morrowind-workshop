@@ -1535,8 +1535,10 @@ function slowWait(btn, note, label){
   setTimeout(tick, 3000);
   return () => { stop = true; if (btn){ btn.disabled = false; btn.textContent = was; } if (note && /^Still waiting/.test(note.textContent)) note.textContent = ''; };
 }
-function projectModal(){
-  const projects = (S.summary && S.summary.projects) || [];
+// (newOnly: from ＋ New mod… and Your mods' Start a new mod, where switching and opening an .esp are on the page
+// already, so the window is only the new mod's name and details)
+function projectModal(newOnly){
+  const projects = newOnly === true ? [] : (S.summary && S.summary.projects) || [];
   // (one at a time, and every field and button looked up in this dialog only: with two open, the buttons on
   // top read the empty one underneath, so "Create mod" did nothing and its error showed where nobody could
   // see it: the user's "I'm not able to switch back to an existing mod, make a new one, or anything")
@@ -1544,33 +1546,35 @@ function projectModal(){
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.pm = '1';
   const $ = s => bg.querySelector(s);
   const cur = S.summary && S.summary.project ? S.summary.project.name : '';
-  bg.innerHTML = `<div class="modal"><h2>${projects.length ? 'Switch to a mod, or start one' : 'Start a mod'}</h2>
-    ${cur ? `<p class="msg">You are working on <b>${esc(cur)}</b>. It is saved already; switching keeps everything in it.</p>` : ''}
+  newOnly = newOnly === true;
+  bg.innerHTML = `<div class="modal"><h2>${newOnly ? 'Start a new mod' : projects.length ? 'Switch to a mod, or start one' : 'Start a mod'}</h2>
+    ${cur ? (newOnly ? `<p class="msg"><b>${esc(cur)}</b> is saved already and stays as it is; Your mods… switches back to it.</p>`
+      : `<p class="msg">You are working on <b>${esc(cur)}</b>. It is saved already; switching keeps everything in it.</p>`) : ''}
     ${projects.length ? `<label>Open one of your mods</label><select class="inp" id="pm-open"><option value="">(choose)</option>${projects.filter(p => p !== cur).map(p => `<option>${esc(p)}</option>`).join('')}</select>
       <div class="msg" style="margin:14px 0 4px;color:var(--text-b)">…or start a new one:</div>` : ''}
     <p class="msg">Everything you create or change is saved into your own plugin file, so the original game files are never touched. You can test it in game any time with the Play buttons on the World map.</p>
     <label>Mod name</label><input class="inp" id="pm-name" placeholder="e.g. Hlaalu Manor Expansion" maxlength="60">
     <label>Author (optional)</label><input class="inp" id="pm-author" maxlength="31">
     <label>Short description (optional)</label><input class="inp" id="pm-desc" maxlength="255">
-    <p class="msg" style="margin-top:10px">…or, as in the Construction Set, make an existing plugin the active file: <button class="btn sm" id="pm-adopt">📂 Set an .esp as the active file…</button></p>
+    ${newOnly ? '' : `<p class="msg" style="margin-top:10px">…or, as in the Construction Set, make an existing plugin the active file: <button class="btn sm" id="pm-adopt">📂 Set an .esp as the active file…</button></p>`}
     <div class="msg err" id="pm-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="pm-cancel">Cancel</button><button class="btn primary" id="pm-ok">Create mod</button></div></div>`;
   document.body.appendChild(bg);
   $('#pm-name').focus();
   $('#pm-cancel').onclick = () => bg.remove();
-  $('#pm-adopt').onclick = () => { bg.remove(); adoptModal(); };
+  if ($('#pm-adopt')) $('#pm-adopt').onclick = () => { bg.remove(); adoptModal(); };
   $('#pm-ok').onclick = async () => {
     const open = $('#pm-open') && $('#pm-open').value;
     const name = $('#pm-name').value.trim();
     if (!open && !name){ $('#pm-err').textContent = 'Give your mod a name.'; return; }
     rememberSelection();
     const done = slowWait($('#pm-ok'), $('#pm-err'), open ? 'Switching…' : 'Making it…');
-    $('#pm-adopt').disabled = true;
+    if ($('#pm-adopt')) $('#pm-adopt').disabled = true;
     try {
       if (open) await post('/api/project/open', {name: open});
       else await post('/api/project/new', {name, author: $('#pm-author').value, description: $('#pm-desc').value});
       done(); bg.remove(); toast((open ? 'Switched to ' + open : 'Made ' + name) + '. Reading your data…'); setTimeout(poll, 300);
-    } catch (err){ done(); $('#pm-adopt').disabled = false; $('#pm-err').className = 'msg err'; $('#pm-err').textContent = err.message; }
+    } catch (err){ done(); if ($('#pm-adopt')) $('#pm-adopt').disabled = false; $('#pm-err').className = 'msg err'; $('#pm-err').textContent = err.message; }
   };
   // (picking an earlier mod makes the button say what it does; typing a new name picks none)
   const pick = $('#pm-open');
@@ -1781,7 +1785,7 @@ async function modsModal(){
   document.body.appendChild(bg);
   const q = s => bg.querySelector(s);
   q('#mx-close').onclick = () => bg.remove();
-  q('#mx-new').onclick = () => { bg.remove(); projectModal(); };
+  q('#mx-new').onclick = () => { bg.remove(); projectModal(true); };
   bg.onclick = e => { if (e.target === bg) bg.remove(); };
   const draw = async () => {
     let r;
@@ -1849,6 +1853,7 @@ async function renderMyMod(){
       <button class="btn primary" id="mm-release" title="Check the mod, write a readme and pack a zip to share">📦 Get ready to share</button>
       ${p.enabled_in_cfg ? '' : `<button class="btn" id="mm-enable">Add to my OpenMW load order</button>`}
       <button class="btn" id="mm-folder" title="Open the folder with ${esc(p.plugin)} in ${osw('files')}, the file picked out">📁 Show folder</button>
+      <button class="btn" id="mm-new" title="Start another mod (this one stays as it is)">＋ New mod…</button>
       <button class="btn" id="mm-mods" title="Switch to another of your mods, start a new one, or delete the ones you no longer want">🗂 Your mods…</button>
       <button class="btn" id="mm-together" title="Build this mod together with other people, live, from wherever they are">👥 Build together…</button>
       <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>
@@ -1901,6 +1906,7 @@ async function renderMyMod(){
   $('#mm-together').onclick = () => togOpen();
   $('#mm-folder').onclick = async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } };
   $('#mm-mods').onclick = modsModal;
+  $('#mm-new').onclick = () => projectModal(true);
   $('#mm-merge').onclick = mergeModal;
   $('#mm-adopt').onclick = () => adoptModal();
   $('#mm-saveas').onclick = saveAsModal;
@@ -1957,6 +1963,39 @@ const toScreen = (x, y) => [(x - W.cam.x) * W.cam.z + W.w / 2, (W.cam.y - y) * W
 const toWorld = (sx, sy) => [(sx - W.w / 2) / W.cam.z + W.cam.x, W.cam.y - (sy - W.h / 2) / W.cam.z];
 const extKey = (gx, gy) => '#' + gx + ',' + gy;
 
+// Coordinates typed into Go to a place. Two whole numbers like "-4, -14" are an outdoor cell, as the status bar
+// shows them; bigger numbers, or three (x y z, as the game's console and openmw.log give a spot), are a place in
+// game units: outdoors, or in the interior open now. Labels like x= and brackets may come along.
+function gotoCoords(q){
+  const bare = q.replace(/\b[xyz]\s*[=:]/gi, '').replace(/[()[\],;]/g, ' ');
+  if (!/^\s*-?\d+(\.\d+)?(\s+-?\d+(\.\d+)?){1,2}\s*$/.test(bare)) return [];
+  const n = bare.trim().split(/\s+/).map(Number), [a, b] = n, z = n.length > 2 ? n[2] : null;
+  const rows = [], f = v => String(Math.round(v));      // (no thousands commas: "1,235, -5,678" reads as four numbers)
+  const inside = W.key && !W.ext && W.info && W.info.interior;
+  const cellLike = n.length === 2 && Number.isInteger(a) && Number.isInteger(b) && Math.abs(a) < 300 && Math.abs(b) < 300;
+  if (cellLike) rows.push({label: `Outdoor cell ${a}, ${b}`, small: 'the whole cell', go: () => gotoSpot(extKey(a, b), (a + 0.5) * CELL, (b + 0.5) * CELL, null, true)});
+  if (inside) rows.push({label: `${f(a)}, ${f(b)}${z != null ? ', ' + f(z) : ''} in ${W.info.name || W.key}`, small: 'game units, in this place', go: () => gotoSpot(W.key, a, b, z)});
+  if (!cellLike){
+    const gx = Math.floor(a / CELL), gy = Math.floor(b / CELL);
+    rows.push({label: `Outdoors at ${f(a)}, ${f(b)}${z != null ? ', ' + f(z) : ''}`, small: `game units · cell ${gx}, ${gy}`, go: () => gotoSpot(extKey(gx, gy), a, b, z)});
+  }
+  return rows;
+}
+async function gotoSpot(key, x, y, z, wholeCell){
+  if (W.key !== key || !W.cells[key]) await worldOpen(key);
+  if (W.key !== key || !W.cells[key]) return;          // (no such cell: worldOpen said so)
+  if (V3.on){
+    const zz = z != null ? z : groundZ(x, y);
+    v3Focus({k: null, p: [x, y, zz + (wholeCell ? 2500 : 120)]});
+  } else {
+    W.cam.x = x; W.cam.y = y;
+    if (!wholeCell) W.cam.z = Math.max(W.cam.z, W.ext ? 0.12 : 0.6);
+    W.mark = {x, y, t: Date.now()};                    // (a ring on the spot for a few seconds: drawMap)
+    drawMap(); if (W.ext) recentre();
+    setTimeout(() => { if (W.mark && Date.now() - W.mark.t >= 4000){ W.mark = null; drawMap(); } }, 4100);
+  }
+  if (!wholeCell) toast(`At ${Math.round(x)}, ${Math.round(y)}${z != null ? ', ' + Math.round(z) : ''}${W.ext ? ` (cell ${Math.floor(x / CELL)}, ${Math.floor(y / CELL)})` : ''}`);
+}
 async function worldOpenIndex(i){
   const m = await api('/api/cellmap?i=' + i);
   worldOpen(m.key);
@@ -2318,6 +2357,14 @@ function drawMap(){
     }
     g.restore();
   }
+  // the spot typed into Go to a place (gotoSpot): a ring and a cross for a few seconds
+  if (W.mark){
+    const [sx, sy] = toScreen(W.mark.x, W.mark.y);
+    g.save(); g.strokeStyle = '#f0cd87'; g.lineWidth = 2;
+    g.beginPath(); g.arc(sx, sy, 14, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(sx - 22, sy); g.lineTo(sx - 6, sy); g.moveTo(sx + 6, sy); g.lineTo(sx + 22, sy);
+    g.moveTo(sx, sy - 22); g.lineTo(sx, sy - 6); g.moveTo(sx, sy + 6); g.lineTo(sx, sy + 22); g.stroke(); g.restore();
+  }
 }
 cv.addEventListener('mousemove', e => { W.mouse = [e.offsetX, e.offsetY]; if (W.mode === 'group') drawMap(); });
 function drawPaths(){
@@ -2435,8 +2482,13 @@ cv.addEventListener('mousedown', e => {
     return;
   }
   if (!hit && e.shiftKey && !W.mode){ W.drag = {kind: 'box', sx: e.offsetX, sy: e.offsetY, ex: e.offsetX, ey: e.offsetY, moved: false}; return; }
-  if (hit){ selectRef(hit[0], hit[1].k); W.drag = {kind: 'obj', cell: hit[0], ref: hit[1], sx: e.offsetX, sy: e.offsetY, moved: false}; }
-  else W.drag = {kind: 'pan', sx: e.offsetX, sy: e.offsetY, cx: W.cam.x, cy: W.cam.y, moved: false};
+  // (only what is selected already moves: a press on anything else selects it if it's a click and pans the map if
+  // it's a drag, so a thing you didn't see under the mouse isn't dragged away: the user's "if you accidentally click
+  // where an item is placed, it ends up dragging that item")
+  if (hit && W.sel && W.sel.cell === hit[0] && W.sel.k === hit[1].k){
+    W.drag = {kind: 'obj', cell: hit[0], ref: hit[1], sx: e.offsetX, sy: e.offsetY, moved: false};
+  }
+  else W.drag = {kind: 'pan', sx: e.offsetX, sy: e.offsetY, cx: W.cam.x, cy: W.cam.y, moved: false, pick: hit ? [hit[0], hit[1].k] : null};
 });
 cv.addEventListener('mousemove', e => {
   if (W.mode === 'region' && REG.drag){ regMove(e); return; }
@@ -2501,6 +2553,11 @@ window.addEventListener('mouseup', async e => {
     drawMap();
     return;
   }
+  if (D.kind === 'pan' && D.moved && D.pick && !W.moveHinted){
+    W.moveHinted = true;                         // (once: panning over things is everyday, the hint isn't)
+    toast('Dragging moved the map. To move something, click it first to select it, then drag it.');
+  }
+  if (D.kind === 'pan' && !D.moved && D.pick && e.target === cv){ selectRef(D.pick[0], D.pick[1]); return; }
   if (D.kind === 'pan' && !D.moved && e.target === cv){
     const [wx, wy] = toWorld(e.offsetX, e.offsetY);
     if (W.mode === 'place'){
@@ -2876,7 +2933,7 @@ function renderWside(){
   if (!PNL.spaces.world) worldPanelsInit();
   const body = id => PNL.body('world', id);
   const i = W.info;
-  let h = `<div class="dd"><input class="inp" id="w-goto" placeholder="Go to a place… (e.g. Balmora)" autocomplete="off"><div class="ddlist" id="w-goto-l"></div></div>`;
+  let h = `<div class="dd"><input class="inp" id="w-goto" placeholder="Go to a place… (Balmora, or -4, -14)" title="A place's name, a cell's coordinates (-4, -14), or a spot in game units (x y, or x y z as the game's console gives it)" autocomplete="off"><div class="ddlist" id="w-goto-l"></div></div>`;
   if (!i){
     body('place').innerHTML = h;
     for (const p of ['sel', 'objs', 'view', 'paths']) if (body(p)) body(p).innerHTML = '<div class="msg" style="padding:10px 0">Open a place first (Place, at the top).</div>';
@@ -3090,7 +3147,7 @@ function renderPlacing(){
   v3ThumbScan(box);
 }
 function bindWside(){
-  ddSearch('w-goto', 'CELL', r => worldOpenIndex(r.i));
+  ddSearch('w-goto', 'CELL', r => worldOpenIndex(r.i), false, gotoCoords);
   ddSearch('w-place', PLACEABLE.join(','), r => setMode('place', {id: r.id, name: r.name, type: r.type}), true);
   const selRef = W.sel && findRef(W.sel.cell, W.sel.k);
   if (selRef) ddSearch('w-swap', (selRef.type === 'DOOR' ? ['DOOR'] : PLACEABLE).join(','), async r => {
@@ -3303,12 +3360,26 @@ document.addEventListener('dragstart', e => {
   hidePreview();
 });
 document.addEventListener('dragend', () => { window.wsDrag = null; if (V3.on && W.mode !== 'place') v3GhostSet(null); });
-function ddSearch(id, types, onPick, pictures){
+// (lead: a function giving rows of its own for what was typed, [{label, small, go}], shown instead of the search:
+// Go to a place's coordinates. Enter takes the first)
+function ddSearch(id, types, onPick, pictures, lead){
   const inp = $('#' + id), list = $('#' + id + '-l'); if (!inp) return;
   let t, seq = 0;
+  if (lead) inp.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    const own = lead(inp.value.trim());
+    if (own.length){ e.preventDefault(); clearTimeout(t); ++seq; list.style.display = 'none'; own[0].go(); }
+  };
   inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
     const q = inp.value.trim(); const my = ++seq;
     if (!q){ list.style.display = 'none'; return; }
+    const own = lead ? lead(q) : [];
+    if (own.length){
+      list.innerHTML = own.map((x, n) => `<div data-own="${n}">${esc(x.label)}<small>${esc(x.small || '')}</small></div>`).join('');
+      list.style.display = 'block';
+      list.querySelectorAll('[data-own]').forEach(d => d.onclick = ev => { ev.preventDefault(); list.style.display = 'none'; own[+d.dataset.own].go(); });
+      return;
+    }
     // (placing: the models the game places most come first, so the common bookshelf is at the top and its
     // twenty variants under it)
     const r = await api('/api/search?' + new URLSearchParams(pictures ? {q, types, limit: 40, sort: 'uses'} : {q, types, limit: 40}));
@@ -4209,6 +4280,7 @@ async function createGo(){
       label = val('cr-name');
     } else if (CR.kind === 'build'){
       const L = bLayout(), entrance = placeValue();
+      msg.innerHTML = '<span class="spin"></span>Building the walls, floors, doors and stairs…';
       if (entrance && String(entrance.cell).startsWith('#') && CR.bout === 'building' && val('cr-bshell')){
         entrance.building = val('cr-bshell'); entrance.facing = +val('cr-bface');
       }
@@ -4217,11 +4289,13 @@ async function createGo(){
         plan: CR.plan});           // (the planner's own plan, kept with the place so you can start from it again)
       label = val('cr-name');
       if ($('#cr-bfurnish').checked){
-        msg.innerHTML = '<span class="spin"></span>Furnishing…';
         const level = furnishAsValue('cr-b');
         // (every floor, when the floors are places of their own)
-        for (const c of (r.cells && r.cells.length ? r.cells : [{key: r.key, name: label}])){
-          try { await furnishWhenLearnt({cell: c.key, level}, msg); msg.innerHTML = '<span class="spin"></span>Furnishing…'; }
+        const floors = r.cells && r.cells.length ? r.cells : [{key: r.key, name: label}];
+        const note = n => '<span class="spin"></span>Built. Furnishing the rooms' + (floors.length > 1 ? ` (${n} of ${floors.length} floors)` : '') + '…';
+        for (const [n, c] of floors.entries()){
+          msg.innerHTML = note(n + 1);
+          try { await furnishWhenLearnt({cell: c.key, level}, msg); }
           catch (e){ toast('Built it, but could not furnish ' + c.name + ': ' + e.message, true); }
         }
       }

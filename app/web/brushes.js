@@ -20,6 +20,7 @@ function brCss(){
 // the brush editor, in the Scatter panel, for one of your brushes
 function brEditor(box, set){
   brCss();
+  const $ = s => box.querySelector(s);              // (this editor's own fields, wherever its box is)
   const id = set.key.slice(3);
   const b = BR.editing && BR.editing.id === id ? BR.editing : {id, name: set.label, items: set.items.map(it => ({...it}))};
   BR.editing = b;

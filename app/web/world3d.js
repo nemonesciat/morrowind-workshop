@@ -1096,20 +1096,32 @@ function v3GroundAt(x, y){
   const tx = fx - x0, ty = fy - y0, H = c.L.h;
   return (H[y0 * 65 + x0] * (1 - tx) + H[y0 * 65 + x0 + 1] * tx) * (1 - ty) + (H[(y0 + 1) * 65 + x0] * (1 - tx) + H[(y0 + 1) * 65 + x0 + 1] * tx) * ty;
 }
+// (a stroke only starts once the mouse has been dragged a few pixels or held a moment: a plain click on the
+// ground, to select something or pick a spot, changed nothing then, but did; and it only goes on while the
+// mouse is over the view and the camera stays put. 2026-10-27: Caldera's square came out a hill in the
+// Workshop, nothing like the game, after clicks and a held stroke while flying)
+const V3_ARM_PX = 5, V3_ARM_MS = 350;
+function v3StrokeArm(e){
+  const S_ = V3.stroke; if (!S_ || S_.armed) return !!S_;
+  if (Math.hypot(e.clientX - S_.x0, e.clientY - S_.y0) < V3_ARM_PX && performance.now() - S_.t0 < V3_ARM_MS) return false;
+  S_.armed = true;
+  const first = S_.first; S_.first = null;
+  if (S_.scatter) v3ScatterDab(first.at, first.ctrl); else v3StrokeAt(first.at, first.e);
+  return true;
+}
 function v3StrokeStart(e){
   const at = v3Brush(e); if (!at) return false;
+  const arm = {armed: false, x0: e.clientX, y0: e.clientY, t0: performance.now(), cam: V3.pos.clone(), first: {at, e, ctrl: e.ctrlKey}};
   if (V3.land.tool === 'scatter'){
     // what already stands around counts as taken
     const near = [];
     for (const c of Object.values(W.cells)) for (const r of c.refs || []) if (Math.hypot(r.p[0] - at[0], r.p[1] - at[1]) < 6000 && !r.arch) near.push([r.p[0], r.p[1]]);
     const grass = V3.land.scatSet === 'grass' && V3.land.scatGrass !== false;
     if (grass) for (const lst of Object.values(V3.grassData || {})) for (const g of lst) if (Math.hypot(g[1] - at[0], g[2] - at[1]) < 6000) near.push([g[1], g[2]]);
-    V3.stroke = {cells: new Map(), scatter: true, grass, circles: [], add: [], gone: new Map(), near, last: 0, lastAt: at, erase: e.ctrlKey};
-    v3ScatterDab(at, e.ctrlKey);
+    V3.stroke = Object.assign({cells: new Map(), scatter: true, grass, circles: [], add: [], gone: new Map(), near, last: 0, lastAt: at, erase: e.ctrlKey}, arm);
     return true;
   }
-  V3.stroke = {cells: new Map(), level: v3GroundAt(at[0], at[1]), last: 0};
-  v3StrokeAt(at, e);
+  V3.stroke = Object.assign({cells: new Map(), level: v3GroundAt(at[0], at[1]), last: 0}, arm);
   return true;
 }
 function v3StrokeAt(at, e){
@@ -1343,6 +1355,9 @@ async function v3ScatterPanel(){
     box.innerHTML = '<div class="faint"><span class="spin"></span>Finding what grows here…</div>';
     try { V3.scatSets = await api('/api/scatter/sets?cell=' + encodeURIComponent(ck)); V3.scatSets.cell = ck; }
     catch (e){ box.innerHTML = `<div class="faint">${esc(e.message)}</div>`; return; }
+    // (the Ground panel was drawn again while the sets came: that newer panel fills its own box; this one is gone
+    // from the page, and the brush editor in it found none of its fields, "setting 'onchange'" of null)
+    if (!box.isConnected){ v3ScatterPanel(); return; }
   }
   const S_ = V3.scatSets, B = V3.land;
   if (!S_.sets.length){ box.innerHTML = '<div class="faint">Nothing grows in the cells around here to learn from. <button class="btn sm" id="v3lnewbr">+ New brush</button> makes one of your own.</div>';
@@ -1598,7 +1613,7 @@ function v3Bind(el){
       if (e.shiftKey && V3.land.tool === 'tint'){ const at = v3Brush(e); if (at) v3TintEyedrop(at); return; }
       if (V3.land.tool === 'paint' && !V3.land.tex){ toast('Pick a ground texture first.'); return; }
       if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.'); return; }
-      if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; }
+      if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; V3.strokeEv = e; V3.over = true; }
       return;
     }
     drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: V3.yaw, pitch: V3.pitch, pos: V3.pos.clone(), moved: false, alt: e.altKey};
@@ -1624,8 +1639,9 @@ function v3Bind(el){
     if (drag.stroke){
       // a few dabs a second while the mouse moves (and while it rests, see v3Loop)
       V3.strokeEv = e;
+      if (!v3StrokeArm(e)) return;
       const now = performance.now();
-      if (now - V3.stroke.last > 33){ V3.stroke.last = now; const at = v3Brush(e); v3StrokeAt(at, e); v3BrushRing(at); }
+      if (now - V3.stroke.last > 33){ V3.stroke.last = now; V3.stroke.cam = V3.pos.clone(); const at = v3Brush(e); v3StrokeAt(at, e); v3BrushRing(at); }
       return;
     }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
@@ -1679,8 +1695,12 @@ function v3Bind(el){
     if (h && h.obj && typeof owOpen === 'function'){ owOpen(h.obj.ck, h.obj.k); return; }
     if (W.sel){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); }
   });
-  el.addEventListener('mousemove', e => v3Hover(e));
-  el.addEventListener('mouseleave', () => { $('#maptip').style.display = 'none'; });
+  el.addEventListener('mousemove', e => { V3.over = true; v3Hover(e); });
+  // (a ground stroke ends where the mouse leaves the view or the window loses focus, and what it did is saved:
+  // a release out there was never seen, and the brush went on working by itself)
+  const strokeOff = () => { if (drag && drag.stroke){ drag = null; V3.strokeEv = null; v3StrokeEnd(); } };
+  el.addEventListener('mouseleave', () => { V3.over = false; $('#maptip').style.display = 'none'; strokeOff(); });
+  window.addEventListener('blur', () => { V3.over = false; strokeOff(); });
   // dropping things from the sidebar
   el.addEventListener('dragover', e => {
     if (!e.dataTransfer.types.includes('text/x-mw-id')) return;
@@ -1884,10 +1904,18 @@ async function v3PlaceAt(id, name, world, yaw){
 function v3ApplyMode(){
   const tc = V3.tc; if (!tc) return;
   tc.setMode(V3.mode);
+  // (World axes: east, north and up, whichever way the thing faces; Own axes: its own front, side and up, so a
+  // turned bench slides along its length; freeman141 on Nexus: the arrows didn't show the way it would go)
+  tc.setSpace(v3Space());
   tc.showX = tc.showY = V3.mode === 'translate' || V3.tilt;
   tc.showZ = true;
   tc.setTranslationSnap(V3.grid || null);
   tc.setRotationSnap(V3.angle ? V3.angle * Math.PI / 180 : null);
+}
+
+function v3Space(){
+  if (!V3.space){ let s = null; try { s = localStorage.getItem('ws-space'); } catch (e) {} V3.space = s === 'local' ? 'local' : 'world'; }
+  return V3.space;
 }
 
 function v3DragStart(){
@@ -2013,7 +2041,8 @@ function v3Tools(){
   const grip = typeof tbGrip === 'function' ? tbGrip() : '';
   t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
-    <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button></div>
+    <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button>
+    <button class="btn sm" data-v3="space" title="${v3Space() === 'local' ? 'Handles on its own axes: front, side and up as it is turned. Click for the world\'s axes.' : 'Handles on the world\'s axes: east, north and up. Click for its own axes, as it is turned.'}">${V3.space === 'local' ? '⟀ Own axes' : '✛ World axes'}</button></div>
     <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
         <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
@@ -2059,6 +2088,7 @@ function v3Tools(){
     else if (a === 'help') $('#v3help').style.display = $('#v3help').style.display === 'none' ? 'block' : 'none';
     // (tilting turns: on, the turning handles with their two tilt rings)
     else if (a === 'tilt'){ V3.tilt = !V3.tilt; if (V3.tilt) V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
+    else if (a === 'space'){ V3.space = V3.space === 'local' ? 'world' : 'local'; try { localStorage.setItem('ws-space', V3.space); } catch (e) {} v3ApplyMode(); v3Tools(); }
     else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; v3Tools(); }
     else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
@@ -2260,7 +2290,11 @@ function v3Loop(){
     if (typeof pe3DTick === 'function'){ pe3DTick(); v3Paths(); }
     if (t - (V3.lightPickT || 0) > 500){ V3.lightPickT = t; v3PointLightsPick(); }
     // holding the brush still keeps raising / lowering / smoothing
-    if (V3.stroke && V3.strokeEv && V3.land.tool !== 'paint' && V3.land.tool !== 'scatter' && t - V3.stroke.last > 50){
+    // (only over the view, and only while the camera stays where the stroke last was: a brush held while flying
+    // with the keys reshaped everything the mouse's spot passed over)
+    if (V3.stroke && V3.stroke.first && V3.strokeEv && performance.now() - V3.stroke.t0 >= V3_ARM_MS && V3.over) v3StrokeArm(V3.strokeEv);
+    if (V3.stroke && V3.stroke.armed && V3.strokeEv && V3.over && V3.land.tool !== 'paint' && V3.land.tool !== 'scatter' && t - V3.stroke.last > 50
+        && V3.stroke.cam && V3.pos.distanceTo(V3.stroke.cam) < 1){
       V3.stroke.last = t; const at = v3Brush(V3.strokeEv); v3StrokeAt(at, V3.strokeEv); v3BrushRing(at);
     }
     // your character, when the game is linked
