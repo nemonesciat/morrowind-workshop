@@ -169,7 +169,7 @@ function mxDraw(){
   const schools = [...new Set(D.templates.map(x => x.school))];
   box.innerHTML = `<aside class="dside"><div class="actions" style="margin-top:0"><button class="btn sm primary" id="mx-new">+ New effect</button><button class="btn sm" id="mx-back">← Create</button></div>
       <h3>Your effects</h3>
-      ${D.effects.length ? D.effects.map(e => `<div class="li ${MX.sel === e.id ? 'on' : ''}" data-mxopen="${esc(e.id)}" style="cursor:pointer;padding:6px 8px;border-radius:6px">${esc(e.name)}<div class="msg">${esc(e.id)}</div></div>`).join('') : '<div class="msg">None yet.</div>'}
+      ${D.effects.length ? D.effects.map(e => `<div class="li ${MX.sel === e.id ? 'on' : ''}" data-mxopen="${esc(e.id)}" style="cursor:pointer;padding:6px 8px;border-radius:6px">${esc(e.name)}<div class="msg">${esc(e.id)}</div></div>`).join('') : '<div class="msg">None yet: <b>+ New effect</b> starts one.</div>'}
       <div class="msg" style="margin-top:14px;line-height:1.6">Your own magic effects, for spells, enchantments and potions, made the way Tamriel Data makes its own in OpenMW.
         Each looks like one of the game's effects and does what you pick. They need OpenMW 0.50 or newer.</div></aside>
     <main class="dmain"><div class="wrap" style="max-width:860px">
@@ -190,7 +190,7 @@ function mxDraw(){
       <h3 style="margin-top:18px">What it does</h3>
       <div class="msg" style="margin-bottom:8px">On the one it lands on, while it lasts. A magnitude of 10 that takes away health per second takes 10 a second.</div>
       <div id="mx-does">${(f.does || []).map(mxDoesRow).join('') || '<div class="msg">Nothing yet: it would only look the part. Add what it does:</div>'}</div>
-      <div class="actions" style="margin-top:6px">${D.does.map(d => `<button class="btn sm" data-mxadd="${d.kind}" title="${esc(d.what)}">+ ${esc(d.label)}</button>`).join('')}</div>
+      <div class="actions" style="margin-top:6px">${D.does.filter(d => !d.untried).map(d => `<button class="btn sm" data-mxadd="${d.kind}" title="${esc(d.what)}">+ ${esc(d.label)}</button>`).join('')}</div>
       <div class="actions" style="margin-top:20px"><button class="btn primary" id="mx-save">${MX.sel ? 'Save' : 'Make the effect'}</button>
         ${MX.sel ? '<button class="btn danger" id="mx-del">Remove it</button>' : ''}<span class="msg" id="mx-msg"></span></div>
       <div class="cwhat"><b>${MX.sel ? 'Save' : 'Make the effect'}</b> ${MX.sel ? 'changes' : 'adds'} the effect in your mod's scripts: made as the game loads, looking like ${esc(t.name || '…')}${(f.does || []).length ? ', doing ' + (f.does || []).length + ' thing' + ((f.does || []).length === 1 ? '' : 's') + ' when it lands' : ', doing nothing yet'}. Then pick it in a spell, enchantment or potion like any effect (it shows as "(yours)"). One Undo takes it back.</div>

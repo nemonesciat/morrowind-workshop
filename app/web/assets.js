@@ -58,8 +58,8 @@ function asDraw(){
       : `<button class="btn sm" data-as="find" data-n="${n}" title="Look through every data folder and archive for a texture of the same name">🔍 Look for it</button>`) : mine
       ? `<button class="btn sm" data-as="open" data-n="${n}" title="Open your copy in the picture editor again">✎ Open your copy</button>
          <button class="btn sm" data-as="giveback" data-n="${n}" title="Take your copy out of the mod (to the Recycle Bin); the game draws its own again">↺ The game's own again</button>`
-      : `<button class="btn sm primary" data-as="everywhere" data-n="${n}" title="A copy in your mod's folder under the same name: the game draws your copy everywhere this texture is used">✎ Change everywhere</button>
-         <button class="btn sm" data-as="own" data-n="${n}" title="A copy under a new name, and a new record of this object drawn with it: nothing else changes">✎ For this one only…</button>`;
+      : `<button class="btn sm primary" data-as="everywhere" data-n="${n}" title="Your copy under the same name: it shows everywhere this texture is used">✎ Change everywhere</button>
+         <button class="btn sm" data-as="own" data-n="${n}" title="A copy under a new name, on a new record of this object only">✎ For this one only…</button>`;
     return `<div class="as-tex">${pic}<div class="as-texinfo"><div class="as-texname" title="${esc(t.path || t.name)}">${esc(t.name)} ${t.missing ? '' : fromTag(t.from, t.from === 'mod' ? "your mod's copy" : t.from_label)}</div>
       <div class="as-sub">${what}</div><div class="as-btns">${btns}</div></div></div>`;
   }).join('') || '<div class="msg">This model draws with no textures (plain colours only).</div>';
@@ -82,7 +82,7 @@ function asDraw(){
       ${ed.found.map(f => `<option value="${esc(f.exe)}" ${f.exe === ed.chosen ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}
       ${ed.chosen && !ed.found.some(f => f.exe === ed.chosen) ? `<option value="${esc(ed.chosen)}" selected>${esc(ed.chosen)}</option>` : ''}
       <option value="?">Another program…</option></select></div>
-    <div class="as-sub" style="margin-top:4px">While this window is open, the 3D view draws a texture again each time you save it. GIMP, Paint.NET and Photoshop (with its DDS plug-in) open .dds files.</div>`;
+    <div class="as-sub" style="margin-top:4px">Each save shows in the 3D view while this window is open. GIMP, Paint.NET and Photoshop (DDS plug-in) open .dds files.</div>`;
   const sel = $('#as-editor');
   if (sel) sel.onchange = async () => {
     let exe = sel.value;
@@ -99,7 +99,7 @@ function asDraw(){
 function asModelHtml(d){
   const G = AS.glb, mine = d.from === 'mod';
   const out = AS.blender
-    ? `<button class="btn sm primary" data-as="blender" title="The model as a .glb with its textures, opened in Blender. Each time you save (Ctrl+S) there, it comes back here">⬡ Open in Blender</button>`
+    ? `<button class="btn sm primary" data-as="blender" title="Opens it in Blender; each save there (Ctrl+S) comes back here">⬡ Open in Blender</button>`
     : `<button class="btn sm primary" data-as="export" title="The model as a .glb (glTF binary) with its textures, for Blender or any 3D program">⬇ Export for Blender (.glb)</button>`;
   const lost = (G && G.lost && G.lost.length) ? `<div class="msg err" style="margin-top:4px">This model also has ${esc(G.lost.join(', '))}: those stay behind, so coming back it is shapes and textures only.</div>` : '';
   let state = '';

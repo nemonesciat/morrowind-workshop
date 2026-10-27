@@ -1817,7 +1817,9 @@ def _sunk_posts(db, m, tiles):
 # of pair (measured 2026-10-21 on 18 Common stone, Common plain and Gold Coast places with stairs, 1,633
 # pieces: posts sunk into the wall ends they cover, tiles overlapping at their seams, a post's face flush
 # with a wall). A place is only told about a kind it shows more than twice as often.
-CLASH_BASELINE = {('clip', 'post-tile'): 37.0, ('zfight', 'post-tile'): 20.0, ('clip', 'tile-tile'): 14.5,
+# (post-tile clips without a kit's posts on their tiles' edges and corners, _post_on_grid: 11.8, measured
+# 2026-10-27 on 112 of the game's places with posts, 13,406 pieces, every kit; 37 with them)
+CLASH_BASELINE = {('clip', 'post-tile'): 11.8, ('zfight', 'post-tile'): 20.0, ('clip', 'tile-tile'): 14.5,
                   ('zfight', 'post-wall'): 11.2, ('zfight', 'tile-tile'): 11.0, ('clip', 'tile-wall'): 9.6,
                   ('zfight', 'post-stair'): 4.8, ('clip', 'post-stair'): 4.4, ('clip', 'wall-wall'): 3.9,
                   ('zfight', 'tile-wall'): 1.4, ('clip', 'stair-tile'): 0.9, ('zfight', 'post-post'): 0.8}
@@ -1828,6 +1830,24 @@ def _pair_kind(i):
         return i['pair']                 # (a kind with no rate of the game's: always listed)
     tag = lambda s: 'post' if COLUMN_WORDS.search(s) else 'stair' if 'stair' in s else 'wall' if re.search(r'_wall|wall_', s) else 'tile'
     return '-'.join(sorted((tag(i['id'].lower()), tag((i.get('other') or '').lower()))))
+
+
+POST_GRID_TOL = 8        # how near a tile's edge line a post's middle stands, and its foot to the tile's floor
+
+
+def _post_on_grid(r, bx, t):
+    """Whether a post (r, its world box) stands where its kit sets posts against floor piece t: its middle
+    on the tile's edge or corner, its foot on the tile's floor."""
+    if not t or not bx or not COLUMN_WORDS.search(r['id'].lower()):
+        return False
+    T, h = t['T'], t['T'] / 2.0
+    cx, cy = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2
+    dx, dy = abs(cx - t['x']), abs(cy - t['y'])
+    if dx > h + POST_GRID_TOL or dy > h + POST_GRID_TOL:
+        return False
+    if abs(dx - h) > POST_GRID_TOL and abs(dy - h) > POST_GRID_TOL:
+        return False
+    return abs(bx[2] - t['floor']) <= POST_GRID_TOL
 
 
 def clash_issues(db, m, tiles=None):
@@ -1847,6 +1867,7 @@ def clash_issues(db, m, tiles=None):
     boxes = {r['k']: _world_box(r) for r in refs}
     tile_ref = {t['ref'] for t in tiles}
     spot_of = {t['ref']: (round(t['x'] / 8), round(t['y'] / 8), round(t['floor'] / 8)) for t in tiles}
+    tile_of = {t['ref']: t for t in tiles}
     is_tile = lambda r: r['k'] in tile_ref
     # the world triangles of a piece, with their planes
     tri_cache = {}
@@ -1955,6 +1976,10 @@ def clash_issues(db, m, tiles=None):
             # that fall inside the other's mesh (a ray straight up from the point crosses the other's
             # faces an odd number of times), deep enough to be no seam
             if stacked or (is_tile(a) and is_tile(b)):
+                continue
+            # (a kit's post standing on a tile's edge or corner, on its floor, is sunk into the tiles round it
+            # by the kit's design: every pillar of the user's Gold Coast manor was listed, 346 clips)
+            if any(_post_on_grid(r_, bx_, tile_of.get(t_['k'])) for r_, bx_, t_ in ((a, A, b), (b, B, a))):
                 continue
             for p, q in ((a, b), (b, a)) if not (is_tile(a) or is_tile(b)) else (((b, a),) if is_tile(a) else ((a, b),)):
                 if (p['k'], q['k']) in seen:

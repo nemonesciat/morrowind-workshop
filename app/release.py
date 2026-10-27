@@ -665,6 +665,14 @@ def checks(db):
     except Exception as e:                  # a check must never stop the release page
         print('verify:', e)
         vf = []
+    # (weapons and armour your mod makes: their own group, gearcheck.py)
+    gf = [f for f in vf if f.get('gear')]
+    vf = [f for f in vf if not f.get('gear')]
+    if gf:
+        out.append({'id': 'gear', 'sev': 'warning', 'title': '%d thing%s to look at in your weapons and armour' % (len(gf), '' if len(gf) == 1 else 's'),
+                    'detail': 'New gear nobody hands out, a levelled list far from where the game puts gear of its worth, half a pair in a set. '
+                              'Right-click a piece, Into the world…, to place it as the game places its own.',
+                    'items': [{'label': f['text']} for f in gf[:40]]})
     if vf:
         ne = sum(1 for f in vf if f['sev'] == 'error')
         out.append({'id': 'records', 'sev': 'error' if ne else 'warning',

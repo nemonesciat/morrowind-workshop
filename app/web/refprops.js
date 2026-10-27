@@ -63,7 +63,7 @@ async function refPropsRender(){
     if (!await needProject()) return;
     const cell = RP.cell, k = RP.k;
     const data = {owner: d.owner, faction: d.faction, rank: d.rank, global: d.global, soul: d.soul, lock: d.lock, key: d.key, trap: d.trap, uses: d.uses};
-    if (data.faction && data.owner){ toast('Pick either a person or a faction as the owner, not both.', true); return; }
+    if (data.faction && data.owner){ toast('Pick either a person or a faction as the owner, not both.'); return; }
     try {
       const m = await refAction('/api/ref/props', {cell, ref: k, data}, cell, k, 'Saved');
       if (m && m.props){ RP.data = m.props; RP.orig = JSON.stringify(m.props); }

@@ -14,7 +14,7 @@ function libCss(){
   .lib-kinds b{color:var(--gold2);font-weight:600}.lib-kinds .msg{font-size:12px;line-height:1.45}
   .lib-card input[type=range], .modal input[type=range], .modal input[type=checkbox]{accent-color:#d9b26a}
   .lib-drop{border:2px dashed #6b5730;border-radius:12px;padding:26px;text-align:center;background:var(--bg2);color:var(--muted-c);transition:.15s}
-  .lib-drop.over{border-color:var(--gold2);background:#221c12;color:var(--text-c)}
+  .lib-drop.over{border-color:var(--gold2);background:color-mix(in srgb,var(--gold) 12%,var(--bg2));color:var(--text-c)}
   .lib-drop b{color:var(--gold2);font-size:16px} .lib-drop .msg{margin-top:6px}
   .lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:14px}
   .lib-card{border:1px solid var(--line);border-radius:10px;background:var(--bg2);overflow:hidden;display:flex;flex-direction:column}

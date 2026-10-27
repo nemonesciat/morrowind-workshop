@@ -58,7 +58,7 @@ function cfMode(m){ if (typeof V3 === 'undefined' || !V3.tc || W.mode === 'group
 
 // world: only on the World map; v3: only in its 3D view; typing: also while typing in a box; any: also over an open window
 const CF_ACT = [
-  {id: 'palette', label: 'Command palette (every command and place)', keys: ['Ctrl+K'], typing: true, any: true, run: () => cfPalette()},
+  {id: 'palette', label: 'Command palette', keys: ['Ctrl+K'], typing: true, any: true, run: () => cfPalette()},
   {id: 'keys', label: 'Keyboard shortcuts', keys: ['Ctrl+/'], any: true, run: () => cfKeysModal()},
   {id: 'search', label: 'Search box at the top', keys: ['/'], run: () => { $('#q').focus(); $('#q').select(); }},
   {id: 'undo', label: 'Undo', keys: ['Ctrl+Z'], run: () => doUndo()},
@@ -81,9 +81,9 @@ const CF_ACT = [
   {id: 'drop', label: '3D: set it down on what\'s below', keys: ['End'], v3: true, run: () => v3DropToFloor()},
   {id: 'view3d', label: 'Switch between the flat map and 3D', keys: [], world: true, run: () => { const b = document.querySelector(`[data-view3d="${V3.on ? 0 : 1}"]`); if (b) b.click(); }},
   {id: 'panels', label: 'Panels and layouts menu', keys: [], world: true, run: () => PNL.windowsMenu('world', $('#w-panels'))},
-  {id: 'fixit', label: 'Find gaps in this place', keys: [], world: true, run: () => W.info && W.info.interior ? fixitOpen(W.info.key) : toast('Open an interior first.', true)},
-  {id: 'check', label: 'Check this place (what\'s wrong with the furnishing)', keys: [], world: true, run: () => W.info && W.info.interior ? placecheckOpen(W.info.key) : toast('Open an interior first.', true)},
-  {id: 'play', label: 'Play here (pick a spot)', keys: [], world: true, run: () => W.key ? setMode('play') : toast('Open a place first.', true)},
+  {id: 'fixit', label: 'Find gaps in this place', keys: [], world: true, run: () => W.info && W.info.interior ? fixitOpen(W.info.key) : toast('Open an interior first.')},
+  {id: 'check', label: 'Check this place (what\'s wrong with the furnishing)', keys: [], world: true, run: () => W.info && W.info.interior ? placecheckOpen(W.info.key) : toast('Open an interior first.')},
+  {id: 'play', label: 'Play here (pick a spot)', keys: [], world: true, run: () => W.key ? setMode('play') : toast('Open a place first.')},
 ];
 const CF_FIXED = [
   ['W A S D', '3D: fly (Q / E down and up, Shift faster)'], ['Esc', 'Stop: placing, flying, or clear the selection'],
@@ -236,7 +236,7 @@ function cfMenuAt(e, hit, at, locked){
     items.push({label: '⧉ Copy', act: () => groupDo('copy')}, {label: 'Duplicate', act: () => groupDo('dup')},
       {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⟲ Turn 90° the other way', act: () => groupDo('turnback')},
       {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⤡ Tilt them…', act: () => cfRun('tilt')},
-      {label: '🫳 Settle them (let them fall into place)', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0]}, `${W.multi.size} objects`)},
+      {label: '🫳 Settle them', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0]}, `${W.multi.size} objects`)},
       {label: '🫳 Settle them, tipping over what can\'t stand', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0], tip: true}, `${W.multi.size} objects`)},
       {label: '⇄ Replace them with…', act: () => cfRun('replace')},
       {label: '🧩 Save as a prefab…', act: () => { const f = $('#g-prefabname'); if (f) f.value = ''; groupDo('prefab'); }});
@@ -249,8 +249,11 @@ function cfMenuAt(e, hit, at, locked){
     if (!(W.sel && W.sel.cell === ck && W.sel.k === r.k)) selectRef(ck, r.k);
     head(r.name || r.id);
     items.push({label: '⌖ Look at it', act: () => cfRun('focus')});
-    if (typeof owOpen === 'function') items.push({label: '🪟 Open its window (record and placement)', act: () => owOpen(ck, r.k)});
+    if (typeof owOpen === 'function') items.push({label: '🪟 Open its window', act: () => owOpen(ck, r.k)});
     items.push({label: '📌 Pin it in its own panel', act: () => wpPin(ck, r)});
+    // (its own page to work on it in, when its kind has one: Browse's record is a finder, not a workbench)
+    const tool_ = typeof otTool === 'function' && r.ri != null ? otTool(r.type) : null;
+    if (tool_) items.push({label: '✎ Edit it in ' + tool_.label, act: () => openTool(r.ri, r.type, r.id)});
     if (r.ri != null) items.push({label: '📄 Open its record', act: () => { showView('browse'); openRecord(r.ri, true); }});
     items.push({label: '🔎 Where it\'s used (F1)', act: () => qolUses(r.id)});
     sep();
@@ -262,9 +265,9 @@ function cfMenuAt(e, hit, at, locked){
     if (V3.on) items.push({label: '⤓ Set it down on what\'s below', act: () => v3DropToFloor()});
     // (gravity for a moment: the thing itself, or a piece of furniture and everything lying on it; settle.py)
     if (['STAT', 'ACTI', 'CONT'].includes(r.type) && !r.arch && r.b && Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) > 140)
-      items.push({label: '🫳 Settle everything on it (let it fall into place)', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20}, 'what lies on ' + (r.name || r.id))},
+      items.push({label: '🫳 Settle everything on it', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20}, 'what lies on ' + (r.name || r.id))},
         {label: '🫳 Settle everything on it, tipping over what can\'t stand', act: () => cfSettle({cell: ck, at: r.p.slice(0, 3), radius: Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1]) * (r.s || 1) / 2 + 20, tip: true}, 'what lies on ' + (r.name || r.id))});
-    else if (!r.arch) items.push({label: '🫳 Settle it (let it fall into place)', act: () => cfSettle({cell: ck, refs: [r.k]}, r.name || r.id)},
+    else if (!r.arch) items.push({label: '🫳 Settle it', act: () => cfSettle({cell: ck, refs: [r.k]}, r.name || r.id)},
       {label: '🫳 Settle it, tipping it over if it can\'t stand', act: () => cfSettle({cell: ck, refs: [r.k], tip: true}, r.name || r.id)});
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
@@ -278,9 +281,8 @@ function cfMenuAt(e, hit, at, locked){
       if (r.to) items.push({label: '→ Go where it leads', act: () => selAction('gotodest')}, {label: '📍 Pick where you arrive…', act: () => selAction('arrive')});
       // (where it leads, in another view, both live: twowin.js)
       if (r.to && typeof twPanelOpen === 'function' && !TW.embed) items.push({label: '⧉ Open where it leads in a second view', act: () => twPanelOpen(r.to.key, r.to)});
-      if (r.to && typeof twMenuItem === 'function') items.push(twMenuItem(r.to.key, r.to, '↗ Open where it leads in a second window'));
-      else items.push({label: 'Make it lead somewhere…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-relink'); if (s) s.focus(); }, 50); }});
-      if (W.info && W.info.interior) items.push({label: '🌀 Make it lead elsewhere in this place (click where you arrive)…', act: () => doorWithinPlace(ck, r)});
+      if (!r.to) items.push({label: 'Make it lead somewhere…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-relink'); if (s) s.focus(); }, 50); }});
+      if (W.info && W.info.interior) items.push({label: '🌀 Make it lead elsewhere in this place…', act: () => doorWithinPlace(ck, r)});
     }
     if (['STAT', 'ACTI', 'CONT', 'DOOR'].includes(r.type) && typeof dressProbe === 'function'){
       // (dress this piece the game's way: shown once the Workshop has answered whether the game dresses
@@ -289,8 +291,8 @@ function cfMenuAt(e, hit, at, locked){
       if (d && d.dressable){
         sep();
         items.push({label: d.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id); }});
-        items.push({label: '➕ Add one thing (keeps what is on it; again for another)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); addOne(ck, r.k, r.name || r.id); }});
-        if (d.book_dressings) items.push({label: '📚 Fill with books (a shelf of books, whatever the room)', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id, true); }});
+        items.push({label: '➕ Add one thing', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); addOne(ck, r.k, r.name || r.id); }});
+        if (d.book_dressings) items.push({label: '📚 Fill with books', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id, true); }});
       }
       else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } }); }
     }
@@ -299,8 +301,8 @@ function cfMenuAt(e, hit, at, locked){
       // (the user tried a log pile and found no entry): a door to somewhere, an ordinary object again, a rotating or sliding panel
       sep(); head('Secret entrance');
       if (typeof sdMenuItems === 'function') items.push(...sdMenuItems(ck, r));
-      else items.push({label: '🚪 Make it a hidden door (looks the same)', act: () => selAction('secretdoor')});
-      if (r.type === 'STAT') items.push({label: '⚙ Make it an activator (for a script)', act: () => selAction('secretacti')});
+      else items.push({label: '🚪 Make it a hidden door', act: () => selAction('secretdoor')});
+      if (r.type === 'STAT') items.push({label: '⚙ Make it an activator', act: () => selAction('secretacti')});
     }
     if (r.type === 'NPC_' || r.type === 'CREA'){ sep(); items.push({label: '💬 Dialogue', act: () => selAction('talk')}, {label: r.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character', act: () => selAction('char')}); }
     sep();
@@ -309,15 +311,20 @@ function cfMenuAt(e, hit, at, locked){
     // (an outer wall of a place built from pieces: a room added through it, previewed as the kit's pieces; extend.js)
     if (r.arch && W.info && W.info.interior && typeof extendStart === 'function') items.push({label: '➕ Add a room through this wall…', act: () => extendStart(ck, r.k, at ? [at[0], at[1], V3.on && at[2] != null ? at[2] : null] : null)});
     // (Extend mode from this piece: its open faces lit, the game's candidates for each; extend.js)
-    if (r.arch && W.info && W.info.interior && typeof extendMode === 'function') items.push({label: '⬚ Extend from here (piece by piece)…', act: () => extendMode(true, ck, {ref: r.k})});
+    if (r.arch && W.info && W.info.interior && typeof extendMode === 'function') items.push({label: '⬚ Extend from here…', act: () => extendMode(true, ck, {ref: r.k})});
     // (outdoors, a building's piece or door: the interior built inside it; frombuilding.js)
     // (Fit the ground for the building piece itself, not for its door: a trapdoor was "not a building piece")
     if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb){ items.push(fb); if (r.arch) items.push(gfMenuItem(ck, r)); } }
     if (r.arch && !(typeof FB_NOT_BUILDING !== 'undefined' && FB_NOT_BUILDING.test(r.id))) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
+    // (how a person or a creature moves, straight from here: it was three clicks down, the user: "should be easier to find")
+    if (r.ri != null && ['NPC_', 'CREA'].includes(r.type) && typeof anShow === 'function') items.push({label: '🎞 Animations and text keys…', act: () => anShow(r.ri, (r.name || r.id) + ': animation & text keys')});
     if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(r.type) && typeof asShow === 'function') items.push({label: '🧩 Model & textures…', act: () => asShow(r.ri, (r.name || r.id) + ': model & textures')});
     if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(r.type)) items.push({label: '🎨 Retexture…', act: () => selAction('retex')});
     // (a new piece of this kind with the game's numbers for its material; forge.js)
-    if ((r.type === 'WEAP' || r.type === 'ARMO') && typeof forgeShow === 'function') items.push({label: '⚒ Forge a new piece like this…', act: () => forgeShow({kind: r.type === 'WEAP' ? 'weapon' : 'armor', like: r.ri})});
+    if ((r.type === 'WEAP' || r.type === 'ARMO') && typeof forgeShow === 'function'){
+      items.push({label: '⚒ Forge a new piece like this…', act: () => forgeShow({kind: r.type === 'WEAP' ? 'weapon' : 'armor', like: r.ri})});
+      items.push({label: '🌐 Into the world…', act: () => forgeShow({world: r.id})});
+    }
     items.push({label: '🔊 Add a sound…', act: () => selAction('sound')});
     sep();
     if (r.mine) items.push({label: '↶ Undo my changes to it', act: () => selAction('restore')});
@@ -333,7 +340,7 @@ function cfMenuAt(e, hit, at, locked){
     if (typeof QOL !== 'undefined' && QOL.back.length) items.push({label: `← Back to ${QOL.back[QOL.back.length - 1].name} (Alt+←)`, act: () => qolBack()});
     if (W.hide.size) items.push({label: `Show the ${W.hide.size} hidden again (Alt+H)`, act: () => cfRun('unhide')});
     if (W.clip) items.push(cfPasteItem(at));
-    if (at) items.push({label: '🫳 Settle what\'s loose here (let it fall into place)…', act: () => cfSettleAsk(at)});
+    if (at) items.push({label: '🫳 Settle what\'s loose here…', act: () => cfSettleAsk(at)});
     // (outdoors: a house stacked as a volume and fitted with the game's buildings; prefabplan.js)
     if (W.ext && typeof pfOpen === 'function') items.push({label: '🏗 Plan a prefab…', act: () => pfOpen()});
     if (at) items.push({label: '▶ Play here', act: () => playHere({cell: cellKeyAt(at[0], at[1]), x: at[0], y: at[1], z: V3.on && at[2] != null ? at[2] + 60 : groundZ(at[0], at[1]) + (W.ext ? 60 : 40), rz: 0})});
@@ -349,13 +356,13 @@ function cfMenuAt(e, hit, at, locked){
       if (ld && ld.dressable){
         sep();
         items.push({label: ld.dressed ? '🎲 Dress again (a fresh draw from the game\'s dressings)' : '🪄 Dress this (the game\'s way)', act: () => dressPiece(lck, lr.k, lr.name || lr.id)});
-        if (ld.book_dressings) items.push({label: '📚 Fill with books (a shelf of books, whatever the room)', act: () => dressPiece(lck, lr.k, lr.name || lr.id, true)});
-        items.push({label: '➕ Add one thing (keeps what is on it; again for another)', act: () => addOne(lck, lr.k, lr.name || lr.id)});
+        if (ld.book_dressings) items.push({label: '📚 Fill with books', act: () => dressPiece(lck, lr.k, lr.name || lr.id, true)});
+        items.push({label: '➕ Add one thing', act: () => addOne(lck, lr.k, lr.name || lr.id)});
       }
       else { const p = dressProbe(lck, lr); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } }); }
     }
     else if (W.info && W.info.interior && at && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix this edge: what the game stands here…', act: () => fixhereMenu(W.info.key, null, pt, [at[0], at[1], V3.on && at[2] != null ? at[2] : null])});
-    if (W.info && W.info.ruin && typeof ruinAgain === 'function') items.push({label: '🎲 Make this place again (a new layout)', act: () => ruinAgain(W.info.key)});
+    if (W.info && W.info.ruin && typeof ruinAgain === 'function') items.push({label: '🎲 Make this place again', act: () => ruinAgain(W.info.key)});
     if (W.info && W.info.interior) items.push({label: '🔧 Find gaps here', act: () => fixitOpen(W.info.key)}, {label: '🩺 Check this place', act: () => placecheckOpen(W.info.key)});
     if (W.info && W.info.interior && typeof redrawPaths === 'function') items.push({label: '🧭 Redraw the walking paths (Project Tamriel\'s rules)', act: () => redrawPaths()});
     // (another view on this place, or the game's version of it; with one open: follow it, its lighting; twowin.js)
@@ -391,7 +398,7 @@ function cfMenuAt(e, hit, at, locked){
     const pk = V3.lastPick, wall = pk.normal && Math.abs(pk.normal.z) <= 0.7;
     sep(); items.push({label: wall ? '▦ Put the grid here, on this wall' : '▦ Put the grid here, level at this height', act: () => v3GridHere(pk)});
   }
-  // (this view in a second window, whatever was clicked; twowin.js)
+  // (this place in a second view, whatever was clicked; twowin.js)
   if (typeof twHereItems === 'function'){ const tw = twHereItems(); if (tw.length){ sep(); items.push(...tw); } }
   // (what other parts of the Workshop add: Create here, Populate; each sorted into its group like the rest)
   for (const f of CF_MENU_MORE){ try { items.push(...(f(e, hit, at, locked) || [])); } catch (err) {} }
@@ -566,7 +573,7 @@ function cfPalette(){
         const [cells, recs] = await Promise.all([api('/api/search?' + new URLSearchParams({q, types: 'CELL', limit: 8})), api('/api/search?' + new URLSearchParams({q, limit: 8}))]);
         if (my !== seq || !bg.isConnected) return;
         found = cells.rows.map(x => ({g: 'Places', label: x.name || x.id, run: () => { showView('world'); worldOpenIndex(x.i); }}))
-          .concat(recs.rows.filter(x => !['CELL', 'PGRD', 'LAND', 'LTEX'].includes(x.type)).map(x => ({g: 'Records', label: x.name || x.id, sub: (S.typeLabels[x.type] || x.type) + (x.name ? ' · ' + x.id : ''), run: () => { showView('browse'); openRecord(x.i, true); }})));
+          .concat(recs.rows.filter(x => !['CELL', 'PGRD', 'LAND', 'LTEX'].includes(x.type)).map(x => ({g: 'Records', label: x.name || x.id, sub: (S.typeLabels[x.type] || x.type) + (x.name ? ' · ' + x.id : ''), run: () => openTool(x.i, x.type, x.id)})));
         draw();
       } catch (e){}
     }, 160);

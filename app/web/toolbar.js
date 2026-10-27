@@ -13,6 +13,8 @@ function tbCss(){
   c.textContent = `
   .v3grp{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
   .v3grp.tb-placed,.viewsw.tb-placed{position:absolute;z-index:4}
+  .v3grp:has(.v3viewmenu[style*="block"]){position:relative;z-index:9}
+  .v3grp.tb-placed:has(.v3viewmenu[style*="block"]){position:absolute}
   .tb-grip{cursor:grab;color:var(--faint);font-size:11px;line-height:1;letter-spacing:-2px;padding:6px 4px 6px 2px;user-select:none;align-self:stretch;display:flex;align-items:center;
     background:color-mix(in srgb,var(--panel) 87%,transparent);border:1px solid var(--line2);border-radius:6px}
   .tb-grip:hover{color:var(--gold2);border-color:var(--goldline)}

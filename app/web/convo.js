@@ -573,7 +573,7 @@ async function cvQuestFlow(q){
         ${l.choices.length ? `<span>${l.choices.length} choices</span>` : ''}${l.gives.map(g => `<span>+ ${g.n} ${esc(g.id)}</span>`).join('')}${l.takes.map(g => `<span>− ${g.n} ${esc(g.id)}</span>`).join('')}</div></div>`;
   let h = `<div class="cvbar"><div class="seg"><button data-zoom="-1" title="Smaller">−</button><button data-zoom="0" title="Actual size">${Math.round(CV.zoom * 100)}%</button><button data-zoom="1" title="Larger">+</button></div>
     <button class="btn sm" id="cv-tidy" title="Put every line back under its stage">↺ Tidy up</button>
-    <span class="msg">Each line sits under the first stage it can be said at; a gold arrow goes to the stage it moves the quest on to. Rows are who says it. Point at a line to follow it, drag it to move it, click to open it.${r.more ? ` (${r.more} more lines not shown.)` : ''}</span></div>
+    <span class="msg">Lines sit under the first stage they can be said at; a gold arrow shows the stage a line moves the quest to. Rows are speakers. Point to follow, drag to move, click to open.${r.more ? ` (${r.more} more lines not shown.)` : ''}</span></div>
     <div class="cvcanvas" id="cv-canvas" style="height:calc(100vh - 300px)"><div class="cvsizer" id="cv-sizer"><div class="cvinner" id="cv-inner" style="transform:scale(${CV.zoom})"><svg class="cvedges" id="cv-edges"></svg>
     <div class="qflow" style="grid-template-columns:150px repeat(${used.length}, 250px)"><div></div>${used.map(head).join('')}`;
   for (const w of who){

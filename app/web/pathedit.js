@@ -184,7 +184,7 @@ window.addEventListener('mouseup', e => {
   }
   if (D.kind === 'add3' && !D.moved && V3.on && e.target === V3.renderer.domElement){
     const h = v3Pick(e, true);
-    if (!h || !h.world) return toast('Click on a floor or the ground.', true);
+    if (!h || !h.world) return toast('Click on a floor or the ground.');
     peAdd(h.world, !D.ctrl);
     return;
   }

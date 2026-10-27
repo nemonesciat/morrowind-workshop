@@ -90,7 +90,7 @@ function anDraw(){
       <div class="an-h">Animation groups <span class="msg">(${G.length})</span></div>
       <div class="an-groups">${G.map((g, n) => `<button class="an-g ${AN.group === g ? 'on' : ''}${d.sources && g.src ? ' src' : ''}" data-ang="${n}" title="${g.start.toFixed(2)}–${g.stop.toFixed(2)} s${d.sources ? ' · from ' + esc(d.sources[g.src].label) + ' animation' : ''}">${esc(g.name)}</button>`).join('') ||
         '<span class="msg">No groups named: it plays from start to end.</span>'}</div>
-      ${d.sources && d.sources.length > 1 ? `<div class="msg" style="font-size:11.5px;margin-top:3px">Layers: ${d.sources.map((s, n) => `<span class="${n ? 'an-lay' : ''}">${esc(s.label)}</span>`).join(' ▸ ')}. Dashed groups come from a later layer.</div>` : ''}
+      ${d.sources && d.sources.length > 1 ? `<div class="msg" style="font-size:11.5px;margin-top:3px">Layers: ${d.sources.map((s, n) => `<span class="${n ? 'an-lay' : ''}">${esc(s.label)}</span>`).join(' ▸ ')}. Dashed: from a later layer.</div>` : ''}
       <div class="an-play">
         <button class="btn sm" id="an-pp">${AN.playing ? '⏸ Pause' : '▶ Play'}</button>
         <label class="msg">Speed <select class="inp" id="an-speed">${[0.25, 0.5, 1, 2].map(v => `<option value="${v}" ${v === AN.speed ? 'selected' : ''}>${v}×</option>`).join('')}</select></label>
@@ -124,7 +124,7 @@ function anDraw(){
            <button class="btn sm" id="an-ptrial-x">Back</button>`
         : `<select class="inp" id="an-people" style="flex:1;min-width:0" title="Animations other people in the game move with (dancers, the dead, Khajiit…)"><option value="">Try another person's animation…</option>${(AN.people || []).filter(p => p.model !== d.modl).map(p => `<option value="${esc(p.model)}">${esc(p.model.replace(/\.nif$/i, ''))} · ${p.count} group${p.count === 1 ? '' : 's'} · ${esc(p.example)}${p.people > 1 ? ` and ${p.people - 1} more` : ''}${p.beast ? ' (beast folk)' : ''}</option>`).join('')}</select>
            ${d.modl ? `<button class="btn sm" id="an-pshared" title="Take their own model (${esc(d.modl)}) off: they move with the shared animation only">↺ The shared animation again</button>` : ''}`}</div>` : ''}
-      ${d.shared && !AN.ptrial ? `<div class="msg" style="font-size:11.5px;margin-top:6px">${d.modl ? `${esc(d.name || d.id)} has an own model (${esc(d.modl)})${d.own ? ', one of your mod\'s that only they use' : ''}. ` : ''}Saving everywhere changes the file for everyone who moves with it; "For this person only" puts the group into ${esc(d.name || d.id)}'s own animation.</div>` : ''}
+      ${d.shared && !AN.ptrial ? `<div class="msg" style="font-size:11.5px;margin-top:6px">${d.modl ? `${esc(d.name || d.id)} has an own model (${esc(d.modl)})${d.own ? ', one of your mod\'s that only they use' : ''}. ` : ''}"Save everywhere" changes everyone who moves with this file; "For this person only" changes ${esc(d.name || d.id)} alone.</div>` : ''}
       <div class="an-h" style="margin-top:10px">Text keys <span class="msg">${d.keyfile ? `in ${esc(d.keyfile.replace('meshes/', ''))}${d.sources ? ` (${esc(d.sources[AN.src].label)})` : ''}` : '(none in this model)'}</span></div>
       <div class="an-keys" id="an-keys"></div>
       ${d.keyfile && !AN.ptrial ? `<div class="an-btns"><button class="btn sm" id="an-add" title="A new key at the time shown">＋ Key here</button>
@@ -410,10 +410,12 @@ function anBuild(keepView){
   V.scene.add(root); V.root = root; V.bones = bones;
   root.updateMatrixWorld(true);
   const mats = {};
-  const mat = s => {
-    const k = (s.tex || '') + (s.alpha ? 'a' : '');
+  // (three r128 bends a skinned mesh by its bones only when its material says skinning: without it the cuirass,
+  // the chest and the hands were drawn unbent, round the feet; a material of its own for skinned shapes)
+  const mat = (s, skinned) => {
+    const k = (s.tex || '') + (s.alpha ? 'a' : '') + (skinned ? 's' : '');
     if (!mats[k]){
-      const m = new T.MeshLambertMaterial({color: 0xcfc6b5, side: T.DoubleSide, alphaTest: s.alpha ? 0.5 : 0});
+      const m = new T.MeshLambertMaterial({color: 0xcfc6b5, side: T.DoubleSide, alphaTest: s.alpha ? 0.5 : 0, skinning: !!skinned});
       if (s.tex && typeof v3Tex === 'function') v3Tex(s.tex, tx => { m.map = tx; m.color.setHex(0xffffff); m.needsUpdate = true; });
       mats[k] = m;
     }
@@ -437,7 +439,7 @@ function anBuild(keepView){
       }
       g.setAttribute('skinIndex', new T.Uint16BufferAttribute(si, 4));
       g.setAttribute('skinWeight', new T.Float32BufferAttribute(sw, 4));
-      const mesh = new T.SkinnedMesh(g, mat(s));
+      const mesh = new T.SkinnedMesh(g, mat(s, true));
       const sb = sk.bones.map(b => bones[b]);
       const inv = sk.inv.map(x => anMat4(x.R, x.t, x.s));
       mesh.bind(new T.Skeleton(sb, inv), new T.Matrix4());

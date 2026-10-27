@@ -603,8 +603,11 @@ def options(db):
                 live = [x for x in v if x not in db.dead]
                 if live:
                     r = db.recs[live[-1]]
-                    out.append({'id': r[1], 'name': r[2] or r[1]})
-        return sorted(out, key=lambda x: x['name'].lower())
+                    import create
+                    nm, old = create._unused_name(r[1], r[2])
+                    out.append({'id': r[1], 'name': nm, 'unused': old})
+        # (the game's "<Deprecated>" leftovers last, by their IDs)
+        return sorted(out, key=lambda x: (x['unused'], x['name'].lower()))
     effects = []
     for k, v in db.by_key.items():
         if k[0] == 'MGEF' and k[1].lstrip('-').isdigit():

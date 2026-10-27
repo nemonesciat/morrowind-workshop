@@ -11,9 +11,8 @@ function renderLists(){
     side.innerHTML = `<div class="actions" style="margin-top:0"><button class="btn sm primary" id="lv-new">+ New list</button><button class="btn sm" id="lv-back">← Create</button></div>
       <h3>Open a list</h3>
       <div class="dd"><input class="inp" id="lv-find" placeholder="Find a list… (e.g. random_gold)" autocomplete="off"><div class="ddlist" id="lv-find-l"></div></div>
-      <div class="msg" style="margin-top:14px;line-height:1.6">Leveled lists give players something different each time, matched to their level:
-        loot in chests and on bodies, and which creature appears at a spawn point. Put a list in a container or a character's inventory like any item,
-        or place a creature list on the World map.</div>`;
+      <div class="msg" style="margin-top:14px;line-height:1.6">A list gives something different each time, matched to the player's level: the loot in a chest,
+        or the creature at a spawn point. Put it in a container or someone's belongings like any item, or a creature list on the World map.</div>`;
     ddSearch('lv-find', 'LEVI,LEVC', r => lvOpen(r.id));
     $('#lv-new').onclick = lvNew;
     $('#lv-back').onclick = () => showView('createv');
@@ -28,7 +27,7 @@ function lvNewForm(){
   LV.newOpen = true;
   const prefix = (S.summary && S.summary.project ? S.summary.project.name : 'mod').replace(/[^A-Za-z0-9]/g, '').slice(0, 8).toLowerCase() || 'mod';
   $('#lmain').innerHTML = `<div class="wrap" style="max-width:760px"><h1>New leveled list</h1>
-    <p class="msg">A list the game rolls on: what a chest holds, what a bandit carries, or which creature comes out of a spawn point, matched to the player's level and different each time. Lists have no name, only an ID. Start empty, or copy one of the game's own lists (random_gold, random_weapon, ex_bandit…) and change it.</p>
+    <p class="msg">A list the game rolls on, different each time and matched to the player's level: what a chest holds, what a bandit carries, which creature appears. Start empty, or copy one of the game's (random_gold, random_weapon…) and change it.</p>
     <div class="frow"><label>Kind</label><div class="radios"><label><input type="radio" name="lv-kind" value="items" checked>Random loot (items, gold, other loot lists)</label>
       <label><input type="radio" name="lv-kind" value="creatures">Random creatures (for spawn points and summons)</label></div>
       <label>ID</label><div><input class="inp" id="lv-id" value="${esc(prefix)}_lev_" maxlength="31" style="max-width:320px"><div class="hint">Say what it is for: ${esc(prefix)}_lev_bandit_loot, ${esc(prefix)}_lev_cave_beasts.</div></div>
@@ -124,7 +123,7 @@ function lvRender(){
   $('#lmain').querySelectorAll('[data-lvplace]').forEach(b => b.onclick = () => { showView('world'); worldOpen(b.dataset.lvplace); });
   $('#lmain').querySelectorAll('[data-lvopen]').forEach(b => b.onclick = () => {
     const k = b.dataset.lvk;
-    if (k === 'NPC_' || k === 'CREA') cOpen(b.dataset.lvid); else if (k === 'LEVI' || k === 'LEVC') lvOpen(b.dataset.lvid); else { showView('browse'); openRecord(+b.dataset.lvopen, true); }
+    openTool(+b.dataset.lvopen, k, b.dataset.lvid);      // (an item in the item editor, a person in Characters, a list here)
   });
   v3ThumbScan($('#lmain'));
 }

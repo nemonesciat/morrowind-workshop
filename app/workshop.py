@@ -323,11 +323,13 @@ def play(body):
     if not info:
         raise editing.EditError('Unknown cell.')
     cmds = []
+    target = None                        # (where the player goes: x, y, z, rx, ry, rz, for a moved save copy)
     if body.get('god'):
         cmds.append('tgm')
     if 'x' in body:
         x, y, z = float(body['x']), float(body['y']), float(body['z'])
         rz = round(math.degrees(float(body.get('rz', 0)))) % 360
+        target = (x, y, z, 0.0, 0.0, float(body.get('rz', 0)))
         if info['interior']:
             cmds.append('player->PositionCell %.0f %.0f %.0f %d "%s"' % (x, y, z, rz, info['name']))
         else:
@@ -336,6 +338,7 @@ def play(body):
         cx, cy = (info['gx'] + 0.5) * 8192, (info['gy'] + 0.5) * 8192
         ld = mapdata.land(db, info['gx'], info['gy'])
         cz = max(ld['h'][32 * 65 + 32], 0) + 100 if ld.get('exists') else 1000
+        target = (cx, cy, cz, 0.0, 0.0, 0.0)
         cmds.append('player->Position %.0f %.0f %.0f 0' % (cx, cy, cz))
     # the test setup that's switched on (unless this start asks for none)
     setup = _active_setup() if body.get('setup', True) else None
@@ -354,10 +357,24 @@ def play(body):
         # script moves them, so: just inside the place's door, as the Workshop's doors arrive)
         import doors
         pos, _d = doors.arrival(db, body['cell'])
+        target = (pos[0], pos[1], pos[2], 0.0, 0.0, pos[5])
         cmds.insert(1 if cmds[:1] == ['tgm'] else 0, 'player->PositionCell %.0f %.0f %.0f %d "%s"' % (
             pos[0], pos[1], pos[2], round(math.degrees(pos[5])) % 360, info['name']))
         with open(script, 'w', encoding='cp1252', errors='replace') as f:
             f.write('\n'.join(cmds) + '\n')
+    if save and target:
+        # (a copy of the save with the player already there: the game loads this place straight away instead
+        # of where they were saved and then moving them, saves.moved_copy; the move commands go, the rest stay)
+        try:
+            copy = saves.moved_copy(save, target, name=info['name'] if info['interior'] else None,
+                                    grid=None if info['interior'] else (math.floor(target[0] / 8192), math.floor(target[1] / 8192)),
+                                    cell_label=info['name'] or '')
+            cmds = [c for c in cmds if not c.startswith(('player->PositionCell ', 'player->Position '))]
+            with open(script, 'w', encoding='cp1252', errors='replace') as f:
+                f.write('\n'.join(cmds) + '\n')
+            save = copy
+        except Exception as e:           # (a save laid out otherwise, a locked file: the save as it is)
+            print('play here: the save is loaded as it is (%s)' % e)
     if save:
         args = [exe, '--load-savegame', save, '--script-run', script] + _game_content_args()
     else:
@@ -1134,6 +1151,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(groups.prefabs())
             elif u.path == '/api/items/options':
                 self._json(items.options(db))
+            elif u.path == '/api/forge/setoptions':
+                # the Forge's Set tab: the materials a set can look like, with their slots and weapons (gearsets.py)
+                import gearsets
+                return self._json(gearsets.options(db))
+            elif u.path == '/api/forge/places':
+                # where the game would put this piece: lists, people who carry one like it, merchants (gearplaces.py)
+                import gearplaces
+                try:
+                    bw = q.get('between')
+                    return self._json(gearplaces.places(db, q.get('id') or '', q.get('mat') or None,
+                                                        (lambda p: (p[0], p[1], float(p[2])))(bw.split(',')) if bw else None))
+                except ValueError as e:
+                    return self._json({'error': str(e)}, 400)
             elif u.path in ('/api/forge/options', '/api/forge/propose', '/api/forge/like'):
                 # the Forge: a new weapon or armour piece with the numbers the game gives its type and material
                 import gearsurvey
@@ -1958,6 +1988,37 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(plans.delete_plan(body.get('name', '')))
                 if u.path == '/api/items/create':
                     return self._json(items.create_item(db, body))
+                if u.path in ('/api/forge/setpreview', '/api/forge/set'):
+                    # a whole set: what it would be, or made as one Undo (gearsets.py)
+                    import gearsets
+                    bw = body.get('between')
+                    args = (body.get('look') or '', body.get('mat') or None, tuple(bw) if bw else None, body.get('stem') or '',
+                            body.get('armor') or [], body.get('weapons') or [])
+                    try:
+                        if u.path.endswith('setpreview'):
+                            return self._json({'pieces': gearsets.preview(db, *args)})
+                        return self._json(gearsets.make(db, *args, names=body.get('names') or {}))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path in ('/api/forge/setplaces', '/api/forge/placeset'):
+                    # a whole set into the world: where each piece would go, or all of it placed, one Undo (gearplaces.py)
+                    import gearplaces
+                    bw = body.get('between')
+                    between = tuple(bw) if bw else None
+                    try:
+                        if u.path.endswith('setplaces'):
+                            return self._json(gearplaces.set_places(db, body.get('ids') or [], body.get('mat') or None, between))
+                        return self._json(gearplaces.place_set(db, body.get('ids') or [], body.get('lists') or {}, body.get('classes') or [],
+                                                               body.get('sells') or [], body.get('mat') or None, between, body.get('name') or ''))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path == '/api/forge/place':
+                    # the piece into the world as chosen: lists, swaps, merchants' stock, one Undo (gearplaces.py)
+                    import gearplaces
+                    try:
+                        return self._json(gearplaces.place(db, body.get('id') or '', body.get('lists') or [], body.get('swaps') or [], body.get('sells') or []))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
                 if u.path == '/api/forge/check':
                     import gearsurvey
                     bw = body.get('between')
@@ -2435,6 +2496,19 @@ def model_for(q):
     if not model:
         return {'error': 'No 3D model to preview for this kind of record.'}
     path = 'meshes/' + model.lower().replace('\\', '/')
+    if r[0] == 'CREA':
+        # a creature stands in the first frame of its Idle, as the game shows it: its file's own pose hung a
+        # centurion spider's legs apart from its body, and skinned parts came unbent (nifanim.posed)
+        key = 'crea|' + path
+        if key not in _model_cache:
+            try:
+                import nifanim
+                _model_cache[key] = nifanim.posed(db, ri)
+            except Exception as e:
+                print('posed creature %s: %s' % (r[1], e))
+                _model_cache[key] = None
+        if _model_cache[key]:
+            return {'model': model, 'shapes': _model_cache[key]}
     if path not in _model_cache:
         raw = db.meshes.read(path)
         shapes = mesh_from_nif(raw) if raw else None

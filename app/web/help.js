@@ -109,7 +109,7 @@ function renderGuide(){
   <div class="cgrid home-cards">
     ${card('tour', '🏠', 'Guided · about 2 minutes', 'Build your first house', 'Lay out a few rooms, let the Workshop build and furnish them from the game\'s own pieces, then look round it in 3D.')}
     ${card('world', '🗺', 'World map', 'Open a place', 'Any town, house or cave of your game, in 2D or 3D. Move things, drag new ones in, furnish rooms, then Play here.')}
-    ${card('create', '⚒', 'Create', 'Make something new', 'A house, a dungeon or ruin, a person, an item, a spell, a book or a container, each one change you can undo.')}
+    ${card('create', '⚒', 'Create', 'Make something new', 'A house, a dungeon or ruin, a person, a spell, a book, or weapons and armour from the Forge, each one change you can undo.')}
     ${card('browse', '🔎', 'Browse', 'Find anything', 'Search every record in your load order by name, ID, dialogue or model, and open it to see and change it.')}
   </div>
 
@@ -136,7 +136,8 @@ function renderGuide(){
     <tr><td><b>World map</b></td><td>Places in 2D or 3D. Drag things in from the Place panel, click to select, drag to move. In 3D: right-drag to look,
       ${HELP_KEY('W')}${HELP_KEY('A')}${HELP_KEY('S')}${HELP_KEY('D')} to fly, ${HELP_KEY('G')} move, ${HELP_KEY('R')} turn; <b>View ▾</b> has a grid, wireframe and, outdoors, the view distance; <b>?</b> lists every control.
       Outdoors, <b>⛰ Ground</b> shapes and paints the land and scatters grass and plants.</td></tr>
-    <tr><td><b>Create</b></td><td>Quick starts: a whole house built from a style's wall and floor pieces and furnished (or a place the game made, copied with a door from outside), new people, items, spells, books, random loot lists and containers. Each is one change you can undo.</td></tr>
+    <tr><td><b>Create</b></td><td>Quick starts: a whole house built from a style's wall and floor pieces and furnished (or a place the game made, copied with a door from outside), new people, items, spells, books, random loot lists and containers. Each is one change you can undo.
+      <b>The Forge</b> makes weapons and armour, one piece or a whole set, with the game's own numbers for the material, then puts them into the world: the loot lists, the people who carry such things, the merchants who sell them.</td></tr>
     <tr><td><b>Characters</b></td><td>People and creatures: looks, stats, what they sell, where they stand.</td></tr>
     <tr><td><b>Dialogue</b></td><td>Greetings, topics and quests with their journal stages. Lines can depend on quest stages, items and more.</td></tr>
     <tr><td><b>Scripts</b></td><td>Morrowind scripts and OpenMW Lua scripts, checked as you type.</td></tr>
@@ -210,11 +211,15 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-gvie
 document.addEventListener('click', e => { if (e.target.closest && e.target.closest('.brand')) showView('guide'); });
 
 // ----- settings
-// the ✦ AI button at the top, for those who'll never use it hidden (Settings, kept for next time; ticking the
-// box again brings it back)
-function aiBtnShown(){ try { return localStorage.getItem('ws-aibtn') !== '0'; } catch (e){ return true; } }
+// the ✦ AI button at the top: shown once there's an API key, or when ticked in Settings (unticking hides it, kept
+// for next time); nobody who never set the assistant up sees it
+function aiBtnShown(){
+  let v = null; try { v = localStorage.getItem('ws-aibtn'); } catch (e) {}
+  return v === '1' || (v !== '0' && typeof AI !== 'undefined' && AI.configured);
+}
 function aiBtnApply(){ const b = $('#aibtn'); if (b) b.style.display = aiBtnShown() ? '' : 'none'; if (typeof hdrFit === 'function') hdrFit(); }
 aiBtnApply();
+if (typeof aiStatus === 'function') aiStatus().then(aiBtnApply);
 
 async function renderSettings(){
   const w = $('#settingswrap');
@@ -248,7 +253,7 @@ async function renderSettings(){
     ${p ? `<h4 style="margin:14px 0 6px">Backups of ${esc(p.name)} (${bk.backups.length})</h4>
       <div class="bklist">${bk.backups.map(b => `<div class="setrow"><span>${esc(when(b.time))}${b.why ? ` <span class="chip">${esc(b.why)}</span>` : ''}</span>
         <span><span class="msg">${fmtN(Math.round(b.size / 1024))} KB</span> <button class="btn sm" data-restore="${esc(b.file)}">Restore</button></span></div>`).join('')
-        || '<div class="msg">None yet.</div>'}</div>` : '<p class="msg">Open a mod to see its backups.</p>'}
+        || '<div class="msg">None yet: the first is made a few minutes after you start working on it.</div>'}</div>` : '<p class="msg">Open a mod to see its backups.</p>'}
     <div class="actions"><button class="btn sm" data-open="backups">Open the backups folder</button></div></section>
 
   <section class="card setsec"><h3>Starting up</h3>
@@ -264,8 +269,8 @@ async function renderSettings(){
   $('#st-pick').onclick = async () => { try { toast('Choose OpenMW\'s folder in the window that opens…'); const r = await post('/api/openmw/pick', {}); if (r.ok){ toast('Using OpenMW in ' + r.install + '. Reading your game again…'); setTimeout(poll, 300); } } catch (e){ toast(e.message, true); } };
   const auto = $('#st-auto'); if (auto) auto.onclick = async () => { await post('/api/settings', {openmw_reset: true}); toast('Looking for OpenMW by itself. Reading your game again…'); setTimeout(poll, 300); };
   $('#st-aibtn').onchange = e => { try { localStorage.setItem('ws-aibtn', e.target.checked ? '1' : '0'); } catch (x) {} aiBtnApply(); };
-  $('#st-savekey').onclick = async () => { const k = $('#st-key').value.trim(); if (!k) return; await post('/api/ai/key', {key: k}); AI.configured = true; toast('Key saved.'); renderSettings(); };
-  const dk = $('#st-delkey'); if (dk) dk.onclick = async () => { if (!confirm('Remove the saved API key?')) return; await post('/api/ai/key', {key: ''}); AI.configured = false; renderSettings(); };
+  $('#st-savekey').onclick = async () => { const k = $('#st-key').value.trim(); if (!k) return; await post('/api/ai/key', {key: k}); AI.configured = true; aiBtnApply(); toast('Key saved.'); renderSettings(); };
+  const dk = $('#st-delkey'); if (dk) dk.onclick = async () => { if (!confirm('Remove the saved API key?')) return; await post('/api/ai/key', {key: ''}); AI.configured = false; aiBtnApply(); renderSettings(); };
   $('#st-bmin').onchange = e => save({backup_minutes: +e.target.value});
   $('#st-bkeep').onchange = e => save({backup_keep: +e.target.value});
   $('#st-guide').onchange = e => { homeStartSet(e.target.checked); toast('Saved.'); };

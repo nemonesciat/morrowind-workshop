@@ -293,6 +293,40 @@ def _leaky_piece(B, pid):
     return bool(g) and g[0] >= 6 and g[1] / g[0] >= GAME_SHARE
 
 
+def _drawn(sc, o, d):
+    """Whether the first face a ray meets is met from its drawn side (the inside of a cave's shell)."""
+    h = sc.nearest_any(o, d, 2000)
+    return bool(h) and not sc.back_of(h[1], d)
+
+
+def inside(sc, box, step=128):
+    """Eye spots over the floor inside a piece's box (a grid, step apart) and how many of them see the void:
+    (spots, seeing). A cave chamber's rock is open where the game closes it with big rock formations."""
+    spots = seen = 0
+    x = box[0] + step / 2
+    while x < box[3]:
+        y = box[1] + step / 2
+        while y < box[4]:
+            g = _probe(sc, x, y, box[2] + (box[5] - box[2]) * 0.6)
+            # (only a spot inside the cave: the floor under it and the roof over it seen from their drawn
+            # side. A spot on the rock's outside, over another piece's roof, sees the void and no one stands
+            # there; such spots made most of a made chamber's count, the user's Bucci, 2026-10-26)
+            if g and g[1] and g[1] > 90 and g[2] > box[2] and _drawn(sc, g[0], (0.0, 0.0, -1.0)) and _drawn(sc, g[0], (0.0, 0.0, 1.0)):
+                spots += 1
+                if any(sc.nearest_any(g[0], d, REACH) is None for d in DIRS):
+                    seen += 1
+            y += step
+        x += step
+    return spots, seen
+
+
+def inside_share(kind, pid):
+    """The share of eye spots inside the game's own pieces of this id that see the void (dgbase 'inside'), or
+    None when the game shows too few."""
+    g = (base(kind).get('inside') or {}).get(pid)
+    return g[1] / g[0] if g and g[0] >= 10 else None
+
+
 def seams_check(db, lay, sc=None, leaks=True, kind=None):
     """At each join: the void seen through it ([(k, x, y, z, rays out)]), and joins too low or narrow to walk
     ([(k, x, y, z, 'low'|'narrow', size)]); both where the game's own joins of the same two pieces don't do it

@@ -641,6 +641,98 @@ def for_record(db, rec_i, modl=None):
             'groups': groups(keys), 'keyfile': keyfile, 'length': round(length, 3)}
 
 
+def _at_time(keys, t):
+    """A key track's value at time t, straight between keys (a turn's quaternion taken the short way, then made whole)."""
+    if not keys:
+        return None
+    if t <= keys[0][0]:
+        return keys[0][1]
+    for (t0, v0), (t1, v1) in zip(keys, keys[1:]):
+        if t0 <= t <= t1:
+            f = (t - t0) / max(1e-6, t1 - t0)
+            if isinstance(v0, tuple):
+                if len(v0) == 4 and sum(a * b for a, b in zip(v0, v1)) < 0:
+                    v1 = tuple(-c for c in v1)
+                v = tuple(a + (b - a) * f for a, b in zip(v0, v1))
+                if len(v) == 4:
+                    L = sum(c * c for c in v) ** 0.5 or 1.0
+                    v = tuple(c / L for c in v)
+                return v
+            return v0 + (v1 - v0) * f
+    return keys[-1][1]
+
+
+def _q_mat(q):
+    w, x, y, z = q
+    return [[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]]
+
+
+def posed(db, rec_i, group='idle'):
+    """A creature's or a moving object's shapes as the 3D view takes them (nif.mesh_from_nif's form, in the
+    model's own frame), standing in the first frame of its group (Idle) as the game shows it, not in the
+    file's own pose: a centurion spider's legs drawn in their file's pose hung under it, apart from its body,
+    and skinned parts were drawn unbent (the user, 2026-10-27). None when it has no animation."""
+    d = for_record(db, rec_i)
+    if not d['tracks']:
+        return None
+    T, tracks = d['tree'], d['tracks']
+    g = next((x for x in d['groups'] if x['name'].lower() == group), None) or (d['groups'][0] if d['groups'] else None)
+    tm = g['start'] if g else 0.0
+    world = []
+    for n in T['nodes']:
+        R, t, s = n['R'], n['t'], n['s']
+        k = tracks.get(n['name'])
+        if k and n['parent'] >= 0:
+            q = _at_time(k['rot'], tm)
+            p = _at_time(k['pos'], tm)
+            sc = _at_time(k['scale'], tm)
+            R = _q_mat(q) if q else R
+            t = list(p) if p else t
+            s = sc if sc is not None else s
+        L = _mat(R, t, s)
+        world.append(_mul4(world[n['parent']], L) if n['parent'] >= 0 else L)
+    # (a hidden node hides what hangs under it: a creature's collision box, its spare parts)
+    hid = []
+    for n in T['nodes']:
+        hid.append(bool(n.get('hidden')) or (n['parent'] >= 0 and hid[n['parent']]))
+    out = []
+    for sh in T['shapes']:
+        if sh['node'] >= 0 and hid[sh['node']]:
+            continue
+        pts = sh['p']
+        sk = sh.get('skin')
+        pos = []
+        if sk and sk.get('inv') and all(b >= 0 for b in sk['bones']):
+            Ms = [_mul4(world[b], _mat(sk['inv'][k]['R'], sk['inv'][k]['t'], sk['inv'][k]['s'])) for k, b in enumerate(sk['bones'])]
+            for v in range(len(pts) // 3):
+                x, y, z = pts[v * 3:v * 3 + 3]
+                ws = sk['weights'][v] if v < len(sk['weights']) else []
+                ws = ws or [(0, 1.0)]
+                tot = sum(w for _b, w in ws) or 1.0
+                acc = [0.0, 0.0, 0.0]
+                for b, w in ws:
+                    M = Ms[b]
+                    for a in range(3):
+                        acc[a] += w / tot * (M[a][0] * x + M[a][1] * y + M[a][2] * z + M[a][3])
+                pos += [round(c, 2) for c in acc]
+            M = None
+        else:
+            M = _mul4(world[sh['node']] if sh['node'] >= 0 else _mat(I3, [0, 0, 0], 1.0), _mat(sh['R'], sh['t'], sh['s']))
+            for v in range(len(pts) // 3):
+                x, y, z = pts[v * 3:v * 3 + 3]
+                pos += [round(M[a][0] * x + M[a][1] * y + M[a][2] * z + M[a][3], 2) for a in range(3)]
+        idx = sh['i']
+        if M is not None:
+            det = (M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0])
+                   + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]))
+            if det < 0:          # (a mirrored part turns its triangles inside out, as nif.py flips them back)
+                idx = [w for k in range(0, len(idx) - 2, 3) for w in (idx[k], idx[k + 2], idx[k + 1])]
+        out.append({'p': pos, 'uv': sh['uv'], 'i': idx, 'tex': sh['tex'], 'alpha': sh['alpha'], 'double': sh['double']})
+    return out
+
+
 def _write_anim(db, rec_i, new_kf, how, kf_src=None, label='own animation'):
     """Write an animation file for an object or creature: over its own .kf (or model) in your mod's folder
     ('everywhere'), or as copies of its model, x-model and the new .kf under one new name with a new record

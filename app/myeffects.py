@@ -78,6 +78,8 @@ DOES = [
     ('message', 'Show a message', 'Show a line of text to the player.'),
     ('lua', 'Lua of your own', 'Your own code, run when you choose, with helpers for the steps above. The Assistant can write it from a description.'),
 ]
+# (kinds not yet seen working in the game: not offered as a new step, but an effect that has one keeps it)
+UNTRIED = ('quake',)
 # (where each kind is done: on the actor itself, or by the global script for what only the world can do)
 WORLD = ('teleport', 'spawn', 'summon', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
 FT = 22.1                     # (game units to a foot, as Tamriel Data's Blink reckons it)
@@ -202,7 +204,7 @@ def effects(db):
 
 def read(db):
     return {'effects': effects_raw(db), 'templates': templates(db),
-            'does': [{'kind': k, 'label': l, 'what': w} for k, l, w in DOES],
+            'does': [{'kind': k, 'label': l, 'what': w, 'untried': k in UNTRIED} for k, l, w in DOES],
             'whens': list(WHENS), 'only': list(ONLY), 'weathers': list(WEATHERS)}
 
 

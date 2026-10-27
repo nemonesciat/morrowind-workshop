@@ -29,8 +29,8 @@ function loRender(){
   for (const p of LO.problems) (probs[p.plugin.toLowerCase()] = probs[p.plugin.toLowerCase()] || []).push(p.text);
   const orderProblem = LO.problems.some(p => p.text.includes('loads after it'));
   let h = `<h1>Load order</h1>
-    <p class="lead">Your OpenMW content list, top to bottom. Files lower in the list win when two of them change the same thing.
-      Tick to switch a plugin on or off, drag it (or use ↑ ↓) to move it, then <b>Save</b>. Click a name to browse what it adds or changes.</p>
+    <p class="lead">The mods OpenMW loads, top to bottom: when two change the same thing, the lower one wins.
+      Tick to switch one on or off, drag to reorder, then <b>Save</b>.</p>
     ${!I.cfg_exists ? `<div class="card msg err" style="margin-bottom:12px">OpenMW's settings file wasn't found (${esc(I.cfg || '')}). Run the OpenMW Launcher once, so it sets up Morrowind, then press Reload.</div>` : ''}
     <div class="lobar">
       <button class="btn primary" id="lo-save" ${LO.dirty ? '' : 'disabled'}>Save load order</button>
@@ -190,7 +190,7 @@ function omwRender(){
        <button data-omw="here"><b>Start in a place…</b><small>Pick a spot on the World map ("Play here").</small></button>
        ${OMW.launcher ? '<button data-omw="launcher"><b>OpenMW Launcher</b><small>OpenMW\'s own settings, mods and data files.</small></button>' : ''}
        <button data-omw="order"><b>Load order…</b><small>Switch plugins on or off and change their order.</small></button>
-       <button data-omw="opts"><b>Game start options…</b><small>Controller in the background, your own options, or choose each time.</small></button>
+       <button data-omw="opts"><b>Game start options…</b><small>Extra options for openmw.exe each time the Workshop starts the game.</small></button>
        <button data-omw="settings"><b>OpenMW settings…</b><small>Graphics, shadows, the game's options: every setting, with what it does.</small></button>
        <button data-omw="settingscfg"><b>Open settings.cfg</b><small>OpenMW's settings file, in your text editor.</small></button>
        <div class="omwfoot">OpenMW: ${esc(OMW.install)} · <span class="lnk" data-omw="pick">change</span></div>`

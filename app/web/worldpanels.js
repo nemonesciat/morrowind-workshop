@@ -41,14 +41,14 @@ function worldPanelsInit(){
   PNL.define('world', 'fixit', {title: 'Find gaps', icon: '🔧', home: 'float', w: 390, h: 540, cls: 'wside',
     render: it => { if (typeof FX === 'undefined' || !FX.panel || !it.el.contains(FX.panel)){
       it.el.innerHTML = `<div class="msg" style="margin:4px 0 10px">Finds the spots in a place built from room pieces where you can see out into the void, and closes them.</div><button class="btn primary" id="fx-start">🔧 Look for gaps here</button>`;
-      it.el.querySelector('#fx-start').onclick = () => { if (W.info && W.info.interior) fixitOpen(W.info.key); else toast('Open an interior first.', true); };
+      it.el.querySelector('#fx-start').onclick = () => { if (W.info && W.info.interior) fixitOpen(W.info.key); else toast('Open an interior first.'); };
     } },
     onShow: it => PNL.spaces.world.types.fixit.render(it),
     onClose: () => { if (typeof FX !== 'undefined'){ FX.issues = []; FX.panel = null; fixitMarks(); } }});
   PNL.define('world', 'check', {title: 'Check this place', icon: '🩺', home: 'float', w: 400, h: 560, cls: 'wside',
     render: it => { if (typeof PC === 'undefined' || !PC.panel || !it.el.contains(PC.panel)){
-      it.el.innerHTML = `<div class="msg" style="margin:4px 0 10px">Looks over a place for what's wrong with its furnishing (chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, books leaning on nothing) and for the gaps, and marks each fault on the map.</div><button class="btn primary" id="pc-start">🩺 Check this place</button>`;
-      it.el.querySelector('#pc-start').onclick = () => { if (W.info && W.info.interior) placecheckOpen(W.info.key); else toast('Open an interior first.', true); };
+      it.el.innerHTML = `<div class="msg" style="margin:4px 0 10px">Finds what's wrong with a place (floating or clipping things, lights on nothing, gaps…) and marks each on the map.</div><button class="btn primary" id="pc-start">🩺 Check this place</button>`;
+      it.el.querySelector('#pc-start').onclick = () => { if (W.info && W.info.interior) placecheckOpen(W.info.key); else toast('Open an interior first.'); };
     } },
     onShow: it => PNL.spaces.world.types.check.render(it),
     onClose: () => { if (typeof PC !== 'undefined'){ PC.issues = []; PC.panel = null; placecheckMarks(); if (!V3.on && typeof drawMap === 'function') drawMap(); } }});
@@ -187,7 +187,7 @@ function wpRenderPlaces(it){
     ddSearch('wp-goto-' + it.id, 'CELL', r => worldOpenIndex(r.i));
     b.querySelector('.wp-pl').onclick = e => { const d = e.target.closest('[data-wpi]'); if (d) worldOpenIndex(+d.dataset.wpi); };
   }
-  b.querySelector('.wp-pl').innerHTML = WP.places.map(p => `<div data-wpi="${p.i}" class="${W.info && W.info.i === p.i ? 'sel' : ''}"><span>${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</span></div>`).join('') || '<div class="msg">None yet.</div>';
+  b.querySelector('.wp-pl').innerHTML = WP.places.map(p => `<div data-wpi="${p.i}" class="${W.info && W.info.i === p.i ? 'sel' : ''}"><span>${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</span></div>`).join('') || '<div class="msg">None yet: the places you open show up here, to go back to.</div>';
 }
 
 // ----- the last changes to your mod (undo any of them from here)

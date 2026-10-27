@@ -349,16 +349,29 @@ ROLES = {
 }
 
 
+def _unused_name(rid, name):
+    """The name a picker shows: the game's leftovers ("<Deprecated>", or no name) by their ID, said to be unused,
+    so dozens of "<Deprecated>" don't lead the Faction and Class lists (the user's Characters page)."""
+    if not (name or '').strip() or 'deprecated' in name.lower():
+        return '%s (unused by the game)' % rid, True
+    return name, False
+
+
 def options(db):
     races = sorted(({'id': db.recs[i][1], 'name': db.recs[i][2] or db.recs[i][1]} for i in _winners(db, 'RACE')),
                    key=lambda r: (r['id'].lower().startswith('t_'), r['name']))
-    classes = sorted(({'id': db.recs[i][1], 'name': db.recs[i][2] or db.recs[i][1]} for i in _winners(db, 'CLAS')),
-                     key=lambda r: r['name'].lower())
+    classes = []
+    for i in _winners(db, 'CLAS'):
+        nm, old = _unused_name(db.recs[i][1], db.recs[i][2])
+        classes.append({'id': db.recs[i][1], 'name': nm, 'unused': old})
+    classes.sort(key=lambda r: (r['unused'], r['name'].lower()))
     factions = []
     for i in _winners(db, 'FACT'):
         ranks = [zstr(d) for t, d in iter_subrecords(_data(db, i)) if t == 'RNAM']
-        factions.append({'id': db.recs[i][1], 'name': db.recs[i][2] or db.recs[i][1], 'ranks': ranks})
-    factions.sort(key=lambda f: f['name'].lower())
+        nm, old = _unused_name(db.recs[i][1], db.recs[i][2])
+        factions.append({'id': db.recs[i][1], 'name': nm, 'ranks': ranks, 'unused': old})
+    # (the game's leftovers last, after every faction and class in use)
+    factions.sort(key=lambda f: (f['unused'], f['name'].lower()))
     styles = {}
     for t in interior_templates(db):
         styles[t['style']] = styles.get(t['style'], 0) + 1

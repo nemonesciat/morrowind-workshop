@@ -1736,6 +1736,97 @@ SHRINE_HEADROOM = 40       # (over the statue's head to the ceiling: the game's 
 SHRINE_STAND = r'platform|stair|step'
 
 
+CLOSE_OVER = 0.15          # a chamber seeing the void this much more often than the game's own of it is closed
+CLOSER_SIZE = 300          # (a rock formation at least this across: one that walls off a chamber's open rock)
+
+
+def _close_chambers(db, key, lay, S, K, rng):
+    """A cave chamber whose open rock shows the void, closed as the game closes it: the game's chambers are
+    open shells it fills with big rock formations (in_moldcave_25 holds in_mold_rock_13-24 in most of its 69
+    places), and a made one whose drawn set had none, or lost them in the tidying, showed the void from 81%
+    of its spots against the game's 8% (the user's Bucci, 2026-10-26). From inside, eye-height rays as
+    dgrules.inside; over the game's own share by CLOSE_OVER, the big rocks of one of the game's sets for that
+    piece are laid, the first that brings it to the game's share without standing in a doorway. Returns how
+    many chambers were closed."""
+    import dgrules
+    import seethrough
+    m = mapdata.cellmap(db, key)
+    c = db.project.cells[key]
+    closed = 0
+    for n, p in enumerate(lay['pieces']):
+        if p.get('gone') or p.get('hall') is None or not p.get('box') or p.get('of') is not None:
+            continue
+        g = dgrules.inside_share(K['kind'], p['id'])
+        if g is None:
+            continue
+        b = p['box']
+        # (the whole place: with only what stood near the chamber, rays that the far rock stops counted as out,
+        # and chambers as open as the game's got rocks they didn't need)
+        near = [r for r in m['refs'] if r.get('ri') is not None and (r.get('arch') or r['type'] == 'DOOR')]
+
+        def scene_with(extra):
+            sc = seethrough.Scene()
+            for r in near:
+                mo = db.recs[r['ri']][5]
+                if mo and 'marker' not in mo.lower():
+                    sc.add_model(seethrough.model_tris(db, mo), r['p'], r['s'])
+            for rid, pos, _e, s in extra:
+                mo = db.recs[db.resolve_id(rid)][5]
+                if mo:
+                    sc.add_model(seethrough.model_tris(db, mo), pos, s)
+            return sc
+        sc0 = scene_with([])
+        spots, seen = dgrules.inside(sc0, b)
+        if spots < 4 or seen / spots <= g + CLOSE_OVER:
+            continue
+        roomy = lambda sc, d: (lambda h: h is not None and h[1] is not None and h[1] >= 100)(dgrules._probe(sc, d[0], d[1], d[2] + 40))
+        # (the doorways: a step in from each of the chamber's openings must keep room to stand)
+        doors = []
+        for px, py, pz, ps in S['ports'].get(p['id']) or []:
+            wx, wy = _rot(px, py, p['p'][5])
+            dx, dy = _rot(*SIDES[ps], p['p'][5])
+            doors.append((p['p'][0] + wx - dx * 96, p['p'][1] + wy - dy * 96, p['p'][2] + pz))
+        groups = []
+        used_ = set(_ports_used(S, lay, n))
+        # (the sets of game chambers that used the same openings first: their rocks leave those ways free)
+        for st in (S.get('dress') or {}).get(p['id']) or []:
+            grp = []
+            for rid, t, lx, ly, lz, rx, ry, drz, s in _set_items(st):
+                ri = db.resolve_id(rid)
+                bb = mapdata.object_bounds(db, ri) if ri is not None and t == 'STAT' else None
+                if not bb or max(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]) * s < CLOSER_SIZE or not re.search(K['dress'], rid.lower()):
+                    continue
+                wx, wy = _rot(lx, ly, p['p'][5])
+                grp.append((rid, (p['p'][0] + wx, p['p'][1] + wy, p['p'][2] + lz, rx, ry, (p['p'][5] + drz) % (2 * math.pi)), [], s))
+            if grp:
+                groups.append((isinstance(st, dict) and set(st['u']) == used_, grp))
+        head = [g_ for same, g_ in groups if same]
+        tail = [g_ for same, g_ in groups if not same]
+        rng.shuffle(head)
+        rng.shuffle(tail)
+        groups = head + tail
+        best = None
+        for grp in groups[:8]:
+            sc = scene_with(grp)
+            a, s_ = dgrules.inside(sc, b)
+            if not a:
+                continue
+            # (room to stand a step in from every doorway that had it)
+            if any(roomy(sc0, d) and not roomy(sc, d) for d in doors):
+                continue
+            share = s_ / a
+            if best is None or share < best[0]:
+                best = (share, grp)
+            if share <= g + 0.05:
+                break
+        if best and best[0] <= g + CLOSE_OVER:
+            _write_refs(db, c, best[1])
+            db.sync_project()
+            m = mapdata.cellmap(db, key)
+            closed += 1
+    return closed
+
+
 def _shrine_items(db, sh):
     """A shrine's things, without the platforms and stairs that only stood near it in the game's place: kept,
     the platforms under the statue and those and the stairs joined to them, and what stands on them; the
@@ -2024,8 +2115,9 @@ def preview(db, kind='dwemer', size='medium', levels='some', twist='branching', 
     # lowest floor to the highest)
     zs_ = [row[4] for row in out]
     dry_to = None
-    if zs_ and ez is not None and max(zs_) > min(zs_):
-        dry_to = round(max(0.0, min(1.0, (ez - min(zs_)) / (max(zs_) - min(zs_)))), 2)
+    if zs_ and ez is not None and max(zs_) + WATER_OVER_HEAD > min(zs_):
+        # (as _water counts it: from the lowest floor to over a standing head on the highest)
+        dry_to = round(max(0.0, min(1.0, (ez - min(zs_)) / (max(zs_) + WATER_OVER_HEAD - min(zs_)))), 2)
     # (what the game's own places of the kind would put in pieces like these, for the sliders' "as the game's"
     # figures: creatures and loose loot from the sets of each piece, on average; and the share of them lived in)
     cr = lt = 0.0
@@ -2316,6 +2408,114 @@ LAST_CLEARED = []          # (what the last builds took out of the way, for the 
 WATER_LIFE = re.compile(r'slaughter|dreugh|fish|_eel|kelp|kollop|bubbles')
 
 
+SWIM_DEEP = 90             # (water this deep over a floor: the player swims there, at any height)
+
+
+def _clear_swim(db, key, lay, S, K, level, dry=False):
+    """Under water the player swims, at any height: a pipe across a flooded corridor at head height or over it
+    holds them there (the user's Nchudzamn, Reeking Ileum: big pipes across a submerged straight hall, "made
+    my character stick in the hallway underwater", 2026-10-26). Across every piece whose floor is SWIM_DEEP
+    under the water, a slice every 32 from each opening to its middle: between its walls, its floor and its
+    ceiling or the surface, a person (SWIM_BODY, upright as OpenMW keeps a swimmer) must fit somewhere past
+    the things standing there; where one doesn't, those things go. (A blanket line through the whole height
+    took out pipes that ran along a wall with room to spare: the user's own place had room for a swimmer in
+    all 453 of its flooded slices.) dry: only say what would go. The number taken out (or the list, dry)."""
+    import seethrough
+    c = db.project.cells.get(key)
+    if not c or level is None:
+        return [] if dry else 0
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    L = _Layout(db, S, K)
+    out = set()
+    for _pass in range(3):
+        m = mapdata.cellmap(db, key)
+        struct_ = {r['k'] for r in m['refs'] if tube.match(r['id'].lower()) or r['type'] == 'DOOR' or r['id'].lower() == K.get('jamb')}
+        sc_t = seethrough.place_scene(db, dict(m, refs=[r for r in m['refs'] if r['k'] in struct_]))
+        # (each thing's box, from its model as it stands: lights, creatures, doors and soft things aren't in the way)
+        boxes = []
+        for r in m['refs']:
+            if r['k'] in struct_ or r['k'] in out or r['type'] in ('NPC_', 'CREA', 'LEVC', 'DOOR', 'LIGH') or r.get('ri') is None \
+                    or re.search(r'rug|mist|sound|web|vine|moss|marker|kelp', r['id'].lower()):
+                continue
+            mo = db.recs[r['ri']][5]
+            if not mo or 'marker' in mo.lower():
+                continue
+            one = seethrough.Scene()
+            one.add_model(seethrough.model_tris(db, mo), r['p'], r['s'])
+            if not one.tris:
+                continue
+            xs = [t[0] + a for t in one.tris for a in (0, t[3], t[6])]
+            ys = [t[1] + a for t in one.tris for a in (0, t[4], t[7])]
+            zs = [t[2] + a for t in one.tris for a in (0, t[5], t[8])]
+            boxes.append((r['k'], min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)))
+        found = set()
+        for p in lay['pieces']:
+            if p.get('gone') or not p.get('id'):
+                continue
+            ports = L.ports_of(p['id'], p['p'][0], p['p'][1], p['p'][2], p['p'][5])
+            if not ports:
+                continue
+            mx = sum(o['x'] for o in ports) / len(ports)
+            my = sum(o['y'] for o in ports) / len(ports)
+            mz = sum(o['z'] for o in ports) / len(ports)
+            for o in ports:
+                ln = math.hypot(mx - o['x'], my - o['y'])
+                if ln < 16:
+                    continue
+                ux, uy = (mx - o['x']) / ln, (my - o['y']) / ln
+                vx, vy = -uy, ux
+                for k in range(int(ln // 32) + 1):
+                    t = k * 32 / ln
+                    x, y, z = o['x'] + (mx - o['x']) * t, o['y'] + (my - o['y']) * t, o['z'] + (mz - o['z']) * t
+                    f = None
+                    for z0 in (z + 40, z + 150):
+                        h = sc_t.nearest_any((x, y, z0), (0.0, 0.0, -1.0), 700)
+                        if h is not None:
+                            f = z0 - h[0]
+                            break
+                    if f is None or level - f < SWIM_DEEP:
+                        continue
+                    up = sc_t.nearest_any((x, y, f + 20), (0.0, 0.0, 1.0), 900)
+                    top = min(f + 20 + up[0] if up else f + 260, level)
+                    wl = sc_t.nearest_any((x, y, f + 100), (-vx, -vy, 0.0), 600)
+                    wr = sc_t.nearest_any((x, y, f + 100), (vx, vy, 0.0), 600)
+                    l0, l1 = -(wl[0] if wl else 150), (wr[0] if wr else 150)
+                    blocks, who = [], []
+                    for b in boxes:
+                        cs = [((cx - x) * vx + (cy - y) * vy, (cx - x) * ux + (cy - y) * uy) for cx in (b[1], b[2]) for cy in (b[3], b[4])]
+                        if min(a[1] for a in cs) > 8 or max(a[1] for a in cs) < -8 or b[6] < f + 15 or b[5] > top \
+                                or max(a[0] for a in cs) < l0 or min(a[0] for a in cs) > l1:
+                            continue
+                        blocks.append((min(a[0] for a in cs), max(a[0] for a in cs), b[5], b[6]))
+                        who.append(b[0])
+                    if blocks and not _body_fits(l0, l1, f, top, blocks):
+                        found.update(who)
+        if not found:
+            break
+        out |= found
+        if dry:
+            continue
+        for k_ in found:
+            c['refs'].pop(k_, None)
+        db.sync_project()
+    if dry:
+        return sorted(out)
+    return len(out)
+
+
+SWIM_BODY = (64, 136)      # (a person, upright as OpenMW keeps a swimmer: about 60 across and 130 tall)
+
+
+def _body_fits(l0, l1, z0, z1, blocks):
+    """Whether a SWIM_BODY fits anywhere in a slice across the way (l across, z up), clear of the blocks
+    [(l0, l1, z0, z1)]: on an 8 grid."""
+    ls = range(int(l0) + 4, int(l1) - 4, 8)
+    zs = range(int(z0) + 4, int(z1) - 4, 8)
+    free = {(a, b) for a in ls for b in zs if not any(c[0] <= a <= c[1] and c[2] <= b <= c[3] for c in blocks)}
+    kw, kh = SWIM_BODY[0] // 8, SWIM_BODY[1] // 8
+    return any(all((a + 8 * i, b + 8 * j) in free for i in range(kw) for j in range(kh)) for a in ls for b in zs)
+
+
 def _water(db, key, lay, K, how, rng):
     """Water in the place: how (0 to 1, or the old 'pools' and 'flooded') is how far up it stands, from the
     lowest floor (0.1: pools there) to the highest (1); the way in goes under when it is lower than that;
@@ -2329,24 +2529,24 @@ def _water(db, key, lay, K, how, rng):
     m = mapdata.cellmap(db, key)
     tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
     sc = seethrough.place_scene(db, dict(m, refs=[r for r in m['refs'] if tube.match(r['id'].lower())]))
-    floors = []
-    for p in lay['pieces']:
-        if p.get('gone') or not p.get('box'):
-            continue
-        b = p['box']
-        f = sc.nearest_any(((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, b[5] - 20), (0.0, 0.0, -1.0), b[5] - b[2])
-        if f is not None:
-            floors.append(b[5] - 20 - f[0])
+    floors = _walk_floors(sc, lay)
     level = None
     if share > 0 and floors:
         floors.sort()
-        # (that share of the way up from the lowest floor to the highest, a wading depth at least. Up to the
-        # way in only, it stayed dry where the front door is near the bottom: the user's large steep ruin at
-        # its top setting had water under every floor. The slider says where the way in goes under)
-        level = floors[0] + max(40.0, share * (floors[-1] - floors[0]))
-    # what lives in water: kept only under it
-    gone = [r['k'] for r in m['refs'] if WATER_LIFE.search(r['id'].lower()) and r['type'] in ('CREA', 'LEVC', 'CONT', 'ACTI', 'STAT')
-            and (level is None or r['p'][2] > level - 20)]
+        # (that share of the way from the lowest floor people walk on to over a standing head on the highest:
+        # 1 is the whole place under. Taken from each piece's box, a Dwemer piece's ran far under its floor and
+        # the water stood under every floor, "no water appears at all", the user's Nchudjak, Flooded Bowels,
+        # its water at -807 under floors of -218 to 619, 2026-10-26)
+        top = floors[-1] + WATER_OVER_HEAD
+        level = floors[0] + max(40.0, share * (top - floors[0]))
+    # what lives in water: kept only under it, inside the place, and no more than WATER_FISH allows
+    life = [r for r in m['refs'] if WATER_LIFE.search(r['id'].lower()) and r['type'] in ('CREA', 'LEVC', 'CONT', 'ACTI', 'STAT')]
+    swims = lambda r: r['type'] in ('CREA', 'LEVC')
+    gone = [r['k'] for r in life if level is None or not _under_water(sc, r['p'][0], r['p'][1], r['p'][2], level, swims(r))]
+    allowed = _fish_allowed(lay, sc, level)
+    kept_fish = [r for r in life if swims(r) and r['k'] not in gone]
+    rng.shuffle(kept_fish)
+    gone += [r['k'] for r in kept_fish[allowed:]]
     for k_ in gone:
         c['refs'].pop(k_, None)
     if level is not None:
@@ -2362,21 +2562,79 @@ def _water(db, key, lay, K, how, rng):
                 continue
             out.append((t, d))
         c['header'] = [[t, b64(d)] for t, d in out]
-        # (and fish in it: one for every few pieces under water, half way down)
-        fish = next((f for f in ('slaughterfish', 'slaughterfish_small') if db.resolve_id(f) is not None), None)
-        wet = [p for p in lay['pieces'] if not p.get('gone') and p.get('box') and p['box'][2] + 60 < level]
+        # (and fish in it, up to what's allowed with those the dressing brought: each at a spot inside the
+        # place, deep enough to swim, half way down. Set at a piece's box middle, they swam in the rock and in
+        # dry tunnels, "casting shadows on walls", and there were "too many", the user, 2026-10-26)
+        fish = next((f for f in ('slaughterfish_small', 'slaughterfish') if db.resolve_id(f) is not None), None)
         if fish and K.get('setting') in ('cave', 'tomb', 'daedric', 'dwemer'):
             mine = db.project.plugin.lower()
-            for p in rng.sample(wet, min(len(wet) // 4, 8)):
-                b = p['box']
-                f = sc.nearest_any(((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, level - 10), (0.0, 0.0, -1.0), level - b[2])
-                if f is None or f[0] < 60:
-                    continue
+            spots = _wet_spots(sc, lay, level)
+            rng.shuffle(spots)
+            for x, y, z in spots[:max(0, allowed - len(kept_fish[:allowed]))]:
                 nk = db.project.new_ref_key()
                 editing._store(c, nk, mine, int(nk.rsplit('|', 1)[1]),
-                               set_ref_pos([('NAME', zs(fish))], ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, level - 10 - f[0] / 2, 0, 0, rng.random() * 6.28), 1.0))
+                               set_ref_pos([('NAME', zs(fish))], (x, y, z, 0, 0, rng.random() * 6.28), 1.0))
     db.sync_project()
     return level
+
+
+WATER_OVER_HEAD = 200      # (full water stands this far over the highest floor: over a standing player's head)
+FISH_DEEP = 120            # a fish only where the water is this deep
+FISH_PER = 12              # one fish for every this many pieces with water deep enough to swim in ...
+FISH_MOST = 4              # ... and never more than this in a place, those the dressing brought counted
+
+
+def _walk_floors(sc, lay):
+    """The floors people walk on: under each join, and under the middle of each hall's tiles (rays down from
+    about head height, met from their drawn side)."""
+    out = []
+    pts = [(s[0], s[1], s[2]) for s in lay['seams'] if not lay['pieces'][s[4]].get('gone') and not lay['pieces'][s[5]].get('gone')]
+    pts += [(p['p'][0], p['p'][1], p['p'][2]) for p in lay['pieces'] if not p.get('gone') and p.get('id') and p.get('hall') is not None]
+    for x, y, z in pts:
+        for z0 in (z + 60, z + 160):
+            h = sc.nearest_any((x, y, z0), (0.0, 0.0, -1.0), 400)
+            if h and not sc.back_of(h[1], (0.0, 0.0, -1.0)):
+                out.append(z0 - h[0])
+                break
+    return out
+
+
+def _under_water(sc, x, y, z, level, swims):
+    """Whether a thing at (x, y, z) is inside the place (a floor under it and a roof over it, met from their
+    drawn side) and under the water: a swimmer FISH_DEEP under it with room below, anything else just under."""
+    down = sc.nearest_any((x, y, z + 20), (0.0, 0.0, -1.0), 1200)
+    up = sc.nearest_any((x, y, z + 20), (0.0, 0.0, 1.0), 2400)
+    if not down or not up or sc.back_of(down[1], (0.0, 0.0, -1.0)) or sc.back_of(up[1], (0.0, 0.0, 1.0)):
+        return False
+    floor = z + 20 - down[0]
+    return level - floor >= (FISH_DEEP if swims else 20) and z < level - (30 if swims else 10)
+
+
+def _wet_spots(sc, lay, level):
+    """Spots for fish: under each join and hall tile middle where the water is FISH_DEEP deep, half way down."""
+    out = []
+    pts = [(s[0], s[1], s[2]) for s in lay['seams'] if not lay['pieces'][s[4]].get('gone') and not lay['pieces'][s[5]].get('gone')]
+    pts += [(p['p'][0], p['p'][1], p['p'][2]) for p in lay['pieces'] if not p.get('gone') and p.get('id') and p.get('hall') is not None]
+    for x, y, z in pts:
+        for z0 in (z + 60, z + 160):
+            if z0 > level:
+                continue
+            h = sc.nearest_any((x, y, z0), (0.0, 0.0, -1.0), 400)
+            if h and not sc.back_of(h[1], (0.0, 0.0, -1.0)):
+                floor = z0 - h[0]
+                if level - floor >= FISH_DEEP and _under_water(sc, x, y, (floor + level) / 2, level, True):
+                    out.append((x, y, (floor + level) / 2))
+                break
+    return out
+
+
+def _fish_allowed(lay, sc, level):
+    """How many fish a place may hold: one for every FISH_PER pieces deep under water, FISH_MOST at most, none
+    when dry."""
+    if level is None:
+        return 0
+    deep = len(_wet_spots(sc, lay, level))
+    return min(FISH_MOST, deep // FISH_PER + (1 if deep >= 4 else 0))
 
 
 def unb64_(d):
@@ -3803,6 +4061,8 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
         water_at = _water(db, key, lay, K, water, rng)
         _upright(db, key)
         cleared = _clear_ways(db, key, lay, S, K)
+        # (and under the water, the whole height of every flooded way: the player swims there)
+        cleared += _clear_swim(db, key, lay, S, K, water_at)
         cleared += _unblock(db, key, lay, K, _walk_starts(db, lay))
         cleared += _door_fronts(db, key, K)
         cleared += _declip(db, key, K)
@@ -3823,6 +4083,14 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
         tables_set = _lay_tops(db, key, S, rng, loot)
     except Exception as ex:
         print('dungeon table tops:', ex)
+    # (a cave chamber still showing the void after the tidying: closed with the game's own big rocks for it;
+    # its own dice, so the rest of the place comes out as before)
+    closed = 0
+    if K['kind'].startswith('cave'):
+        try:
+            closed = _close_chambers(db, key, lay, S, K, random.Random(lay['seed'] * 13 + 5))
+        except Exception as ex:
+            print('dungeon chamber rock:', ex)
     if out_spot:
         oc, _r = editing._cell(db, out_spot[0])
         dsubs = set_ref_pos([('NAME', zs(out_spot[1]))], out_spot[2], 1.0)
@@ -3865,5 +4133,5 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
         editing.fold(db, steps, note + (' and %d %s' % (people, 'person living in it' if people == 1 else 'people living in it') if people else ''))
     return {'key': key, 'name': name, 'kind': kind, 'seed': lay['seed'], 'tunnels': lay['tunnels'], 'halls': lay['halls'],
             'open_left': lay['open_left'], 'refs': len(refs), 'entrance': out_spot[0] if out_spot else None,
-            'arrive': [round(v, 1) for v in arrive[:3]], 'people': people, 'final': lay['final'] is not None, 'cleared': cleared, 'water': water_at, 'tables_set': tables_set,
+            'arrive': [round(v, 1) for v in arrive[:3]], 'people': people, 'final': lay['final'] is not None, 'cleared': cleared, 'water': water_at, 'tables_set': tables_set, 'closed': closed,
             'said': lay.get('said') or []}

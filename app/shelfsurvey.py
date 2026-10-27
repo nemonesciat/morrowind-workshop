@@ -1017,7 +1017,7 @@ def everyday_pool(db, purpose, rid=None):
 
 
 def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=None, cap=None, rate_k=1.0, max_value=None,
-             band=None, budget=None, fill_books=False):
+             band=None, budget=None, fill_books=False, bare=True):
     """A dressing for a new piece of this furniture, from what the game puts on it: one of the game's own
     dressings (picked at random, so the common patterns come up most; from rooms of this purpose when the
     game has dressed it in a few of those; one not used in this house yet, when `used` is the house's set
@@ -1034,7 +1034,9 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     and no ebonyware); budget: the home's book allowance, {'left', 'titles', 'stems'}, shared over the house
     (one to three common books outside the study, no second copy, no series). fill_books: a shelf of books,
     asked for by hand ("Fill with books"): only the game's dressings of the model that are mostly books, the
-    fullest of a few draws, never bare, and no house allowance."""
+    fullest of a few draws, never bare, and no house allowance. bare=False: never one of the game's bare
+    ones (Dress this, asked for by hand: the game leaves most crates and chests bare, and the user's "Dress
+    doesn't work" was a bare draw reported as "too close to a wall")."""
     s = survey(db, rid)
     if not s['dressings']:
         return None
@@ -1079,6 +1081,10 @@ def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=No
     empty_share = s['empty'] / float(s['n'] or 1)
     if fill_books:
         pool = pool_b
+    elif not bare:
+        pool = [d for d in pool if d['objects']] or [d for d in s['dressings'] if d['objects']]
+        if not pool:
+            return []
     elif rng.random() < max(0.0, empty_share - 0.3):
         return []
     # not the same one twice in a house (the pool is small: a house's shelves would all match)

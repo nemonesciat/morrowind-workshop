@@ -19,6 +19,9 @@ async function togPoll(){
     else if (st.role === 'join'){ say(st.connected ? `With ${st.host} · ${n} here` : 'Reconnecting…'); b.className = st.connected ? 'btn primary' : 'btn danger'; }
     else if (togIsCopy() && st.can_rejoin){ say('Rejoin'); b.className = 'btn primary'; }
     else { say('Build together'); b.title = 'Build this mod together with other people, live, from wherever they are'; b.className = 'btn'; }
+    // (in the top bar only while you're hosting, joined or can rejoin; it starts from My mod)
+    const live = !!(st.role || (togIsCopy() && st.can_rejoin));
+    if ((b.style.display !== 'none') !== live){ b.style.display = live ? '' : 'none'; if (typeof hdrFit === 'function') hdrFit(); }
   }
   if (!st) return;
   // a note when someone else changed something
@@ -128,7 +131,7 @@ function togRender(){
       <div class="msg">Work on one mod with other people at the same time, from wherever they are. One person hosts; the others join with an invite code.
         Everyone sees every change within a second or so, in the Workshop and in their own game.</div>
       ${st.error ? `<div class="msg err" style="margin-top:6px">${esc(st.error)}</div>` : ''}
-      ${copy && st.can_rejoin ? `<div style="border:1px solid #6b5730;border-radius:10px;padding:10px;margin-top:10px;background:#1e1810"><b style="color:var(--gold2)">This is your copy of ${esc(st.can_rejoin.mod || '')}</b>
+      ${copy && st.can_rejoin ? `<div style="border:1px solid var(--goldline);border-radius:10px;padding:10px;margin-top:10px;background:color-mix(in srgb,var(--gold) 8%,var(--panel))"><b style="color:var(--gold2)">This is your copy of ${esc(st.can_rejoin.mod || '')}</b>
         <div class="msg">Rejoin to keep building with the others. (The mod as the host has it replaces this copy: anything changed here while you weren't joined is left out.)</div>
         <div class="actions"><button class="btn primary" id="tog-rejoin">Rejoin</button></div></div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">

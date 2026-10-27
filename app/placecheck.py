@@ -78,6 +78,8 @@ KINDS = [
     ('hallblock', 'Halls you can\'t walk through', 'Furniture standing across a hall, corridor or landing so there is no way past it from one doorway to the next.'),
     ('counter', 'Counters into tapestries', 'A counter end meeting a wall hanging.'),
     ('book', 'Books leaning on nothing', 'A leaning book with no support on the side it leans to.'),
+    ('tallbook', 'Books through the shelf above', 'A book standing on a shelf with its top through the board over it, with a shorter book of its size as the fix.'),
+    ('bookclip', 'Books cut into their shelf', 'A book sunk into the side, back or board of the furniture it stands on, deeper than the game\'s own sit.'),
     ('gap', 'Gaps', 'An open side looking out onto nothing.'),
     ('doorway', 'Doorways to nowhere', 'A doorway that leads nowhere, or a stairwell landing boxed in with no doorway out of it.'),
     ('stairend', 'Stairs with a closed end', 'The foot or head of a staircase meets a wall, or comes out onto nothing.'),
@@ -511,6 +513,219 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
     return out
 
 
+TALL_TOL = 1.5          # (a book's top may touch its board above by this much: the game's own sit a hair into it)
+_book_pool = {}
+
+
+def _shorter_books(db):
+    """The game's everyday books, each with its model's bounds, to swap a too-tall one for (cached)."""
+    if _book_pool.get('recs') is db.recs:
+        return _book_pool['out']
+    out = []
+    for (tag, _k), lst in db.by_key.items():
+        if tag != 'BOOK':
+            continue
+        lv = [v for v in lst if v not in db.dead]
+        if not lv:
+            continue
+        rid = db.recs[lv[-1]][1]
+        low = rid.lower()
+        # (a real book's model, not a note, a marker or a scroll: Tamriel Data's NPC notes stand 143 tall)
+        if not REAL_BOOK.search(low) or NOT_BOOK.search(low) or not shelfsurvey.plain(db, rid, 2):
+            continue
+        b = mapdata.object_bounds(db, lv[-1])
+        if b and max(b[3] - b[0], b[4] - b[1], b[5] - b[2]) <= 70:
+            out.append((rid, b))
+    _book_pool.update(recs=db.recs, out=out)
+    return out
+
+
+def _tall_books(db, refs, rooms=None):
+    """Books standing on furniture with their top through the board over them, by the furniture's own mesh
+    (shelfsurvey.board_over: the clear height over the spot). The books Auto-furnish laid are fitted as they go
+    (shelfsurvey.fit_books); these are the ones laid before that, by hand, or by another mod. The fix: a shorter
+    everyday book of the same thickness and depth, turned the same, its bottom where the old one's was, the
+    tallest that fits (so the row's tops stay even); or taking it away."""
+    import seethrough
+    furn = [x for x in refs if x['type'] in ('STAT', 'ACTI', 'CONT') and x.get('_box')]
+    own_of, out = {}, []
+    pool = None
+    for x in refs:
+        if x['type'] != 'BOOK' or not x.get('_box') or not x.get('b'):
+            continue
+        # (a shelf's books only: not a quest marker, a scroll, a note or an open book lying in its pages; on the
+        # game's own 100 places those were most of the six it flagged)
+        low = x['id'].lower()
+        if not REAL_BOOK.search(low) or NOT_BOOK.search(low) or re.search(r'_o$|_open|mark|_sc_', low):
+            continue
+        # (its box turned every way it is: a book is modelled lying down and stood up by a turn, which the
+        # plan box, turned about its height only, misses: an upright book read 8 units tall)
+        tb = shelfsurvey.box_turned(x['b'], x['p'][3], x['p'][4], x['p'][5], x.get('s') or 1.0)
+        bx = (x['p'][0] + tb[0], x['p'][1] + tb[1], x['p'][2] + tb[2], x['p'][0] + tb[3], x['p'][1] + tb[4], x['p'][2] + tb[5])
+        cx, cy, bottom = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, bx[2]
+        base = next((f for f in furn if f['_box'][0] <= cx <= f['_box'][3] and f['_box'][1] <= cy <= f['_box'][4]
+                     and f['_box'][2] - 4 <= bottom <= f['_box'][5]), None)
+        if base is None:
+            continue
+        k = base.get('k')
+        if k not in own_of:
+            own_of[k] = seethrough.overlay(db, [{'op': 'place', 'id': base['id'], 'p': list(base['p']), 's': base.get('s', 1.0)}])
+        own = own_of[k]
+        if not own.tris:
+            continue
+        room_ = shelfsurvey.board_over(own, cx, cy, bottom)
+        if room_ is None or bx[5] - bottom <= room_ + TALL_TOL:
+            continue
+        over = bx[5] - bottom - room_
+        # a shorter book of its size: thickness and depth within a few units, turned as it is, the tallest that fits
+        if pool is None:
+            pool = _shorter_books(db)
+        rx, ry, rz, s = x['p'][3], x['p'][4], x['p'][5], x.get('s') or 1.0
+        old = shelfsurvey.box_turned(x['b'], rx, ry, rz, s)
+        ow, od = sorted((old[3] - old[0], old[4] - old[1]))
+        best = None
+        for rid, b in pool:
+            if rid.lower() == x['id'].lower():
+                continue
+            fp = shelfsurvey.box_turned(b, rx, ry, rz, s)
+            w, d_ = sorted((fp[3] - fp[0], fp[4] - fp[1]))
+            h = fp[5] - fp[2]
+            if abs(w - ow) <= 2.5 and abs(d_ - od) <= 5 and h <= room_ - 0.5 and (best is None or h > best[1]):
+                best = (rid, h, fp)
+        fixes = []
+        if best:
+            p = list(x['p'][:6])
+            p[2] = round(p[2] + old[2] - best[2][2], 2)      # (its bottom where the old one's was)
+            ri = db.resolve_id(best[0])
+            fixes.append({'label': 'Swap it for %s' % ((db.recs[ri][2] if ri is not None else '') or best[0]),
+                          'ops': [{'op': 'swap', 'ref': x['k'], 'id': best[0], 'p': p}]})
+        fixes.append(_remove(x))
+        room = next((r for r in (rooms or []) if r['x_min'] <= cx <= r['x_max'] and r['y_min'] <= cy <= r['y_max']), None) or {'name': ''}
+        out.append(_issue('tallbook', x, '%s stands %.0f through the shelf above it (on %s)' % (x.get('name') or x['id'], over, base.get('name') or base['id']),
+                          room, fixes))
+    return out
+
+
+BOOK_INSET = 2.0        # (how deep a book may sit in its furniture's mesh, every way: the game's own sit a unit or two in)
+BOOK_SLIDE = 12.0       # (how far the fix slides a book to get it clear, at most)
+
+
+def _tri_in_box(v0, v1, v2, h):
+    """Whether a triangle (three points about a box's middle) meets the box of half sizes h: the separating
+    axis test (the box's three axes, the triangle's normal, and the nine edge crosses)."""
+    e = [(v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]), (v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]),
+         (v0[0] - v2[0], v0[1] - v2[1], v0[2] - v2[2])]
+    for i in range(3):
+        if min(v0[i], v1[i], v2[i]) > h[i] or max(v0[i], v1[i], v2[i]) < -h[i]:
+            return False
+    n = (e[0][1] * e[1][2] - e[0][2] * e[1][1], e[0][2] * e[1][0] - e[0][0] * e[1][2], e[0][0] * e[1][1] - e[0][1] * e[1][0])
+    axes = [n] + [(0.0, -f[2], f[1]) for f in e] + [(f[2], 0.0, -f[0]) for f in e] + [(-f[1], f[0], 0.0) for f in e]
+    for a in axes:
+        if abs(a[0]) + abs(a[1]) + abs(a[2]) < 1e-9:
+            continue
+        p = [a[0] * v[0] + a[1] * v[1] + a[2] * v[2] for v in (v0, v1, v2)]
+        r = h[0] * abs(a[0]) + h[1] * abs(a[1]) + h[2] * abs(a[2])
+        if min(p) > r or max(p) < -r:
+            return False
+    return True
+
+
+def _book_cuts(tris, R, at, b, s, inset=BOOK_INSET):
+    """How many of the furniture's triangles (world, seethrough's form) cut into a book's model box b turned
+    by R (shelfsurvey._turned), scaled s and standing at world point at, the box taken in by inset every way."""
+    c = ((b[0] + b[3]) / 2 * s, (b[1] + b[4]) / 2 * s, (b[2] + b[5]) / 2 * s)
+    h = tuple(max(0.1, (b[k + 3] - b[k]) / 2 * s - inset) for k in range(3))
+    reach = math.sqrt(sum(x * x for x in h)) + 1
+    # (the box's middle in the world, and each triangle brought into the book's own frame about it: R's transpose)
+    w = (at[0] + R[0][0] * c[0] + R[0][1] * c[1] + R[0][2] * c[2], at[1] + R[1][0] * c[0] + R[1][1] * c[1] + R[1][2] * c[2],
+         at[2] + R[2][0] * c[0] + R[2][1] * c[1] + R[2][2] * c[2])
+    n = 0
+    for x0, y0, z0, ax, ay, az, bx, by, bz in tris:
+        pts = ((x0, y0, z0), (x0 + ax, y0 + ay, z0 + az), (x0 + bx, y0 + by, z0 + bz))
+        if any(min(p[k] for p in pts) > w[k] + reach or max(p[k] for p in pts) < w[k] - reach for k in range(3)):
+            continue
+        loc = [tuple(R[0][k] * (p[0] - w[0]) + R[1][k] * (p[1] - w[1]) + R[2][k] * (p[2] - w[2]) for k in range(3)) for p in pts]
+        if _tri_in_box(loc[0], loc[1], loc[2], h):
+            n += 1
+    return n
+
+
+def _book_clips(db, refs, rooms=None, skip=()):
+    """Books cut into the furniture they stand on, by its own mesh: sunk into a side or the back of a bookshelf,
+    or deep into the board under them (what the user saw clip with nothing in the list, 2026-10-27; the top
+    through the board over them is 'tallbook'). The fixes: slide it clear the shortest way (along the shelf, out
+    from the back, or up out of its board), or take it away."""
+    import seethrough
+    furn = [x for x in refs if x['type'] in ('STAT', 'ACTI', 'CONT') and x.get('_box')]
+    books = [x for x in refs if x['type'] == 'BOOK' and x.get('_box') and x.get('b')]
+    own_of, out, pool = {}, [], None
+    for x in books:
+        low = x['id'].lower()
+        if x.get('k') in skip or not REAL_BOOK.search(low) or NOT_BOOK.search(low) or re.search(r'_o$|_open|mark|_sc_', low):
+            continue
+        rx, ry, rz, s = x['p'][3], x['p'][4], x['p'][5], x.get('s') or 1.0
+        tb = shelfsurvey.box_turned(x['b'], rx, ry, rz, s)
+        bx = (x['p'][0] + tb[0], x['p'][1] + tb[1], x['p'][2] + tb[2], x['p'][0] + tb[3], x['p'][1] + tb[4], x['p'][2] + tb[5])
+        cx, cy, bottom = (bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, bx[2]
+        base = next((f for f in furn if f['_box'][0] <= cx <= f['_box'][3] and f['_box'][1] <= cy <= f['_box'][4]
+                     and f['_box'][2] - 4 <= bottom <= f['_box'][5]), None)
+        if base is None:
+            continue
+        k = base.get('k')
+        if k not in own_of:
+            own_of[k] = seethrough.overlay(db, [{'op': 'place', 'id': base['id'], 'p': list(base['p']), 's': base.get('s', 1.0)}]).tris
+        tris = own_of[k]
+        R = shelfsurvey._turned(rx, ry, rz)
+        at = tuple(x['p'][:3])
+        if not tris or not _book_cuts(tris, R, at, x['b'], s):
+            continue
+        # the shortest slide that gets it clear and runs into no other book: across the floor's two ways and up
+        others = [o['_box'] for o in books if o is not x]
+        best = None
+        for step in [0.5 * i for i in range(1, int(BOOK_SLIDE * 2) + 1)]:
+            for d in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1)):
+                p = (at[0] + d[0] * step, at[1] + d[1] * step, at[2] + d[2] * step)
+                if _book_cuts(tris, R, p, x['b'], s):
+                    continue
+                moved = (bx[0] + d[0] * step + 1, bx[1] + d[1] * step + 1, bx[2] + d[2] * step + 1,
+                         bx[3] + d[0] * step - 1, bx[4] + d[1] * step - 1, bx[5] + d[2] * step - 1)
+                if any(moved[0] < o[3] and o[0] < moved[3] and moved[1] < o[4] and o[1] < moved[4] and moved[2] < o[5] and o[2] < moved[5]
+                       for o in others if not (bx[0] < o[3] and o[0] < bx[3] and bx[1] < o[4] and o[1] < bx[4] and bx[2] < o[5] and o[2] < bx[5])):
+                    continue          # (into a book it wasn't already touching)
+                best = (step, p)
+                break
+            if best:
+                break
+        fixes = []
+        if best:
+            fixes.append({'label': 'Slide it clear (%.1f)' % best[0],
+                          'ops': [{'op': 'move', 'ref': x['k'], 'p': [round(best[1][0], 2), round(best[1][1], 2), round(best[1][2], 2), rx, ry, rz]}]})
+        else:
+            # (wedged, with no way clear: a slimmer everyday book standing where it stood, turned the same, its
+            # bottom where the old one's was, the thickest that fits)
+            if pool is None:
+                pool = _shorter_books(db)
+            sw = None
+            for rid, b in pool:
+                if rid.lower() == low:
+                    continue
+                fp = shelfsurvey.box_turned(b, rx, ry, rz, s)
+                if fp[5] - fp[2] > tb[5] - tb[2] + 0.5:
+                    continue
+                p = (at[0] + (tb[0] + tb[3] - fp[0] - fp[3]) / 2, at[1] + (tb[1] + tb[4] - fp[1] - fp[4]) / 2, at[2] + tb[2] - fp[2])
+                vol = (fp[3] - fp[0]) * (fp[4] - fp[1])
+                if (sw is None or vol > sw[0]) and not _book_cuts(tris, R, p, b, s):
+                    sw = (vol, rid, p)
+            if sw:
+                ri = db.resolve_id(sw[1])
+                fixes.append({'label': 'Swap it for %s' % ((db.recs[ri][2] if ri is not None else '') or sw[1]),
+                              'ops': [{'op': 'swap', 'ref': x['k'], 'id': sw[1], 'p': [round(sw[2][0], 2), round(sw[2][1], 2), round(sw[2][2], 2), rx, ry, rz]}]})
+        fixes.append(_remove(x))
+        room = next((r for r in (rooms or []) if r['x_min'] <= cx <= r['x_max'] and r['y_min'] <= cy <= r['y_max']), None) or {'name': ''}
+        out.append(_issue('bookclip', x, '%s is cut into %s' % (x.get('name') or x['id'], base.get('name') or base['id']), room, fixes))
+    return out
+
+
 def _orphan_riders(db, cell_key, refs, info):
     """Riders whose base is gone: a dressing's things, a plant, a hearth's tools, a crate's top, laid on or
     round a piece (tagged 'on' by Auto-furnish) that is no longer in the place. One issue per lost base,
@@ -877,6 +1092,16 @@ def faults(db, cell_key):
         out += _room_issues(db, info, room, refs, arch, sc, storey, hearths, rough)
         out += _smith_issues(db, info, room, refs, heats, rough)
     out += _orphan_riders(db, cell_key, refs, info)
+    tall = []
+    try:
+        tall = _tall_books(db, refs, info['rooms'])
+        out += tall
+    except Exception as e:                       # (a check must never stop the list)
+        print('place check, tall books:', e)
+    try:
+        out += _book_clips(db, refs, info['rooms'], skip={i['ref'] for i in tall})
+    except Exception as e:
+        print('place check, book clips:', e)
     try:
         out += _hall_blocks(info, refs)
     except Exception as e:                       # (a check must never stop the list)

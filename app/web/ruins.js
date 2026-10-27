@@ -65,7 +65,7 @@ function dtSlideSay(k){
     // (the way in goes under past this layout's own mark: a front door near the bottom leaves little room)
     const dry = DT.lay && DT.lay.dry_to != null ? Math.round(DT.lay.dry_to * 100) : null;
     const tail = dry == null ? '' : v > dry ? ` · the way in is under water (it stays dry up to ${dry}%)` : dry >= 100 ? ' · the way in stays dry' : ` · the way in stays dry up to ${dry}%`;
-    return `Up ${v}% of the way from the lowest floor to the highest${tail}`;
+    return v >= 100 ? `All of it under water${tail}` : `Up ${v}% of the way from the lowest floor to over your head on the highest${tail}`;
   }
   if (k === 'occ'){
     // (a density: up to the game's own share the chance of one camp, past it more halls with camps of their

@@ -33,16 +33,16 @@ async function cMine(){
 }
 function cWelcome(){
   $('#cmain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Characters</h1>
-    <p class="msg" style="font-size:14px;line-height:1.7">Open anyone on the left, from your own characters to Fargoth, and change how they look, what they're good at,
-    how they behave, what they sell, where they take you and what they carry. Changing someone from the base game keeps the original safe:
-    your version goes into your mod.</p>
+    <p class="msg" style="font-size:14px;line-height:1.7">Open anyone on the left, from your own characters to Fargoth, and change their looks, skills, behaviour, wares and belongings.
+    The game's own stay safe: your version goes into your mod.</p>
     <div class="cgrid">
       <div class="ccard" data-cw="new"><div style="font-size:26px">➕</div><b>Make someone new</b><div class="msg">Pick a role (townsperson, merchant, guard, quest giver) and the Workshop sets them up. Then fine-tune them here.</div></div>
       <div class="ccard" data-cw="find"><div style="font-size:26px">🔎</div><b>Change someone</b><div class="msg">Give a merchant more gold, make a quest giver essential, teach a trainer new skills.</div></div>
-      <div class="ccard" data-cw="talk"><div style="font-size:26px">💬</div><b>What they say</b><div class="msg">Greetings and topics are on the Dialogue page. Every character here has a button to go there.</div></div>
     </div></div>`;
+  // (two things to do here; no card for Dialogue, its own page: the user, "why is 'what they say' a button when
+  // it just opens the dialogue page")
   $('#cmain').querySelectorAll('[data-cw]').forEach(c => c.onclick = () => {
-    if (c.dataset.cw === 'new') $('#c-new').click(); else if (c.dataset.cw === 'find') $('#c-find').focus(); else showView('dialog');
+    if (c.dataset.cw === 'new') $('#c-new').click(); else $('#c-find').focus();
   });
 }
 
@@ -73,6 +73,7 @@ function cRender(){
         <div class="msg">${esc(d.id)} · ${d.kind === 'creature' ? `${esc((C.opts.ctypes || [])[d.ctype] || 'Creature')}` : `${d.female ? 'female' : 'male'} ${esc(race)} ${esc(cls)}`}, level ${d.level}${d.essential ? ' · <b>essential</b>' : ''}</div></div>
       <div class="chbtns">
         <button class="btn sm" id="c-talk" title="Greetings and topics for this character">💬 Dialogue</button>
+        ${typeof anShow === 'function' ? '<button class="btn sm" id="c-anim" title="How they move: their animations played on their body, and the text keys to change">🎞 Animations</button>' : ''}
         <button class="btn sm" id="c-copy" title="Make a new character based on this one">⧉ Make a copy</button>
         <button class="btn sm" id="c-revert" style="visibility:hidden" title="Forget the changes you haven't saved">↺ Undo edits</button>
         <button class="btn primary" id="c-save" disabled>Saved</button>
@@ -86,6 +87,11 @@ function cRender(){
   $('#c-revert').onclick = () => { C.data = JSON.parse(C.orig); cRender(); };
   $('#c-talk').onclick = () => { showView('dialog'); dOpen('npc', d.id); };
   $('#c-copy').onclick = cCopy;
+  const an = $('#c-anim');
+  if (an) an.onclick = () => {
+    if (d.i == null) return toast('Save this character first: a new one has no record to play yet.', true);
+    anShow(d.i, (d.name || d.id) + ': animation & text keys');
+  };
   (d.kind === 'creature' ? {who: cWhoCrea, stats: cStatsCrea, ai: cAI, services: cServices, items: cItems}
     : {who: cWho, stats: cStats, ai: cAI, services: cServices, items: cItems})[C.tab]($('#cbody'));
   cChanged();

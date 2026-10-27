@@ -409,7 +409,7 @@ function plCss(){
   .pl-menu{position:relative} .pl-menu > div{display:none;position:absolute;z-index:20;top:100%;left:0;margin-top:4px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:200px;box-shadow:0 8px 30px #000c;max-height:min(420px,70vh);overflow-y:auto}
   .pl-menu > div .note{padding:7px 9px;border-top:1px solid var(--line);margin-top:4px;color:var(--muted-b);font-size:12px;line-height:1.45;max-width:240px}
   .pl-menu.open > div{display:block} .pl-menu > div button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--text-b);padding:6px 9px;border-radius:5px;cursor:pointer;font-size:13px}
-  .pl-menu > div button:hover{background:#2b241a} .pl-menu > div small{display:block;color:var(--muted-b);font-size:11px}
+  .pl-menu > div button:hover{background:var(--hover)} .pl-menu > div small{display:block;color:var(--muted-b);font-size:11px}
   .pl-menu .prow{display:flex;align-items:center} .pl-menu .prow > button:first-child{flex:1;min-width:0} .pl-menu .prow .x{width:auto;padding:4px 7px;color:var(--muted-b);font-size:12px} .pl-menu .prow .x:hover{color:#ff8a6a}
   .pl-menu .head{padding:7px 9px 3px;color:var(--gold2);font-size:11px;letter-spacing:.04em;text-transform:uppercase;border-top:1px solid var(--line);margin-top:4px}`;
   document.head.appendChild(c);
@@ -1335,7 +1335,7 @@ function plBuild(rooms, doors, stairs, pins, well){
 // least: the whole-storey piece, no landings, the game's pieces round it). Rooms are then added round it
 async function plSeedStairs(){
   const st = $('#cr-bstyle'), sty = plStyle();
-  if (!st || !sty) return toast('Pick a style first.', true);
+  if (!st || !sty) return toast('Pick a style first.');
   if (!sty.floors) return toast(`${sty.name} has no stair pieces: pick a style with stairs (⇅), like Hlaalu.`, true);
   let r;
   try { r = await post('/api/build/stairseed', {style: st.value}); } catch (e){ return toast(e.message, true); }
@@ -1352,7 +1352,7 @@ async function plSeedStairs(){
 // plan the best few are built in a scratch place and looked through for holes. Undo puts it back
 async function plShuffle(){
   const st = $('#cr-bstyle'), sty = plStyle(), b = $('#pl-shuffle');
-  if (!st || !sty) return toast('Pick a style first.', true);
+  if (!st || !sty) return toast('Pick a style first.');
   const L = bLayout();
   if (new Set(L.rooms.map(r => r.floor)).size < 2) return toast('Fit together works out where the stairs sit best: it needs rooms on two floors.', true);
   if (L.floors_as === 'linked' || (PL.res && PL.res.linked)) return toast('The floors are joined by doors here, so there are no stairs to fit. Choose "Stairs" under Floors joined by.', true);
@@ -1429,7 +1429,7 @@ async function plFromGame(){
   const kitName = id => ((CR.bstyles || []).find(x => x.id === id) || {}).name || id;
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(620px,94vw)"><h2>Plan from a place in the game</h2>
-    <div class="msg">A house, shop or tavern the game's own builders made, read as a plan: its rooms (named by what stands in them), the doorways between them, the way out, its floors, and the stairs where the game has them, in its own style. Only places the Workshop can build again are listed, the closest first; tombs, caves and sets without stairs are left out. Nothing in your mod changes; the plan is yours to study, change and build.</div>
+    <div class="msg">One of the game's houses, shops or taverns as a plan: its rooms, doorways, floors and stairs, in its own style. Only places the Workshop can rebuild are listed, closest first. Nothing in your mod changes until you build.</div>
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"><select class="inp" id="pfg-style" style="max-width:220px"></select>
       <input class="inp" id="pfg-find" placeholder="Find… (e.g. Balmora, inn, manor)" style="flex:1;min-width:160px" autocomplete="off"></div>
     <div class="msg" id="pfg-prog" style="margin-top:6px;display:none"></div>

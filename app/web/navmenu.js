@@ -24,7 +24,6 @@ function navCreate(k){
   // (the cards that open a page of their own, as bindForm's)
   if (k === 'forge' && typeof forgeShow === 'function') return forgeShow();
   if (k === 'givespell' && typeof sgShow === 'function') return sgShow();
-  if (k === 'merge' && typeof mergeModal === 'function') return mergeModal();
   if (k === 'lists'){ LV.id = null; LV.data = null; return open('lists'); }
   if (k === 'effect'){ MX.form = null; return open('myeff'); }
   if (k === 'itemed'){ IE.id = null; IE.data = null; return open('itemed'); }
@@ -36,7 +35,7 @@ function navType(tag){
   showView('browse'); S.types = tag ? [tag] : []; buildSide(); runSearch();
 }
 function navWorld(text){
-  if (!W.key){ showView('world'); toast('Open a place on the World map first.', true); return; }
+  if (!W.key){ showView('world'); toast('Open a place on the World map first.'); return; }
   navGo('world', null, text);
 }
 
@@ -85,7 +84,7 @@ const NAV_MENU = {
     {label: '💾 Save as…', act: () => navGo('mymod', '#mm-saveas')},
     {label: '📁 Show folder', act: () => navGo('mymod', '#mm-folder')}, '-',
     {label: '🗂 Your mods…', act: () => navGo('mymod', '#mm-mods')},
-    {label: 'Switch or start another mod', act: () => navGo('mymod', '#mm-switch')},
+    {label: '👥 Build together…', act: () => togOpen()},
     {label: '📂 Open an .esp as your mod…', act: () => navGo('mymod', '#mm-adopt')},
     {label: '⊕ Merge another mod into this one…', act: () => navGo('mymod', '#mm-merge')}],
   health: () => [['all', 'Everything'], ['error', 'Needs fixing'], ['warning', 'Worth a look'], ['info', 'Good to know']]

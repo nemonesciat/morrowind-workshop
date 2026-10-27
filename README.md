@@ -45,7 +45,9 @@ repository is the source code it is built from.
   interior-design guidelines, each with Show me and a one-Undo fix.
 
 ### The world map, in 2D and 3D
-- Place, move, turn and scale with snapping, grid and wireframe; land things on surfaces; box select.
+- Place, move, turn, tilt and scale with snapping, grid and wireframe; land things on surfaces; box select.
+- **Settle** and **Physics** (Rapier): loose things fall and rest by their real shapes, for what you
+  look at, a picked shelf or table, or just your selection; pause, put back, or keep where they lie.
 - **Windows over the view**: an object's record and placement side by side, with what you can do
   with that kind of thing; **Create here…** makes a container, item, note, person, spell, magic
   effect or new place at the spot you clicked.
@@ -70,9 +72,22 @@ repository is the source code it is built from.
   lamp hanging on nothing, nothing standing in the way from the front door.
 - **A tool, not a form**: the plan of the layout is drawn as you choose, flat or as a 3D sketch you can
   turn, and Make builds exactly that plan. Options: size, levels (ramps up and down), layout (one winding way, branching, a maze), water
-  (dry, pools, flooded caves), creatures, loot, lived in, and a door outside. 🎲 for another layout, ↶
+  (from dry to fully flooded, with a way to swim through), creatures, loot, lived in, and a door outside. 🎲 for another layout, ↶
   for the one before. On the World map it opens in a window over the 3D view.
 - Learnt from the game's own places of each kind, once (15–20 s each).
+
+### Weapons and armour
+- **The Forge** (Create, or New item for a weapon or armour piece): a new piece with the game's own
+  numbers for its kind and material, or for a new material between two, with badges where a number
+  goes well beyond the game's, and the armour's weight class.
+- **Whole sets**: any material the game has four or more armour pieces of, the pieces you pick, named
+  the game's way, one Undo.
+- **Into the world**: the game's loot lists that hold pieces like it, at the level the game gives
+  pieces of that worth there; the classes whose people carry such things; the merchants who sell them.
+  Measured on the game's own pieces held out in turn: it finds the lists a piece is really in three
+  times in four, at a level within 2 of the game's 95% of the time.
+- **Checks**: gear nobody hands out, list levels far from the game's for its worth (more than 10 off;
+  the game keeps 98% of its own within that), half a pair in a set.
 
 ### Magic of your own
 - **New magic effect**: looks taken from a template effect, its own name, icon and cost, and steps

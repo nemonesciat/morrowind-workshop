@@ -13,7 +13,7 @@
 <style>
 :root{
   --bg:#13110d; --panel:#1b1813; --panel2:#221e18; --line:#342d23; --line2:#463c2e;
-  --text:#ebe2cf; --muted:#9c917c; --faint:#6e6555; --gold:#d2a85a; --gold2:#f0cd87;
+  --text:#ebe2cf; --muted:#9c917c; --faint:#8b806c; --gold:#d2a85a; --gold2:#f0cd87;
   --red:#e0705b; --amber:#e2b04a; --blue:#7fa7d6; --green:#8fbf7a; --hover:#2a251d; --sel:#3a3020;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   /* deeper and in-between shades (input boxes, bars, faint row lines): themes change these too (theme.js) */
@@ -32,7 +32,7 @@ input[type=range]{margin-left:0;margin-right:0;max-width:100%}
 a{color:var(--gold2)}
 .app{display:grid;grid-template-rows:auto 1fr;grid-template-columns:minmax(0,1fr);height:100vh}
 header{display:flex;align-items:center;gap:14px;row-gap:6px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--line);background:linear-gradient(var(--bg3),var(--bg2))}
-/* the logo: a half Dwemer gear, MW over WS cut from straight strokes, OPENMW BROWSER to their width
+/* the logo: a half Dwemer gear, MW over WS cut from straight strokes, WORKSHOP spaced to their width
    (web/logo.svg is the same with fixed colours, for pages outside the app) */
 /* the header: the logo, the page buttons beside it (a fixed row, the same at any window width: the main
    way round the Workshop), then the search over the toolbar, which take what room is left; in a window
@@ -79,7 +79,7 @@ nav button.on svg{stroke:var(--gold)}
 /* (the count's holder sits on the button's corner, out of the stacking: an empty holder in the column took a
    gap of its own and lifted Health check's icon and name above the others) */
 nav #hbadge{position:absolute;top:5px;right:8px;line-height:0}
-nav .badge{display:inline-block;min-width:17px;padding:0 4px;border-radius:9px;background:var(--red);color:#1b0f0b;font:600 10.5px/17px Inter,sans-serif;text-align:center}
+nav .badge{display:inline-block;min-width:17px;padding:0 4px;border-radius:9px;background:var(--red);color:var(--bg);font:600 10.5px/17px Inter,sans-serif;text-align:center}
 .search{flex:1;max-width:640px;position:relative}
 .search input{width:100%;padding:9px 34px 9px 36px;text-overflow:ellipsis;border-radius:9px;border:1px solid var(--line2);background:var(--deep);color:var(--text);font:inherit;outline:none}
 .search input:focus{border-color:var(--gold)}
@@ -99,6 +99,7 @@ main{min-height:0;position:relative}
 .tbtn:hover{background:var(--hover);color:var(--text)}
 .tbtn.on{background:var(--sel);color:var(--gold2)}
 .tbtn span:last-child{font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.tbtn.on span:last-child{color:var(--muted)}
 .tbtn.zero{opacity:.4}
 select{width:calc(100% - 16px);margin:4px 8px;background:var(--deep);color:var(--text);border:1px solid var(--line2);border-radius:7px;padding:6px}
 .list{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;border-right:1px solid var(--line)}
@@ -113,7 +114,7 @@ select{width:calc(100% - 16px);margin:4px 8px;background:var(--deep);color:var(-
 .row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:2px 10px;padding:7px 14px;border-bottom:1px solid var(--line0);cursor:pointer}
 .row:hover{background:var(--hover)}
 .row.sel{background:var(--sel)}
-.row .ty{grid-row:span 2;font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.row .ty{grid-row:span 2;font-size:11px;color:var(--gold2);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
 .row .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .nm b{font-weight:600}
 .row .nm .id{color:var(--muted);font-family:var(--mono);font-size:12px;margin-left:6px}
@@ -131,10 +132,11 @@ select{width:calc(100% - 16px);margin:4px 8px;background:var(--deep);color:var(-
 .empty{color:var(--faint);padding:40px 10px;text-align:center}
 .empty h3{font-family:Cinzel,serif;color:var(--muted);font-weight:500}
 .dt-top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-.dt-type{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--gold)}
+.dt-type{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--gold2)}
 .navbtns{margin-left:auto;display:flex;gap:4px}
 .navbtns button{border:1px solid var(--line2);background:var(--panel2);border-radius:6px;width:28px;height:26px;cursor:pointer;color:var(--muted)}
 .navbtns button:disabled{opacity:.35;cursor:default}
+.detail .dt-tool{margin:8px 0 4px}
 .detail h2{margin:0 0 2px;font-family:Cinzel,serif;font-weight:600;font-size:22px;color:var(--gold2);word-break:break-word}
 .idline{font-family:var(--mono);font-size:12.5px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .copy{border:1px solid var(--line2);background:none;border-radius:5px;padding:0 6px;font-size:11px;color:var(--muted);cursor:pointer}
@@ -167,7 +169,7 @@ table.t{width:100%;border-collapse:collapse;font-size:13px}
 table.t td,table.t th{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 table.t th{color:var(--faint);font-weight:500;font-size:11.5px}
 table.t td.num{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;width:40px}
-table.t td.ty{color:var(--gold);font-size:11px;text-transform:uppercase;white-space:nowrap;width:110px}
+table.t td.ty{color:var(--gold2);font-size:11px;text-transform:uppercase;white-space:nowrap;width:110px}
 .filter{width:100%;padding:6px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--deep);color:var(--text);margin-bottom:8px;font:inherit;font-size:13px}
 .resp{border-bottom:1px solid var(--line);padding:7px 0;cursor:pointer}
 .resp:hover{background:var(--hover)}
@@ -201,7 +203,7 @@ table.t td.ty{color:var(--gold);font-size:11px;text-transform:uppercase;white-sp
 .bar i{display:block;height:100%;background:linear-gradient(90deg,#8c6a2f,var(--gold2));width:0;transition:width .3s}
 .step{color:var(--muted);font-size:13px}
 .tip{color:var(--faint);font-size:12.5px;margin-top:22px}
-.err{color:var(--red);white-space:pre-wrap;text-align:left;background:#21130f;border:1px solid #5a2a20;border-radius:8px;padding:12px}
+.err{color:var(--red);white-space:pre-wrap;text-align:left;background:color-mix(in srgb,var(--red) 9%,var(--panel));border:1px solid color-mix(in srgb,var(--red) 40%,var(--line));border-radius:8px;padding:12px}
 .hl{background:var(--hl,#5a4520);color:var(--gold2);border-radius:2px}
 /* project + editing */
 .proj{border:1px solid var(--line2);background:var(--panel2);border-radius:20px;padding:5px 12px;cursor:pointer;color:var(--muted);font-size:12.5px;white-space:nowrap}
@@ -224,7 +226,7 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .bits{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px}
 .bits label{display:flex;gap:5px;align-items:center;cursor:pointer}
 .statgrid .inp{width:64px;padding:2px 5px;text-align:right}
-.editbar{position:sticky;bottom:-60px;margin:18px -22px -60px;padding:12px 22px;background:#211c14;border-top:1px solid var(--line2);display:flex;gap:8px;align-items:center}
+.editbar{position:sticky;bottom:-60px;margin:18px -22px -60px;padding:12px 22px;background:var(--panel2);border-top:1px solid var(--line2);display:flex;gap:8px;align-items:center}
 .msg{font-size:12.5px;color:var(--muted)}
 .msg.err{color:var(--red);background:none;border:0;padding:0}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--panel2-c);border:1px solid var(--gold);color:var(--gold2);padding:9px 16px;border-radius:9px;z-index:50;box-shadow:0 8px 30px #000a;font-size:13.5px;max-width:80vw}
@@ -395,7 +397,7 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px 0 8px}
 .tile{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:4px 4px 5px;cursor:grab;user-select:none;text-align:center;min-width:0;transition:border-color .1s}
 .tile:hover{border-color:var(--gold)}
-.tile.placing{border-color:var(--gold);background:#3a2e17;box-shadow:0 0 0 1px var(--gold) inset}
+.tile.placing{border-color:var(--gold);background:color-mix(in srgb,var(--gold) 20%,var(--panel));box-shadow:0 0 0 1px var(--gold) inset}
 .tile span{display:block;font-size:11.5px;line-height:1.25;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
 .thumb{width:100%;aspect-ratio:1;object-fit:contain;display:block;border-radius:5px;background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2))}
 .thumb.nothumb{display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--faint)}
@@ -446,13 +448,13 @@ details.pal summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:3
 .pchip{font-size:12px;border:1px solid var(--line2);background:var(--panel2);border-radius:14px;padding:2px 9px;cursor:grab;user-select:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pchip:hover{border-color:var(--gold);color:var(--gold2)}
 /* assistant */
-#aipanel{position:fixed;top:57px;right:0;bottom:0;width:min(420px,100vw);background:#18150f;border-left:1px solid var(--line2);z-index:30;display:none;flex-direction:column;box-shadow:-12px 0 40px #0008}
+#aipanel{position:fixed;top:57px;right:0;bottom:0;width:min(420px,100vw);background:var(--panel);border-left:1px solid var(--line2);z-index:30;display:none;flex-direction:column;box-shadow:-12px 0 40px #0008}
 #aipanel.open{display:flex}
 .ai-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
 .ai-head h2{font-family:Cinzel,serif;font-size:17px;color:var(--gold2);margin:0;font-weight:600;flex:1}
 .ai-msgs{flex:1;overflow:auto;padding:14px}
 .ai-msg{margin-bottom:14px;line-height:1.5;font-size:13.5px}
-.ai-msg.user{background:#2a2419;border:1px solid var(--line2);border-radius:10px;padding:8px 11px;margin-left:30px;white-space:pre-wrap}
+.ai-msg.user{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:8px 11px;margin-left:30px;white-space:pre-wrap}
 .ai-msg.bot{white-space:pre-wrap}
 .ai-msg.err{color:#f3b2a5}
 .ai-steps{margin:6px 0;display:flex;flex-direction:column;gap:3px}
@@ -472,7 +474,7 @@ details.pal summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:3
 .cwrap{max-width:1100px;margin:0 auto}
 .chead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:10px}
 .chbtns{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.cnote{background:#2a2315;border:1px solid #5a4a2a;border-radius:8px;padding:8px 12px;font-size:13px;color:var(--muted);margin:8px 0;line-height:1.55}
+.cnote{background:color-mix(in srgb,var(--gold) 10%,var(--panel));border:1px solid color-mix(in srgb,var(--gold) 35%,var(--line));border-radius:8px;padding:8px 12px;font-size:13px;color:var(--muted);margin:8px 0;line-height:1.55}
 .ctabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:12px 0 14px;flex-wrap:wrap}
 .ctabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:8px 12px;cursor:pointer;font-size:13.5px}
 .ctabs button.on{color:var(--gold2);border-bottom-color:var(--gold)}
@@ -609,11 +611,11 @@ tr.bad td{color:#e08a7a}
 .dchip.who{color:#a9c8e8;border-color:#34485e}
 .dchip.ok{border-color:var(--green);color:var(--green)} .dchip.ok::before{content:"✓ "}
 .dchip.no{border-color:var(--red);color:var(--red)} .dchip.no::before{content:"✗ "}
-.qtbar{border:1px solid #4a6a3a;background:#1d2419;border-radius:8px;padding:8px 10px;margin:12px 0 4px;line-height:1.6}
+.qtbar{border:1px solid color-mix(in srgb,var(--green) 45%,var(--line));background:color-mix(in srgb,var(--green) 9%,var(--panel));border-radius:8px;padding:8px 10px;margin:12px 0 4px;line-height:1.6}
 .qtbar.off{border-color:var(--line2);background:transparent;color:var(--muted)}
 .qtbar .qtbtns{margin-left:10px;display:inline-flex;gap:6px}
 .qstage.qnow{outline:1px solid var(--green);outline-offset:3px;border-radius:6px}
-.qtpanel{border:1px solid #4a6a3a;background:#1d2419;border-radius:8px;padding:10px;margin-bottom:12px}
+.qtpanel{border:1px solid color-mix(in srgb,var(--green) 45%,var(--line));background:color-mix(in srgb,var(--green) 9%,var(--panel));border-radius:8px;padding:10px;margin-bottom:12px}
 .qtrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
 .qtv{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:12.5px;padding:2px 0;border-bottom:1px solid var(--line)}
 .qtv span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -688,7 +690,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 .radios{display:flex;flex-wrap:wrap;gap:6px}
 .radios label{border:1px solid var(--line2);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:13px;color:var(--muted)}
 .radios input{display:none}
-.radios label:has(input:checked){border-color:var(--gold);color:var(--gold2);background:#2a2214}
+.radios label:has(input:checked){border-color:var(--gold);color:var(--gold2);background:var(--sel)}
 .itemrow{display:flex;gap:6px;align-items:center;margin-bottom:4px}
 /* the Create page: cards in groups, the rest of a form folded away, and a line saying what the button does */
 .cgroups{margin-bottom:20px}
@@ -727,7 +729,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 <body>
 <div class="app">
 <header>
-  <div class="brand"><svg class="logo" viewBox="33 5 191.0 132.9" role="img" aria-label="Morrowind Workshop, OpenMW browser"><title>Morrowind Workshop</title><path class="lg-g" d="M88,17 L83.5,17.2 L80.0,6.6 L68.2,9.8 L70.5,20.7 L62.7,25.2 L54.4,17.8 L45.8,26.4 L53.2,34.7 L48.7,42.5 L37.8,40.2 L34.6,52.0 L45.2,55.5 L45.2,64.5 L34.6,68.0 L37.8,79.8 L48.7,77.5 L53.2,85.3 L45.8,93.6 L54.4,102.2 L62.7,94.8 L70.5,99.3 L68.2,110.2 L80.0,113.4 L83.5,102.8 L88,103 Z"/><path class="lg-h" d="M88,34 A26,26 0 0 0 88,86 Z"/><path class="lg-g" d="M88,48 A12,12 0 0 0 88,72 Z"/><circle class="lg-h" cx="80" cy="60" r="4"/><polyline class="lg-a" points="105.2,58.0 105.2,13.2 129.0,37.0 152.8,13.2 152.8,58.0"/><polyline class="lg-a" points="170.2,8.0 170.2,52.8 194.0,29.0 217.8,52.8 217.8,8.0"/><polyline class="lg-b" points="105.2,62.0 105.2,106.8 129.0,83.0 152.8,106.8 152.8,62.0"/><polyline class="lg-b" points="217.8,67.2 170.2,67.2 170.2,87.0 217.8,87.0 217.8,106.8 170.2,106.8"/><text class="lg-s" x="34" y="135.9" textLength="189.0" lengthAdjust="spacingAndGlyphs">OPENMW BROWSER</text></svg></div>
+  <div class="brand"><svg class="logo" viewBox="33 5 191.0 132.9" role="img" aria-label="Morrowind Workshop"><title>Morrowind Workshop</title><path class="lg-g" d="M88,17 L83.5,17.2 L80.0,6.6 L68.2,9.8 L70.5,20.7 L62.7,25.2 L54.4,17.8 L45.8,26.4 L53.2,34.7 L48.7,42.5 L37.8,40.2 L34.6,52.0 L45.2,55.5 L45.2,64.5 L34.6,68.0 L37.8,79.8 L48.7,77.5 L53.2,85.3 L45.8,93.6 L54.4,102.2 L62.7,94.8 L70.5,99.3 L68.2,110.2 L80.0,113.4 L83.5,102.8 L88,103 Z"/><path class="lg-h" d="M88,34 A26,26 0 0 0 88,86 Z"/><path class="lg-g" d="M88,48 A12,12 0 0 0 88,72 Z"/><circle class="lg-h" cx="80" cy="60" r="4"/><polyline class="lg-a" points="105.2,58.0 105.2,13.2 129.0,37.0 152.8,13.2 152.8,58.0"/><polyline class="lg-a" points="170.2,8.0 170.2,52.8 194.0,29.0 217.8,52.8 217.8,8.0"/><polyline class="lg-b" points="105.2,62.0 105.2,106.8 129.0,83.0 152.8,106.8 152.8,62.0"/><polyline class="lg-b" points="217.8,67.2 170.2,67.2 170.2,87.0 217.8,87.0 217.8,106.8 170.2,106.8"/><text class="lg-s" x="34" y="135.9" textLength="189.0" lengthAdjust="spacing">WORKSHOP</text></svg></div>
   <nav>
     <button data-view="browse" class="on"><svg viewBox="0 0 24 24"><path d="M4 6h9M4 11h6M4 16h5"/><circle cx="15.5" cy="14.5" r="4"/><path d="m18.5 17.5 3 3"/></svg>Browse</button>
     <button data-view="world"><svg viewBox="0 0 24 24"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></svg>World map</button>
@@ -750,13 +752,13 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   </div>
   <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
   </div>
-  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
+  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn primary" id="aibtn" title="Assistant: ask the AI to help you build (it can be hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -784,7 +786,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
       <div class="viewsw" id="viewsw"><button data-view3d="0" class="on" title="Flat map seen from above">Map</button><button data-view3d="1" title="See and build the place in 3D, like in game">3D</button></div>
       <div class="v3tools" id="v3tools" style="display:none"></div>
       <div class="v3help" id="v3help" style="display:none"><b>3D view controls</b><br>
-        <kbd>Right-drag</kbd> look around · <kbd>W A S D</kbd> fly · <kbd>Q</kbd>/<kbd>E</kbd> down/up · <kbd>Shift</kbd> faster · <kbd>Esc</kbd> stop<br>
+        <kbd>Right-drag</kbd> look around · <kbd>W A S D</kbd> fly · <kbd>Q</kbd>/<kbd>E</kbd> down/up · <kbd>Shift</kbd> faster · tap <kbd>W A S D</kbd> twice and hold: sprint · <kbd>Esc</kbd> stop<br>
         <kbd>Wheel</kbd> forward/back · <kbd>Middle-drag</kbd> slide · <kbd>Alt+drag</kbd> circle the selection<br>
         <kbd>Click</kbd> select · drag the arrows to move, the rings to turn · <kbd>G</kbd> move · <kbd>R</kbd> turn<br>
         <kbd>F</kbd> look at it · double-click: its window (record and placement) · <kbd>End</kbd> drop it onto what's below · <kbd>Del</kbd> remove · <kbd>Esc</kbd> deselect<br>
@@ -1206,6 +1208,9 @@ function renderDetail(d){
   let h = `<div class="dt-top"><span class="dt-type">${esc(d.type_label)}</span>
     <div class="navbtns"><button id="hb" title="Back (Alt+←)" ${S.histPos>0?'':'disabled'}>←</button><button id="hf" title="Forward (Alt+→)" ${S.histPos<S.hist.length-1?'':'disabled'}>→</button></div></div>`;
   h += `<h2>${esc(d.name || d.id || '(no ID)')}</h2>`;
+  // (Browse finds; the work is done on the kind's own page: one click there)
+  const tool_ = typeof otTool === 'function' && d.id ? otTool(d.type) : null;
+  if (tool_) h += `<div class="dt-tool"><button class="btn sm primary" data-otgo="${d.i}" data-ottype="${esc(d.type)}" data-otid="${esc(d.id)}">✎ Edit it in ${esc(tool_.label)}</button></div>`;
   h += `<div class="idline">${d.id ? `ID: ${esc(d.id)} <button class="copy" data-copy="${esc(d.id)}">copy</button>` : ''}
         ${d.topic ? `· topic <span class="lnk" data-go="${d.topic.i}">${esc(d.topic.id)}</span>` : ''}</div>`;
   const flags = [];
@@ -1370,6 +1375,8 @@ async function afterChange(){
 }
 $('#detail').addEventListener('keydown', e => { if (e.target.id === 'newid' && e.key === 'Enter') detailAction('docopy'); });
 $('#detail').addEventListener('click', e => {
+  const og = e.target.closest('[data-otgo]');
+  if (og){ openTool(+og.dataset.otgo, og.dataset.ottype, og.dataset.otid); return; }
   const a = e.target.closest('[data-act]');
   if (a) { detailAction(a.dataset.act); return; }
   const g = e.target.closest('[data-go]');
@@ -1767,10 +1774,11 @@ async function modsModal(){
     <p class="msg">Every mod you made or opened here, newest first. <b>Delete</b> sends the mod to the Windows Recycle Bin (its project, its plugin, its scripts and grass files), where it can be restored, and takes it out of your OpenMW load order. The mod open now can't be deleted: switch to another first.</p>
     <div id="mx-list" style="max-height:min(56vh,560px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking…</div>
     <div class="msg err" id="mx-err" style="margin-top:8px"></div>
-    <div class="foot"><button class="btn" id="mx-close">Close</button></div></div>`;
+    <div class="foot"><button class="btn" id="mx-new">＋ Start a new mod…</button><button class="btn" id="mx-close">Close</button></div></div>`;
   document.body.appendChild(bg);
   const q = s => bg.querySelector(s);
   q('#mx-close').onclick = () => bg.remove();
+  q('#mx-new').onclick = () => { bg.remove(); projectModal(); };
   bg.onclick = e => { if (e.target === bg) bg.remove(); };
   const draw = async () => {
     let r;
@@ -1838,8 +1846,8 @@ async function renderMyMod(){
       <button class="btn primary" id="mm-release" title="Check the mod, write a readme and pack a zip to share">📦 Get ready to share</button>
       ${p.enabled_in_cfg ? '' : `<button class="btn" id="mm-enable">Add to my OpenMW load order</button>`}
       <button class="btn" id="mm-folder" title="Open the folder with ${esc(p.plugin)} in Explorer, the file picked out">📁 Show folder</button>
-      <button class="btn" id="mm-switch">Switch or start another mod</button>
-      <button class="btn" id="mm-mods" title="All your mods, where their files are, and deleting the ones you no longer want">🗂 Your mods…</button>
+      <button class="btn" id="mm-mods" title="Switch to another of your mods, start a new one, or delete the ones you no longer want">🗂 Your mods…</button>
+      <button class="btn" id="mm-together" title="Build this mod together with other people, live, from wherever they are">👥 Build together…</button>
       <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>
       <button class="btn" id="mm-adopt" title="An existing .esp or .omwaddon becomes the active file: the mod you work on, saved back into that file">📂 Open an .esp as your mod…</button>
       <button class="btn" id="mm-saveas" title="Save everything into a new .esp or .omwaddon, which becomes the active file (the Construction Set's Save As)">💾 Save as…</button>
@@ -1874,8 +1882,8 @@ async function renderMyMod(){
     };
     const shownRoots = roots.slice(0, S.logAll ? 400 : 40);
     h += `<h3 style="margin:26px 0 6px;color:var(--muted);font-weight:500">Recent activity</h3>
-      <p class="msg" style="margin:0 0 8px">Changes made on top of another one (furnishing a place you built, lines in a topic you made, moving something you placed) sit inside it: click ▸ to see them.
-        Undoing a change also takes back everything built on it, newest first, in one step, and one Redo brings it all back. Unrelated changes stay as they are.</p>
+      <p class="msg" style="margin:0 0 8px">Changes built on another (furniture in a house you built, lines in your topic) sit inside it: click ▸ to see them.
+        Undoing a change takes back what's built on it too, in one step.</p>
       ${nHistory ? `<label class="msg" style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="mm-undone" ${S.showUndone ? 'checked' : ''}> Show undone changes and undo history (${nHistory}), to redo something</label>` : ''}
       <div class="alist">${shownRoots.map(l => row(l, 0)).join('') || '<div class="arow msg">Nothing in effect right now.</div>'}</div>` +
       (!S.logAll && roots.length > 40 ? `<div class="actions"><button class="btn sm" id="mm-logall">Show older activity</button></div>` : '');
@@ -1887,7 +1895,7 @@ async function renderMyMod(){
     try { const r = await post('/api/project/enable'); toast(r.already ? 'Already enabled' : 'Enabled. Backup saved next to openmw.cfg'); await afterChange(); renderMyMod(); }
     catch (err){ toast(err.message, true); }
   };
-  $('#mm-switch').onclick = projectModal;
+  $('#mm-together').onclick = () => togOpen();
   $('#mm-folder').onclick = async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } };
   $('#mm-mods').onclick = modsModal;
   $('#mm-merge').onclick = mergeModal;
@@ -1965,7 +1973,7 @@ async function worldOpen(key, keepCam){
 }
 document.querySelectorAll('[data-view3d]').forEach(b => b.onclick = () => {
   const on = b.dataset.view3d === '1';
-  if (on && !W.key) return toast('Pick a place first (type a cell name in the Place panel).', true);
+  if (on && !W.key) return toast('Pick a place first (type a cell name in the Place panel).');
   if (on !== V3.on) v3Enable(on);
 });
 function prepCell(m){
@@ -2636,7 +2644,7 @@ function groupHint(){
   setBanner(`Placing <b>${esc(G.label)}</b> (${G.items.length} objects): ${V3.on ? 'point where it goes, <b>wheel</b> turns it,' : 'click where it goes, <b>R</b> turns it 90° (Shift+R 15°),'} click to put it down. Esc to stop. Turned ${Math.round(G.yaw * 180 / Math.PI)}°.`, 'group');
 }
 function startGroupPlace(items, label){
-  if (!W.key) return toast('Open a place on the World map first.', true);
+  if (!W.key) return toast('Open a place on the World map first.');
   W.groupPlace = {items, label: label || 'group', yaw: 0};
   setMode('group');
   if (V3.on) v3GhostGroup(items);
@@ -2824,7 +2832,7 @@ function palTilesHtml(g){
 // the walking paths here redrawn by Project Tamriel's rules (pathgrid.redraw), from the Paths panel, the map's
 // right-click menu or Ctrl+K
 async function redrawPaths(btn){
-  if (!W.key) return toast('Open a place first.', true);
+  if (!W.key) return toast('Open a place first.');
   if (!await needProject()) return;
   if (W.mode === 'paths'){ PE.discard = true; setMode(null); }      // (made afresh: what was being edited goes)
   if (btn) btn.disabled = true;
@@ -2882,7 +2890,7 @@ function renderWside(){
     <div class="wtools">
       <button class="btn sm" id="w-create" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
       <button class="btn sm" id="w-stylepal" title="Building pieces, furniture, decor and whole sets sorted by style (Hlaalu, Redoran, Telvanni, Nord, Imperial, Gold Coast...), the way the game's own places use them: see what goes with what, then click or drag to place">🎨 Style palette…</button>
-      ${i.interior ? '<button class="btn sm wt-wide" id="w-furnish" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" title="Look over the whole place for what\'s wrong: chairs with nothing to sit at, things floating or through a wall, shelves and lights hung on nothing, and the gaps. Each fault gets a marker, Show me, and a fix where there is an obvious one.">🩺 Check place…</button>' : ''}
+      ${i.interior ? '<button class="btn sm wt-wide" id="w-furnish" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" title="Look over the place for what\'s wrong (floating things, chairs with nothing to sit at, gaps…), each with a marker and a fix where there is one">🩺 Check place…</button>' : ''}
       <button class="btn sm wt-link" id="w-2win" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Open in a second window</button></div>
     ${i.interior ? '<div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
@@ -3666,19 +3674,18 @@ const CR_CARDS = {
   ruin: ['⚙', 'Dungeon', 'A Dwemer ruin, a cave, a Velothi tomb or a Daedric ruin, laid out, lit, stocked and guarded the way the game\'s own are, with whoever has moved in. Make it again until you like it.', 'A place'],
   npc: ['🧍', 'New NPC', 'A townsperson, quest character, merchant or guard, dressed the way the game\'s own people of their race and class are.', 'A person'],
   container: ['🧰', 'Container with contents', 'A chest, crate, barrel or sack, filled with what you choose, locked and owned if you like.', 'In a place'],
-  item: ['🗡', 'New item', 'A weapon, armor, clothing, potion, tool or other item, started from one you pick. Enchant it if you like.', 'A thing'],
-  forge: ['⚒', 'Forge a weapon or armour', 'Pick what it is and its material: the Workshop gives it the numbers the game gives that kind of piece, and says when yours go beyond the game.', 'A thing'],
+  item: ['🗡', 'New item', 'Clothing, a potion, a tool or any other item, started from one you pick. Enchant it if you like. (Weapons and armour open in the Forge.)', 'A thing'],
+  forge: ['⚒', 'Forge a weapon or armour', 'A piece or a whole set, with the numbers the game gives its type and material, then into the game\'s loot lists, onto people and into merchants\' stock.', 'A thing'],
   book: ['📜', 'Note, letter or book', 'Something to read in game, in your own words, placed somewhere or given to someone.', 'A thing'],
   spell: ['✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone, or to the player.', 'Magic'],
   lists: ['🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.', 'A list'],
   effect: ['🌀', 'New magic effect', 'An effect of your own for spells, enchantments and potions: it looks like one of the game\'s and does what you pick (OpenMW 0.50 or newer).', 'Magic'],
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
   givespell: ['🪄', 'Give spells to people', 'Teach spells to everyone who fits: by race, class, faction, a spell they know or a skill, in the regions or towns you pick. In their records, or by a script that leaves them untouched.', 'Magic'],
-  merge: ['⊕', 'Merge another mod into this one', 'Everything another of your mods holds (its places, objects, records and scripts) added to this mod. The other mod is left as it is; this mod\'s Undo history starts afresh (a backup is kept).', 'A change'],
 };
 const CR_GROUPS = [['Make something new', ['build', 'ruin', 'npc', 'container', 'item', 'forge', 'book', 'spell', 'effect', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
-                   ['Change something that exists', ['itemed', 'givespell', 'merge']]];
+                   ['Change something that exists', ['itemed', 'givespell']]];
 // the rest of a form, folded away under a line
 function moreHtml(label, inner){ return `<details class="cmore"><summary>${esc(label)}</summary><div class="frow">${inner}</div></details>`; }
 function chk(id, label, on, title){ return `<label class="msg" style="display:flex;gap:6px;align-items:center" ${title ? `title="${esc(title)}"` : ''}><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`; }
@@ -3747,7 +3754,7 @@ function formHtml(kind){
   if (kind === 'ruin' && typeof ruinFormHtml === 'function') return ruinFormHtml(what);
   if (kind === 'build'){
     const copy = CR.bmode === 'copy';
-    return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds the floors, walls, ceilings, doorways, stairs and a way out from the style's own pieces, so it looks like the base game, and furnishes the rooms the way similar places in the game are furnished. <b>Plans ▾</b> has ready-made layouts, your saved plans, <b>Plan from a place in the game</b> (a house the game made, read as a plan of its rooms, doorways and stairs, to study and build from) and <b>Copy a place from the game</b>: a room or house the game made, copied whole, with a working door from outside.</p>
+    return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds them from the style's own walls, floors, doorways and stairs, and furnishes them the way the game's own places are. <b>Plans ▾</b> has ready-made layouts and your saved ones, and can start from a house the game made, as a plan or copied whole.</p>
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
       <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
       <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div>
@@ -3861,7 +3868,6 @@ function bindForm(){
   document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'lists'){ LV.id = null; LV.data = null; showView('lists'); return; }
     if (b.dataset.ck === 'effect'){ MX.form = null; showView('myeff'); return; }
     if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; }
-    if (b.dataset.ck === 'merge'){ mergeModal(); return; }
     if (b.dataset.ck === 'forge'){ if (typeof forgeShow === 'function') forgeShow(); return; }
     if (b.dataset.ck === 'givespell'){ if (typeof sgShow === 'function') sgShow(); return; }
     CR.kind = b.dataset.ck; CR.items = []; CR.idEdited = false;
@@ -4022,6 +4028,13 @@ async function bindItem(){
   ddSearch('it-give', 'NPC_,CREA,CONT', r => { $('#it-give').value = r.id; });
   const loadTpl = async () => {
     const t = CR.itTplInfo = await api('/api/items/template?i=' + CR.itTpl);
+    // (a weapon or armour piece is made in the Forge, starting like this one: the game's numbers for its type
+    // and material, the badges, and into the world afterwards; one way to make them, not two)
+    if ((t.tag === 'WEAP' || t.tag === 'ARMO') && typeof forgeShow === 'function'){
+      const like = CR.itTpl; CR.itTpl = null; CR.itTplInfo = null;
+      toast('Weapons and armour are made in the Forge: it starts like ' + (t.name || t.id) + ', with the game\'s numbers for its type and material.');
+      return forgeShow({kind: t.tag === 'WEAP' ? 'weapon' : 'armor', like});
+    }
     if (!$('#it-tplname')) return;
     $('#it-tplname').textContent = `Starting from ${t.name || t.id} (${t.id})`;
     $('#it-tpl').value = t.name || t.id;
@@ -4249,10 +4262,10 @@ async function createGo(){
     if (typeof vwHosting === 'function' && vwHosting('createv')){ go.disabled = false; msg.textContent = ''; await vwCreated(CR.kind, r, label); return; }
     if (CR.kind === 'spell'){
       toast(`Created ${label} (${r.cost} magicka)` + (r.given ? `, known by ${r.given}` : '') + '.');
-      openRecord(r.i, true); showView('browse');
+      openTool(r.i, 'SPEL', r.id);
     } else if (CR.kind === 'item' && !r.placed){
       toast(`Created ${label}` + (r.given ? `, given to ${r.given}` : '') + '. Place it from the World map.');
-      openRecord(r.i, true); showView('browse');
+      openTool(r.i);
     } else if (CR.kind === 'build'){
       const furnished = CR.bmode !== 'copy' && $('#cr-bfurnish') && $('#cr-bfurnish').checked;
       toast((CR.bmode === 'copy' ? 'Copied it as "' : 'Built "') + label + '". ' + (LINK.connected ? 'You can walk into it in game right away.' : furnished ? 'Look round it in 3D, then try it with Play here.' : 'Furnish it here, then try it with Play here.'));
@@ -4262,7 +4275,7 @@ async function createGo(){
       showView('world'); await worldOpen(r.key);
     } else if (CR.kind === 'book' && r.given){
       toast('Created ' + label + ', given to ' + r.given + '.');
-      openRecord(r.i, true); showView('browse');
+      openTool(r.i);
     } else if (CR.kind === 'npc' && !r.placed){
       toast('Created ' + label + '. Fine-tune them here, then place them from the World map.');
       cOpen(r.id);
@@ -4464,6 +4477,7 @@ poll();
 <script src="/web/frombuilding.js"></script>
 <script src="/web/prefabplan.js"></script>
 <script src="/web/twowin.js"></script>
+<script src="/web/opentool.js"></script>
 <script src="/web/coach.js"></script>
 <script src="/web/icons.js"></script>
 </body>

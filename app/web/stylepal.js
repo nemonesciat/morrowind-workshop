@@ -245,7 +245,7 @@ function spItem(id){
 }
 function spSet(n){ const d = SP.data[SP.cur]; return d && d.sets[+n]; }
 function spPlaceSet(s){
-  if (!W.key) return toast('Open a place on the World map first.', true);
+  if (!W.key) return toast('Open a place on the World map first.');
   startGroupPlace(s.items.map(i => Object.assign({}, i)), s.label.toLowerCase());
 }
 async function spShow(ck, id){

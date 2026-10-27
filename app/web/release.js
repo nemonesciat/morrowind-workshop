@@ -67,7 +67,7 @@ function rlRender(){
   desc.oninput = dl; dl();
   $('#rl-saveinfo').onclick = rlSaveInfo;
   wrap.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { RL.rmode = b.dataset.rm; wrap.querySelectorAll('[data-rm]').forEach(x => x.classList.toggle('on', x === b)); rlReadme(); });
-  $('#rl-copy').onclick = async () => { try { await navigator.clipboard.writeText($('#rl-readme').textContent); toast('Copied'); } catch (e){ toast('Select the text and copy it with Ctrl+C.', true); } };
+  $('#rl-copy').onclick = async () => { try { await navigator.clipboard.writeText($('#rl-readme').textContent); toast('Copied'); } catch (e){ toast('Select the text and copy it with Ctrl+C.'); } };
   $('#rl-clean').onclick = rlClean;
   $('#rl-pack').onclick = rlPack;
   $('#rl-openrel').onclick = () => post('/api/release/open', {what: 'releases'}).catch(e => toast(e.message, true));

@@ -75,7 +75,7 @@ async function sdDoorTo(ck, r){
   const info = await sdInfo(ck, r); if (!info) return;
   const name = r.name || r.id;
   const here = W.info && W.info.name ? W.info.name : '';
-  const html = `<div class="msg">${esc(name)} becomes a door that looks just the same (a new door record with its model) and leads where you choose. You arrive just inside, in front of the door back to here. A place with no door back gets one (move it afterwards if it stands oddly).</div>
+  const html = `<div class="msg">${esc(name)} becomes a door that looks the same and leads where you choose. You arrive in front of the door back here; a place without one gets one (move it if it stands oddly).</div>
     <div style="margin-top:12px"><label class="msg" style="display:flex;gap:6px;align-items:center"><input type="radio" name="sd-kind" value="existing" checked> <b>A place that exists</b></label>
       <div class="dd" style="margin:4px 0 0 22px"><input class="inp" id="sd-place" placeholder="Search a place… (any interior, or an outdoor cell)" autocomplete="off" style="width:100%"><div class="ddlist" id="sd-place-l"></div></div>
       <div class="msg" id="sd-place-pick" style="margin-left:22px"></div></div>
@@ -171,7 +171,7 @@ async function sdSwing(ck, r){
   const sz = info.size || {};
   const wide = sz.left != null ? Math.round(sz.left) : '?', deep = sz.back != null ? Math.round(sz.back) : '?';
   const html = `<div class="msg">${esc(name)} becomes a door that leads nowhere and swings open when used, like a door on a hinge. It is ${wide} units wide and ${deep} deep${info.front_learnt ? '' : '; which side is its front was guessed from its shape (the thinner side faces the room)'}.</div>
-    <div class="msg" style="margin-top:8px">The game turns a door round its model's origin, so a copy of the model is made with its origin at the hinge and the piece is re-seated on that point: nothing looks to have moved, and in game it swings a quarter turn round the edge you pick.</div>
+    <div class="msg" style="margin-top:8px">It swings a quarter turn round the edge you pick. (The Workshop makes a copy of the model hinged on that edge; nothing looks moved.)</div>
     <div style="margin-top:12px">${[['left', 'Hinge on the left', 'your left as you look at it from the room, at the wall side'], ['right', 'Hinge on the right', 'your right as you look at it, at the wall side'], ['centre', 'Turns round its middle', 'like a revolving door: half of it swings into the wall']].map(([v, l, d], n) => `<label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="radio" name="sd-hinge" value="${v}" ${n === 0 ? 'checked' : ''}> <b>${l}</b> · ${d}</label>`).join('')}</div>
     <div class="frow" style="margin-top:12px"><label>Open and close sound</label>${sdSoundSelect(info, 'sd-sound')}</div>
     <div class="msg" style="margin-top:10px;font-size:11.5px">If it swings the wrong way in game, Undo and pick the other edge. To make it lead somewhere as well, use "Make it lead somewhere…" afterwards.</div>`;
@@ -192,7 +192,7 @@ async function sdSlide(ck, r){
   const sz = info.size || {};
   const ways = [['back', 'Back into the wall'], ['left', 'To the left'], ['right', 'To the right'], ['up', 'Up into the ceiling'], ['down', 'Down into the floor'], ['forward', 'Forward into the room']];
   const others = ((W.cells[ck] || {}).refs || []).filter(x => x.k !== r.k && ['ACTI', 'STAT', 'LIGH', 'BOOK', 'MISC', 'CONT', 'DOOR', 'WEAP', 'ARMO', 'CLOT'].includes(x.type));
-  const html = `<div class="msg">${esc(name)} becomes an activator with a script: when used it slides the chosen way over a second and a half, with a sound, and slides back the next time. The script is written the way the game's own secret doors are (a timer, Move, SetAtStart) and opens in the Scripts editor afterwards.${info.front_learnt ? '' : ' Which side is its front was guessed from its shape (the thinner side faces the room).'}</div>
+  const html = `<div class="msg">${esc(name)} slides the chosen way with a sound when used, and back the next time. Its script is written like the game's own secret doors and opens in Scripts afterwards.${info.front_learnt ? '' : ' Its front was guessed from its shape.'}</div>
     <div class="frow" style="margin-top:12px"><label>Slides</label><select class="inp" id="sd-way">${ways.map(([v, l], n) => `<option value="${v}" ${n === 0 ? 'selected' : ''}>${l}${sz[v] != null ? ' (it is ' + Math.round(sz[v]) + ' units that way)' : ''}</option>`).join('')}</select></div>
     <div class="frow"><label>How far (units)</label><input class="inp" id="sd-dist" value="${sz.back != null ? Math.round(sz.back) : 128}"><div class="hint">Its own size that way slides it fully out of sight. 70 units are about a metre.</div></div>
     <div class="frow"><label>Sound</label>${sdSoundSelect(info, 'sd-sound')}</div>

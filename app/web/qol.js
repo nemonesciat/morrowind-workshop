@@ -188,8 +188,9 @@ async function qolUses(id){
     ${sec('Carried by, or in a list', holders, 'No character, creature, container or levelled list has it.')}
     ${sec('Named in scripts and dialogue', texts, 'No script or dialogue line names it.')}
     ${u.texts_more ? '<div class="msg">(only the first ones are shown)</div>' : ''}
-    <div class="foot">${u.i != null ? '<button class="btn" id="qu-rec">Open its record</button>' : ''}<button class="btn primary" id="qu-close">Close</button></div>`;
+    <div class="foot">${u.i != null ? '<button class="btn" id="qu-edit">✎ Edit it</button><button class="btn" id="qu-rec">Open its record</button>' : ''}<button class="btn primary" id="qu-close">Close</button></div>`;
   bg.querySelector('#qu-close').onclick = close;
+  const ed = bg.querySelector('#qu-edit'); if (ed) ed.onclick = () => { close(); openTool(u.i); };
   const rec = bg.querySelector('#qu-rec'); if (rec) rec.onclick = () => { close(); showView('browse'); openRecord(u.i, true); };
   bg.querySelectorAll('[data-up]').forEach(d => d.onclick = async () => {
     const p = u.places[+d.dataset.up]; close();
@@ -197,8 +198,9 @@ async function qolUses(id){
     const like = visibleRefs().filter(([, r]) => r.id.toLowerCase() === u.id.toLowerCase());
     if (like.length){ cfPickMany(like); centerOn(like[0][1]); }
   });
-  bg.querySelectorAll('[data-uh]').forEach(d => d.onclick = () => { const h = u.holders[+d.dataset.uh]; close(); showView('browse'); openRecord(h.i, true); });
-  bg.querySelectorAll('[data-ut]').forEach(d => d.onclick = () => { const t = u.texts[+d.dataset.ut]; close(); showView('browse'); openRecord(t.i, true); });
+  // (each opens where it is worked on: a person in Characters, a list in Lists, a script in Scripts, a line in its topic)
+  bg.querySelectorAll('[data-uh]').forEach(d => d.onclick = () => { const h = u.holders[+d.dataset.uh]; close(); openTool(h.i, h.type, h.id); });
+  bg.querySelectorAll('[data-ut]').forEach(d => d.onclick = () => { const t = u.texts[+d.dataset.ut]; close(); openTool(t.i); });
 }
 
 // ---------------------------------------------------------------- doors, and back again
@@ -466,7 +468,7 @@ function qolReplace(from){
   bg.querySelector('#qr-go').onclick = async () => {
     const to = pick.to || bg.querySelector('#qr-to').value.trim(), list = targets();
     if (!list.length) return toast('Nothing to replace: pick the object to replace first.', true);
-    if (!to) return toast('Pick what to put there instead.', true);
+    if (!to) return toast('Pick what to put there instead.');
     if (!await needProject()) return;
     close();
     const r = await groupAction('/api/group/swap', {refs: list.map(([cell, x]) => ({cell, ref: x.k})), id: to}, `Replaced ${list.length} with ${to}. One Undo takes it back.`);

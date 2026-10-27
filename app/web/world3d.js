@@ -130,7 +130,7 @@ function v3Init(){
   V3.ray = new T.Raycaster();
   // move / turn handles
   const tc = new T.TransformControls(V3.camera, r.domElement);
-  tc.setSpace('world'); tc.size = 0.9;
+  tc.setSpace('world'); tc.size = 0.9;          // (V3_HANDLE: v3HandleSize keeps it from growing past the thing)
   tc.addEventListener('dragging-changed', e => e.value ? v3DragStart() : v3DragEnd());
   tc.addEventListener('objectChange', v3Snap);
   V3.scene.add(tc); V3.tc = tc;
@@ -1596,8 +1596,8 @@ function v3Bind(el){
       // the ground brush
       if (e.shiftKey && V3.land.tool === 'paint'){ const at = v3Brush(e); if (at) v3LandEyedrop(at); return; }
       if (e.shiftKey && V3.land.tool === 'tint'){ const at = v3Brush(e); if (at) v3TintEyedrop(at); return; }
-      if (V3.land.tool === 'paint' && !V3.land.tex){ toast('Pick a ground texture first.', true); return; }
-      if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.', true); return; }
+      if (V3.land.tool === 'paint' && !V3.land.tex){ toast('Pick a ground texture first.'); return; }
+      if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.'); return; }
       if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; }
       return;
     }
@@ -1701,7 +1701,13 @@ function v3Bind(el){
   window.addEventListener('keydown', e => {
     if (!V3.on || !$('#world').classList.contains('on') || v3Typing(e)) return;
     const k = (e.key || '').toLowerCase(), mv = v3MoveKey(e);
-    if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){ V3.keys[mv] = true; (V3.keyAt = V3.keyAt || {})[mv] = performance.now(); e.preventDefault(); }
+    if (!e.repeat) V3.lastKey = mv || k;           // (the key Windows now repeats: only the last one pressed)
+    if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){
+      // (a move key tapped twice, the second press within a third of a second of letting go: sprint until it's
+      // let go, in any direction: W, A, S, D, Q or E)
+      if (!e.repeat && !V3.keys[mv] && performance.now() - ((V3.upAt || {})[mv] || 0) < 320) V3.sprint = mv;
+      V3.keys[mv] = true; (V3.keyAt = V3.keyAt || {})[mv] = performance.now(); e.preventDefault();
+    }
     if (e.key === 'Shift') V3.keys.shift = true;
     if (e.key === 'Escape') V3.keys = {};
     // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
@@ -1713,6 +1719,7 @@ function v3Bind(el){
   // letting go of a key always stops it (heard first, before anything else can swallow it)
   window.addEventListener('keyup', e => {
     const mv = v3MoveKey(e); if (mv) V3.keys[mv] = false;
+    if (mv){ if (V3.sprint === mv) V3.sprint = false; (V3.upAt = V3.upAt || {})[mv] = performance.now(); }
     const k = (e.key || '').toLowerCase(); if (k.length === 1 && V3.keys[k]) V3.keys[k] = false;     // (a key event with no name: a controller's)
     if (e.key === 'Shift') V3.keys.shift = false;
     if (e.key === 'Meta' || e.key === 'OS') V3.keys = {};   // (the Windows key: the Start menu eats the rest)
@@ -1762,7 +1769,7 @@ function v3Click(e){
   if (typeof extendPick3D === 'function' && extendPick3D(e, true)) return;
   if (W.mode === 'arrive'){
     const h = v3Pick(e, true);
-    if (!h || !h.world) return toast('Click on the floor or ground where the player should arrive.', true);
+    if (!h || !h.world) return toast('Click on the floor or ground where the player should arrive.');
     // facing the way the camera looks, in whole 15° steps
     const yaw = Math.round(((V3.yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 12)) * (Math.PI / 12);
     arriveAt(h.world[0], h.world[1], h.world[2] + 10, yaw);
@@ -1771,7 +1778,7 @@ function v3Click(e){
   if (W.mode === 'place' || W.mode === 'play'){
     const G = W.mode === 'place' && V3.ghost;
     const h = G && G.hit ? {world: G.hit} : v3Pick(e, true);
-    if (!h || !h.world) return toast('Click on the ground, a floor or an object.', true);
+    if (!h || !h.world) return toast('Click on the ground, a floor or an object.');
     if (W.mode === 'place') v3PlaceAt(W.placeId, W.placeName, h.world, G ? G.yaw : undefined);
     else { setMode(null); playHere({cell: cellKeyAt(h.world[0], h.world[1]), x: h.world[0], y: h.world[1], z: h.world[2] + 60, rz: 0}); }
     return;
@@ -1781,7 +1788,7 @@ function v3Click(e){
     // (a prefab planned in its window is pinned by the click, and set down by the window's Place here; prefabplan.js)
     if (W.groupPlace && W.groupPlace.prefab && typeof pfPin === 'function'){ pfPin(); return; }
     const h = G && G.hit ? {world: G.hit} : v3Pick(e, true);
-    if (!h || !h.world) return toast('Click on the ground or a floor.', true);
+    if (!h || !h.world) return toast('Click on the ground or a floor.');
     placeGroupAt(h.world[0], h.world[1], h.world[2]);
     return;
   }
@@ -1991,7 +1998,7 @@ async function v3Commit(o, g){
 // Set the selected object down on whatever is below it (End key)
 async function v3DropToFloor(){
   const sk = W.sel && W.sel.cell + '|' + W.sel.k, o = sk && V3.objs.get(sk);
-  if (!o) return toast('Select something first.', true);
+  if (!o) return toast('Select something first.');
   const dz = v3RestDz(o, sk, false);
   if (dz == null) return toast('There is nothing below it to set it down on.', true);
   o.g.position.z += dz;
@@ -2005,35 +2012,35 @@ function v3Tools(){
   // (in groups you can drag about by their grip: see toolbar.js)
   const grip = typeof tbGrip === 'function' ? tbGrip() : '';
   t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
-    <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button></div>
-    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Moving and turning in steps, lining up with pieces, tilting, landing on surfaces">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
+    <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
+    <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button></div>
+    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
         <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
         <label title="Turn in steps">Turn in steps of <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label>
-        <label title="When moving, line up with the edges of nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap to pieces</label>
-        <label title="Also tilt forwards/sideways when turning"><input type="checkbox" id="v3tilt" ${V3.tilt ? 'checked' : ''}> Tilt when turning</label>
-        <label title="After a move, let it come to rest on what's below: the floor, a table, a shelf"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label></div></span>
-    <button class="btn sm" data-v3="floor" title="Set the selected object down on what is below it (End)">⤓ Drop down</button>
-    <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Physics here: loose things fall, rest and get pushed by what you drag, with gravity and high friction, while it's on. Keep where they lie, or put them back (physics.js)">🧲 Physics</button></div>
-    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new in a window over the view: a place, a person, a container, an item, a note, a spell, a list (right-click a spot for Create here)">✚ Create</button><button class="btn sm" data-v3="style" title="The Style palette: building pieces, furniture, decor and sets by style (Hlaalu, Redoran, Nord, Imperial...), as the game's own places use them (stylepal.js)">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
-    ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Extend: build out piece by piece from the open edges of the place, with what the game joins there">⬚ Extend</button>` : ''}
-    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Showing light as in game (lamps, candles, fog). Click for bright, even light for editing.' : 'Showing bright, even light for editing. Click to see it as in game.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, cell borders, wireframe, what to show, and how far you can see">👁 View ▾</button>
+        <label title="Line up with nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap to pieces</label>
+        <label title="After a move, rest it on what's below"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label></div></span>
+    <button class="btn sm" data-v3="floor" title="Set it down on what's below (End)">⤓ Drop down</button>
+    <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">🧲 Physics</button></div>
+    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">✚ Create</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
+    ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Build out piece by piece from open edges">⬚ Extend</button>` : ''}
+    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">👁 View ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
-        <label title="Lines at the move grid's spacing (128 when the grid is off), every fourth brighter. It stays where it is put: right-click a floor or a wall for Put the grid here"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128}, bright every ${(V3.grid || 128) * 4})</span></label>
+        <label title="Lines at the move step (128 when off)"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128}, bright every ${(V3.grid || 128) * 4})</span></label>
         <div class="v3gridrow" style="display:${V3.view.grid ? 'flex' : 'none'};gap:4px;flex-wrap:wrap;margin:2px 0 4px 20px">
-          <button class="btn sm" data-v3="gridsel" title="Lay the grid level at the selected object's base, on the game's own lines">📍 At the selection</button>
-          <button class="btn sm" data-v3="gridturn" title="Lay it at the selected object's base, turned to it: for right angles against a building">⟲ Turned to it</button>
-          <label style="display:block;width:100%" title="Show the grid through walls and floors, instead of hidden behind them like a real thing"><input type="checkbox" data-v3v="gridThrough" ${V3.view.gridThrough ? 'checked' : ''}> through walls</label>
-          <span class="msg" style="width:100%">Right-click a floor or a wall: Put the grid here.</span></div>
+          <button class="btn sm" data-v3="gridsel" title="Grid at the selection's base">📍 At the selection</button>
+          <button class="btn sm" data-v3="gridturn" title="Grid at the selection, turned to match it">⟲ Turned to it</button>
+          <label style="display:block;width:100%" title="Show the grid through walls and floors"><input type="checkbox" data-v3v="gridThrough" ${V3.view.gridThrough ? 'checked' : ''}> through walls</label>
+          <span class="msg" style="width:100%">Or right-click a floor or wall: Put the grid here.</span></div>
         ${W.ext ? `<label title="Where one cell ends and the next begins"><input type="checkbox" data-v3v="cells" ${V3.view.cells ? 'checked' : ''}> Cell borders</label>` : ''}
-        <label title="Show the triangles that make up models and the ground"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
-        <label title="How wide the view is: narrow like a camera lens, or wide to take a whole room in (the game's own is about 75)" style="display:block;margin-top:6px">Field of view <b id="v3fovv">${V3.fov || 60}°</b>
-          <input type="range" id="v3fov" min="40" max="110" step="5" value="${V3.fov || 60}" style="width:100%"></label>
+        <label title="Show the triangles"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
+        <label title="How wide the view is (the game uses about 75°)" style="display:block;margin-top:6px">Field of view <b id="v3fovv">${V3.fov || 60}°</b>
+          <input type="range" id="v3fov" min="20" max="150" step="5" value="${V3.fov || 60}" style="width:100%"></label>
         ${W.ext ? `<label><input type="checkbox" data-v3v="ground" ${V3.view.ground ? 'checked' : ''}> Ground</label>
         <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>
-        <label title="The game's sky: clouds for the weather, the sun, the stars and the moons. Off: a plain sky colour"><input type="checkbox" data-v3v="sky" ${V3.view.sky !== false ? 'checked' : ''}> Sky</label>
-        <label title="How far you can see outdoors: the cells loaded round the camera. Further is slower in towns."
+        <label title="The game's clouds, sun, stars and moons"><input type="checkbox" data-v3v="sky" ${V3.view.sky !== false ? 'checked' : ''}> Sky</label>
+        <label title="How many cells load round you; further is slower"
           style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
           <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
       </div></span>
@@ -2050,6 +2057,8 @@ function v3Tools(){
     else if (a === 'light'){ V3.lightMode = v3LightMode() === 'game' ? 'bright' : 'game'; try { localStorage.setItem('ws-light', V3.lightMode); } catch (e) {} v3ApplyLighting(); v3Tools(); }
     else if (a === 'home') v3Home();
     else if (a === 'help') $('#v3help').style.display = $('#v3help').style.display === 'none' ? 'block' : 'none';
+    // (tilting turns: on, the turning handles with their two tilt rings)
+    else if (a === 'tilt'){ V3.tilt = !V3.tilt; if (V3.tilt) V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
     else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; v3Tools(); }
     else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
@@ -2068,7 +2077,6 @@ function v3Tools(){
   $('#v3grid').onchange = e => { V3.grid = +e.target.value; v3ApplyMode(); v3Tools(); V3.gridFor = null; };
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); v3Tools(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
-  $('#v3tilt').onchange = e => { V3.tilt = e.target.checked; v3ApplyMode(); };
   $('#v3rest').onchange = e => { V3.rest = e.target.checked; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} };
 }
 
@@ -2117,7 +2125,7 @@ function v3GridHere(pick){
 }
 function v3GridToSel(turn){
   const sel = V3.tc && V3.tc.object;
-  if (!sel) return toast('Select something first.', true);
+  if (!sel) return toast('Select something first.');
   const b = new THREE.Box3().setFromObject(sel);
   const r = W.sel && findRef(W.sel.cell, W.sel.k);
   v3GridPlace(new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z), false, turn && r ? -r.p[5] : 0);
@@ -2189,6 +2197,26 @@ function v3GridTick(t){
 
 // ----- drawing -----
 let v3Last = 0, v3CellCheck = 0;
+// The move and turn handles keep one size on the screen (TransformControls), so from far off, or with a wide
+// field of view, they grew far past the thing they hold: the user's tilt rings round a small thing filled the
+// room. Kept on screen as before up close, but never more than a few times the thing's own size in the world.
+const V3_HANDLE = 0.9;
+function v3HandleSize(){
+  const tc = V3.tc, o = tc && tc.object;
+  if (!o) return;
+  if (V3.handleFor !== o){
+    V3.handleFor = o;
+    const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    V3.handleR = Math.max(sz.x, sz.y, sz.z) / 2 || 32;
+  }
+  const cam = V3.camera, p = o.getWorldPosition(new THREE.Vector3());
+  const factor = p.distanceTo(cam.position) * Math.min(1.9 * Math.tan(Math.PI * cam.fov / 360) / cam.zoom, 7);
+  // (the handles' world size is factor * size / 7; at most 2.5 times the thing's half size, and never under 40)
+  const most = Math.max(40, V3.handleR * 2.5) * 7 / Math.max(1e-6, factor);
+  const size = Math.round(Math.min(V3_HANDLE, most) * 100) / 100;
+  if (tc.size !== size) tc.size = size;
+}
+
 function v3Loop(){
   if (V3.looping) return;
   V3.looping = true;
@@ -2206,8 +2234,12 @@ function v3Loop(){
     // the page didn't hear it, a menu or a dialog of the window's own: the camera "that wouldn't stop",
     // the user, still now and then after the blur and Windows-key fixes)
     const now_ = performance.now();
-    for (const k of 'wasdqe') if (V3.keys[k] && V3.keyAt && now_ - (V3.keyAt[k] || 0) > 700) V3.keys[k] = false;
-    const sp = (V3.keys.shift ? 2600 : 700) * dt, d = v3Dir(), flat = new THREE.Vector3(d.x, d.y, 0).normalize(),
+    // (only the key pressed last repeats: W held, then Shift pressed, W's repeats stop and it is still held,
+    // the user's "Shift works for a second and then it abruptly stops")
+    for (const k of 'wasdqe') if (V3.keys[k] && V3.keyAt && V3.lastKey === k && now_ - (V3.keyAt[k] || 0) > 700) V3.keys[k] = false;
+    if (V3.sprint && !V3.keys[V3.sprint]) V3.sprint = false;
+    // (a double-tapped move key: three times as fast, every direction alike, until that key is let go)
+    const sp = (V3.keys.shift ? 2600 : 700) * (V3.sprint ? 3 : 1) * dt, d = v3Dir(), flat = new THREE.Vector3(d.x, d.y, 0).normalize(),
           right = new THREE.Vector3(flat.y, -flat.x, 0);
     if (V3.keys.w) V3.pos.addScaledVector(d, sp);
     if (V3.keys.s) V3.pos.addScaledVector(d, -sp);
@@ -2244,6 +2276,7 @@ function v3Loop(){
     }
     // (outdoors with the game's sky: the sky first, then the place over it; a colour background would
     // clear the sky away again, so the place is drawn without it)
+    v3HandleSize();
     const R = V3.renderer;
     if (W.ext && V3.view.sky !== false && v3SkyTick(dt)){
       const bg = V3.scene.background;

@@ -74,8 +74,7 @@ function dWelcome(){
       <div class="ccard" data-dw="ai"><div style="font-size:26px">✦</div><b>Ask the assistant</b><div class="msg">"Make a short quest for Fenas: she lost a ring in the cave nearby." It writes the quest and the lines.</div></div>
     </div>
     <div class="card msg" style="line-height:1.7"><b style="color:var(--text)">How Morrowind picks a line</b><br>
-      When you click a topic, the game goes down that topic's lines from the top and says the <b>first</b> one whose conditions all fit
-      (who is speaking, quest stages, items…). That's why lines for a particular character go at the top, and why you can move lines up and down here.</div></div>`;
+      The game says the <b>first</b> line of a topic, from the top, whose conditions all fit. So a line for one character goes above the general ones; drag lines to reorder them.</div></div>`;
   $('#dmain').querySelectorAll('[data-dw]').forEach(c => c.onclick = () => {
     if (c.dataset.dw === 'npc') $('#d-npc').focus();
     else if (c.dataset.dw === 'quest') dNewQuest();

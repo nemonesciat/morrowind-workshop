@@ -247,6 +247,15 @@ def findings(db):
                 x, y = struct.unpack_from('<2f', s['DODT'])
                 if abs(x) > 8192 * 100 or abs(y) > 8192 * 100:
                     add('warning', 'CELL', ck, 'A door in %s leads outdoors to a spot far outside the world.' % where, cell=ck)
+    # weapons and armour: a new piece nobody hands out, a list level far from the game's for its worth, half a
+    # pair in a set (gearcheck.py)
+    try:
+        import gearcheck
+        for sev, tag, key, text in gearcheck.findings(db):
+            add(sev, tag, key, text)
+            out[-1]['gear'] = True
+    except Exception as e:                  # (a check must never stop the list)
+        print('gear checks:', e)
     order = {'error': 0, 'warning': 1, 'info': 2}
     out.sort(key=lambda f: (order[f['sev']], f['tag'], f['key']))
     return out

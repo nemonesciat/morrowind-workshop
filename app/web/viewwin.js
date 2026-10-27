@@ -49,6 +49,9 @@ function vwCss(){
   .vwin{resize:both;min-width:360px;min-height:220px;outline:none}
   .vwbody{position:relative;flex:1;min-height:0}
   .vwbody > .view{display:grid !important;position:absolute;inset:0;overflow:auto}
+  /* (a page laid out in panels is a row of docks, as on its own page: as a grid, Browse's Record dock sat in
+     its old third column, half empty, and its edge dragged the wrong way) */
+  .vwbody > .view.pspace{display:flex !important;overflow:hidden}
   .vwbody > #createv,.vwbody > #itemed,.vwbody > #myeff,.vwbody > #library,.vwbody > #mymod,.vwbody > #release,.vwbody > #health,.vwbody > #plugins,.vwbody > #guide,.vwbody > #settings{display:block !important}
   .vwbody > .view > .wrap{padding:8px 20px 30px}
   .vwbody > .view{padding-top:0 !important;padding-bottom:0 !important}
@@ -237,7 +240,6 @@ function vwSpot(at){
 }
 async function vwCreate(kind, at){
   if (!cfWorldOn()) showView('world');
-  if (kind === 'merge'){ mergeModal(); return; }
   if (kind === 'lists'){ LV.id = null; LV.data = null; vwRun('lists', () => showView('lists')); return; }
   if (kind === 'effect'){ MX.form = null; vwRun('myeff', () => showView('myeff')); return; }
   if (kind === 'itemed'){ IE.id = null; IE.data = null; vwRun('itemed', () => showView('itemed')); return; }
@@ -251,7 +253,7 @@ function vwCreateMenu(pt, at){
   const where = spot ? ' here' : '';
   const it = k => ({label: `${CR_CARDS[k][0]} ${CR_CARDS[k][1]}${['npc', 'container', 'item', 'book'].includes(k) ? where : k === 'build' && spot ? ' (a door from here)' : ''}`, act: () => vwCreate(k, spot)});
   const items = [{label: 'Make something new', disabled: true, head: true}, ...['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'].map(it),
-    '-', {label: 'Change something that exists', disabled: true, head: true}, it('itemed'), it('merge')];
+    '-', {label: 'Change something that exists', disabled: true, head: true}, it('itemed')];
   const m = pnlMenu(pt, items);
   m.querySelectorAll('button').forEach((b, n) => { const x = items.filter(y => y !== '-')[n]; if (x && x.head) b.className = 'phd'; });
   return m;
@@ -296,7 +298,7 @@ CF_MENU_MORE.push((e, hit, at) => {
   return [{label: '✚ Create here…', title: 'A new place, person, container, item, note, spell or list, made in a window over the view', act: () => setTimeout(() => vwCreateMenu(pt, spot), 0)}];
 });
 // the Ctrl+K command list: each card
-for (const k of ['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists', 'itemed', 'merge'])
+for (const k of ['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists', 'itemed'])
   CF_ACT.push({id: 'vwcreate-' + k, label: 'Create in a window: ' + CR_CARDS[k][1], keys: [], world: true, run: () => vwCreate(k, null)});
 CF_ACT.push({id: 'vwcreate', label: 'Create… (a window over the World map)', keys: [], world: true,
   run: () => { const b = $('#v3tools [data-v3="create"]') || $('#w-create'); const r = b ? b.getBoundingClientRect() : {left: 300, bottom: 160}; vwCreateMenu({x: r.left, y: r.bottom + 4}, null); }});

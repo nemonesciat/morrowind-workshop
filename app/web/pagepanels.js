@@ -19,7 +19,7 @@ function ppCss(){
   .pbody > .side,.pbody > .dside{display:block}
   .pbody > .detail{position:static;display:block;inset:auto}
   .pcenter{position:relative}
-  .pp-btn{position:absolute;bottom:10px;right:16px;z-index:30;background:var(--panel2);border:1px solid var(--line2);border-radius:7px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer;opacity:.75}
+  .pp-btn{position:absolute;bottom:10px;right:16px;z-index:30;background:var(--panel2);border:1px solid var(--line2);border-radius:7px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer;opacity:.9}
   .pp-btn:hover{opacity:1;color:var(--text);border-color:var(--gold)}
   .pp-tab{position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:30;writing-mode:vertical-rl;background:var(--panel2);border:1px solid var(--line2);border-left:0;border-radius:0 7px 7px 0;color:var(--muted);font-size:12px;padding:10px 4px;cursor:pointer}
   .pp-tab:hover{color:var(--gold2)}

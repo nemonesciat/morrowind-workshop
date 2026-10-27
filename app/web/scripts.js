@@ -33,17 +33,17 @@ function sMine(){
 }
 function sWelcome(){
   $('#smain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Scripts</h1>
-    <p class="msg" style="font-size:14px;line-height:1.7">Scripts make things happen: a door that only opens after a quest stage, a note that starts a quest when picked up,
-    a character who walks up and talks to the player. They're written in Morrowind's own little language (MWScript).
-    The editor checks what you write as you type and explains mistakes in plain words, and the list on the right has every command with an example.</p>
+    <p class="msg" style="font-size:14px;line-height:1.7">Scripts make things happen: a door that opens only after a quest stage, a note that starts a quest when picked up.
+    The editor checks what you type and explains mistakes in plain words; the list beside it has every command, with an example.</p>
     <div class="cgrid">
       <div class="ccard" data-sw="new"><div style="font-size:26px">➕</div><b>Write a new script</b><div class="msg">Start from a ready-made example: a door that stays barred, an item that moves a quest on, a timer…</div></div>
       <div class="ccard" data-sw="find"><div style="font-size:26px">🔎</div><b>Look at existing scripts</b><div class="msg">See how the base game does things, or change one for your mod (the original stays safe).</div></div>
       <div class="ccard" data-sw="ai"><div style="font-size:26px">✦</div><b>Ask the assistant</b><div class="msg">"Write a script for a lever that opens the gate when the player has the key." Then check it here.</div></div>
     </div>
     <div class="card msg" style="line-height:1.7"><b style="color:var(--text)">Three kinds of scripts</b><br>
-      <b>On an object or character</b>: runs while they're nearby (attach it to them). <b>Global</b>: runs everywhere once started with <code>StartScript</code>.
-      <b>Start script</b>: a global script that runs from the moment the game starts. In dialogue, a line's <i>result</i> box takes script commands too.</div></div>`;
+      <b>On an object or character</b>: runs while they're nearby.<br>
+      <b>Global</b>: runs everywhere, once started with <code>StartScript</code>.<br>
+      <b>Start script</b>: a global one that runs from the start of the game.</div></div>`;
   $('#smain').querySelectorAll('[data-sw]').forEach(c => c.onclick = () => {
     if (c.dataset.sw === 'new') sNew(); else if (c.dataset.sw === 'find') $('#s-find').focus();
     else { AI.open = true; $('#aipanel').classList.add('open'); aiStatus().then(renderAI); }
@@ -192,14 +192,15 @@ function sUsed(){
   const u = SC.data.used_by || [], box = $('#s-used');
   box.innerHTML = u.length ? u.map((x, n) => `<div class="drow"><span>${x.kind === 'NPC_' ? '👤' : x.kind === 'start' ? '▶' : x.kind === 'dialogue' ? '💬' : '◇'} ${esc(x.label)}${x.id && x.id !== x.label ? ` <small>${esc(x.id)}</small>` : ''}</span>
       <span>${x.kind === 'NPC_' ? `<button class="btn sm" data-uchar="${esc(x.id)}">Open</button>` : `<button class="btn sm" data-uopen="${x.i}">Open</button>`}${x.id || x.kind === 'start' ? `<button class="btn sm" data-udet="${n}" title="Take the script off">✕</button>` : ''}</span></div>`).join('')
-    : '<div class="msg">Nobody yet. A script does nothing until something runs it: put it on an object or character below, start it from another script or a dialogue result (<code>StartScript ' + esc(SC.id) + '</code>), or make it run from the start of the game.</div>';
+    : '<div class="msg">Nothing runs it yet, so it does nothing. Put it on an object or character below, start it with <code>StartScript ' + esc(SC.id) + '</code>, or make it run from the start of the game.</div>';
   box.querySelectorAll('[data-uchar]').forEach(b => b.onclick = () => cOpen(b.dataset.uchar));
-  box.querySelectorAll('[data-uopen]').forEach(b => b.onclick = () => { showView('browse'); openRecord(+b.dataset.uopen, true); });
+  box.querySelectorAll('[data-uopen]').forEach(b => b.onclick = () => openTool(+b.dataset.uopen));
   box.querySelectorAll('[data-udet]').forEach(b => b.onclick = () => { const x = u[+b.dataset.udet]; sAttach(x.kind === 'start' ? '*start*' : x.id, true); });
 }
 async function sAttach(target, detach){
   if (!await needProject()) return;
-  if (SC.text !== SC.orig){ toast('Save the script first.', true); return; }
+  // (a new script not saved yet has no name to put on anything: "There is no script called None", the crawl)
+  if (!SC.id || SC.newOpen || SC.text !== SC.orig){ toast('Save the script first, then choose who runs it.'); return; }
   try {
     const r = await post('/api/script/attach', {id: SC.id, target, detach: !!detach});
     SC.data.used_by = r.used_by; sUsed(); afterChange();

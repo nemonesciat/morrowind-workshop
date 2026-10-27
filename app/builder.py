@@ -179,6 +179,7 @@ COLUMN_WORDS_RE = re.compile(r'post|pillar|column')
 HALL_IN_ROOM = 6    # a stair block's cost for each of its hall pieces standing in a room, not a corridor (0: the old choice)
 COLUMNS = True       # columns standing free in big rooms, where the game's own places of the style have them (layoutsurvey.py)
 WINDOWS = True       # window props on outside walls, as often as the game's own places of the style have them (layoutsurvey.py)
+last_plan = {}       # the last build's tiles and their sides (need), for the lab
 ALCOVES = True       # stairs with the game's own pieces round them (the stair block), where the style's places show how
 STAIR_VOID = True    # ... and the stairwell's void where the game has no floor (over the lower landing, under the upper)
 TALL = True          # a two-storey hall from the kit's own two-storey pieces where it has them (Redoran (large)'s 764-tall halls,
@@ -2976,6 +2977,8 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             break
     plain_jamb = full_jamb
 
+    last_plan.clear()
+    last_plan.update(need=need, grid=grid, stairs=stair_list)    # (each tile's sides as built from, for the lab)
     refs = []        # (id, (x, y, z, rx, ry, rz), extra subrecords[, scale])
     z0 = -kp['zmin']         # floors at height 0
     door_at = {}             # (tile, side) -> how far from the tile's centre that side's doorway stands

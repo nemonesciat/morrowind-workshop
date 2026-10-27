@@ -27,6 +27,18 @@ const PH_HOLDER = /shelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|drawe
 const PH_BIG = /barrel|keg|crate|(?<!f)urn|sack|basket|chest|_box|box_|_pot|jar|bucket|cask/;
 try { PH.big = localStorage.getItem('ph_big') === '1'; } catch (e) {}
 
+// the spot the reach is measured round: what the middle of the view looks at (at most 300 ahead). A spot a
+// fixed 300 ahead lay past a table close by: the user's reach of 100 took the far things on it, not the near
+function phLookAt(){
+  const far = V3.pos.clone().addScaledVector(v3Dir(), 300);
+  try {
+    V3.ray.setFromCamera(new THREE.Vector2(0, 0), V3.camera);
+    const h = V3.ray.intersectObjects([V3.root, V3.ground].filter(Boolean), true)[0];
+    if (h && h.distance < 300) return h.point.clone();
+  } catch (e) {}
+  return far;
+}
+
 function phLoose(r, chosen){
   if (!r || !r.b || ['NPC_', 'CREA', 'LEVC', 'LEVI', 'DOOR'].includes(r.type)) return false;
   const low = r.id.toLowerCase(), s = r.s || 1, size = Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1], r.b[5] - r.b[2]) * s;
@@ -56,6 +68,33 @@ function phChosen(){
   return out;
 }
 
+// what is selected now becomes what takes part: a group alone ("Only the N selected"), or a shelf, table or
+// chest picked alone with the things on it (the user's bookshelf, half its books out of a reach of 148 stayed
+// solid). force: only the selection, even one thing (the panel's "Just the selected", the user: "select a
+// handful of objects and have physics only work on the selection")
+async function phTakeSelection(force){
+  PH.chosen = phChosen();
+  if (PH.chosen.size === 1 && W.sel){
+    const r = findRef(W.sel.cell, W.sel.k);
+    if (r && PH_HOLDER.test(r.id.toLowerCase())){
+      try {
+        const c = await api('/api/ref/contents?' + new URLSearchParams({cell: W.sel.cell, ref: r.k}));
+        for (const k of (c.on || [])) PH.chosen.add(W.sel.cell + '|' + k);
+      } catch (e) {}
+    }
+  }
+  PH.onlySel = PH.chosen.size > 1 || (force && PH.chosen.size > 0);
+  // (the solid world round the group itself when it alone moves: round where you look, a group off to one
+  // side fell through a floor that wasn't built)
+  PH.group = null;
+  const gs = [...PH.chosen].map(k => V3.objs.get(k)).filter(o => o && o.g);
+  if (gs.length){
+    const c = new THREE.Vector3(); gs.forEach(o => c.add(o.g.position)); c.divideScalar(gs.length);
+    PH.group = {c, r: Math.max(...gs.map(o => Math.hypot(o.g.position.x - c.x, o.g.position.y - c.y)))};
+  }
+  if (PH.onlySel && PH.group) PH.centre = PH.group.c.clone();
+}
+
 // whether this one takes part: with "Only the selected" (on by itself when a group is picked: the user, "select
 // a group of objects and make physics just apply to them") the picked ones alone, wherever they are, the rest
 // solid; else every loose thing in reach, and the picked ones
@@ -67,8 +106,9 @@ function phPart(key, o){
 
 async function phToggle(on){
   if (on === PH.on || PH.loading) return;
-  // (off again with the button, or Esc: put back, nothing saved; Keep where they lie is the panel's)
-  if (!on){ return phStop(false); }
+  // (off, by the button, Esc or the panel's ✕: everything stays where it lies, saved as one Undo; the user:
+  // "closing physics should just close", Put back is the way to undo)
+  if (!on){ return phStop(true); }
   if (!V3.on || !V3.scene) return toast('Physics works in the 3D view: open it first.', true);
   PH.loading = true; toast('Starting physics…');
   try {
@@ -78,22 +118,13 @@ async function phToggle(on){
       await (m.init || (m.default && m.default.init))();
     }
     PH.centre = null;                  // (round where you look now)
-    PH.chosen = phChosen();
-    PH.onlySel = PH.chosen.size > 1;
-    // (the solid world round the group itself when it alone moves: round where you look, a group off to one
-    // side fell through a floor that wasn't built)
-    PH.group = null;
-    const gs = [...PH.chosen].map(k => V3.objs.get(k)).filter(o => o && o.g);
-    if (gs.length > 1){
-      const c = new THREE.Vector3(); gs.forEach(o => c.add(o.g.position)); c.divideScalar(gs.length);
-      PH.group = {c, r: Math.max(...gs.map(o => Math.hypot(o.g.position.x - c.x, o.g.position.y - c.y)))};
-    }
-    if (PH.onlySel && PH.group) PH.centre = PH.group.c.clone();
+    PH.paused = false;
+    await phTakeSelection(PH.forceSel);
     await phPreSettle();
     phBuild();
     PH.on = true;
     phPanel();
-    toast(`Physics on: ${PH.bodies.size} loose things can fall and be pushed (${PH.held} hung ones stay put). Drag one to push the others; Esc puts them back.`);
+    toast(`Physics on: ${PH.bodies.size} loose things can fall and be pushed (${PH.held} hung ones stay put). Drag one to push the others.`);
   } catch (e){ toast('Physics could not start: ' + e.message, true); phClear(); }
   PH.loading = false;
   v3Tools();
@@ -105,7 +136,7 @@ async function phToggle(on){
 // saved is kept, so Keep and Put back measure from there.
 async function phPreSettle(){
   PH.saved = new Map();
-  if (!PH.centre) PH.centre = V3.pos.clone().addScaledVector(v3Dir(), 300);
+  if (!PH.centre) PH.centre = phLookAt();
   const C = PH.centre, keys = [];
   for (const [key, o] of V3.objs){
     if (!o.g || !phPart(key, o) || o.ck !== W.key) continue;
@@ -137,7 +168,7 @@ function phBuild(){
   const loose = [];
   const inv = new T.Matrix4(), m = new T.Matrix4(), v = new T.Vector3();
   // here: round the spot the camera looks at (a few hundred bodies at most, or it crawls: 682 ran at 1.5 a second)
-  if (!PH.centre) PH.centre = V3.pos.clone().addScaledVector(v3Dir(), 300);
+  if (!PH.centre) PH.centre = phLookAt();
   const C = PH.centre, near = (g, r) => Math.hypot(g.position.x - C.x, g.position.y - C.y) <= r && Math.abs(g.position.z - C.z) <= Math.max(r, 400);
   for (const [key, o] of V3.objs){
     if (!o.g || !o.r) continue;
@@ -239,7 +270,7 @@ function phClear(){
 
 // a step a frame (fixed 1/60 s steps, at most four a frame); the view follows the bodies
 function phTick(dt){
-  if (!PH.on || !PH.world) return;
+  if (!PH.on || !PH.world || PH.paused) return;
   const D = PH.drag;
   if (D){
     // (what's dragged pushes: moved where the handles have it, as a kinematic body)
@@ -368,9 +399,46 @@ async function phStop(keep){
     await groupAction('/api/group/move', {moves}, `Physics: kept where ${moves.length} thing${moves.length === 1 ? ' lies' : 's lie'}`);
   } else {
     v3Refresh();                        // (back where they were saved)
-    toast(keep ? 'Nothing moved.' : 'Put back where they were.');
+    toast(keep ? 'Physics off: nothing moved.' : 'Put back where they were.');
   }
 }
+// the panel's Put back: everything taking part back where it was saved, and held there (paused) until Run;
+// the panel stays (the user: "put back should just put back the items, not close the menu")
+function phPutBack(){
+  if (!PH.on) return;
+  for (const b of PH.bodies.values()){
+    const s = b.start;
+    b.o.g.position.copy(s.p); b.o.g.quaternion.copy(s.q); b.o.g.updateMatrixWorld(true);
+    if (b.body.isFixed && b.body.isFixed()) continue;
+    b.body.setTranslation(s.p, false); b.body.setRotation(s.q, false);
+    b.body.setLinvel({x: 0, y: 0, z: 0}, false); b.body.setAngvel({x: 0, y: 0, z: 0}, false);
+    b.from = {p: s.p.clone(), q: s.q.clone()};
+  }
+  phLoosen();
+  PH.paused = true;
+  phPanel();
+  toast('Put back where they were. Press Run to let them fall again.');
+}
+// Pause / Run: the bodies held where they are, or let go again (with the gentle start)
+function phPauseToggle(){
+  if (!PH.on) return;
+  PH.paused = !PH.paused;
+  if (!PH.paused){ PH.t0 = performance.now(); PH.acc = 0; phLoosen(); for (const b of PH.bodies.values()) b.body.wakeUp(); }
+  phPanel();
+}
+// the panel's Keep: where they lie saved (one Undo), and physics carries on from there with the same things
+async function phKeepGoing(){
+  const moves = phMoves();
+  if (!moves.length) return toast('Nothing has moved yet.');
+  if (!await needProject()) return;
+  const force = PH.onlySel;
+  PH.on = false; phClear();
+  await groupAction('/api/group/move', {moves}, `Physics: kept where ${moves.length} thing${moves.length === 1 ? ' lies' : 's lie'}`);
+  PH.forceSel = force;
+  await phToggle(true);
+  PH.forceSel = false;
+}
+
 // the reach changed: the bodies again round the same spot, those still in reach where they lie now, those
 // left out back where they were saved (Keep only writes what takes part)
 function phSetReach(r){
@@ -391,27 +459,32 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || !PH.on || PH.loading) return;
   const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) && !(PH.panel && PH.panel.contains(t))) return;
   e.preventDefault(); e.stopPropagation();
-  phStop(false);
+  phStop(true);
 }, true);
 
 function phPanel(){
+  // (drawn again after Pause, Put back or Keep: where you dragged it stays)
+  const was = PH.panel ? {left: PH.panel.style.left, top: PH.panel.style.top, bottom: PH.panel.style.bottom} : null;
   if (PH.panel) PH.panel.remove();
   const p = document.createElement('div'); p.id = 'phpanel';
   p.style.cssText = 'position:absolute;left:12px;bottom:12px;z-index:25;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:8px 10px;max-width:320px;box-shadow:0 4px 16px #0007';
-  p.innerHTML = `<div data-ph="grip" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none" title="Drag to move this panel"><b>🧲 Physics on</b><span class="msg" id="phcount"></span>
-      <button class="btn sm" data-ph="close" style="margin-left:auto;padding:0 6px" title="Turn physics off and put everything back (Esc)">✕</button></div>
-    <div class="msg" style="margin:4px 0 6px;line-height:1.4">Loose things fall and rest; drag one to push the others. Hung things and the building stay put. Nothing is saved until you keep it; Esc or the Physics button puts them back.</div>
+  if (was){ p.style.left = was.left; p.style.top = was.top; p.style.bottom = was.bottom; }
+  p.innerHTML = `<div data-ph="grip" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none" title="Drag to move this panel"><b>🧲 Physics</b><button class="btn sm ${PH.paused ? 'primary' : ''}" data-ph="pause" style="padding:0 8px" title="${PH.paused ? 'Let them fall again' : 'Hold everything where it is'}">${PH.paused ? '▶ Run' : '⏸ Pause'}</button><span class="msg" id="phcount"></span>
+      <button class="btn sm" data-ph="close" style="margin-left:auto;padding:0 6px" title="Close; everything stays where it lies (Esc)">✕</button></div>
+    <div class="msg" style="margin:4px 0 6px;line-height:1.4">Loose things fall; drag one to push others. Closing (✕ or Esc) leaves them where they lie, as one Undo. A picked shelf or table brings everything on it.</div>
     <label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="How far from the spot you looked at loose things take part">Reach
       <input type="range" min="1" max="1000" step="1" value="${PH.reach}" data-ph="reach" style="flex:1"><span data-ph="reachv" style="min-width:3.2em;text-align:right">${PH.reach}</span></label>
-    ${PH.chosen && PH.chosen.size > 1 ? `<label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="On: only the things you picked move, wherever they are; everything else stays solid. Off: every loose thing in reach takes part, these too"><input type="checkbox" data-ph="only" ${PH.onlySel ? 'checked' : ''}> Only the ${PH.chosen.size} selected</label>` : ''}
+    <div style="display:flex;gap:6px;align-items:center;margin:0 0 6px"><button class="btn sm" data-ph="sel" title="Select things (Shift+click or drag a box), then press this: only they move">◎ Just the selected</button>${PH.onlySel ? '' : '<span class="msg">or all in reach</span>'}</div>
+    ${PH.chosen && (PH.chosen.size > 1 || PH.onlySel) ? `<label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="On: only the things you picked move, wherever they are; everything else stays solid. Off: every loose thing in reach takes part, these too"><input type="checkbox" data-ph="only" ${PH.onlySel ? 'checked' : ''}> Only the ${PH.chosen.size} selected</label>` : ''}
     <label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="Off: only small loose things (cups, books, bones). On: barrels, kegs, crates, urns, sacks and chests fall and settle too"><input type="checkbox" data-ph="big" ${PH.big ? 'checked' : ''}> Larger things too (barrels, crates)</label>
-    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-ph="keep">✔ Keep where they lie</button><button class="btn sm" data-ph="back">↶ Put back</button>
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-ph="keep" title="Save where they lie now, and carry on">✔ Keep where they lie</button><button class="btn sm" data-ph="back" title="Back where they were saved, held still until Run">↶ Put back</button>
     <button class="btn sm" data-ph="jiggle" title="A little shake: everything loose wakes and settles again">〰 Jiggle</button></div>`;
   ($('#v3wrap') || document.body).appendChild(p);
   PH.panel = p;
-  p.querySelector('[data-ph=keep]').onclick = () => phStop(true);
-  p.querySelector('[data-ph=back]').onclick = () => phStop(false);
-  p.querySelector('[data-ph=close]').onclick = () => phStop(false);
+  p.querySelector('[data-ph=keep]').onclick = () => phKeepGoing();
+  p.querySelector('[data-ph=back]').onclick = () => phPutBack();
+  p.querySelector('[data-ph=pause]').onclick = () => phPauseToggle();
+  p.querySelector('[data-ph=close]').onclick = () => phStop(true);
   const rs = p.querySelector('[data-ph=reach]'), rv = p.querySelector('[data-ph=reachv]');
   rs.oninput = () => { rv.textContent = rs.value; };
   rs.onchange = () => phSetReach(+rs.value);           // (on letting go: a rebuild takes a moment)
@@ -420,8 +493,14 @@ function phPanel(){
   if (only) only.onchange = e => {
     PH.onlySel = e.target.checked;
     // (round the group again, or round where you look)
-    PH.centre = PH.onlySel && PH.group ? PH.group.c.clone() : V3.pos.clone().addScaledVector(v3Dir(), 300);
+    PH.centre = PH.onlySel && PH.group ? PH.group.c.clone() : phLookAt();
     phSetReach(PH.reach);
+  };
+  p.querySelector('[data-ph=sel]').onclick = async () => {
+    if (!W.sel && !(W.multi && W.multi.size)) return toast('Select what should move first: Shift+click, or drag a box on empty space.');
+    await phTakeSelection(true);
+    phSetReach(PH.reach);
+    phPanel();
   };
   p.querySelector('[data-ph=big]').onchange = e => { PH.big = e.target.checked; try { localStorage.setItem('ph_big', PH.big ? '1' : '0'); } catch (x) {} phSetReach(PH.reach); };
   // (moved by its title row, kept inside the view)

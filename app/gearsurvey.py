@@ -143,7 +143,7 @@ def survey(db):
             mb = max(st[k]['med'] for k in ('Chop Max', 'Slash Max', 'Thrust Max'))
             return abs(best - mb) + abs(p['stats']['Value'] - st['Value']['med']) / max(1.0, st['Value']['med'])
         looks = sorted(lst, key=off)
-        groups[key] = {'n': len(lst), 'stats': st, 'looks': [p['i'] for p in looks[:24]]}
+        groups[key] = {'n': len(lst), 'stats': st, 'looks': [p['i'] for p in looks[:24]], 'members': [p['i'] for p in looks]}
     # tiers: each material's typical value against the other materials of the same types, over all types
     rank = defaultdict(list)
     by_type = defaultdict(list)

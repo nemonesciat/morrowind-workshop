@@ -431,7 +431,7 @@ async function owSave(){
   const c = owChanges(), r = owRef(), cell = OW.cell, k = OW.k, name = r.name || r.id;
   if (c.bad) return toast('Please enter numbers only', true);
   if (!c.any) return toast('Nothing changed.');
-  if (c.props){ const d = owPropsData(); if (d.faction && d.owner) return toast('Pick either a person or a faction as the owner, not both.', true); }
+  if (c.props){ const d = owPropsData(); if (d.faction && d.owner) return toast('Pick either a person or a faction as the owner, not both.'); }
   OW.busy = true; $('#ow-save').disabled = true; $('#ow-msg').textContent = 'Saving…';
   const depth = async () => { try { const s = await api('/api/status'); return (s.project || {}).undo_depth || 0; } catch (e){ return 0; } };
   const d0 = await depth(), done = [];

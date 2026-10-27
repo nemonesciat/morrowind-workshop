@@ -43,7 +43,7 @@ const PO_WHEN = {first: 'when they first meet', again: 'later on', liked: 'only 
 })();
 
 function poOpen(cell, at){
-  if (!cell){ toast('Open a place first.', true); return; }
+  if (!cell){ toast('Open a place first.'); return; }
   if (W.ext || String(cell).startsWith('#')){ toast('Populate works indoors for now: open an interior.', true); return; }
   if (typeof owCss === 'function') owCss();
   if (PO.cell !== cell){ PO.data = null; PO.locked = new Set(); }

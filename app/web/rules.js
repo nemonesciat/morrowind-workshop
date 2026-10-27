@@ -261,7 +261,7 @@ function ruRender(){
           ${cField('Fades out by', `<input class="inp num" type="number" min="0" max="255" data-rf="max" data-num value="${d.max}">`, 'Beyond this it can\'t be heard (a fire is 15, wind 40). 0 and 0: everywhere at full volume.')}</div></div>
       <div class="card"><h3 style="margin-top:0">Who plays it</h3>
         ${(d.used_by || []).length ? `<table class="t">${d.used_by.map(u => `<tr><td>${esc(S.typeLabels[u.tag] || u.tag)}</td><td><span class="lnk" data-ruopen="${u.i}">${esc(u.label)}</span></td></tr>`).join('')}</table>`
-          : '<div class="msg">Nothing yet. Regions play sounds in the background, doors when they open and close, lights (torches, fires) where they stand, magic effects when cast; scripts with <code>PlaySound "' + esc(d.id) + '"</code>, and 🔊 Add a sound on the World map stands a sound where you click.</div>'}</div></div>`;
+          : '<div class="msg">Nothing plays it yet. To use it: a region\'s background sounds, a door or a light, a script\'s <code>PlaySound "' + esc(d.id) + '"</code>, or 🔊 Add a sound on the World map to stand it where you click.</div>'}</div></div>`;
   } else if (k === 'global'){
     body = `<div class="card" style="max-width:620px">
       <div class="crow">${cField('Kind', `<select class="inp" data-rf="type">${Object.entries({s: 'Whole number (short)', l: 'Whole number (long)', f: 'Decimal number (float)'}).map(([v, t]) => `<option value="${v}" ${v === d.type ? 'selected' : ''}>${t}</option>`).join('')}</select>`)}
@@ -363,7 +363,7 @@ function ruBind(){
     $('#ru-splay').onclick = () => ruPlayFile(d.file);
     const vol = box.querySelector('[data-rf="volume"]'); if (vol) vol.addEventListener('input', () => { $('#ru-svolv').textContent = Math.round(vol.value / 2.55) + '%'; });
   }
-  box.querySelectorAll('[data-ruopen]').forEach(x => x.onclick = () => { showView('browse'); openRecord(+x.dataset.ruopen, true); });
+  box.querySelectorAll('[data-ruopen]').forEach(x => x.onclick = () => openTool(+x.dataset.ruopen));
   $('#ru-back').onclick = () => { RU.data = null; RU.id = null; ruList(); };
   $('#ru-revert').onclick = () => { if (d.creating){ RU.data = null; RU.id = null; return ruList(); } RU.data = JSON.parse(RU.orig); ruRender(); };
   $('#ru-save').onclick = async () => {

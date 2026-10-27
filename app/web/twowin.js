@@ -35,14 +35,12 @@ function twOpen(key, to, orig){
 function twMenuItem(key, to, label){
   return {label: label || '↗ Open in a second window', act: () => twOpen(key, to)};
 }
-// (for every right-click menu on the map and in 3D: this place in a second view inside the Workshop, or in a
-// window of its own, looking from where this one's camera is: the 3D view's eye, or the map's middle and zoom)
+// (for every right-click menu on the map and in 3D: this place in a second view inside the Workshop, looking
+// from where this one's camera is; the view's own ↗ Window button makes a window of it, so the menu offers one
+// entry, not two. A view inside the Workshop opens no view of its own.)
 function twHereItems(){
-  if (!W.key) return [];
-  const out = [{label: '⧉ Open a second view here (inside the Workshop)', act: () => twPanelOpen(W.key)}];
-  if (TW.embed) out.length = 0;                     // (a view inside the Workshop opens no view of its own)
-  out.push(twMenuItem(W.key, null, '↗ Open a second window here (from this view)'));
-  return out;
+  if (!W.key || TW.embed) return [];
+  return [{label: '⧉ Open a second view here', act: () => twPanelOpen(W.key)}];
 }
 
 // ----- a second view inside the Workshop: the same page in a frame with only its World map / 3D view showing
@@ -200,13 +198,13 @@ if (TW.ch) TW.ch.onmessage = e => {
 function twObjectItems(ck, r){
   // (a "before" window takes nothing in; from one, a copy of the game's version can go back into your mod)
   if (!twPeerList().some(p => !p.orig)) return [];
-  const out = [{label: '↗ Send a copy to the other view (place it there)', act: () => twSend(false)}];
+  const out = [{label: '↗ Send a copy to the other view', act: () => twSend(false)}];
   if (TW.orig) return out;
-  out.push({label: '↗ Move it to the other view (place it there)', act: () => twSend(true)});
+  out.push({label: '↗ Move it to the other view', act: () => twSend(true)});
   if (r && r.type === 'DOOR'){
     out.unshift({label: '📍 Pick where you arrive, in the other view…', act: () => twDoorArrival(ck, r)});
     if (TW.pending) out.unshift({label: `🔗 Link with ${TW.pending.name} (${TW.pending.place})`, act: () => twLinkDoors(ck, r)});
-    else out.unshift({label: '🔗 Link to a door in the other view (then click it there)', act: () => twPickDoor(ck, r)});
+    else out.unshift({label: '🔗 Link to a door in the other view', act: () => twPickDoor(ck, r)});
   }
   return out;
 }
@@ -252,7 +250,7 @@ function twDoorEnd(said){
 }
 async function twLinkDoors(ck, r){
   const P = TW.pending; if (!P || !await needProject()) return;
-  if (P.cell === ck && P.k === r.k) return toast('Pick a different door.', true);
+  if (P.cell === ck && P.k === r.k) return toast('Pick a different door.');
   TW.pending = null;
   try {
     const res = await post('/api/doors/pair', {cell_a: P.cell, ref_a: P.k, cell_b: ck, ref_b: r.k});

@@ -4,7 +4,8 @@
 // button and clicks it, text is typed into the fields, and captions say what's happening.
 // It only runs when asked for with that link, in a mod that's open (it's a normal edit, so Undo works).
 const DEMO = {on: false};
-const demoSleep = ms => new Promise(r => setTimeout(r, ms));
+// (Esc, or the recording stopped from the browser's bar, ends the demo at its next pause)
+const demoSleep = ms => new Promise((ok, no) => setTimeout(() => DEMO.stop ? no(new Error('demo stopped')) : ok(), ms));
 
 function demoSetup(){
   if (DEMO.cursor) return;
@@ -125,10 +126,23 @@ async function demoFly(to, ms){
 async function demoFurnish(opts = {}){
   DEMO.on = true;
   demoSetup();
-  const name = opts.name || "Balmora, Ilvi's House";
   // 0. title
   const title = demoTitle('Morrowind Workshop', 'Build a house, then Auto-furnish it');
   await demoSleep(3200); title.style.opacity = 0; await demoSleep(800); title.remove();
+  const r = await demoHouse(opts);
+  demoCaption('Try it in the game straight away', '▶ OpenMW → Start the game, or Play here: the live link shows changes as you make them');
+  await demoSleep(3500);
+  demoCaption('');
+  demoTitle('Morrowind Workshop', 'For OpenMW · free on Nexus Mods');
+  await demoSleep(4000);
+  DEMO.done = true;
+  document.title = 'Morrowind Workshop demo finished';     // (a recorder watching the window knows to stop)
+  return r;
+}
+
+// the house scene: Create → Build from pieces, three rooms, built, seen in 3D, Auto-furnish, a look round
+async function demoHouse(opts = {}){
+  const name = opts.name || "Balmora, Ilvi's House";
   // 1. Create → Build from pieces
   showView('browse'); await demoSleep(600);
   demoCaption('Create → Build from pieces', 'Lay out rooms; the Workshop builds them from the game\'s own wall and floor pieces');
@@ -197,14 +211,7 @@ async function demoFurnish(opts = {}){
   await demoFly(across, 7000);
   await demoFly(back, 7000);
   await demoFly(Object.assign({}, back, {yaw: back.yaw + Math.PI * 0.6}), 6000);          // and a look round
-  demoCaption('Try it in the game straight away', '▶ OpenMW → Start the game, or Play here: the live link shows changes as you make them');
-  await demoSleep(3500);
-  demoCaption('');
-  const end = demoTitle('Morrowind Workshop', 'For OpenMW · free on Nexus Mods');
-  await demoSleep(4000);
-  DEMO.done = true;
-  document.title = 'Morrowind Workshop demo finished';     // (a recorder watching the window knows to stop)
-  return {placed: n, seconds: Math.round((Date.now() - before3d) / 1000)};
+  return {placed: n, seconds: Math.round((Date.now() - before3d) / 1000), key: W.key, room: m, at};
 }
 
 // ---------- Screenshots: #demo=shot&s=<scene> sets up one scene and captions it ----------

@@ -4,10 +4,10 @@
 const TH_THEMES = {
   ashlands: {label: 'Ashlands', about: 'The usual: dark ash and gold', v: {}},
   telvanni: {label: 'Telvanni', about: 'Mushroom-tower purple', v: {
-    bg: '#120f17', panel: '#1a1621', panel2: '#221c2b', line: '#322a3d', line2: '#45395a', text: '#e9e1f2', muted: '#a097b2', faint: '#837999',
+    bg: '#120f17', panel: '#1a1621', panel2: '#221c2b', line: '#322a3d', line2: '#45395a', text: '#e9e1f2', muted: '#a097b2', faint: '#8f86a6',
     gold: '#b98be0', gold2: '#d9b8ff', hover: '#261f30', sel: '#33264a', deep: '#0d0b11', bg2: '#16121c', bg3: '#1c1724', line0: '#1f1a27', goldline: '#6e4f8f'}},
   redoran: {label: 'Redoran', about: 'Red-brown, like their bug-shell armour', v: {
-    bg: '#150f0c', panel: '#1e1511', panel2: '#281c17', line: '#3c2a22', line2: '#523a2f', text: '#efe0d4', muted: '#a99183', faint: '#8b7467',
+    bg: '#150f0c', panel: '#1e1511', panel2: '#281c17', line: '#3c2a22', line2: '#523a2f', text: '#efe0d4', muted: '#a99183', faint: '#9a8376',
     gold: '#d9824f', gold2: '#f4ac7c', hover: '#2d1f19', sel: '#40271b', deep: '#100b09', bg2: '#19110e', bg3: '#211713', line0: '#251a15', goldline: '#8d5233'}},
   hlaalu: {label: 'Hlaalu', about: 'Olive and amber, like their halls in Balmora', v: {
     bg: '#11130d', panel: '#191c13', panel2: '#212519', line: '#313724', line2: '#444c31', text: '#e6e8d6', muted: '#9ea38a', faint: '#80876c',
@@ -18,29 +18,33 @@ const TH_THEMES = {
     bg: '#000000', panel: '#000000', panel2: '#0f0e0e', line: '#4d0009', line2: '#713339', text: '#f2e6e4', muted: '#a58d8d', faint: '#8c7878',
     gold: '#c70a00', gold2: '#d8544c', hover: '#181717', sel: '#380300', deep: '#000000', bg2: '#000000', bg3: '#000000', line0: '#2a0005', goldline: '#770600',
     red: '#ff5a3c', amber: '#ff9a3c', blue: '#7fa7d6', green: '#8fbf7a', view3d: '#330000'}, btn: '#110403'},
-  dwemer: {label: 'Dwemer', about: 'Bronze and verdigris', v: {
-    bg: '#0e1211', panel: '#151b19', panel2: '#1c2421', line: '#2b3833', line2: '#3c4d46', text: '#e1ebe5', muted: '#93a49b', faint: '#788a80',
-    gold: '#c8964a', gold2: '#e8bd78', hover: '#1f2925', sel: '#2e3426', deep: '#0b0e0d', bg2: '#121816', bg3: '#18201d', line0: '#1b2420', goldline: '#7d6033'}},
+  dwemer: {label: 'Dwemer', about: 'Verdigris on cold stone, with bronze', v: {
+    // (once olive-dark with a gold accent, too like Hlaalu, the user 2026-10-26: now the ruins' cool blue-grey
+    // stone, the patina's teal for accents and headings, bronze for the main buttons)
+    bg: '#0e1214', panel: '#151b1e', panel2: '#1c2428', line: '#2a383d', line2: '#3b4e55', text: '#e2ecee', muted: '#94a8ac', faint: '#7a8e92',
+    gold: '#4db3a0', gold2: '#8edccb', hover: '#1d282c', sel: '#1d3a36', deep: '#0a0d0f', bg2: '#121719', bg3: '#182024', line0: '#1b2427', goldline: '#2e7468',
+    green: '#9fca7e'}, btn: '#6b4a22'},
   imperial: {label: 'Imperial', about: 'Ivory marble, Septim red and old gold', light: true, v: {
     // (marble rather than parchment: cooler ivory panels with firm warm lines, the Legion's red for what
     // matters and a deep gold for the rest)
     // (the text darker than at first, 2026-10-26: "the text has to pop a little more", the user)
     bg: '#e4dccb', panel: '#f3eee3', panel2: '#e9e1d0', line: '#c9b994', line2: '#a9956a', text: '#0f0a05', muted: '#3d3021', faint: '#4d3f2b',
     gold: '#8e1d1d', gold2: '#5f1010', hover: '#e4d9c0', sel: '#e2c9a2', deep: '#faf7f0', bg2: '#dfd5c0', bg3: '#ece5d5', line0: '#d7cbb0', goldline: '#b8902f',
-    red: '#9f2d1d', amber: '#9c6a0c', blue: '#2e5d97', green: '#4b7833'}},
+    red: '#9f2d1d', amber: '#7d5408', blue: '#2e5d97', green: '#4b7833'}},
   indoril: {label: 'Indoril', about: 'Light: Mournhold grey stone and pale blue panels, with deep Almalexia blue', light: true, v: {
     // (the user's own theme, made from High contrast and liked enough to be the light preset, 2026-10-24:
     // near-black text and lines on grey and pale blue, white main buttons, a dark 3D view)
     bg: '#afadb3', panel: '#dce0ea', panel2: '#d0d4dd', line: '#0d0326', line2: '#100823', text: '#1a1919', muted: '#121212', faint: '#2a292a',
     gold: '#12327d', gold2: '#0d2358', hover: '#c9ccd5', sel: '#a3afcb', deep: '#c7c6ca', bg2: '#bcbcc4', bg3: '#ced1da', line0: '#565065', goldline: '#516393',
-    red: '#df2201', amber: '#8d6411', blue: '#4480c5', green: '#2e8f05', view3d: '#171717'}, btn: '#ffffff'},
+    // (the problem colours darker than at first, 2026-10-26, to read on the grey and pale blue: 3.1 to 3.6 to 1 before)
+    red: '#921500', amber: '#7a560e', blue: '#245a99', green: '#22700a', view3d: '#171717'}, btn: '#ffffff'},
   contrast: {label: 'High contrast', about: 'Black, white and bright yellow: easiest to read', v: {
     bg: '#000000', panel: '#0a0a0a', panel2: '#161616', line: '#5c5c5c', line2: '#8c8c8c', text: '#ffffff', muted: '#e2e2e2', faint: '#bdbdbd',
     gold: '#ffd23f', gold2: '#ffe680', hover: '#232323', sel: '#3d3400', deep: '#000000', bg2: '#0a0a0a', bg3: '#111111', line0: '#333333', goldline: '#b39400'}},
 };
 
 // The usual look's own colours (index.html :root), for presets that leave some of them alone
-const TH_USUAL = {bg: '#13110d', panel: '#1b1813', panel2: '#221e18', line: '#342d23', line2: '#463c2e', text: '#ebe2cf', muted: '#9c917c', faint: '#6e6555',
+const TH_USUAL = {bg: '#13110d', panel: '#1b1813', panel2: '#221e18', line: '#342d23', line2: '#463c2e', text: '#ebe2cf', muted: '#9c917c', faint: '#8b806c',
   gold: '#d2a85a', gold2: '#f0cd87', red: '#e0705b', amber: '#e2b04a', blue: '#7fa7d6', green: '#8fbf7a', btn: '#5a4420', view3d: '#0d0c0a'};
 // What you can set in your own (Custom) theme; the in-between shades are worked out from these
 const TH_KEYS = [['bg', 'Background'], ['panel', 'Panels and windows'], ['text', 'Text'], ['muted', 'Quieter text (notes, IDs)'],

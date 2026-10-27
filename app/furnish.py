@@ -124,6 +124,7 @@ last_placed = []                # what the last Auto-furnish put where (for test
 last_trace = []                 # why recipe items were left out: (room, kind, id, reason) (for tests)
 last_clutter = []               # how the clutter groups went (for tests)
 last_dress = []                 # (model, room, things in the dressing, things that stood) per dressed piece (for tests)
+last_why = Counter()            # (why things of a dressing were left out in the last furnish: wall, taken, under...)
 
 # what goes in a kind of room: (kind of thing, how many, where). Rugs go where the game puts them: under
 # the table, beside the bed, in front of a shrine or counter (where people stand); a long one down a hall;
@@ -2656,6 +2657,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
     # a book nor a series; the shelves fill out with other things. Libraries, shops and guilds are free.)
     book_budget = {'left': 3, 'titles': set(), 'stems': set()} if theme == 'house' else None
 
+    dress_why = last_why          # (why a dressing's things were left out, for Dress this's message and the lab)
+    dress_why.clear()
+
     def dress(rec, purpose, min_z=None, fill_books=False):
         """Set a new bookshelf, shelf, table or counter out the way the game dresses that model (see
         shelfsurvey.py): the things of one of its real dressings, at the same spots on the same shelves,
@@ -2667,9 +2671,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         import shelfsurvey
         d = shelfsurvey.dressing(db, rec['id'], purpose, rng, books=fam.get('book') or [], theme=theme, used=dressings_used,
                                  cap=L['cap'] if L else None, rate_k=L['rate'] if L else 1.0, max_value=L['max_value'] if L else None,
-                                 band=L['band'] if L else 'comfortable', budget=book_budget, fill_books=fill_books)
+                                 band=L['band'] if L else 'comfortable', budget=book_budget, fill_books=fill_books,
+                                 bare=piece is None)      # (asked for by hand: never one of the game's bare ones)
         if d is None:
             return None
+        if not d:
+            dress_why['bare'] += 1
         if min_z is not None:
             d = [o for o in d if o['z'] - rec['b'][2] >= min_z]         # (this high over the piece's bottom, not its origin)
             if not d:
@@ -2724,27 +2731,39 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             # (nothing stands higher than the piece's top: a cobweb or a hung broom the game had on the wall
             # over its kiln hearth came out in the air 200 over ours, the model's dressing reading them as its)
             if bottom > pz + rec['b'][5] * (rec.get('s') or 1.0) + 40:
+                dress_why['above'] += 1
                 continue
             # (and nothing through the ceiling: the game's lilypads and mosses stand in tall halls' beds)
             if room_top and room_d is not None and ob and pz + o['z'] + shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])[5] > room_d['floor'] + room_top:
+                dress_why['ceiling'] += 1
                 continue
             # (not for a wine rack: a bottle lies across two slats of the lattice, nothing straight under its
             # middle, and the game's own racks are where its pose came from)
             if is_pl:
                 hit = own.nearest((px + wx, py + wy, bottom + 40), (0.0, 0.0, -1.0), 80) if own.tris else (0, None)
                 if hit is None or hit[0] > 40 + 30:
+                    dress_why['under'] += 1
                     continue                             # (no soil near its bottom)
             else:
                 hit = own.nearest((px + wx, py + wy, bottom + 8), (0.0, 0.0, -1.0), 40) if own.tris and not WINERACK.search(rec['id'].lower()) else (0, None)
                 if hit is None or hit[0] > 8 + 14:
+                    dress_why['under'] += 1
                     continue                             # (nothing of the furniture within reach under it)
-            # (and within the room's walls: a ledger lying across a bookshelf's back edge reached into the wall)
+            # (and within the room's walls: a ledger lying across a bookshelf's back edge reached into the wall;
+            # a thing within the piece's own outline is no further through a wall than the piece is, which in a
+            # ruin or a cave, whose traced rooms are rough, stood outside them: "none of the 191 dressings fit")
             if ob and room_d is not None and T:
                 tb_ = shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])
-                if not on_floor((px + wx + tb_[0], py + wy + tb_[1], px + wx + tb_[3], py + wy + tb_[4]), room_rects(room_d, T)):
+                fb_ = shelfsurvey.box_turned(rec['b'], 0, 0, rz, rec.get('s') or 1.0)
+                within = (px + wx + tb_[0] >= px + fb_[0] - 4 and px + wx + tb_[3] <= px + fb_[3] + 4
+                          and py + wy + tb_[1] >= py + fb_[1] - 4 and py + wy + tb_[4] <= py + fb_[4] + 4)
+                if not within and not on_floor((px + wx + tb_[0], py + wy + tb_[1], px + wx + tb_[3], py + wy + tb_[4]), room_rects(room_d, T)):
+                    dress_why['wall'] += 1
                     continue
             if put(o['id'], px + wx, py + wy, orz, at_z=pz + o['z'], tilt=(orx, ory), scale=o['s'], room=rec.get('room'), on_ref=rec.get('k')):
                 kept.append(o)
+            else:
+                dress_why['taken'] += 1
         last_dress.append((rec['id'], rec.get('room'), len(d), len(kept)))
         return kept or None
 
@@ -2833,6 +2852,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
 
         def clear_of_have(wb):
             return not any(wb[0] < hb[3] - 2 and hb[0] < wb[3] - 2 and wb[1] < hb[4] - 2 and hb[1] < wb[4] - 2 and wb[2] < hb[5] - 2 and hb[2] < wb[5] - 2 for _r, hb in have)
+        # (inside the piece's own outline is never further through a wall than the piece: a ruin's or a cave's
+        # traced rooms are rough, and a shelf in one stood outside them, as dress() has it)
+        pb_ = shelfsurvey.box_turned(fb_, 0, 0, rz, rec.get('s') or 1.0)
+        in_piece = lambda b: b[0] >= px + pb_[0] - 4 and b[3] <= px + pb_[3] + 4 and b[1] >= py + pb_[1] - 4 and b[4] <= py + pb_[4] + 4
+        walls_ok = lambda b: rects_ is None or in_piece(b) or on_floor((b[0], b[1], b[3], b[4]), rects_)
         for _w, o, riders in cands[:600]:
             w_ = world_of(o)
             if w_ is None:
@@ -2840,7 +2864,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             (X, Y, Z), (orx, ory, orz), wb = w_
             if not clear_of_have(wb):
                 continue                 # (something stands there already)
-            if rects_ is not None and not on_floor((wb[0], wb[1], wb[3], wb[4]), rects_):
+            if not walls_ok(wb):
                 continue
             hit = own.nearest((X, Y, wb[2] + 8), (0.0, 0.0, -1.0), 40) if own.tris and not WINERACK.search(rec['id'].lower()) else (0, None)
             if hit is None or hit[0] > 8 + 14:
@@ -2850,7 +2874,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             rw = []
             for r_ in riders:
                 w2 = world_of(r_)
-                if w2 is None or not clear_of_have(w2[2]) or (rects_ is not None and not on_floor((w2[2][0], w2[2][1], w2[2][3], w2[2][4]), rects_)):
+                if w2 is None or not clear_of_have(w2[2]) or not walls_ok(w2[2]):
                     rw = None
                     break
                 rw.append((r_, w2))
@@ -5961,7 +5985,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 if sk_ and lay_scene(sk_, on_rec=prec):
                     got_ = [p['id'] for p in placed[n0_:]]
                 else:
-                    d_ = dress(prec, purpose)
+                    # (a few draws before giving up: one of the game's dressings that does not fit this spot,
+                    # a wall's edge or a thing in the way, is not all of them)
+                    for _try in range(6):
+                        d_ = dress(prec, purpose)
+                        if d_ or d_ is None:
+                            break
                     got_ = [o['id'] for o in (d_ or [])]
             piece_out = {'placed': len(got_), 'model': prec['id'], 'kind': fam_, 'room': room['name']}
             report.append({'room': room['name'], 'purpose': purpose, 'placed': len(got_)})
@@ -7048,7 +7077,14 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         if not placed:
             if not known:
                 raise EditError('The game never puts anything on this (%s), so there is nothing to copy.' % piece_out['model'])
-            raise EditError('None of the game\'s %d dressings of this model fit here as it stands (too close to a wall, or things in the way).' % known)
+            # (the reason the things were left out, the commonest first: not "too close to a wall" whatever it was)
+            why_words = {'wall': 'they would reach past the room\'s walls', 'taken': 'other things are in the way',
+                         'under': 'the piece\'s surface wasn\'t under them (its shape differs from the game\'s copies)',
+                         'above': 'they stood higher than the piece', 'ceiling': 'they would go through the ceiling',
+                         'bare': 'the game\'s dressings of it came out empty'}
+            top_why = [why_words[k] for k, _n in dress_why.most_common(2) if k in why_words]
+            raise EditError('None of the game\'s %d dressings of this model fit here: %s. Try Dress again, or move it a little.'
+                            % (known, ' and '.join(top_why) if top_why else 'nothing of them could stand on it'))
         db.sync_project()
         import modelcache
         modelcache.save()

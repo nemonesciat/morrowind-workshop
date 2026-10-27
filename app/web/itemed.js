@@ -74,7 +74,7 @@ function ieRender(){
   if (d.can_enchant) body += ieEnchHtml(d.enchant, false);
   $('#itemed').innerHTML = `<div class="wrap cwrap"><div class="chead"><div><h1 style="margin:0">${esc(d.name || d.id)}</h1>
       <div class="msg">${IE_LABEL[t] || t} · ${esc(d.id)} · ${d.mine ? (d.created ? 'made in your mod' : 'changed in your mod') : 'from ' + esc(d.src) + '. Saving puts your version in your mod.'}</div></div>
-      <div class="chbtns"><button class="btn sm" id="ie-other">Edit another…</button><button class="btn sm" id="ie-rec">Record</button><button class="btn sm" id="ie-revert" style="visibility:hidden">↺ Undo edits</button><button class="btn primary" id="ie-save" disabled>Saved</button></div></div>
+      <div class="chbtns"><button class="btn sm" id="ie-other">Edit another…</button>${t === 'WEAP' || t === 'ARMO' ? '<button class="btn sm" id="ie-world" title="Into its random loot lists, onto the people who carry one like it, into merchants\' stock: where the game puts its own">🌐 Into the world…</button>' : ''}<button class="btn sm" id="ie-rec">Record</button><button class="btn sm" id="ie-revert" style="visibility:hidden">↺ Undo edits</button><button class="btn primary" id="ie-save" disabled>Saved</button></div></div>
     ${body}</div>`;
   ieBind();
 }
@@ -149,6 +149,7 @@ function ieBind(){
   box.querySelectorAll('[data-ieopen]').forEach(a => a.onclick = ev => { ev.preventDefault(); ieShow(a.dataset.ieopen); });
   $('#ie-other').onclick = () => { if (JSON.stringify(IE.data) !== IE.orig && !confirm('Leave your unsaved changes?')) return; IE.id = null; IE.data = null; ieWelcome(); };
   $('#ie-rec').onclick = () => { openRecord(d.i, true); showView('browse'); };
+  const iw = $('#ie-world'); if (iw) iw.onclick = () => forgeShow({world: d.id});
   $('#ie-revert').onclick = () => { IE.data = JSON.parse(IE.orig); ieRender(); };
   $('#ie-save').onclick = async () => {
     if (!await needProject()) return;
