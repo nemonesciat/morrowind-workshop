@@ -34,7 +34,8 @@ UNITS_PER_METRE = 70.0          # a Morrowind unit is about 1.4 cm
 
 # ------------------------------------------------------------------ where things go
 def data_dir(db):
-    return os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or os.path.join(db.config['userdir'], 'data')
+    return os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or \
+        os.path.join(db.config.get('userdata') or db.config['userdir'], 'data')
 
 
 def _index():

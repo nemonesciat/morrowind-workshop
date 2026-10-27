@@ -106,7 +106,7 @@ class LiveLink:
         """Where versions before 1.2.3 put these files: OpenMW's own data folder."""
         cfg = self.db.config or {}
         return os.environ.get('WORKSHOP_PLUGIN_DIR') or cfg.get('data_local') or \
-            (os.path.join(cfg['userdir'], 'data') if cfg.get('userdir') else None)
+            (os.path.join(cfg.get('userdata') or cfg['userdir'], 'data') if cfg.get('userdir') else None)
 
     def _remove_old_copies(self):
         """Take the Workshop's own link files out of OpenMW's data folder (only those exact files)."""
@@ -239,17 +239,13 @@ class LiveLink:
         return spares[cell_key]
 
     def game_running(self):
-        """Is openmw.exe running? (checked at most every 2 seconds)"""
+        """Is the game running? (checked at most every 2 seconds)"""
         now = time.time()
         if now - getattr(self, '_proc_checked', 0) > 2:
             self._proc_checked = now
-            try:
-                import subprocess
-                out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq openmw.exe', '/NH'], capture_output=True,
-                                     text=True, timeout=5, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                self._proc_running = 'openmw.exe' in out.stdout.lower()
-            except Exception:
-                self._proc_running = now - self.last_seen < 6
+            import osplat
+            running = osplat.process_running('openmw')
+            self._proc_running = (now - self.last_seen < 6) if running is None else running
         return self._proc_running
 
     def connected(self):

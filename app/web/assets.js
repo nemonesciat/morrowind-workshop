@@ -57,7 +57,7 @@ function asDraw(){
         : '<span class="as-sub">The game has no texture of that name anywhere.</span>')
       : `<button class="btn sm" data-as="find" data-n="${n}" title="Look through every data folder and archive for a texture of the same name">🔍 Look for it</button>`) : mine
       ? `<button class="btn sm" data-as="open" data-n="${n}" title="Open your copy in the picture editor again">✎ Open your copy</button>
-         <button class="btn sm" data-as="giveback" data-n="${n}" title="Take your copy out of the mod (to the Recycle Bin); the game draws its own again">↺ The game's own again</button>`
+         <button class="btn sm" data-as="giveback" data-n="${n}" title="Take your copy out of the mod (to the ${osw('bin')}); the game draws its own again">↺ The game's own again</button>`
       : `<button class="btn sm primary" data-as="everywhere" data-n="${n}" title="Your copy under the same name: it shows everywhere this texture is used">✎ Change everywhere</button>
          <button class="btn sm" data-as="own" data-n="${n}" title="A copy under a new name, on a new record of this object only">✎ For this one only…</button>`;
     return `<div class="as-tex">${pic}<div class="as-texinfo"><div class="as-texname" title="${esc(t.path || t.name)}">${esc(t.name)} ${t.missing ? '' : fromTag(t.from, t.from === 'mod' ? "your mod's copy" : t.from_label)}</div>
@@ -87,10 +87,11 @@ function asDraw(){
   if (sel) sel.onchange = async () => {
     let exe = sel.value;
     if (exe === '?'){
-      exe = await askText('The program to open textures in: its .exe, e.g. C:\\Program Files\\GIMP 2\\bin\\gimp-2.10.exe', ed.chosen || '');
+      exe = await askText(osw('linux') ? 'The program to open textures in, e.g. /usr/bin/gimp'
+        : 'The program to open textures in: its .exe, e.g. C:\\Program Files\\GIMP 2\\bin\\gimp-2.10.exe', ed.chosen || '');
       if (exe == null){ sel.value = ed.chosen || ''; return; }
     }
-    try { await post('/api/settings', {image_editor: exe}); AS.editors.chosen = exe; asDraw(); asMsg(exe ? 'Textures open in ' + exe.split('\\').pop() + ' now.' : 'Textures open in what Windows chooses.'); }
+    try { await post('/api/settings', {image_editor: exe}); AS.editors.chosen = exe; asDraw(); asMsg(exe ? 'Textures open in ' + exe.split(/[\\/]/).pop() + ' now.' : 'Textures open in what ' + (osw('linux') ? 'your desktop' : 'Windows') + ' chooses.'); }
     catch (e){ asMsg(e.message, true); sel.value = ed.chosen || ''; }
   };
 }
@@ -104,7 +105,7 @@ function asModelHtml(d){
   const lost = (G && G.lost && G.lost.length) ? `<div class="msg err" style="margin-top:4px">This model also has ${esc(G.lost.join(', '))}: those stay behind, so coming back it is shapes and textures only.</div>` : '';
   let state = '';
   if (G){
-    state = `<div class="as-sub" style="margin-top:6px">Out at <span class="lnk" data-as="showfile">${esc(G.file.split('\\').pop())}</span>. ${G.blender
+    state = `<div class="as-sub" style="margin-top:6px">Out at <span class="lnk" data-as="showfile">${esc(G.file.split(/[\\/]/).pop())}</span>. ${G.blender
       ? 'Save in Blender (Ctrl+S) and it comes back here.' : 'In your 3D program, export it again as glTF binary over the same file and it comes back here.'}
       ${G.how ? ` It comes back <b>${G.how === 'own' ? 'as its own object' : 'everywhere'}</b>.` : ''}</div>${lost}`;
     if (G.pending && !G.how) state += `<div class="as-back"><b>The model changed.</b> Bring it back:
@@ -113,7 +114,7 @@ function asModelHtml(d){
       <button class="btn sm" data-as="backno">Not now</button></div>`;
   }
   const anim = d.animated && typeof anShow === 'function' ? `<button class="btn sm" data-as="anim" title="Its animations played here, and its text keys (the groups and their sounds) to change">🎞 Animation & text keys…</button>` : '';
-  return `<div class="as-btns" style="margin-top:10px">${out}${anim}${mine ? `<button class="btn sm" data-as="giveback-model" title="Take your copy of the model out of the mod (to the Recycle Bin); the game draws its own again">↺ The game's own model again</button>` : ''}</div>${state}`;
+  return `<div class="as-btns" style="margin-top:10px">${out}${anim}${mine ? `<button class="btn sm" data-as="giveback-model" title="Take your copy of the model out of the mod (to the ${osw('bin')}); the game draws its own again">↺ The game's own model again</button>` : ''}</div>${state}`;
 }
 
 async function asBack(how){
@@ -155,7 +156,7 @@ async function asClick(e){
   if (how === 'back'){ if (!await needProject()) return; return asBack(b.dataset.how); }
   if (how === 'backno'){ AS.glb.pending = false; asDraw(); return; }
   if (how === 'giveback-model'){
-    if (!confirm(`Take your copy of ${d.model} out of your mod?\n\nIt goes to the Recycle Bin, and the game draws its own model again.`)) return;
+    if (!confirm(`Take your copy of ${d.model} out of your mod?\n\nIt goes to the ${osw('bin')}, and the game draws its own model again.`)) return;
     try {
       const r = await post('/api/assets/giveback', {path: d.path});
       if (typeof v3ModelReload === 'function') v3ModelReload((d.records || []).map(x => x.id));
@@ -192,15 +193,15 @@ async function asClick(e){
         asMsg(`Made ${r.id}, drawn with its own copy of the texture. It opened in your picture editor; place ${r.id} to see it.`);
         if (typeof afterChange === 'function') afterChange();
       } else {
-        asMsg(`Your copy opened in ${r.editor ? r.editor.split('\\').pop() : 'your picture editor'}. Save it there, and the 3D view draws it again.`);
+        asMsg(`Your copy opened in ${r.editor ? r.editor.split(/[\\/]/).pop() : 'your picture editor'}. Save it there, and the 3D view draws it again.`);
         AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw();
       }
     } catch (er){ asMsg(er.message, true); }
   } else if (how === 'open'){
-    try { const r = await post('/api/assets/open', {file: t.file}); AS.watch[t.path] = AS.watch[t.path] || {file: t.file, stamp: null, path: t.path, shown: t.path}; asWatch(); asMsg('Opened ' + (r.editor ? 'in ' + r.editor.split('\\').pop() : 'your copy') + '.'); }
+    try { const r = await post('/api/assets/open', {file: t.file}); AS.watch[t.path] = AS.watch[t.path] || {file: t.file, stamp: null, path: t.path, shown: t.path}; asWatch(); asMsg('Opened ' + (r.editor ? 'in ' + r.editor.split(/[\\/]/).pop() : 'your copy') + '.'); }
     catch (er){ asMsg(er.message, true); }
   } else if (how === 'giveback'){
-    if (!confirm(`Take your copy of ${t.name} out of your mod?\n\nIt goes to the Recycle Bin, and the game draws its own texture again.`)) return;
+    if (!confirm(`Take your copy of ${t.name} out of your mod?\n\nIt goes to the ${osw('bin')}, and the game draws its own texture again.`)) return;
     try {
       const r = await post('/api/assets/giveback', {path: t.path});
       delete AS.watch[t.path];

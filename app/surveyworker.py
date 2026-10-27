@@ -23,12 +23,8 @@ def main():
         import psutil  # noqa: F401
     except ImportError:
         pass
-    if os.name == 'nt':
-        try:
-            import ctypes
-            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)   # BELOW_NORMAL
-        except Exception:
-            pass
+    import osplat
+    osplat.lower_priority()             # (below normal on Windows, nice on Linux)
     import project
     from database import Database
     import mapdata

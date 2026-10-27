@@ -289,10 +289,17 @@ class Database:
             self.state = 'error'
 
     def _find_file(self, name):
+        import osplat
         for d in reversed(self.config['data']):
             p = os.path.join(d, name)
             if os.path.isfile(p):
                 return p
+        if not osplat.WINDOWS:
+            # (Linux keeps Morrowind.esm and morrowind.esm apart; openmw.cfg names files in any case, as OpenMW reads them)
+            for d in reversed(self.config['data']):
+                p = osplat.find_ci(d, name)
+                if p and os.path.isfile(p):
+                    return p
         return None
 
     def _scan_assets(self):

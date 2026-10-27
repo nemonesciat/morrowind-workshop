@@ -410,10 +410,11 @@ def _locate(db, rel):
     # loose files: the mod's own folder first (the Library's files are there; OpenMW always reads it)
     dirs = [_mine_dir(db)] + [d for d in reversed(db.config['data'])
                               if os.path.normcase(os.path.abspath(d)) != os.path.normcase(os.path.abspath(_mine_dir(db)))]
+    import osplat
     for c in cands:
         for d in dirs:
-            fp = os.path.join(d, *c.split('/'))
-            if os.path.isfile(fp):
+            fp = osplat.find_ci(d, c)              # (rel is lower case; on Linux the file may be Meshes/x/Foo.nif)
+            if fp and os.path.isfile(fp):
                 return ('loose', d, fp, c)
     return None
 
@@ -1162,10 +1163,11 @@ def clean_launch_args(db, start):
     mine = _mine_dir(db)
     if mine not in dirs:
         dirs.append(mine)
+    import osplat
     archives = []
     for a in db.config['archives']:
         for d in dirs:
-            if os.path.isfile(os.path.join(d, a)):
+            if osplat.find_ci(d, a):
                 archives.append(a)
                 break
     args = ['--skip-menu', '--start', start, '--replace', 'data']

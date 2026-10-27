@@ -8,6 +8,7 @@ import re
 import sys
 import time
 
+import osplat
 from project import APP_DIR, PROJECTS_DIR, load_settings, save_settings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -142,17 +143,10 @@ def notices_text():
 
 # ------------------------------------------------------------------ problem report
 def _anon(text):
-    """Leave the Windows user name out of paths."""
+    """Leave the user name out of paths."""
     home = os.path.expanduser('~')
-    user = os.environ.get('USERNAME') or os.path.basename(home)
-    try:                                       # (also Windows' short "8.3" form of it, like C:\Users\JOHNSM~1)
-        import ctypes
-        buf = ctypes.create_unicode_buffer(520)
-        if ctypes.windll.kernel32.GetShortPathNameW(home, buf, 520):
-            text = re.sub(re.escape(buf.value), '%USERPROFILE%', text, flags=re.I)
-    except Exception:
-        pass
-    text = re.sub(re.escape(home), '%USERPROFILE%', text, flags=re.I)
+    user = os.environ.get('USERNAME') or os.environ.get('USER') or os.path.basename(home)
+    text = osplat.anonymise(text)              # (the home folder, and on Windows its short "8.3" form too)
     if user and len(user) > 2:
         text = re.sub(re.escape(user), '<user>', text, flags=re.I)
     return re.sub(r'sk-ant-[A-Za-z0-9_\-]+', 'sk-ant-<hidden>', text)       # (never an API key)
@@ -190,7 +184,7 @@ def report(db, link, what='', page=None):
     lines = ['Morrowind Workshop problem report', '=' * 40,
              'When: %s' % time.strftime('%Y-%m-%d %H:%M'),
              'Workshop: %s' % version(),
-             'Windows: %s' % platform.platform(),
+             osplat.system_name(),
              'OpenMW: %s, in %s' % (openmw_version(db), cfg.get('install') or 'NOT FOUND'),
              'openmw.cfg: %s (%s)' % (cfg.get('user_cfg'), 'found' if cfg.get('user_cfg_exists') else 'MISSING'),
              'Load order: %d plugins, %d data folders, %d archives' % (len(getattr(db, 'cfg_content_all', []) or []),
@@ -260,16 +254,16 @@ def set_settings(body):
     # the picture editor textures open in (assets.py): a program on this PC, or '' for Windows' own choice
     if 'image_editor' in body:
         exe = (body.get('image_editor') or '').strip().strip('"')
-        if exe and not (exe.lower().endswith('.exe') and os.path.isfile(exe)):
+        if exe and not osplat.is_program(exe):
             from editing import EditError
             raise EditError('That is not a program on this PC: %s' % exe)
         s['image_editor'] = exe
     # Blender, wherever it is (assets.blender looks in the usual places when this is empty)
     if 'blender' in body:
         exe = (body.get('blender') or '').strip().strip('"')
-        if exe and not (os.path.basename(exe).lower() == 'blender.exe' and os.path.isfile(exe)):
+        if exe and not osplat.is_program(exe, 'blender'):
             from editing import EditError
-            raise EditError('That is not Blender (blender.exe) on this PC: %s' % exe)
+            raise EditError('That is not Blender (%s) on this PC: %s' % (osplat.program_name('blender'), exe))
         s['blender'] = exe
     # the look chosen in Settings → Appearance (theme.js), your own theme with it; small, so kept as it comes
     if isinstance(body.get('theme'), dict) and len(json.dumps(body['theme'])) < 8000:

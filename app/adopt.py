@@ -295,7 +295,7 @@ def save_as(db, name, ext, overwrite=False):
     old_file = p.plugin
     old_path = editing.plugin_path(db)
     folder = os.path.dirname(old_path) if p.source else (os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local')
-                                                        or os.path.join(db.config['userdir'], 'data'))
+                                                        or os.path.join(db.config.get('userdata') or db.config['userdir'], 'data'))
     new_path = os.path.join(folder, new_file)
     if os.path.normcase(os.path.abspath(new_path)) == os.path.normcase(os.path.abspath(old_path)):
         raise EditError('%s is the file this mod saves into already.' % new_file)
@@ -396,16 +396,13 @@ def candidates(db):
 
 
 def pick_file(db):
-    """Ask for a plugin file with Windows' own file picker (nothing is opened yet). {path} or {cancelled}."""
-    start = (db.config or {}).get('data_local') or os.path.join((db.config or {}).get('userdir', ''), 'data')
-    ps = ("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; "
-          "$d.Title = 'Open a plugin as your mod'; $d.Filter = 'Morrowind plugins (*.esp;*.omwaddon)|*.esp;*.omwaddon|All files (*.*)|*.*'; "
-          "$d.InitialDirectory = '%s'; "
-          "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
-          "if ($d.ShowDialog($o) -eq 'OK') { $d.FileName }") % start.replace("'", "''")
-    r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', ps], capture_output=True, text=True,
-                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    path = (r.stdout or '').strip()
+    """Ask for a plugin file with the computer's own file picker (nothing is opened yet). {path} or {cancelled}."""
+    import osplat
+    cfg = db.config or {}
+    start = cfg.get('data_local') or os.path.join(cfg.get('userdata') or cfg.get('userdir', ''), 'data')
+    path = osplat.pick_file('Open a plugin as your mod', start, ('Morrowind plugins', ['*.esp', '*.omwaddon']))
+    if path is None:
+        raise EditError(osplat.NO_PICKER)
     if not path:
         return {'ok': False, 'cancelled': True}
     known = {os.path.normcase(os.path.abspath(d)) for d in (db.config or {}).get('data', [])}

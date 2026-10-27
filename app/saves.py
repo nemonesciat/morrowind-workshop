@@ -5,12 +5,25 @@ import glob
 import os
 import struct
 
-from esm import openmw_userdir
+from esm import openmw_userdata
 
 
 def saves_dir():
-    base = os.environ.get('WORKSHOP_OPENMW_USERDIR') or openmw_userdir()
+    base = os.environ.get('WORKSHOP_OPENMW_USERDIR') or openmw_userdata(_install())
     return os.path.join(base, 'saves')
+
+
+def _install():
+    """(Linux only: whether the game is the Flatpak decides where its saves are)"""
+    import osplat
+    if osplat.WINDOWS:
+        return None
+    try:
+        from project import load_settings
+        from esm import find_openmw
+        return find_openmw(load_settings().get('openmw_install'))
+    except Exception:
+        return None
 
 
 def _header(path, want_picture=False):

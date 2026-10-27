@@ -190,12 +190,12 @@ function omwRender(){
        <button data-omw="here"><b>Start in a place…</b><small>Pick a spot on the World map ("Play here").</small></button>
        ${OMW.launcher ? '<button data-omw="launcher"><b>OpenMW Launcher</b><small>OpenMW\'s own settings, mods and data files.</small></button>' : ''}
        <button data-omw="order"><b>Load order…</b><small>Switch plugins on or off and change their order.</small></button>
-       <button data-omw="opts"><b>Game start options…</b><small>Extra options for openmw.exe each time the Workshop starts the game.</small></button>
+       <button data-omw="opts"><b>Game start options…</b><small>Extra options for ${osw('exe')} each time the Workshop starts the game.</small></button>
        <button data-omw="settings"><b>OpenMW settings…</b><small>Graphics, shadows, the game's options: every setting, with what it does.</small></button>
        <button data-omw="settingscfg"><b>Open settings.cfg</b><small>OpenMW's settings file, in your text editor.</small></button>
        <div class="omwfoot">OpenMW: ${esc(OMW.install)} · <span class="lnk" data-omw="pick">change</span></div>`
     : `<div class="omwfoot" style="border:0">OpenMW wasn't found on this computer.</div>
-       <button data-omw="pick"><b>Choose OpenMW's folder…</b><small>The folder with openmw.exe in it.</small></button>
+       <button data-omw="pick"><b>Choose OpenMW's folder…</b><small>The folder with ${osw('exe')} in it.</small></button>
        <button data-omw="get"><b>Get OpenMW</b><small>openmw.org (free). Install it, run its Launcher once, then come back.</small></button>`;
   const b = $('#omwbtn'); if (b) b.classList.toggle('warn', !found);
 }
@@ -306,9 +306,9 @@ function launchForm(L){
       <span><b>${esc(p.label)}</b><br><span class="msg">${esc(p.help)}</span></span></label>`).join('')}
     <details ${L.args || L.env ? 'open' : ''} style="margin-top:8px"><summary>Your own options</summary>
       <label>Extra OpenMW options</label><input class="inp" id="lp-args" value="${esc(L.args)}" placeholder="e.g. --script-console">
-      <div class="msg">Added to the command that starts openmw.exe, as you'd type them after it.</div>
+      <div class="msg">Added to the command that starts ${osw('exe')}, as you'd type them after it.</div>
       <label>Settings (environment variables), one per line</label><textarea class="inp" id="lp-env" rows="3" placeholder="NAME=value">${esc(L.env)}</textarea>
-      <div class="msg">Like the "set NAME=value" in a shortcut that starts OpenMW through cmd.</div></details>`;
+      <div class="msg">${osw('linux') ? 'Like the NAME=value before a command in a terminal.' : 'Like the "set NAME=value" in a shortcut that starts OpenMW through cmd.'}</div></details>`;
 }
 function launchRead(bg){
   return {on: [...bg.querySelectorAll('[data-lp]')].filter(c => c.checked).map(c => c.dataset.lp),

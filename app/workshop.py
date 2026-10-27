@@ -38,12 +38,15 @@ import questtest  # noqa: E402
 import loadorder  # noqa: E402
 import backups  # noqa: E402
 import helpinfo  # noqa: E402
+import osplat  # noqa: E402
 from esm import find_openmw  # noqa: E402
 from link import CONTENT_NAME, SPARE_NAME, LiveLink  # noqa: E402
 from database import Database  # noqa: E402
 from project import APP_DIR, PROJECTS_DIR, Project, load_settings, save_settings  # noqa: E402
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
+OS_WORDS = {'linux': not osplat.WINDOWS, 'exe': osplat.program_name(), 'bin': osplat.trash_name(),
+            'files': 'Explorer' if osplat.WINDOWS else 'the file manager'}
 db = Database()
 edit_lock = threading.RLock()        # (re-entrant: a request that holds it may flush pending writes, which take it too)
 
@@ -138,16 +141,15 @@ def _spawn(args, install, launch=None):
                 env[k.strip()] = v.strip()
     # your own options, written as on a command line ("quotes" keep spaces together)
     extra += [a.strip('"') for a in re.findall(r'"[^"]*"|\S+', str(opts.get('args') or ''))]
-    exe, rest = args[0], args[1:]
-    cmd = [exe] + extra + rest
+    prog = osplat.game_argv(install)           # (openmw.exe, openmw, or the Flatpak's "flatpak run ...")
+    cmd = prog + extra + args
     link.ALT_LOG = None
     if len(subprocess.list2cmdline(cmd)) > LAUNCH_CMD_MAX:
-        cmd = _via_config(cmd)
+        cmd = _via_config(cmd, len(prog))
     # (in the Workshop's log, for when a start goes wrong: the whole line but the load order)
     shown = [a for i, a in enumerate(cmd) if not (a == '--content' or (i and cmd[i - 1] == '--content'))]
     print('Starting OpenMW:', subprocess.list2cmdline(shown), '(+ %d content files)' % sum(1 for a in cmd if a == '--content'))
-    subprocess.Popen(cmd, cwd=install, env=env,
-                     creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+    osplat.detached(cmd, cwd=install, env=env)
     return extra
 
 
@@ -158,10 +160,10 @@ LAUNCH_CMD_MAX = int(os.environ.get('WORKSHOP_LAUNCH_CMD_MAX') or 30000)     # (
 _CFG_KEYS = ('--data', '--replace', '--content', '--groundcover', '--fallback-archive')
 
 
-def _via_config(cmd):
+def _via_config(cmd, n_prog=1):
     folder = os.path.join(APP_DIR, 'launch_config')
     os.makedirs(folder, exist_ok=True)
-    lines, keep, i = [], [cmd[0]], 1
+    lines, keep, i = [], cmd[:n_prog], n_prog
     while i < len(cmd):
         a = cmd[i]
         if a in _CFG_KEYS and i + 1 < len(cmd):
@@ -309,9 +311,8 @@ def _setup_commands(setup, god_already=False):
 def play(body):
     """Launch OpenMW straight into a cell, with the project plugin loaded."""
     install = db.config.get('install')
-    exe = os.path.join(install, 'openmw.exe') if install else None
-    if not exe or not os.path.isfile(exe):
-        raise editing.EditError('Could not find openmw.exe.')
+    if not osplat.has_game(install):
+        raise editing.EditError('Could not find %s.' % osplat.program_name())
     if link.game_running():
         raise editing.EditError('The game is still running. Quit it first (or use the map to teleport while linked).')
     # make sure the game loads your latest changes: finish a plugin write the game was blocking
@@ -376,9 +377,9 @@ def play(body):
         except Exception as e:           # (a save laid out otherwise, a locked file: the save as it is)
             print('play here: the save is loaded as it is (%s)' % e)
     if save:
-        args = [exe, '--load-savegame', save, '--script-run', script] + _game_content_args()
+        args = ['--load-savegame', save, '--script-run', script] + _game_content_args()
     else:
-        args = [exe, '--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
+        args = ['--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
     link.from_save = bool(save)          # (a save remembers visited rooms' doors: the link re-tells them their links)
     _spawn(args, install, body.get('launch'))
     return {'ok': True, 'start': start, 'commands': cmds, 'setup': setup['name'] if setup else None,
@@ -391,12 +392,10 @@ def start_openmw(mode, launch=None):
     if not install:
         raise editing.EditError('OpenMW wasn\'t found. Use "Choose OpenMW\'s folder" to show the Workshop where it is.')
     if mode == 'launcher':
-        exe = os.path.join(install, 'openmw-launcher.exe')
-        if not os.path.isfile(exe):
-            raise editing.EditError('OpenMW\'s Launcher (openmw-launcher.exe) isn\'t in ' + install)
-        subprocess.Popen([exe], cwd=install, creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+        if not osplat.has_game(install, 'openmw-launcher'):
+            raise editing.EditError('OpenMW\'s Launcher (%s) isn\'t in %s' % (osplat.program_name('openmw-launcher'), install))
+        osplat.detached(osplat.game_argv(install, 'openmw-launcher'), cwd=install)
         return {'ok': True}
-    exe = os.path.join(install, 'openmw.exe')
     if link.game_running():
         raise editing.EditError('The game is already running.')
     if db.project and db.state == 'ready':
@@ -404,7 +403,7 @@ def start_openmw(mode, launch=None):
         if getattr(db.project, 'pending_write', None):
             raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
     link.from_save = False               # (the main menu: whichever save the player loads, the link re-tells doors on request below)
-    args = [exe] + (_game_content_args() if db.state == 'ready' else [])
+    args = _game_content_args() if db.state == 'ready' else []
     _spawn(args, install, launch)
     return {'ok': True}
 
@@ -413,24 +412,21 @@ def openmw_info():
     cfg = db.config or {}
     install = cfg.get('install') or find_openmw(load_settings().get('openmw_install'))
     return {'install': install, 'found': bool(install),
-            'launcher': bool(install) and os.path.isfile(os.path.join(install, 'openmw-launcher.exe')),
+            'launcher': osplat.has_game(install, 'openmw-launcher'),
             'cfg': cfg.get('user_cfg'), 'cfg_exists': cfg.get('user_cfg_exists', False),
             'running': link.game_running(), 'chosen': load_settings().get('openmw_install')}
 
 
 def pick_openmw():
-    """Ask for OpenMW's folder with Windows' own folder picker; remember it and reload."""
-    ps = ("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; "
-          "$d.Description = 'Choose the folder OpenMW is installed in (the one with openmw.exe)'; "
-          "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
-          "if ($d.ShowDialog($o) -eq 'OK') { $d.SelectedPath }")
-    r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', ps], capture_output=True, text=True,
-                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    path = (r.stdout or '').strip()
+    """Ask for OpenMW's folder with the computer's own folder picker; remember it and reload."""
+    exe = osplat.program_name()
+    path = osplat.pick_folder('Choose the folder OpenMW is installed in (the one with %s)' % exe)
+    if path is None:
+        raise editing.EditError(osplat.NO_PICKER)
     if not path:
         return {'ok': False, 'cancelled': True}
-    if not os.path.isfile(os.path.join(path, 'openmw.exe')):
-        raise editing.EditError('There is no openmw.exe in ' + path + '. Choose the folder OpenMW is installed in.')
+    if not osplat.has_game(path):
+        raise editing.EditError('There is no %s in %s. Choose the folder OpenMW is installed in.' % (exe, path))
     s = load_settings()
     s['openmw_install'] = path
     save_settings(s)
@@ -475,9 +471,8 @@ def _game_content_args():
 def clean_test(body):
     """Start OpenMW with only the base game, the mod's masters and the mod (nothing else you have installed)."""
     install = db.config.get('install')
-    exe = os.path.join(install, 'openmw.exe') if install else None
-    if not exe or not os.path.isfile(exe):
-        raise editing.EditError('Could not find openmw.exe.')
+    if not osplat.has_game(install):
+        raise editing.EditError('Could not find %s.' % osplat.program_name())
     if link.game_running():
         raise editing.EditError('The game is still running. Quit it first.')
     editing._require_project(db)
@@ -489,14 +484,13 @@ def clean_test(body):
         s = release.summary(db)
         start = s['new_places'][0] if s['new_places'] and '(' not in s['new_places'][0] else 'Seyda Neen'
     args, what = release.clean_launch_args(db, start)
-    _spawn([exe] + args, install, body.get('launch'))
+    _spawn(args, install, body.get('launch'))
     return dict(what, start=start)
 
 
 def open_folder(path):
     os.makedirs(path, exist_ok=True)
-    if hasattr(os, 'startfile'):
-        os.startfile(path)
+    osplat.open_path(path)
     return {'ok': True, 'path': path}
 
 
@@ -526,14 +520,9 @@ def github_pick():
     """Ask for the GitHub folder with Windows' own folder picker (starting at the one chosen before, or the usual
     place); remember it."""
     cur = load_settings().get('dev_github_folder') or GITHUB_FOLDER_DEFAULT
-    ps = ("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; "
-          "$d.Description = 'Choose your GitHub folder for the Workshop (the one GitHub Desktop commits from)'; "
-          "$d.SelectedPath = %s; "
-          "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
-          "if ($d.ShowDialog($o) -eq 'OK') { $d.SelectedPath }") % ("'" + cur.replace("'", "''") + "'")
-    r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', ps], capture_output=True, text=True,
-                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    path = (r.stdout or '').strip()
+    path = osplat.pick_folder('Choose your GitHub folder for the Workshop (the one GitHub Desktop commits from)', cur)
+    if path is None:
+        raise editing.EditError(osplat.NO_PICKER)
     if not path:
         return dict(github_status(), cancelled=True)
     if os.path.normcase(os.path.abspath(path)) == os.path.normcase(SRC_ROOT):
@@ -556,6 +545,8 @@ def _robocopy(src, dst, args):
 def github_sync(body):
     """app\\ mirrored (less __pycache__) and packaging's source files copied into the GitHub folder, then GitHub
     Desktop opened on it for the commit (the commit itself is the user's)."""
+    if not osplat.WINDOWS:
+        raise editing.EditError('Copying to the GitHub folder works on Windows only (it uses robocopy and GitHub Desktop).')
     folder = load_settings().get('dev_github_folder') or ''
     if not folder or not os.path.isdir(folder):
         raise editing.EditError('Choose your GitHub folder first.')
@@ -768,6 +759,7 @@ class Handler(BaseHTTPRequestHandler):
                     import learning
                     learning.prewarm(db)                 # (the learning starts now, not at the first furnish)
                 s['surveys'] = background.status()      # (what is being learnt from the game's places right now)
+                s['os'] = OS_WORDS                       # (the page's words for the game's program, the bin, the file manager)
                 self._json(s)
             elif u.path == '/api/surveys':
                 import background
@@ -1524,8 +1516,8 @@ class Handler(BaseHTTPRequestHandler):
                         open(p, 'w', encoding='utf-8').close()
                     if not os.path.isfile(p):
                         return self._json({'error': "OpenMW's settings folder wasn't found. Run the OpenMW Launcher once."}, 400)
-                    if body.get('open', True) and hasattr(os, 'startfile'):
-                        os.startfile(p)
+                    if body.get('open', True):
+                        osplat.open_path(p)
                     return self._json({'ok': True, 'path': p})
                 try:
                     return self._json(omwsettings.write(userdir, openmw_info()['install'], body.get('changes') or []))
@@ -1813,7 +1805,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({'error': 'That is not one of the Workshop\'s exports.'}, 400)
                     if u.path == '/api/assets/blender':
                         return self._json({'blender': assets.open_in_blender(f)})
-                    subprocess.Popen(['explorer', '/select,', os.path.normpath(f)])
+                    osplat.show_in_folder(f)
                     return self._json({'ok': True})
                 if u.path == '/api/assets/import':
                     import assets

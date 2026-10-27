@@ -997,6 +997,9 @@ function loadProblemsNote(s){
   t.title = 'Click to dismiss'; t.onclick = () => t.remove();
   document.body.appendChild(t); setTimeout(() => t.remove(), 60000);
 }
+// (the computer's own words: openmw.exe, the Recycle Bin and Explorer on Windows; openmw, the bin and the file
+// manager on Linux. /api/status sends them)
+function osw(k){ const o = (S.summary && S.summary.os) || {}; return o[k] || {exe: 'openmw.exe', bin: 'Recycle Bin', files: 'Explorer'}[k]; }
 async function poll(){
   let s;
   try { s = await api('/api/status'); } catch(e){ setTimeout(poll, 800); return; }
@@ -1039,7 +1042,7 @@ async function setupScreen(s){
       <p>The Workshop works with <b>OpenMW</b>, the free modern engine for Morrowind, and it couldn't find it on this computer.</p>
       <div class="setupbtns"><button class="btn primary" data-setup="pick">Choose OpenMW's folder…</button>
       <button class="btn" data-setup="get">Get OpenMW (openmw.org)</button></div>
-      <p class="tip">Choose the folder with <b>openmw.exe</b> in it. If you don't have OpenMW yet: install it, run its Launcher once so it finds your Morrowind, then come back.</p>`;
+      <p class="tip">Choose the folder with <b>${osw('exe')}</b> in it. If you don't have OpenMW yet: install it, run its Launcher once so it finds your Morrowind, then come back.</p>`;
   else if (!o.cfg_exists) what = `<h2>Set up OpenMW first</h2>
       <p>OpenMW is installed in <b>${esc(o.install)}</b>, but it hasn't been set up with Morrowind yet.</p>
       <div class="setupbtns">${o.launcher ? '<button class="btn primary" data-setup="launcher">Open the OpenMW Launcher</button>' : ''}
@@ -1771,7 +1774,7 @@ async function modsModal(){
   document.querySelectorAll('.modal-bg[data-mods]').forEach(x => x.remove());
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.mods = '1';
   bg.innerHTML = `<div class="modal" style="width:min(820px,96vw)"><h2>Your mods</h2>
-    <p class="msg">Every mod you made or opened here, newest first. <b>Delete</b> sends the mod to the Windows Recycle Bin (its project, its plugin, its scripts and grass files), where it can be restored, and takes it out of your OpenMW load order. The mod open now can't be deleted: switch to another first.</p>
+    <p class="msg">Every mod you made or opened here, newest first. <b>Delete</b> sends the mod to the ${osw('bin')} (its project, its plugin, its scripts and grass files), where it can be restored, and takes it out of your OpenMW load order. The mod open now can't be deleted: switch to another first.</p>
     <div id="mx-list" style="max-height:min(56vh,560px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking…</div>
     <div class="msg err" id="mx-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="mx-new">＋ Start a new mod…</button><button class="btn" id="mx-close">Close</button></div></div>`;
@@ -1798,13 +1801,13 @@ async function modsModal(){
     bg.querySelectorAll('[data-mxdel]').forEach(b => b.onclick = async () => {
       const name = b.dataset.mxdel, adopted = !!b.dataset.adopted;
       let pluginToo = true;
-      if (adopted) pluginToo = confirm(`"${name}" was opened from an existing file, ${b.dataset.plugin}.\n\nOK: send that file to the Recycle Bin too.\nCancel: keep the file, only forget the mod here.`);
-      else if (!confirm(`Delete "${name}"?\n\nIts project and ${b.dataset.plugin} (with its scripts and grass files) go to the Windows Recycle Bin, where you can restore them, and it is taken out of your OpenMW load order.`)) return;
+      if (adopted) pluginToo = confirm(`"${name}" was opened from an existing file, ${b.dataset.plugin}.\n\nOK: send that file to the ${osw('bin')} too.\nCancel: keep the file, only forget the mod here.`);
+      else if (!confirm(`Delete "${name}"?\n\nIts project and ${b.dataset.plugin} (with its scripts and grass files) go to the ${osw('bin')}, where you can restore them, and it is taken out of your OpenMW load order.`)) return;
       const done = slowWait(b, q('#mx-err'), 'Deleting…');
       try {
         const r = await post('/api/mods/delete', {name, plugin_too: pluginToo});
         done();
-        toast(`Deleted ${name}: ${r.recycled.join(', ')} in the Recycle Bin${r.kept_plugin ? ' (' + r.kept_plugin + ' kept)' : ''}${r.load_order_lines ? ', out of your load order' : ''}.`);
+        toast(`Deleted ${name}: ${r.recycled.join(', ')} in the ${osw('bin')}${r.kept_plugin ? ' (' + r.kept_plugin + ' kept)' : ''}${r.load_order_lines ? ', out of your load order' : ''}.`);
         await afterChange(); draw();
       } catch (e){ done(); q('#mx-err').className = 'msg err'; q('#mx-err').textContent = e.message; }
     });
@@ -1845,7 +1848,7 @@ async function renderMyMod(){
     <div class="actions" style="margin-bottom:22px">
       <button class="btn primary" id="mm-release" title="Check the mod, write a readme and pack a zip to share">📦 Get ready to share</button>
       ${p.enabled_in_cfg ? '' : `<button class="btn" id="mm-enable">Add to my OpenMW load order</button>`}
-      <button class="btn" id="mm-folder" title="Open the folder with ${esc(p.plugin)} in Explorer, the file picked out">📁 Show folder</button>
+      <button class="btn" id="mm-folder" title="Open the folder with ${esc(p.plugin)} in ${osw('files')}, the file picked out">📁 Show folder</button>
       <button class="btn" id="mm-mods" title="Switch to another of your mods, start a new one, or delete the ones you no longer want">🗂 Your mods…</button>
       <button class="btn" id="mm-together" title="Build this mod together with other people, live, from wherever they are">👥 Build together…</button>
       <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>

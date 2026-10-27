@@ -23,7 +23,8 @@ class EditError(Exception):
 def plugin_path(db):
     if getattr(db.project, 'source', None):
         return db.project.source          # a plugin opened as the mod: saved straight into that file (adopt.py)
-    d = os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or os.path.join(db.config['userdir'], 'data')
+    d = os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or \
+        os.path.join(db.config.get('userdata') or db.config['userdir'], 'data')
     return os.path.join(d, db.project.plugin)
 
 

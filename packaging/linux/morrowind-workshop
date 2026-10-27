@@ -1,0 +1,16 @@
+#!/bin/sh
+# Morrowind Workshop: starts it (see README.txt; --help for the other options). Needs Python 3.10 or newer.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$HERE/python-env/bin/python3" ]; then
+  PY="$HERE/python-env/bin/python3"
+else
+  PY="$(command -v python3)"
+fi
+if [ -z "$PY" ]; then
+  MSG="Morrowind Workshop needs Python 3 (python3). Install it from your system's software centre, then start it again."
+  if command -v zenity >/dev/null 2>&1; then zenity --error --title="Morrowind Workshop" --text="$MSG"
+  elif command -v kdialog >/dev/null 2>&1; then kdialog --title "Morrowind Workshop" --error "$MSG"
+  else echo "$MSG" >&2; fi
+  exit 1
+fi
+exec "$PY" "$HERE/launcher.py" "$@"

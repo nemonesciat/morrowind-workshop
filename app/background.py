@@ -82,20 +82,10 @@ def slots():
         n = min(n, max(1, (os.cpu_count() or 2) // 4))
     except Exception:
         pass
-    try:
-        if os.name == 'nt':
-            import ctypes
-
-            class MEM(ctypes.Structure):
-                _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong), ('ullTotalPhys', ctypes.c_ulonglong),
-                            ('ullAvailPhys', ctypes.c_ulonglong), ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
-                            ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong), ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
-            m = MEM()
-            m.dwLength = ctypes.sizeof(MEM)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
-                n = min(n, max(1, int(m.ullAvailPhys / (2.5 * 1024 ** 3))))
-    except Exception:
-        pass
+    import osplat
+    free = osplat.free_memory()
+    if free:
+        n = min(n, max(1, int(free / (2.5 * 1024 ** 3))))
     return n
 
 
@@ -212,9 +202,8 @@ def _in_process(jobs):
         if os.path.isfile(alt):
             exe = alt
     args = [exe, os.path.join(here, 'surveyworker.py'), project_path[0] or '-', json.dumps([list(j.task) for j in jobs])]
-    flags = 0
-    if os.name == 'nt':
-        flags = getattr(subprocess, 'BELOW_NORMAL_PRIORITY_CLASS', 0x00004000) | getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+    import osplat
+    flags = osplat.background_flags()
     try:
         p = subprocess.Popen(args, cwd=here, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags)
     except Exception as e:

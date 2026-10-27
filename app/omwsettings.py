@@ -44,18 +44,21 @@ def path_of(userdir):
 
 
 def _default_text(install):
-    for name in ('defaults.bin', 'settings-default.cfg'):
-        p = os.path.join(install or '', name)
-        try:
-            raw = open(p, 'rb').read()
-        except OSError:
-            continue
-        if name.endswith('.bin'):
+    import osplat
+    # (beside the game on Windows; /etc/openmw on a Linux system install: the game's own config folders)
+    for folder in list(reversed(osplat.global_cfg_dirs(install))) or [install or '']:
+        for name in ('defaults.bin', 'settings-default.cfg'):
+            p = os.path.join(folder, name)
             try:
-                return base64.b64decode(raw).decode('utf-8', 'replace')
-            except ValueError:
+                raw = open(p, 'rb').read()
+            except OSError:
                 continue
-        return raw.decode('utf-8', 'replace')
+            if name.endswith('.bin'):
+                try:
+                    return base64.b64decode(raw).decode('utf-8', 'replace')
+                except ValueError:
+                    continue
+            return raw.decode('utf-8', 'replace')
     return ''
 
 

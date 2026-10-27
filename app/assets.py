@@ -345,23 +345,18 @@ def thumb(db, path):
 
 
 # ----- changing a texture ---------------------------------------------------------------------------
-# (picture editors where they install themselves, for the window's list: GIMP, Paint.NET, Krita, Photoshop, Affinity)
-EDITOR_GLOBS = [('GIMP', r'%ProgramFiles%\GIMP*\bin\gimp-*.exe'), ('Paint.NET', r'%ProgramFiles%\paint.net\paintdotnet.exe'),
-                ('Krita', r'%ProgramFiles%\Krita (x64)\bin\krita.exe'), ('Photoshop', r'%ProgramFiles%\Adobe\Adobe Photoshop*\Photoshop.exe'),
-                ('Affinity Photo', r'%ProgramFiles%\Affinity\Photo*\Photo.exe'), ('GIMP', r'%LOCALAPPDATA%\Programs\GIMP*\bin\gimp-*.exe')]
-
-
+# (picture editors where they install themselves, for the window's list: GIMP, Paint.NET, Krita, Photoshop,
+# Affinity on Windows; GIMP, Krita, Pinta, KolourPaint on Linux: osplat.picture_editors)
 def editors():
     """The picture editors found on this PC, and the one chosen: {'found': [{'name', 'exe'}], 'chosen': exe or ''}."""
-    import glob
+    import osplat
     found, seen = [], set()
-    for name, pat in EDITOR_GLOBS:
-        for exe in sorted(glob.glob(os.path.expandvars(pat))):
-            low = os.path.basename(exe).lower()
-            if 'console' in low or low in seen:
-                continue                                 # (gimp-console-2.10.exe: no window)
-            seen.add(low)
-            found.append({'name': name, 'exe': exe})
+    for name, exe in osplat.picture_editors():
+        low = os.path.basename(exe).lower()
+        if 'console' in low or low in seen:
+            continue                                     # (gimp-console-2.10.exe: no window)
+        seen.add(low)
+        found.append({'name': name, 'exe': exe})
     return {'found': found, 'chosen': _editor()}
 
 
@@ -371,16 +366,16 @@ def _editor():
 
 
 def _open(path):
-    """The file in the chosen picture editor, or in whatever Windows opens it with."""
+    """The file in the chosen picture editor, or in whatever the computer opens it with."""
+    import osplat
     exe = _editor()
     if exe and os.path.isfile(exe):
-        subprocess.Popen([exe, path])
+        if osplat.WINDOWS:
+            subprocess.Popen([exe, path])
+        else:
+            osplat.detached([exe, path])
         return exe
-    if hasattr(os, 'startfile'):
-        try:
-            os.startfile(path, 'edit')
-        except OSError:
-            os.startfile(path)
+    osplat.open_path(path, edit=True)
     return None
 
 
@@ -593,12 +588,8 @@ def export_glb(db, model, out=None):
 
 def blender():
     """Blender's program on this PC, newest first, or None."""
-    import glob
-    found = sorted(glob.glob(os.path.expandvars(r'%ProgramFiles%\Blender Foundation\Blender*\blender.exe')), reverse=True)
-    # (a portable Blender, unpacked from blender.org's zip onto the Desktop or into Downloads)
-    for pat in (r'%USERPROFILE%\Desktop\blender-*\blender.exe', r'%USERPROFILE%\Downloads\blender-*\blender.exe',
-                r'%LOCALAPPDATA%\Programs\Blender*\blender.exe'):
-        found += sorted(glob.glob(os.path.expandvars(pat)), reverse=True)
+    import osplat
+    found = osplat.blenders()
     s = load_settings() or {}
     if s.get('blender') and os.path.isfile(s['blender']):
         return s['blender']

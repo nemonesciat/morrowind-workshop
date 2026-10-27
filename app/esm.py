@@ -4,6 +4,8 @@ import mmap
 import os
 import struct
 
+import osplat
+
 ENC = 'cp1252'
 
 
@@ -107,63 +109,28 @@ def _unquote(v):
     return v
 
 
-def openmw_userdir():
-    """Where OpenMW keeps your openmw.cfg, settings and saves (Documents\\My Games\\OpenMW)."""
-    if os.environ.get('WORKSHOP_OPENMW_USERDIR'):
-        return os.environ['WORKSHOP_OPENMW_USERDIR']          # (tests, or an unusual setup)
-    docs = os.path.join(os.path.expanduser('~'), 'Documents')
-    try:
-        import ctypes.wintypes
-        buf = ctypes.create_unicode_buffer(260)
-        ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf)
-        if buf.value:
-            docs = buf.value
-    except Exception:
-        pass
-    return os.path.join(docs, 'My Games', 'OpenMW')
+def openmw_userdir(install=None):
+    """Where OpenMW keeps your openmw.cfg, settings.cfg and openmw.log (Documents\\My Games\\OpenMW on
+    Windows, ~/.config/openmw on Linux)."""
+    return osplat.openmw_dirs(install)[0]
+
+
+def openmw_userdata(install=None):
+    """Where OpenMW keeps its data folder and your saves (the same folder on Windows, ~/.local/share/openmw on Linux)."""
+    return osplat.openmw_dirs(install)[1]
 
 
 def find_openmw(hint=None):
-    """The folder openmw.exe is in: the one chosen in the Workshop, else Program Files\\OpenMW...,
-    else wherever Windows' list of installed programs says OpenMW went. None if not found."""
-    def ok(d):
-        return bool(d) and os.path.isfile(os.path.join(d, 'openmw.exe'))
+    """The folder the game's program is in: the one chosen in the Workshop, else where OpenMW usually goes
+    (Program Files and Windows' list of installed programs; on Linux the PATH, /usr/games, openmw.org's
+    download unpacked at home, the Flatpak). None if not found."""
     for d in (hint, os.environ.get('WORKSHOP_OPENMW_INSTALL')):
-        if ok(d):
+        if osplat.has_game(d):
             return os.path.normpath(d)
-    for base in (os.environ.get('ProgramFiles', r'C:\Program Files'),
-                 os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')):
-        try:
-            for d in sorted(os.listdir(base), reverse=True):
-                if d.lower().startswith('openmw') and ok(os.path.join(base, d)):
-                    return os.path.join(base, d)
-        except OSError:
-            pass
     try:
-        import winreg
-        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-            for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
-                try:
-                    root = winreg.OpenKey(hive, r'Software\Microsoft\Windows\CurrentVersion\Uninstall', 0,
-                                          winreg.KEY_READ | view)
-                except OSError:
-                    continue
-                for i in range(winreg.QueryInfoKey(root)[0]):
-                    try:
-                        k = winreg.OpenKey(root, winreg.EnumKey(root, i))
-                        name = winreg.QueryValueEx(k, 'DisplayName')[0]
-                    except OSError:
-                        continue
-                    if not str(name).lower().startswith('openmw'):
-                        continue
-                    for val in ('InstallLocation', 'DisplayIcon', 'UninstallString'):
-                        try:
-                            v = str(winreg.QueryValueEx(k, val)[0]).strip('"').split(',')[0]
-                        except OSError:
-                            continue
-                        d = v if val == 'InstallLocation' else os.path.dirname(v)
-                        if ok(d):
-                            return os.path.normpath(d)
+        for d in osplat.openmw_installs():
+            if osplat.has_game(d):
+                return os.path.normpath(d)
     except Exception:
         pass
     return None
@@ -172,14 +139,15 @@ def find_openmw(hint=None):
 def read_openmw_config(install_hint=None):
     """Find and merge OpenMW's config files. Returns dict with data dirs,
     content files (load order), fallback archives and the config path(s)."""
-    userdir = openmw_userdir()
-    user_cfg = os.path.join(userdir, 'openmw.cfg')
-
     # Find the OpenMW install (global cfg holds resources/vfs-mw)
     install = find_openmw(install_hint)
+    userdir, userdata = osplat.openmw_dirs(install)
+    user_cfg = os.path.join(userdir, 'openmw.cfg')
+    global_data = osplat.global_data_dir(install)
 
     result = {'data': [], 'content': [], 'archives': [], 'groundcover': [], 'config_files': [], 'install': install,
-              'userdir': userdir, 'user_cfg': user_cfg, 'user_cfg_exists': os.path.isfile(user_cfg)}
+              'userdir': userdir, 'userdata': userdata, 'user_cfg': user_cfg, 'user_cfg_exists': os.path.isfile(user_cfg),
+              'global_dirs': osplat.global_cfg_dirs(install)}
 
     def parse(path, base_dir):
         if not os.path.isfile(path):
@@ -193,8 +161,8 @@ def read_openmw_config(install_hint=None):
                 key, val = line.split('=', 1)
                 key, val = key.strip(), _unquote(val)
                 if key in ('data', 'data-local'):
-                    val = val.replace('?userdata?', userdir + os.sep).replace('?userconfig?', userdir + os.sep)
-                    val = val.replace('?local?', (install or '') + os.sep).replace('?global?', (install or '') + os.sep)
+                    val = val.replace('?userdata?', userdata + os.sep).replace('?userconfig?', userdir + os.sep)
+                    val = val.replace('?local?', (install or '') + os.sep).replace('?global?', global_data + os.sep)
                     if not os.path.isabs(val):
                         val = os.path.normpath(os.path.join(base_dir, val))
                     val = os.path.normpath(val)
@@ -218,8 +186,8 @@ def read_openmw_config(install_hint=None):
                             result[{'data': 'data', 'content': 'content', 'fallback-archive': 'archives',
                                     'groundcover': 'groundcover'}[k]] = []
 
-    if install:
-        parse(os.path.join(install, 'openmw.cfg'), install)
+    for g in result['global_dirs']:                 # (the game's own openmw.cfg: its folder, or /etc/openmw on Linux)
+        parse(os.path.join(g, 'openmw.cfg'), g)
     parse(user_cfg, userdir)
     # data-local always has the highest priority
     if result.get('data_local') and os.path.isdir(result['data_local']):

@@ -1,9 +1,9 @@
 """Your mods' files on disk (My mod > Your mods, 2026-10-23): where each mod's plugin is, a "Show folder" that
-opens Explorer with the file picked out, and deleting a mod you no longer want (the user's "deleting excessive
+opens the file manager with the file picked out, and deleting a mod you no longer want (the user's "deleting excessive
 test mods is something I need to do too").
 
 Deleting never destroys anything: the mod's project, its plugin, its Lua scripts' list and folder and its grass
-plugin go to the Windows Recycle Bin, where they can be restored, and the mod is taken out of openmw.cfg's
+plugin go to the Recycle Bin (the bin on Linux), where they can be restored, and the mod is taken out of openmw.cfg's
 load order (a dated copy of openmw.cfg is kept first) so the game doesn't stop at a missing file. The mod
 open now can't be deleted (switch to another first); a mod opened from someone's .esp (adopt.py) keeps that
 .esp unless asked, since the file was there before the Workshop."""
@@ -11,7 +11,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import time
 
 from editing import EditError
@@ -21,7 +20,8 @@ _info = {}                  # project path -> (mtime, size, plugin, source)
 
 def _dirs(db):
     from project import PROJECTS_DIR
-    plug = os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or os.path.join(db.config['userdir'], 'data')
+    plug = os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or \
+        os.path.join(db.config.get('userdata') or db.config['userdir'], 'data')
     return PROJECTS_DIR, plug
 
 
@@ -105,35 +105,20 @@ def show(db, name=None):
             raise EditError('Start or open a mod first.')
         import editing
         pfile = editing.plugin_path(db)
-    if os.name != 'nt':
-        return {'ok': False, 'path': pfile}
-    if os.path.isfile(pfile):
-        subprocess.Popen(['explorer', '/select,', os.path.normpath(pfile)])
-    else:
-        folder = os.path.dirname(pfile)
-        os.makedirs(folder, exist_ok=True)
-        os.startfile(folder)
-    return {'ok': True, 'path': pfile}
+    import osplat
+    if not os.path.isfile(pfile):
+        os.makedirs(os.path.dirname(pfile), exist_ok=True)
+    return {'ok': osplat.show_in_folder(pfile), 'path': pfile}
 
 
 def _recycle(paths):
-    """Send files and folders to the Windows Recycle Bin (restorable). Raises when Windows refuses."""
-    import ctypes
-    from ctypes import wintypes
-
-    class SHFILEOPSTRUCTW(ctypes.Structure):
-        _fields_ = [('hwnd', wintypes.HWND), ('wFunc', ctypes.c_uint), ('pFrom', wintypes.LPCWSTR),
-                    ('pTo', wintypes.LPCWSTR), ('fFlags', ctypes.c_ushort), ('fAnyOperationsAborted', wintypes.BOOL),
-                    ('hNameMappings', ctypes.c_void_p), ('lpszProgressTitle', wintypes.LPCWSTR)]
-    FO_DELETE, FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 3, 0x4, 0x10, 0x40, 0x400
-    op = SHFILEOPSTRUCTW()
-    op.wFunc = FO_DELETE
-    op.pFrom = '\0'.join(os.path.abspath(p) for p in paths) + '\0\0'
-    op.fFlags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI
-    r = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
-    if r != 0 or op.fAnyOperationsAborted:
-        raise EditError('Windows could not move those files to the Recycle Bin (code %s). Is one of them open in the game '
-                        'or another program?' % hex(r))
+    """Send files and folders to the bin (restorable). Raises when that fails."""
+    import osplat
+    try:
+        osplat.to_trash(paths)
+    except OSError as e:
+        raise EditError('%s. Is one of them open in the game or another program?' % (
+            str(e) or 'Those files could not be moved to the %s' % osplat.trash_name()))
 
 
 def delete(db, name, plugin_too=True):
@@ -145,10 +130,7 @@ def delete(db, name, plugin_too=True):
     if os.path.isfile(pfile) and (plugin_too or not adopted):
         gone.append(pfile)
     names = {os.path.basename(p).lower() for p in gone if os.path.isfile(p)}
-    if os.name == 'nt':
-        _recycle([p for p in gone if os.path.exists(p)])
-    else:
-        raise EditError('Deleting mods works on Windows only.')
+    _recycle([p for p in gone if os.path.exists(p)])
     # out of the load order (a dated copy of openmw.cfg first), so OpenMW doesn't stop at a missing file
     lines, cfg_changed, backup = _cfg_lines(db), 0, None
     keep = []

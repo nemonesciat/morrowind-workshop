@@ -322,8 +322,10 @@ class Assistant:
         try:
             import anthropic
         except ImportError:
-            raise ToolError('The "anthropic" Python package is missing. Close the Workshop and start it '
-                            'again with Start Morrowind Workshop.bat so it can be installed.')
+            import osplat
+            raise ToolError('The "anthropic" Python package is missing. ' + (
+                'Run the Workshop\'s setup again to put it back.' if osplat.WINDOWS else
+                'In the Workshop\'s folder, run  ./morrowind-workshop --install-ai  once, then restart the Workshop.'))
         key = self.get_key()
         opts = dict(
             # Only ask for gzip replies: an old "Brotli" package (e.g. Anaconda's 1.0.9) makes the
