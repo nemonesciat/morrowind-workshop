@@ -280,6 +280,32 @@ def buildings(db, style):
             for m in sorted(best.values(), key=lambda m: (-m['uses'], m['main']))]
 
 
+USES_MAX = 12
+
+
+def uses(db, piece_id, style=None):
+    """The game's buildings that use a piece, to see it in use (the user, 2026-10-28: "hard to get a sense of the use
+    of all the pieces in game without seeing them in use first"): [{key, name, uses, pieces, hit}], the bench's
+    style first, then the most built; hit: the indices of that piece among the pieces. Up to USES_MAX."""
+    s = _survey(db)
+    low = (piece_id or '').lower()
+    best = {}
+    for m in s['modules']:
+        fp = m.get('fpieces') or ()
+        if not any(p['id'].lower() == low for p in fp):
+            continue
+        if m['main'] not in best or m['uses'] > best[m['main']]['uses']:
+            best[m['main']] = m
+    rows = sorted(best.values(), key=lambda m: (hm.look(m) != style, -m['uses'], m['main']))[:USES_MAX]
+    out = []
+    for m in rows:
+        # (this module's own pieces: the most built one of the same main need not have the piece)
+        pcs = _pieces_of(db, m)
+        out.append({'key': m['main'], 'name': hm._label(m), 'uses': m['uses'], 'style': hm.look(m), 'pieces': pcs,
+                    'hit': [n for n, p in enumerate(pcs) if p['id'].lower() == low]})
+    return {'id': piece_id, 'buildings': out, 'more': max(0, len(best) - len(out))}
+
+
 def building(db, key):
     """One of the game's buildings as bench pieces, its door at the middle facing -y, standing on the bench's ground:
     {'pieces': [{id, type, p, s}]}."""
@@ -288,6 +314,11 @@ def building(db, key):
     if not ms:
         raise EditError('The Workshop does not know that building.')
     m = max(ms, key=lambda m: m['uses'])
+    return {'pieces': _pieces_of(db, m), 'name': hm._label(m)}
+
+
+def _pieces_of(db, m):
+    """A module's pieces as bench pieces, standing on the bench's ground."""
     g = m.get('fground', -40.0)
     out = []
     for p in m['fpieces']:
@@ -296,4 +327,4 @@ def building(db, key):
             continue
         out.append({'id': db.recs[ri][1], 'type': db.recs[ri][0], 's': p.get('s') or 1.0,
                     'p': [round(p['x'], 2), round(p['y'], 2), round(p['z'] - g, 2), p.get('rx', 0.0), p.get('ry', 0.0), p['rz']]})
-    return {'pieces': out, 'name': hm._label(m)}
+    return out

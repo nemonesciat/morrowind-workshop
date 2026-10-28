@@ -13,6 +13,9 @@ const BN = {open: false, style: null, pieces: [], objs: new Map(), sel: null, hi
             check: null, marks: [], drag: null, yaw: -0.7, pitch: -0.5, dist: 2400, target: null, mode: 'translate', q: ''};
 const BN_SNAP = 80;              // a game spot this near (units) takes the piece
 const BN_GRID = 256;             // the floor grid's step: the building pieces' own
+const BN_RSNAP = [0, 1, 5, 15, 90];   // the turn ring's steps, in degrees (0: it turns freely), as the 3D view's Snap ▾
+try { BN.rsnap = +(localStorage.getItem('ws-bench-rsnap') || 0); } catch (e) { BN.rsnap = 0; }
+if (!BN_RSNAP.includes(BN.rsnap)) BN.rsnap = 0;
 
 function benchCss(){
   if ($('#benchcss')) return;
@@ -26,6 +29,11 @@ function benchCss(){
   #bench .bnpc{border:1px solid var(--line);border-radius:6px;background:var(--panel2);padding:3px;cursor:grab;text-align:center;font-size:10.5px;overflow:hidden}
   #bench .bnpc:hover{border-color:var(--gold)} #bench .bnpc img,#bench .bnpc .nothumb{width:64px;height:64px;display:block;margin:0 auto}
   #bench .bnpc span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+  #bench .bnpc{position:relative} #bench .bneye{position:absolute;right:2px;top:2px;padding:0 3px;font-size:11px;line-height:16px;border:1px solid var(--line);
+    border-radius:4px;background:var(--panel);color:var(--text);cursor:pointer;display:none} #bench .bnpc:hover .bneye{display:block}
+  #bench .bnex{position:absolute;left:50%;top:44px;transform:translateX(-50%);display:flex;gap:6px;align-items:center;background:var(--panel);
+    border:1px solid var(--gold);border-radius:8px;padding:4px 8px;z-index:3;font-size:12.5px;max-width:calc(100% - 20px);white-space:nowrap}
+  #bench .bnex .nm{overflow:hidden;text-overflow:ellipsis;max-width:260px}
   #bench .bnview{position:relative;min-width:0;min-height:0;overflow:hidden}
   #bench .bnview canvas{display:block;outline:none}
   #bench .bntools{position:absolute;left:8px;right:8px;top:8px;display:flex;gap:5px;flex-wrap:wrap;align-items:center;z-index:2}
@@ -37,6 +45,8 @@ function benchCss(){
   #bench .bnpop{position:absolute;left:8px;top:48px;width:380px;max-height:70%;overflow:auto;background:var(--panel);border:1px solid var(--line);
     border-radius:8px;padding:8px;z-index:3;box-shadow:0 6px 20px #0006}
   #bench .bnpop button.row{display:block;width:100%;text-align:left;margin:2px 0}
+  #bench .bntools .btn.on{border-color:var(--gold);color:var(--gold)}
+  #bench .bnbox{position:absolute;border:1px dashed var(--gold);background:#f0cd8722;pointer-events:none;z-index:2;display:none}
   #bench .bnhelp{position:absolute;left:8px;bottom:8px;max-width:420px;font-size:11.5px;color:var(--muted);background:var(--panel);border:1px solid var(--line0);
     border-radius:6px;padding:4px 8px;z-index:2}`;
   document.head.appendChild(c);
@@ -48,7 +58,9 @@ async function benchOpen(){
   if (typeof showView === 'function') showView('world');
   let box = $('#bench');
   if (!box){
-    box = document.createElement('div'); box.id = 'bench';
+    // (data-ownkeys: the world's shortcuts (comfort.js) leave the bench's keys alone; Delete there deleted the
+    // world's selection)
+    box = document.createElement('div'); box.id = 'bench'; box.dataset.ownkeys = '1';
     $('#v3wrap').parentElement.appendChild(box);
   }
   box.style.display = 'grid';
@@ -59,25 +71,42 @@ async function benchOpen(){
       <div class="bnlist" id="bn-list"><div class="msg">Reading the pieces…</div></div></div>
     <div class="bnview" id="bn-view">
       <div class="bntools">
-        <button class="btn sm" id="bn-start" title="Begin from one of the game's buildings of this style, then change it">🏠 Start from a game building…</button>
-        <button class="btn sm" id="bn-fill" title="Put the style's own doors in doorways and windows in window holes, where the game puts them">🚪 Fill the openings</button>
+        <button class="btn sm" id="bn-start" title="Begin from one of the game's buildings of this style, then change it">🏠 Start from…</button>
+        <button class="btn sm" id="bn-fill" title="Put the style's own doors in doorways and windows in window holes, where the game puts them">🚪 Fill openings</button>
         <button class="btn sm" id="bn-check" title="Gaps in the walls, an open roof, pieces touching nothing">🔍 Check</button>
+        <button class="btn sm" id="bn-move" title="Move handles (T)">✥ Move</button><button class="btn sm" id="bn-turn" title="Turn handles (R): drag the ring">⟳ Turn</button><button class="btn sm" id="bn-tilt" title="Tilt handles: the red and green rings tip it, the blue one turns it">⤡ Tilt</button><button class="btn sm" id="bn-scale" title="Size handles: drag any handle (the game sizes evenly, ×0.5 to ×2)">⤢ Size</button>
+        <select id="bn-rsnap" title="Snap the turn ring to steps" style="width:auto">${BN_RSNAP.map(d => `<option value="${d}" ${d === BN.rsnap ? 'selected' : ''}>${d ? 'Snap ' + d + '°' : 'Snap off'}</option>`).join('')}</select>
+        <label id="bn-turnbox" title="The selected piece's turn, in degrees ([ ] 15°, Shift+[ ] 1°)" style="display:none;font-size:12px">° <input id="bn-deg" type="number" step="1" style="width:58px">
+          <span title="The selected pieces' size (×0.5 to ×2)">× <input id="bn-size" type="number" step="0.05" min="0.5" max="2" style="width:58px"></span></label>
         <button class="btn sm" id="bn-undo" title="Undo on the bench (Ctrl+Z)">↶</button><button class="btn sm" id="bn-redo" title="Redo (Ctrl+Y)">↷</button>
         <button class="btn sm" id="bn-clear" title="Take everything off the bench">Clear</button>
-        <button class="btn sm" id="bn-save" title="Keep it in the Library's prefabs too">💾 Save as prefab…</button>
-        <button class="btn primary sm" id="bn-place" title="Set the whole structure down in the world: it follows the mouse on the land, the wheel turns it, a click puts it down (one Undo)">⤓ Place in the world</button>
+        <button class="btn sm" id="bn-save" title="Keep it in the Library's prefabs too">💾 Save…</button>
+        <button class="btn primary sm" id="bn-place" title="Set the whole structure down in the world: it follows the mouse on the land, the wheel turns it, a click puts it down (one Undo)">⤓ Place</button>
         <span style="flex:1"></span>
         <button class="btn sm" id="bn-close" title="Back to the World map (the bench is kept)">✕ Close</button>
       </div>
-      <div class="bnnote" id="bn-note"></div>
+      <div class="bnnote" id="bn-note"></div><div class="bnex" id="bn-ex" style="display:none"></div><div class="bnbox" id="bn-boxsel"></div>
       <div class="bncheck" id="bn-checkbox" style="display:none"></div>
-      <div class="bnhelp" id="bn-help">Drag pieces in from the shelf (or click one). Click a piece to move it: it snaps where the game joins it, or flush.
-        <b>R</b> turn handles, <b>T</b> move handles, <b>Q</b>/<b>E</b> turn 15°, <b>Del</b> remove, <b>D</b> copy. Drag the background to look round, right-drag to pan, wheel to zoom.</div>
+      <div class="bnhelp" id="bn-help" title="Drag a piece in from the shelf, or click one. Click a piece to move it: it snaps where the game joins it, or flush. Drag on the bench to box-select (Shift adds), Shift+click to add or take one. Right-drag to look round, middle-drag to pan, wheel to zoom. W A S D fly, Q / E down and up, Shift faster. [ ] turn 15° (Shift 1°), R turn handles, T move handles, Del remove. Ctrl+C copy, Ctrl+V paste (click where it goes; the wheel turns it), Ctrl+D both.">
+        <b>Drag</b> select · <b>Right-drag</b> look · <b>Middle</b> pan · <b>WASD</b> fly · <b>[ ]</b> turn · <b>Ctrl+C/V</b> copy, paste</div>
     </div>`;
   $('#bn-close').onclick = benchClose;
   $('#bn-start').onclick = benchStartMenu;
   $('#bn-fill').onclick = benchFill;
   $('#bn-check').onclick = () => benchCheck(true);
+  $('#bn-move').onclick = () => { BN.mode = 'translate'; benchSync(); };
+  $('#bn-turn').onclick = () => { BN.mode = 'rotate'; benchSync(); };
+  $('#bn-scale').onclick = () => { BN.mode = 'scale'; benchSync(); };
+  $('#bn-tilt').onclick = () => { BN.mode = 'tilt'; benchSync(); };
+  $('#bn-size').onchange = e => { const s = parseFloat(e.target.value); if (isFinite(s)) benchSizeAll(s); else benchTurnBox(); };
+  $('#bn-size').onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); };
+  $('#bn-rsnap').onchange = e => { BN.rsnap = +e.target.value; try { localStorage.setItem('ws-bench-rsnap', BN.rsnap); } catch (er) {} benchSync(); };
+  $('#bn-deg').onchange = e => {
+    const p = BN.sel && BN.pieces.find(q => q.k === BN.sel), d = parseFloat(e.target.value);
+    if (!p || !isFinite(d)) return benchTurnBox();
+    benchTurnAll(d * Math.PI / 180 - (p.p[5] || 0));     // (the others selected turn with it)
+  };
+  $('#bn-deg').onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); };
   $('#bn-undo').onclick = benchUndo; $('#bn-redo').onclick = benchRedo;
   $('#bn-clear').onclick = () => { if (!BN.pieces.length || confirm('Take everything off the bench?')){ benchPush(); BN.pieces = []; benchSync(); benchChanged(); } };
   $('#bn-save').onclick = benchSavePrefab;
@@ -97,7 +126,7 @@ async function benchOpen(){
 }
 
 function benchClose(){
-  BN.open = false;
+  BN.open = false; BN.keys = {}; benchPasteEnd(true); benchExampleEnd();
   const box = $('#bench'); if (box) box.style.display = 'none';
   benchSaveSoon(0);
 }
@@ -108,7 +137,7 @@ async function benchStyles(){
   let st;
   try { st = (await api('/api/build/modules')).styles || {}; }
   catch (e){
-    $('#bn-list').innerHTML = `<div class="msg">${/still learning/i.test(e.message) ? 'The Workshop is learning how the game puts its buildings together (a few minutes, once). The shelf fills in by itself when it is done.' : esc(e.message)}</div>
+    $('#bn-list').innerHTML = `<div class="msg">${/still learning/i.test(e.message) ? 'Learning the game\'s buildings (a few minutes, once)…' : esc(e.message)}</div>
       ${typeof learnHtml === 'function' && typeof LEARN !== 'undefined' && LEARN.sv && LEARN.sv.left ? learnHtml(LEARN.sv, true) : ''}`;
     clearTimeout(BN.styleT); BN.styleT = setTimeout(() => { if (BN.open) benchStyles(); }, 5000);
     return;
@@ -137,15 +166,22 @@ function benchShelfRender(){
     const ps = k.pieces.filter(p => !q || p.id.toLowerCase().includes(q));
     if (!ps.length) return '';
     return `<details data-kind="${k.kind}" ${q || BN.openKinds.has(k.kind) ? 'open' : ''}><summary>${esc(k.label)} <span class="msg">${ps.length}</span></summary>
-      <div class="bngrid">${ps.map(p => `<div class="bnpc" draggable="true" data-id="${esc(p.id)}" data-type="${p.tag}" title="${esc(p.id)}: the game uses it ${p.n}×. Drag it onto the bench, or click it.">
-        <img data-tid="${esc(p.id)}" data-ts="64" data-tt="${p.tag}" alt=""><span>${esc(p.id)}</span></div>`).join('')}</div></details>`;
+      <div class="bngrid">${ps.map(p => `<div class="bnpc" draggable="true" data-id="${esc(p.id)}" data-type="${p.tag}" title="${esc(p.id)}: the game uses it ${p.n}×. Drag it onto the bench, or click it. 👁 or right-click: see it in the game's buildings.">
+        <button class="bneye" title="See it in use">👁</button><img data-tid="${esc(p.id)}" data-ts="64" data-tt="${p.tag}" alt=""><span>${esc(p.id)}</span></div>`).join('')}</div></details>`;
   }).join('') || '<div class="msg">No piece by that name.</div>';
   list.querySelectorAll('details').forEach(d => d.ontoggle = () => { if (d.open){ BN.openKinds.add(d.dataset.kind); v3ThumbScan(d); } else BN.openKinds.delete(d.dataset.kind); });
   list.querySelectorAll('details[open]').forEach(d => v3ThumbScan(d));
   list.querySelectorAll('.bnpc').forEach(el => {
     el.ondragstart = e => { e.dataTransfer.setData('text/x-bench', el.dataset.id); e.dataTransfer.effectAllowed = 'copy'; BN.dragIn = {id: el.dataset.id, type: el.dataset.type}; };
     el.ondragend = () => { BN.dragIn = null; };
-    el.onclick = () => benchAddAt(el.dataset.id, el.dataset.type, null);
+    el.onclick = e => { if (e.target.closest('.bneye')) return; benchAddAt(el.dataset.id, el.dataset.type, null); };
+    el.querySelector('.bneye').onclick = e => { e.stopPropagation(); benchExample(el.dataset.id); };
+    el.oncontextmenu = e => {
+      e.preventDefault();
+      pnlMenu({x: e.clientX, y: e.clientY}, [{label: el.dataset.id, disabled: true},
+        {label: '👁 See it in use', act: () => benchExample(el.dataset.id)},
+        {label: '＋ Put it on the bench', act: () => benchAddAt(el.dataset.id, el.dataset.type, null)}]);
+    };
   });
 }
 
@@ -167,8 +203,11 @@ function benchScene(){
     const grid = new T.GridHelper(BN_GRID * 60, 60, 0xb8902f, 0x6a5f4d);
     grid.rotation.x = Math.PI / 2; grid.position.z = 0.5; grid.material.transparent = true; grid.material.opacity = 0.55;
     BN.scene.add(grid);
-    BN.floor = new T.Mesh(new T.PlaneGeometry(BN_GRID * 200, BN_GRID * 200), new T.MeshLambertMaterial({color: 0x3a352d}));
+    // (see-through by default: the game sinks a building's foot into the land, a Hlaalu house a third of its height,
+    // Telvanni roots and platforms almost whole, and those parts are kept as the game has them)
+    BN.floor = new T.Mesh(new T.PlaneGeometry(BN_GRID * 200, BN_GRID * 200), new T.MeshLambertMaterial({color: 0x3a352d, transparent: true}));
     BN.scene.add(BN.floor);
+    benchFloorLook();
     BN.ray = new T.Raycaster();
     const tc = new T.TransformControls(BN.camera, r.domElement);
     tc.setSpace('world'); tc.size = 0.9; tc.showX = tc.showY = true;
@@ -183,6 +222,14 @@ function benchScene(){
   view.insertBefore(BN.renderer.domElement, view.firstChild);
   benchResize();
 }
+// the floor: 'see' (see-through, what is under it shows), 'solid', or 'off' (not drawn; still there to point at)
+function benchFloorLook(v){
+  if (v){ BN.floorLook = v; try { localStorage.setItem('ws-bench-floor', v); } catch (e) {} }
+  if (!BN.floorLook){ try { BN.floorLook = localStorage.getItem('ws-bench-floor') || 'see'; } catch (e) { BN.floorLook = 'see'; } }
+  const m = BN.floor && BN.floor.material; if (!m) return;
+  m.opacity = BN.floorLook === 'solid' ? 1 : 0.55; m.depthWrite = BN.floorLook === 'solid';
+  m.visible = BN.floorLook !== 'off'; m.needsUpdate = true;
+}
 function benchResize(){
   if (!BN.renderer || !BN.open) return;
   const b = $('#bn-view').getBoundingClientRect();
@@ -195,16 +242,30 @@ function benchLoop(){
   if (!BN.open){ BN.looping = false; return; }
   if (BN.looping) return;
   BN.looping = true;
+  let last = performance.now();
   const tick = () => {
     if (!BN.open){ BN.looping = false; return; }
-    const c = BN.camera, t = BN.target;
+    const c = BN.camera, t = BN.target, now = performance.now(), dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    benchFly(dt);
     c.position.set(t.x + BN.dist * Math.cos(BN.pitch) * Math.sin(BN.yaw), t.y - BN.dist * Math.cos(BN.pitch) * Math.cos(BN.yaw), t.z - BN.dist * Math.sin(BN.pitch));
     c.lookAt(t);
     if (BN.sel) BN.selBox.update();
+    for (const b of BN.mBoxes || []) b.update();
     BN.renderer.render(BN.scene, c);
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+}
+
+// flying with the keys, as in the 3D view: W/S ahead and back, A/D aside, Q/E down and up, Shift faster; the
+// point looked at moves, so the camera keeps its turn and distance (faster the further it stands off)
+function benchFly(dt){
+  const K = BN.keys; if (!K) return;
+  const f = (K.w ? 1 : 0) - (K.s ? 1 : 0), r = (K.d ? 1 : 0) - (K.a ? 1 : 0), u = (K.e ? 1 : 0) - (K.q ? 1 : 0);
+  if (!f && !r && !u) return;
+  const v = Math.max(500, BN.dist * 0.9) * (K.shift ? 3 : 1) * dt, c = Math.cos(BN.yaw), s = Math.sin(BN.yaw);
+  BN.target.x += (-s * f + c * r) * v; BN.target.y += (c * f + s * r) * v; BN.target.z += u * v;
 }
 
 // the bench's pieces drawn: one object a piece, from the 3D view's models
@@ -225,11 +286,30 @@ async function benchSync(){
     o.r = {id: p.id};
     if (!(BN.drag && BN.drag.o === o)) benchPose(o.g, p);
   }
+  // (the selection: BN.sel the piece the handles sit on, BN.multi every piece selected with it, BN.sel among them)
+  BN.multi = new Set([...(BN.multi || [])].filter(k => BN.objs.has(k)));
   if (BN.sel && !BN.objs.has(BN.sel)) BN.sel = null;
+  if (!BN.sel && BN.multi.size) BN.sel = [...BN.multi][0];
+  if (BN.sel) BN.multi.add(BN.sel); else BN.multi.clear();
+  for (const b of BN.mBoxes || []) BN.scene.remove(b);
+  BN.mBoxes = [...BN.multi].filter(k => k !== BN.sel).map(k => { const b = new THREE.BoxHelper(BN.objs.get(k).g, 0xd8b060); BN.scene.add(b); return b; });
   const so = BN.sel && BN.objs.get(BN.sel);
-  if (so){ if (BN.tc.object !== so.g) BN.tc.attach(so.g); BN.tc.setMode(BN.mode); BN.tc.showX = BN.tc.showY = BN.mode !== 'rotate'; BN.selBox.setFromObject(so.g); BN.selBox.visible = true; }
+  // (Turn shows the one ring that turns it on the ground; Tilt all three)
+  if (so){ if (BN.tc.object !== so.g) BN.tc.attach(so.g); BN.tc.setMode(BN.mode === 'tilt' ? 'rotate' : BN.mode); BN.tc.showX = BN.tc.showY = BN.mode !== 'rotate'; BN.selBox.setFromObject(so.g); BN.selBox.visible = true; }
   else { BN.tc.detach(); BN.selBox.visible = false; }
+  BN.tc.setRotationSnap(BN.rsnap ? BN.rsnap * Math.PI / 180 : null);
+  for (const [id, m] of [['#bn-move', 'translate'], ['#bn-turn', 'rotate'], ['#bn-tilt', 'tilt'], ['#bn-scale', 'scale']]){ const b = $(id); if (b) b.classList.toggle('on', BN.mode === m); }
+  benchTurnBox();
   if (!BN.framed && BN.pieces.length){ BN.framed = true; benchFrame(); }
+}
+// the Turn (°) box: the selected piece's turn, or hidden with nothing selected (pose: a pose being dragged)
+function benchTurnBox(pose){
+  const box = $('#bn-turnbox'), inp = $('#bn-deg'); if (!box || !inp) return;
+  const p = BN.sel && BN.pieces.find(q => q.k === BN.sel);
+  box.style.display = p ? '' : 'none';
+  if (p && document.activeElement !== inp) inp.value = +(((pose || p.p)[5] || 0) * 180 / Math.PI).toFixed(1);
+  const si = $('#bn-size'), so = p && BN.objs.get(p.k);
+  if (p && si && document.activeElement !== si) si.value = +(BN.drag && so && BN.drag.o === so ? so.g.scale.x : (p.s || 1)).toFixed(2);
 }
 function benchPose(g, p){
   g.position.set(p.p[0], p.p[1], p.p[2]);
@@ -256,17 +336,19 @@ function benchMouse(e){
   return new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
 }
 // what is under the mouse: a piece (its key), and the point on it or on the floor
-function benchHit(e, skip){
+// (pick: choosing a piece, so one seen through a see-through floor counts; a drop lands on the floor)
+function benchHit(e, skip, pick){
   BN.ray.setFromCamera(benchMouse(e), BN.camera);
   const hits = BN.ray.intersectObjects([BN.root, BN.floor], true);
+  let floor = null;
   for (const h of hits){
     let o = h.object; while (o && o.userData.bench == null && o !== BN.floor) o = o.parent;
     if (!o) continue;
-    if (o === BN.floor) return {key: null, point: h.point};
+    if (o === BN.floor){ if (pick && BN.floorLook !== 'solid'){ floor = floor || h; continue; } return {key: null, point: h.point}; }
     if (o.userData.bench === skip) continue;
     return {key: o.userData.bench, point: h.point};
   }
-  return null;
+  return floor ? {key: null, point: floor.point} : null;
 }
 function benchBind(el){
   let drag = null;
@@ -274,14 +356,23 @@ function benchBind(el){
   el.addEventListener('mousedown', e => {
     el.focus();
     if (e.button === 0 && (BN.tc.dragging || BN.tc.axis)) return;
-    drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: BN.yaw, pitch: BN.pitch, t: BN.target.clone(), moved: false};
+    if (e.button === 1) e.preventDefault();      // (no autoscroll on the middle button)
+    drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: BN.yaw, pitch: BN.pitch, t: BN.target.clone(), moved: false, alt: e.altKey, shift: e.shiftKey};
   });
   window.addEventListener('mousemove', e => {
+    if (e.target === el){ BN.lastMouse = {clientX: e.clientX, clientY: e.clientY}; if (BN.paste && BN.open) benchPasteMove(e); }
     if (!drag || !BN.open) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
     if (!drag.moved) return;
-    if (drag.b === 0){ BN.yaw = drag.yaw - dx * 0.006; BN.pitch = Math.max(-1.5, Math.min(-0.05, drag.pitch - dy * 0.005)); }
+    // (as the 3D view: a left-drag draws a box to select, the right button looks round, the middle one slides;
+    // Alt+left looks round too)
+    if (drag.b === 0 && !drag.alt){
+      const r = el.getBoundingClientRect(), bx = $('#bn-boxsel');
+      Object.assign(bx.style, {display: 'block', left: Math.min(drag.x, e.clientX) - r.left + 'px', top: Math.min(drag.y, e.clientY) - r.top + 'px',
+                               width: Math.abs(dx) + 'px', height: Math.abs(dy) + 'px'});
+    }
+    else if (drag.b === 2 || drag.alt){ BN.yaw = drag.yaw - dx * 0.006; BN.pitch = Math.max(-1.5, Math.min(-0.05, drag.pitch - dy * 0.005)); }
     else {
       // (pan along the floor, the floor following the mouse: right is (cos, sin) of the camera's turn, ahead is
       // (-sin, cos); faster the further the camera stands off)
@@ -291,13 +382,26 @@ function benchBind(el){
   });
   window.addEventListener('mouseup', e => {
     const d = drag; drag = null;
-    if (!d || !BN.open || d.moved || e.target !== el) return;
-    if (d.b !== 0) return;
-    const h = benchHit(e);
-    BN.sel = h && h.key ? h.key : null;
+    if (!d || !BN.open) return;
+    // (pasting: a click puts the copy down where it shows, a right-click lets it go; dragging still looks round)
+    if (BN.paste && !d.moved && e.target === el){ if (d.b === 0) benchPasteDrop(e); else if (d.b === 2) benchPasteEnd(); return; }
+    if (d.b === 0 && !d.alt && d.moved){ $('#bn-boxsel').style.display = 'none'; benchBoxSelect(d, e); return; }
+    if (d.b === 2 && !d.moved && e.target === el){ benchMenu(e); return; }   // (a right-click without dragging: the menu)
+    if (d.moved || e.target !== el || d.b !== 0) return;
+    // (a click selects what is under it; Shift+click adds it or takes it out)
+    const h = benchHit(e, null, true), k = h && h.key;
+    if (e.shiftKey){
+      if (!k) return;
+      if (BN.multi.has(k)){ BN.multi.delete(k); if (BN.sel === k) BN.sel = [...BN.multi][0] || null; }
+      else { BN.multi.add(k); BN.sel = k; }
+    } else { BN.multi = new Set(); BN.sel = k || null; }
     benchSync();
   });
-  el.addEventListener('wheel', e => { e.preventDefault(); BN.dist = Math.max(200, Math.min(30000, BN.dist * (e.deltaY > 0 ? 1.12 : 0.89))); }, {passive: false});
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    // (pasting: the wheel turns the copy, 15° a notch, Shift 1°)
+    if (BN.paste){ BN.paste.yaw += (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 1 : 15) * Math.PI / 180; benchPasteMove(e); return; }
+    BN.dist = Math.max(200, Math.min(30000, BN.dist * (e.deltaY > 0 ? 1.12 : 0.89))); }, {passive: false});
   el.addEventListener('dragover', e => { if (BN.dragIn){ e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
   el.addEventListener('drop', e => {
     const id = e.dataTransfer.getData('text/x-bench'); if (!id) return;
@@ -305,20 +409,258 @@ function benchBind(el){
     const h = benchHit(e);
     benchAddAt(id, (BN.dragIn && BN.dragIn.type) || 'STAT', h ? h.point : null);
   });
+  // (the keys are the canvas's own: heard only while the bench's view has the focus, never while typing in the
+  // shelf's search or a menu)
+  BN.keys = {};
   el.addEventListener('keydown', e => {
     if (!BN.open) return;
-    const k = e.key.toLowerCase();
-    if ((e.ctrlKey || e.metaKey) && k === 'z'){ e.preventDefault(); benchUndo(); return; }
-    if ((e.ctrlKey || e.metaKey) && k === 'y'){ e.preventDefault(); benchRedo(); return; }
-    if (k === 'escape'){ BN.sel = null; benchSync(); return; }
+    const k = (e.key || '').toLowerCase(), ctrl = e.ctrlKey || e.metaKey, mv = v3MoveKey(e);
+    if (mv && !ctrl && !e.altKey){ BN.keys[mv] = true; e.preventDefault(); return; }
+    if (e.key === 'Shift'){ BN.keys.shift = true; return; }
+    if (ctrl && k === 'z'){ e.preventDefault(); benchUndo(); return; }
+    if (ctrl && k === 'y'){ e.preventDefault(); benchRedo(); return; }
+    if (k === 'escape'){ BN.keys = {}; if (BN.paste){ benchPasteEnd(); return; } if (BN.ex){ benchExampleEnd(); return; } BN.sel = null; BN.multi = new Set(); benchSync(); return; }
+    if (ctrl && k === 'v'){ e.preventDefault(); benchPasteStart(); return; }
     if (k === 'r'){ BN.mode = 'rotate'; benchSync(); return; }
     if (k === 't' || k === 'g'){ BN.mode = 'translate'; benchSync(); return; }
-    const p = BN.sel && BN.pieces.find(q => q.k === BN.sel);
-    if (!p) return;
-    if (k === 'delete' || k === 'backspace'){ e.preventDefault(); benchPush(); BN.pieces = BN.pieces.filter(q => q !== p); BN.sel = null; benchSync(); benchChanged(); }
-    else if (k === 'q' || k === 'e'){ benchPush(); p.p[5] = ((p.p[5] || 0) + (k === 'e' ? 1 : -1) * Math.PI / 12 + 2 * Math.PI) % (2 * Math.PI); benchSync(); benchChanged(); }
-    else if (k === 'd'){ benchPush(); const c = {k: String(BN.next++), id: p.id, type: p.type, s: p.s, p: p.p.slice()}; c.p[0] += BN_GRID; BN.pieces.push(c); BN.sel = c.k; benchSync(); benchChanged(); }
+    const ps = benchSelected();
+    if (!ps.length) return;
+    if (k === 'delete' || k === 'backspace'){ e.preventDefault(); benchPush(); BN.pieces = BN.pieces.filter(q => !ps.includes(q)); BN.sel = null; BN.multi = new Set(); benchSync(); benchChanged(); }
+    // (turning and copying keep off the flying keys: a held D copied the piece over and over, 2.5.2)
+    // ([ ] 15°, Shift 1°: by where the key sits, as Shift turns [ into { on most keyboards)
+    else if (e.code === 'BracketLeft' || e.code === 'BracketRight' || '[]{}'.includes(e.key)){
+      const sgn = e.code === 'BracketRight' || e.key === ']' || e.key === '}' ? 1 : -1;
+      benchTurnAll(sgn * (e.shiftKey ? 1 : 15) * Math.PI / 180);
+    }
+    // (Ctrl+C keeps a copy, Ctrl+V puts it down where you click; Ctrl+D both at once. Nothing goes in on the key)
+    else if (ctrl && k === 'c' && !e.repeat){ e.preventDefault(); benchCopy(); }
+    else if (ctrl && k === 'd' && !e.repeat){ e.preventDefault(); benchCopy(); benchPasteStart(); }
   });
+  // (letting go always stops, wherever the focus went; and nothing flies on once the view loses it)
+  window.addEventListener('keyup', e => {
+    const mv = v3MoveKey(e); if (mv) BN.keys[mv] = false;
+    if (e.key === 'Shift') BN.keys.shift = false;
+  }, true);
+  el.addEventListener('blur', () => { BN.keys = {}; });
+}
+
+// the pieces whose middle falls inside the box dragged on the screen (Shift: added to what is selected)
+function benchBoxSelect(d, e){
+  const r = BN.renderer.domElement.getBoundingClientRect();
+  const x0 = Math.min(d.x, e.clientX), x1 = Math.max(d.x, e.clientX), y0 = Math.min(d.y, e.clientY), y1 = Math.max(d.y, e.clientY);
+  const got = [];
+  for (const [k, o] of BN.objs){
+    const b = new THREE.Box3().setFromObject(o.g); if (b.isEmpty()) continue;
+    const c = b.getCenter(new THREE.Vector3()).project(BN.camera);
+    if (c.z > 1) continue;
+    const sx = r.left + (c.x + 1) / 2 * r.width, sy = r.top + (1 - c.y) / 2 * r.height;
+    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) got.push(k);
+  }
+  if (!d.shift) BN.multi = new Set();
+  for (const k of got) BN.multi.add(k);
+  if (!BN.multi.has(BN.sel)) BN.sel = got[0] || [...BN.multi][0] || null;
+  benchSync();
+  benchNote(BN.multi.size > 1 ? BN.multi.size + ' pieces selected' : '');
+  clearTimeout(BN.noteT); BN.noteT = setTimeout(() => benchNote(''), 1400);
+}
+// the selected pieces (the handles' piece first)
+function benchSelected(){ return BN.pieces.filter(q => q.k === BN.sel).concat(BN.pieces.filter(q => q.k !== BN.sel && BN.multi && BN.multi.has(q.k))); }
+// the selected pieces turned together by a, round the handles' piece
+function benchTurnAll(a){
+  const ps = benchSelected(); if (!ps.length) return;
+  const [cx, cy] = ps[0].p, c = Math.cos(-a), s = Math.sin(-a), tw = 2 * Math.PI;
+  benchPush();
+  for (const p of ps){
+    const dx = p.p[0] - cx, dy = p.p[1] - cy;
+    p.p[0] = +(cx + c * dx - s * dy).toFixed(2); p.p[1] = +(cy + s * dx + c * dy).toFixed(2);
+    p.p[5] = +((((p.p[5] || 0) + a) % tw + tw) % tw).toFixed(5);
+  }
+  benchSync(); benchChanged();
+}
+
+// ----- a piece in use: the game's buildings that use it, one at a time beside the bench's work, that piece outlined
+// and the rest of the building faint; looked at, not edited (the user, 2026-10-28: "hard to get a sense of the use of
+// all the pieces in game without seeing them in use first"). Take it onto the bench puts that building there.
+async function benchExample(id){
+  let r;
+  try { r = await api('/api/bench/uses?id=' + encodeURIComponent(id) + '&style=' + encodeURIComponent(BN.style || '')); }
+  catch (e){ return toast(e.message, true); }
+  if (!r.buildings.length) return toast(`No building of the game's that the Workshop knows uses ${id}.`);
+  BN.ex = {id, list: r.buildings, more: r.more, i: 0, g: null};
+  await benchExampleShow();
+}
+async function benchExampleShow(){
+  const X = BN.ex; if (!X) return;
+  if (X.g){ BN.scene.remove(X.g); X.g = null; }
+  const b = X.list[X.i];
+  await v3EnsureModels([...new Set(b.pieces.map(p => p.id))]);
+  if (BN.ex !== X) return;
+  // (beside the bench's work, to its right, as Start from puts a building)
+  let ox = 0;
+  if (BN.objs.size){ const w = new THREE.Box3(); for (const o of BN.objs.values()) w.expandByObject(o.g); ox = w.max.x + 900 - Math.min(...b.pieces.map(p => p.p[0])); }
+  const g = new THREE.Group(), hits = new Set(b.hit), box = new THREE.Box3();
+  b.pieces.forEach((p, n) => {
+    const o = v3Build({id: p.id, type: p.type || 'STAT', b: null});
+    benchPose(o, {p: [p.p[0] + ox, p.p[1], p.p[2], p.p[3], p.p[4], p.p[5]], s: p.s});
+    if (!hits.has(n)) o.traverse(ch => { if (ch.isMesh) ch.material = [].concat(ch.material).map(m => { const c = m.clone(); c.transparent = true; c.opacity = 0.35; c.depthWrite = false; return c; }); });
+    g.add(o);
+    if (hits.has(n)){ const h = new THREE.BoxHelper(o, 0xf0cd87); g.add(h); box.expandByObject(o); }
+  });
+  BN.scene.add(g); X.g = g;
+  // (looked at from where the piece shows, the whole building in view)
+  const all = new THREE.Box3().setFromObject(g);
+  BN.target.copy((box.isEmpty() ? all : box).getCenter(new THREE.Vector3()));
+  BN.dist = Math.max(900, all.getSize(new THREE.Vector3()).length() * 1.1);
+  const bar = $('#bn-ex'), n = X.list.length;
+  bar.innerHTML = `<span>👁</span><span class="nm" title="${esc(X.id)} in ${esc(b.name)}, a ${esc(b.style || '')} building the game puts up ${b.uses}×${X.more ? `; ${X.more} more use it` : ''}"><b>${esc(X.id)}</b> in ${esc(b.name)}</span>
+    <span class="msg">${X.i + 1}/${n}${X.more ? '+' : ''}</span>
+    <button class="btn sm" id="bn-exprev" ${n < 2 ? 'disabled' : ''} title="The one before">◀</button><button class="btn sm" id="bn-exnext" ${n < 2 ? 'disabled' : ''} title="The next one">▶</button>
+    <button class="btn sm" id="bn-extake" title="Put this building on the bench to change">Take it</button><button class="btn sm" id="bn-exx" title="Close (Esc)">✕</button>`;
+  bar.style.display = 'flex';
+  bar.querySelector('#bn-exprev').onclick = () => { X.i = (X.i + n - 1) % n; benchExampleShow(); };
+  bar.querySelector('#bn-exnext').onclick = () => { X.i = (X.i + 1) % n; benchExampleShow(); };
+  bar.querySelector('#bn-extake').onclick = () => { benchExampleEnd(); benchStartFrom(b.key, {name: b.name, pieces: b.pieces}); };
+  bar.querySelector('#bn-exx').onclick = benchExampleEnd;
+}
+function benchExampleEnd(){
+  const X = BN.ex; if (!X) return;
+  if (X.g) BN.scene.remove(X.g);
+  BN.ex = null;
+  const bar = $('#bn-ex'); if (bar) bar.style.display = 'none';
+}
+
+// ----- copy and paste: the copy is kept, and goes in only where you click
+// (BN.clip: the pieces as offsets from the middle of their foot, so the copy stands on what is under the mouse)
+function benchCopy(){
+  const ps = benchSelected(); if (!ps.length) return;
+  const box = new THREE.Box3();
+  for (const p of ps){ const o = BN.objs.get(p.k); if (o) box.expandByObject(o.g); }
+  // (a copy of something sunk into the floor, as the game sinks a building's foot, keeps that much sunk: its height
+  // is taken from the floor, not from its own bottom)
+  const c = box.isEmpty() ? new THREE.Vector3(ps[0].p[0], ps[0].p[1], ps[0].p[2]) : box.getCenter(new THREE.Vector3()), z0 = box.isEmpty() ? ps[0].p[2] : Math.max(0, box.min.z);
+  BN.clip = ps.map(p => ({id: p.id, type: p.type, s: p.s || 1, p: [p.p[0] - c.x, p.p[1] - c.y, p.p[2] - z0, p.p[3] || 0, p.p[4] || 0, p.p[5] || 0]}));
+  benchNote(`Copied ${ps.length === 1 ? ps[0].id : ps.length + ' pieces'} · Ctrl+V, then click`);
+  clearTimeout(BN.noteT); BN.noteT = setTimeout(() => { if (!BN.paste) benchNote(''); }, 1800);
+}
+// the copy's pieces where it would go: at `at` (the point under the mouse), turned by yaw
+function benchPastePieces(at, yaw){
+  const c = Math.cos(-yaw), s = Math.sin(-yaw), tw = 2 * Math.PI;
+  return BN.clip.map(q => ({id: q.id, type: q.type, s: q.s,
+    p: [+(at.x + c * q.p[0] - s * q.p[1]).toFixed(2), +(at.y + s * q.p[0] + c * q.p[1]).toFixed(2), +(at.z + q.p[2]).toFixed(2),
+        q.p[3], q.p[4], +((((q.p[5] + yaw) % tw) + tw) % tw).toFixed(5)]}));
+}
+async function benchPasteStart(){
+  if (!BN.clip || !BN.clip.length) return toast('Copy something first (Ctrl+C).');
+  benchPasteEnd(true);
+  await v3EnsureModels([...new Set(BN.clip.map(q => q.id))]);
+  const g = new THREE.Group();
+  for (const q of BN.clip){
+    const o = v3Build({id: q.id, type: q.type || 'STAT', b: null});
+    // (a see-through copy: its own materials, so the pieces on the bench stay as they are)
+    o.traverse(ch => { if (ch.isMesh) ch.material = [].concat(ch.material).map(m => { const n = m.clone(); n.transparent = true; n.opacity = 0.55; n.depthWrite = false; return n; }); });
+    g.add(o);
+  }
+  BN.paste = {g, yaw: 0, at: null};
+  BN.scene.add(g); g.visible = false;
+  BN.mode = 'translate'; BN.tc.detach();
+  benchNote('Click to put it down · wheel turns · Esc or right-click: not now');
+  if (BN.lastMouse) benchPasteMove(BN.lastMouse);
+}
+function benchPasteMove(e){
+  const P = BN.paste; if (!P) return;
+  BN.lastMouse = {clientX: e.clientX, clientY: e.clientY};
+  const h = benchHit(e); if (!h){ P.g.visible = false; P.at = null; return; }
+  P.at = h.point.clone();
+  const ps = benchPastePieces(P.at, P.yaw);
+  P.g.children.forEach((o, i) => benchPose(o, ps[i]));
+  P.g.visible = true;
+}
+function benchPasteDrop(e){
+  const P = BN.paste; if (!P) return;
+  benchPasteMove(e);
+  if (!P.at) return toast('Point at the floor or a piece.', true);
+  benchPush();
+  const cs = benchPastePieces(P.at, P.yaw).map(q => Object.assign({k: String(BN.next++)}, q));
+  BN.pieces.push(...cs); BN.sel = cs[0].k; BN.multi = new Set(cs.map(c => c.k));
+  benchPasteEnd(); benchSync(); benchChanged();
+}
+function benchPasteEnd(quiet){
+  const P = BN.paste; if (!P) return;
+  BN.scene.remove(P.g); BN.paste = null;
+  if (!quiet) benchNote('');
+}
+
+// the selected pieces sized s each, in place (the game's limits)
+function benchSizeAll(s){
+  const ps = benchSelected(); if (!ps.length) return;
+  s = Math.max(0.5, Math.min(2, +s.toFixed(3)));
+  benchPush(); for (const p of ps) p.s = s; benchSync(); benchChanged();
+}
+// the selected pieces set down together on what is below them (another piece, or the bench's floor)
+function benchSetDown(){
+  const ps = benchSelected(); if (!ps.length) return;
+  const keys = new Set(ps.map(p => p.k)), box = new THREE.Box3();
+  for (const p of ps){ const o = BN.objs.get(p.k); if (o) box.expandByObject(o.g); }
+  if (box.isEmpty()) return;
+  const others = [...BN.objs.values()].filter(o => !keys.has(o.k)).map(o => o.g).concat([BN.floor]);
+  let top = -Infinity;
+  // (a few rays down from under the selection: its middle and its corners pulled in a little)
+  const c = box.getCenter(new THREE.Vector3()), ix = (box.max.x - box.min.x) * 0.35, iy = (box.max.y - box.min.y) * 0.35;
+  for (const [dx, dy] of [[0, 0], [-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]]){
+    BN.ray.set(new THREE.Vector3(c.x + dx, c.y + dy, box.min.z + 1), new THREE.Vector3(0, 0, -1));
+    const h = BN.ray.intersectObjects(others, true)[0];
+    if (h) top = Math.max(top, h.point.z);
+  }
+  if (!isFinite(top)) top = 0;
+  const dz = +(top - box.min.z).toFixed(2);
+  if (Math.abs(dz) < 0.5) return benchNote('');
+  benchPush(); for (const p of ps) p.p[2] = +(p.p[2] + dz).toFixed(2); benchSync(); benchChanged();
+}
+// the selected pieces stood upright again (no tilt), keeping their turn
+function benchStraighten(){
+  const ps = benchSelected().filter(q => q.p[3] || q.p[4]); if (!ps.length) return;
+  benchPush(); for (const p of ps){ p.p[3] = 0; p.p[4] = 0; } benchSync(); benchChanged();
+}
+function benchSelectLike(id){
+  BN.multi = new Set(BN.pieces.filter(p => p.id === id).map(p => p.k));
+  if (!BN.multi.has(BN.sel)) BN.sel = [...BN.multi][0] || null;
+  benchSync();
+}
+function benchKey(code, key, o){ BN.renderer.domElement.dispatchEvent(new KeyboardEvent('keydown', Object.assign({code, key, bubbles: true, cancelable: true}, o || {}))); }
+// the right-click menu: for the piece under the mouse (and the others selected with it), or for the bench
+function benchMenu(e){
+  const h = benchHit(e, null, true), k = h && h.key, pt = {x: e.clientX, y: e.clientY}, items = [];
+  if (k){
+    if (!BN.multi.has(k)){ BN.multi = new Set(); BN.sel = k; benchSync(); }
+    const ps = benchSelected(), p = ps[0], n = ps.length;
+    items.push({label: n > 1 ? n + ' pieces' : p.id, disabled: true},
+      {label: '✥ Move', on: BN.mode === 'translate', act: () => { BN.mode = 'translate'; benchSync(); }},
+      {label: '⟳ Turn', on: BN.mode === 'rotate', act: () => { BN.mode = 'rotate'; benchSync(); }},
+      {label: '⤡ Tilt', on: BN.mode === 'tilt', act: () => { BN.mode = 'tilt'; benchSync(); }},
+      {label: '⤢ Size', on: BN.mode === 'scale', act: () => { BN.mode = 'scale'; benchSync(); }}, '-',
+      {label: '⟳ Turn 90°', act: () => benchTurnAll(Math.PI / 2)}, {label: '⟲ Turn 90° back', act: () => benchTurnAll(-Math.PI / 2)},
+      {label: '⤢ Size…', act: () => { const s = $('#bn-size'); if (s){ s.focus(); s.select(); } }},
+      {label: '↺ Size ×1', act: () => benchSizeAll(1)},
+      {label: '⊥ Straighten', disabled: !ps.some(q => q.p[3] || q.p[4]), act: benchStraighten},
+      {label: '⤓ Set down', act: benchSetDown}, '-',
+      {label: '⧉ Copy (Ctrl+C)', act: benchCopy},
+      {label: '⧉ Duplicate, then click (Ctrl+D)', act: () => { benchCopy(); benchPasteStart(); }},
+      ...(BN.clip ? [{label: '📋 Paste, then click (Ctrl+V)', act: benchPasteStart}] : []),
+      {label: 'Select all like it', act: () => benchSelectLike(p.id)},
+      {label: '👁 See it in use', act: () => benchExample(p.id)},
+      {label: 'Find on the shelf', act: () => { BN.q = p.id; const q = $('#bn-q'); if (q) q.value = p.id; benchShelfRender(); }},
+      {label: '⌖ Look at it', act: () => { const o = BN.objs.get(p.k); if (o){ const b = new THREE.Box3().setFromObject(o.g); BN.target.copy(b.getCenter(new THREE.Vector3())); BN.dist = Math.max(600, b.getSize(new THREE.Vector3()).length() * 1.4); } }}, '-',
+      {label: n > 1 ? '✕ Delete all ' + n : '✕ Delete', act: () => benchKey('Delete', 'Delete')});
+  } else {
+    items.push({label: 'Select all', disabled: !BN.pieces.length, act: () => { BN.multi = new Set(BN.pieces.map(p => p.k)); BN.sel = BN.pieces[0] && BN.pieces[0].k; benchSync(); }},
+      {label: '⌖ Show everything', disabled: !BN.pieces.length, act: benchFrame},
+      {label: '🚪 Fill openings', disabled: !BN.pieces.length, act: benchFill},
+      {label: '🔍 Check', disabled: !BN.pieces.length, act: () => benchCheck(true)});
+    if (BN.clip) items.unshift({label: '📋 Paste, then click (Ctrl+V)', act: benchPasteStart});
+    items.push('-', ...[['see', 'Floor: see-through'], ['solid', 'Floor: solid'], ['off', 'Floor: hidden']].map(([v, l]) => ({label: l, on: BN.floorLook === v, act: () => benchFloorLook(v)})));
+    if (BN.sel) items.push('-', {label: 'Clear the selection', act: () => { BN.sel = null; BN.multi = new Set(); benchSync(); }});
+  }
+  pnlMenu(pt, items);
 }
 
 // ----- adding a piece: where it was dropped (on the floor or on a piece), else in front of the camera; then snapped
@@ -329,7 +671,7 @@ async function benchAddAt(id, type, point){
   const at = point ? point.clone() : BN.target.clone().setZ(0);
   const z = at.z - (box.isEmpty() ? 0 : box.min.z);
   const p = {k: String(BN.next++), id, type, s: 1, p: [Math.round(at.x), Math.round(at.y), Math.round(z), 0, 0, 0]};
-  BN.pieces.push(p); BN.sel = p.k; BN.mode = 'translate';
+  BN.pieces.push(p); BN.sel = p.k; BN.multi = new Set(); BN.mode = 'translate';
   await benchSync();
   // (snapped at once where the game joins it to a piece beside it, else flush)
   const o = BN.objs.get(p.k);
@@ -341,7 +683,13 @@ async function benchAddAt(id, type, point){
 // ----- moving with the handles: the game's joins first, flush faces after (as the 3D view outdoors)
 function benchDragStart(o){
   o = o || (BN.sel && BN.objs.get(BN.sel)); if (!o) return;
-  const D = {o, startQ: o.g.quaternion.clone(), nearObjs: [...BN.objs.values()].filter(x => x !== o && x.g.position.distanceTo(o.g.position) < 4000), snaps: []};
+  // (the others selected ride along: each kept where it stands from the handles' piece; they are never snapped to)
+  const others = o.k === BN.sel && BN.multi ? [...BN.multi].filter(k => k !== o.k && BN.objs.has(k)) : [];
+  o.g.updateMatrixWorld(true);
+  const inv = o.g.matrixWorld.clone().invert();
+  const D = {o, startQ: o.g.quaternion.clone(), startS: o.g.scale.x, snaps: [],
+             nearObjs: [...BN.objs.values()].filter(x => x !== o && !others.includes(x.k) && x.g.position.distanceTo(o.g.position) < 4000),
+             ride: others.map(k => { const g = BN.objs.get(k).g; g.updateMatrixWorld(true); return {k, g, rel: inv.clone().multiply(g.matrixWorld)}; })};
   BN.drag = D;
   D.fetching = benchSnapsFetch(D);
 }
@@ -349,14 +697,21 @@ async function benchSnapsFetch(D){
   const g = D.o.g, p = BN.pieces.find(q => q.k === D.o.k); if (!p) return;
   D.at = g.position.clone();
   try {
-    const r = await post('/api/bench/snaps', {pieces: BN.pieces.filter(q => q !== p), id: p.id, x: g.position.x, y: g.position.y, z: g.position.z});
+    const ride = new Set((D.ride || []).map(x => x.k));
+    const r = await post('/api/bench/snaps', {pieces: BN.pieces.filter(q => q !== p && !ride.has(q.k)), id: p.id, x: g.position.x, y: g.position.y, z: g.position.z});
     if (BN.drag === D) D.snaps = r.snaps || [];
   } catch (e) {}
 }
 function benchSnap(){
   const D = BN.drag; if (!D) return;
   const g = D.o.g;
-  if (BN.mode !== 'translate'){ BN.selBox.setFromObject(g); return; }
+  if (BN.mode === 'scale'){
+    // (the game sizes a thing evenly, ×0.5 to ×2: whichever handle is dragged sizes all three ways)
+    const s0 = D.startS || 1, v = [g.scale.x, g.scale.y, g.scale.z].reduce((a, b) => Math.abs(b - s0) > Math.abs(a - s0) ? b : a, s0);
+    g.scale.setScalar(Math.max(0.5, Math.min(2, +v.toFixed(3))));
+    g.updateMatrixWorld(true); BN.selBox.setFromObject(g); benchTurnBox(); benchRide(D); return;
+  }
+  if (BN.mode !== 'translate'){ BN.selBox.setFromObject(g); benchTurnBox(benchPoseOf(g)); benchRide(D); return; }
   if (D.at && g.position.distanceTo(D.at) > 800) D.fetching = benchSnapsFetch(D);
   let best = null;
   for (const s of D.snaps || []){
@@ -378,15 +733,30 @@ function benchSnap(){
   }
   g.updateMatrixWorld(true);
   BN.selBox.setFromObject(g);
+  benchRide(D);
+}
+function benchRide(D){
+  if (!D.ride || !D.ride.length) return;
+  D.o.g.updateMatrixWorld(true);
+  const m = new THREE.Matrix4();
+  for (const x of D.ride){
+    m.multiplyMatrices(D.o.g.matrixWorld, x.rel).decompose(x.g.position, x.g.quaternion, x.g.scale);
+    x.g.updateMatrixWorld(true);
+  }
 }
 function benchDragEnd(){
   const D = BN.drag; BN.drag = null;
   benchNote('');
   if (!D) return;
   const p = BN.pieces.find(q => q.k === D.o.k); if (!p) return;
-  const np = benchPoseOf(D.o.g);
-  if (np.some((v, i) => Math.abs(v - (p.p[i] || 0)) > 0.01)){ if (!BN.pushed) benchPush(); p.p = np; benchChanged(); }
+  const np = benchPoseOf(D.o.g), ns = +D.o.g.scale.x.toFixed(3);
+  if (np.some((v, i) => Math.abs(v - (p.p[i] || 0)) > 0.01) || Math.abs(ns - (p.s || 1)) > 0.001){
+    if (!BN.pushed) benchPush(); p.p = np; p.s = ns;
+    for (const x of D.ride || []){ const q = BN.pieces.find(z => z.k === x.k); if (q){ q.p = benchPoseOf(x.g); q.s = Math.max(0.5, Math.min(2, +x.g.scale.x.toFixed(3))); } }
+    benchChanged();
+  }
   BN.pushed = false;
+  benchTurnBox();
 }
 function benchNote(t){ const n = $('#bn-note'); if (n){ n.textContent = t; n.style.display = t ? 'block' : 'none'; } }
 
@@ -404,6 +774,15 @@ function benchSaveSoon(ms){
   BN.saveT = setTimeout(() => post('/api/bench/save', {name: 'bench', style: BN.style, pieces: BN.pieces}).catch(() => {}), ms == null ? 600 : ms);
 }
 
+// a check line's first clause, for the panel (the whole line is its tooltip): up to a '; ', '. ' or ' (', then
+// up to a ': ' when what comes before it says enough, at most 56 letters
+function benchShort(t){
+  let s = String(t || '');
+  for (const c of ['; ', '. ', ' (']){ const i = s.indexOf(c); if (i > 0) s = s.slice(0, i); }
+  if (s.length > 56){ const i = s.indexOf(': '); if (i >= 14) s = s.slice(0, i); }
+  return s.length > 56 ? s.slice(0, 55).replace(/\s+\S*$/, '') + '…' : s;
+}
+
 // ----- the check, as it grows: its lines, and the spots marked on the bench
 async function benchCheck(asked){
   const box = $('#bn-checkbox'); if (!box) return;
@@ -413,8 +792,8 @@ async function benchCheck(asked){
   try { r = await post('/api/bench/check', {pieces: BN.pieces}); }
   catch (e){ if (asked) toast(e.message, true); box.style.display = 'none'; return; }
   const T = THREE;
-  box.innerHTML = `<b>🔍 The check</b> <span class="msg">${r.style ? esc(r.style) + ', ' : ''}by the game's own buildings</span>
-    ${r.lines.map((l, n) => `<div class="sev-${l.sev}" style="margin:3px 0">${l.sev === 'ok' ? '✓' : l.sev === 'warning' ? '⚠' : '✗'} ${esc(l.text)}${l.at ? ` <button class="btn sm" data-at="${n}" title="Look at it">⌖</button>` : ''}</div>`).join('')}`;
+  box.innerHTML = `<b title="Checked by the rules of the game's own ${esc(r.style || '')} buildings">🔍 Check</b> <span class="msg">${r.style ? esc(r.style) : ''}</span>
+    ${r.lines.map((l, n) => `<div class="sev-${l.sev}" style="margin:3px 0" title="${esc(l.text)}">${l.sev === 'ok' ? '✓' : l.sev === 'warning' ? '⚠' : '✗'} ${esc(benchShort(l.text))}${l.at ? ` <button class="btn sm" data-at="${n}" title="Look at it">⌖</button>` : ''}</div>`).join('')}`;
   box.style.display = 'block';
   box.querySelectorAll('[data-at]').forEach(b => b.onclick = () => { const a = r.lines[+b.dataset.at].at[0]; BN.target.set(a[0], a[1], a[2]); BN.dist = Math.min(BN.dist, 1400); });
   for (const l of r.lines){
@@ -431,12 +810,12 @@ async function benchFill(){
   if (!BN.pieces.length) return toast('Put some pieces on the bench first.');
   let r;
   try { r = await post('/api/bench/fill', {pieces: BN.pieces}); } catch (e){ return toast(e.message, true); }
-  if (!r.add.length) return toast('Every doorway and window the game fills in these pieces is filled already.');
+  if (!r.add.length) return toast('Nothing left to fill.');
   benchPush();
   for (const a of r.add) BN.pieces.push({k: String(BN.next++), id: a.id, type: a.type, s: a.s || 1, p: a.p});
   await benchSync(); benchChanged();
   const doors = r.add.filter(a => a.type === 'DOOR').length;
-  toast(`Filled ${r.add.length} opening${r.add.length === 1 ? '' : 's'}: ${doors} door${doors === 1 ? '' : 's'}, ${r.add.length - doors} window${r.add.length - doors === 1 ? '' : 's'}, as the game fills them (↶ takes them out).`);
+  toast(`Filled ${doors} door${doors === 1 ? '' : 's'}, ${r.add.length - doors} window${r.add.length - doors === 1 ? '' : 's'} (↶ undoes)`);
 }
 
 // ----- starting from one of the game's buildings
@@ -450,19 +829,20 @@ async function benchStartMenu(){
   try { list = await api('/api/bench/buildings?style=' + encodeURIComponent(BN.style)); } catch (e){ pop.innerHTML = `<div class="msg">${esc(e.message)}</div>`; return; }
   const draw = q => {
     const ls = list.filter(b => !q || b.key.toLowerCase().includes(q) || b.name.toLowerCase().includes(q));
-    pop.querySelector('.bnrows').innerHTML = ls.slice(0, 120).map((b, n) => `<button class="btn sm row" data-k="${esc(b.key)}">${esc(b.name)} <span class="msg">· ${b.pieces} pieces · ${b.uses}× in the game${b.home ? '' : ' · not a home'}</span></button>`).join('') || '<div class="msg">None by that name.</div>';
+    pop.querySelector('.bnrows').innerHTML = ls.slice(0, 120).map((b, n) => `<button class="btn sm row" data-k="${esc(b.key)}">${esc(b.name)} <span class="msg">· ${b.pieces} pieces · ${b.uses}×${b.home ? '' : ' · not a home'}</span></button>`).join('') || '<div class="msg">None by that name.</div>';
     pop.querySelectorAll('[data-k]').forEach(btn => btn.onclick = () => benchStartFrom(btn.dataset.k));
   };
   pop.innerHTML = `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px"><b>Start from a game building</b><span style="flex:1"></span><button class="btn sm" id="bn-popx">✕</button></div>
-    <div class="msg">The game's ${esc(BN.style)} buildings, the most built first. One is put on the bench to change as you like${BN.pieces.length ? ', beside what is there' : ''}.</div>
+    <div class="msg">Most built first.</div>
     <input id="bn-popq" placeholder="Find…" style="width:100%;margin:6px 0"><div class="bnrows"></div>`;
   pop.querySelector('#bn-popx').onclick = () => pop.remove();
   pop.querySelector('#bn-popq').oninput = e => draw(e.target.value.trim().toLowerCase());
   draw('');
 }
-async function benchStartFrom(key){
-  let r;
-  try { r = await api('/api/bench/building?key=' + encodeURIComponent(key)); } catch (e){ return toast(e.message, true); }
+async function benchStartFrom(key, given){
+  // (given: the building already in hand, {name, pieces}, as an example of a piece in use shows it)
+  let r = given;
+  if (!r) try { r = await api('/api/bench/building?key=' + encodeURIComponent(key)); } catch (e){ return toast(e.message, true); }
   const pop = $('#bn-pop'); if (pop) pop.remove();
   benchPush();
   // (beside what is on the bench already, not in it)
@@ -470,7 +850,7 @@ async function benchStartFrom(key){
   if (BN.pieces.length){ const b = new THREE.Box3(); for (const o of BN.objs.values()) b.expandByObject(o.g); ox = b.max.x + 600 - Math.min(...r.pieces.map(p => p.p[0])); }
   for (const p of r.pieces) BN.pieces.push({k: String(BN.next++), id: p.id, type: p.type, s: p.s, p: [p.p[0] + ox, p.p[1], p.p[2], p.p[3], p.p[4], p.p[5]]});
   BN.framed = false; await benchSync(); benchChanged();
-  toast(`${r.name} is on the bench: change it as you like.`);
+  toast(`${r.name} is on the bench (its foot sunk as in the game)`);
 }
 
 // ----- out of the bench: as a prefab, or into the world
@@ -497,13 +877,13 @@ async function benchSavePrefab(){
 }
 async function benchPlace(){
   if (!BN.pieces.length) return toast('Put some pieces on the bench first.');
-  if (!W.key || !W.ext) return toast('Open an outdoor place on the World map first (Go to a place…), then Place in the world.', true);
+  if (!W.key || !W.ext) return toast('Open an outdoor place first.', true);
   const items = benchItems();
   benchClose();
   if (!V3.on && typeof v3Enable === 'function') await v3Enable(true);
   startGroupPlace(items, 'the bench\'s building (' + items.length + ' pieces)');
   W.groupPlace.bench = true;
-  toast('It follows the mouse, set on the land under it; the wheel turns it, a click puts it down. Esc: not now. The bench keeps its copy.');
+  toast('Click to put it down · wheel turns · Esc cancels');
 }
 // (world3d.js: the click in the view while the bench's building is being placed; the ghost stands where
 // v3GhostMove set it, on the lowest ground under its ground floor)

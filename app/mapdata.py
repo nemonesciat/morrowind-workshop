@@ -3,6 +3,7 @@ import base64
 import math
 import re
 import struct
+import zlib
 
 from esm import iter_subrecords, zstr
 from project import ref_info
@@ -366,6 +367,28 @@ def object_bounds(db, ri):
 _LITE = {}          # land record index -> (heights, vertex colours), for the zoomed-out map
 
 
+def land_after(db, key):
+    """Plugins that load after your mod in openmw.cfg and have their own ground for this outdoor cell, when your mod
+    changes it: started from OpenMW's launcher, the game shows theirs (Play here loads your mod last)."""
+    if not db.project or not key.startswith('#') or getattr(db, 'proj_pidx', None) is None:
+        return []
+    k = ('LAND', key[1:])
+    lst = [v for v in db.by_key.get(k, []) if v not in db.dead]
+    if not any(db.recs[v][3] == db.proj_pidx for v in lst):
+        return []
+    order = [c.lower() for c in getattr(db, 'cfg_content_all', [])]
+    mine = db.project.plugin.lower()
+    if mine not in order:
+        return []
+    at = order.index(mine)
+    out = []
+    for v in lst:
+        name = db.plugins[db.recs[v][3]]['name']
+        if db.recs[v][3] != db.proj_pidx and name.lower() in order and order.index(name.lower()) > at and name not in out:
+            out.append(name)
+    return out
+
+
 def lands_overview(db, x0, y0, x1, y1, step):
     """Ground of many cells at once for the 2D map, every step-th point (1, 2, 4 or 8):
     {"gx,gy": {"n": points per side, "h": heights, "c": base64 colours, "name": place name}}."""
@@ -382,6 +405,10 @@ def lands_overview(db, x0, y0, x1, y1, step):
             if not lst:
                 continue
             ri = lst[-1]
+            # (your mod's version of a cell keeps its record number through every edit, the record list updated in
+            # place: keyed by its bytes too, or the 2D map showed the ground as first drawn; PIN2, 2026-10-28)
+            if db.recs[ri][3] == getattr(db, 'proj_pidx', None):
+                ri = (ri, zlib.crc32(db.files[db.recs[ri][3]].record_at(db.recs[ri][4])[2]))
             full = _LITE.get(ri)
             if full is None:
                 L = land(db, gx, gy)
@@ -424,7 +451,14 @@ def land(db, gx, gy, with_textures=False):
             colors = base64.b64encode(bytes(sd[:65 * 65 * 3])).decode('ascii')
         elif st == 'VTEX' and len(sd) >= 512:
             vtex = struct.unpack_from('<256H', sd)
+    # (a land with textures but no heights, as Morrowind.esm's and Distant Seafloor's round Roth Roryn: the game lays
+    # it flat at -2048, its default; shown and shaped that way here too, where it had been left out, sea with no floor)
+    flat = heights is None and len(data) > 0
+    if flat:
+        heights = [-2048] * (65 * 65)
     out = {'exists': heights is not None, 'h': heights, 'c': colors}
+    if flat:
+        out['flat'] = True
     if with_textures:
         # 16 x 16 ground textures per cell (stored in 4x4 blocks of 4x4; put them in plain rows)
         raw = vtex or (0,) * 256

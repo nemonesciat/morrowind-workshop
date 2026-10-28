@@ -562,7 +562,20 @@ ROOM_NAMES = {0: ['Hall', 'Room', 'Back Room', 'Side Room', 'Store'], 1: ['Upsta
               2: ['Top Floor', 'Attic Room', 'Loft']}
 
 
-def _plan(db, b, kit=None, cover=COVER, floors=None, ch=None, tiles=None):
+FLOORS_MAX = 4                   # the most floors asked for by number (the builder's stairs climb that far)
+
+
+def tall_floors(b):
+    """How many storeys a building is tall over its door's sill (1 at least, FLOORS_MAX at most): the most floors
+    worth asking for."""
+    if not b.get('frame') or not b.get('group'):
+        return 1
+    # (a storey a STOREY, about 100 of roof over the top one: a one-storey Hlaalu house is ~350 over its sill)
+    h = max(g['box'][5] for g in b['group']) - b['frame'].z
+    return max(1, min(FLOORS_MAX, int(round((h - 100) / float(ss.STOREY)))))
+
+
+def _plan(db, b, kit=None, cover=COVER, floors=None, ch=None, tiles=None, force=False):
     """The interior for a building at one cover and floor count: {'style', 'tile', 'rooms', 'doors', 'exit', 'tiles', 'floors', 'notes',
     'prediction', 'ratio'} in the builder's terms."""
     if b['door'] is None:
@@ -602,18 +615,27 @@ def _plan(db, b, kit=None, cover=COVER, floors=None, ch=None, tiles=None):
                 for k2 in [x for x in per if x > k]:
                     del per[k2]
         ground = per[0]
+    st_ = (kits.stairs(db, kit) or {}).get('storey') or kp.get('height') or ss.STOREY
     for k, u in enumerate([] if tiles else ch['ups'], start=1):
         if k >= want or k > 2:
             break
         if not (u['closed'] and u['area'] >= UP_MIN * ch['outline']['area']):
+            if force:
+                break                            # (laid over the floor below, after this loop)
             notes.append('Floor %d left out: the walls %d storey%s up don\'t close round.' % (k + 1, k, '' if k == 1 else 's'))
             break
         up = _tiles_in(set(map(tuple, u['cells'])), T, keep_door=False, cover=cover) & per[k - 1]
         if len(up) < 2:
             break
         per[k] = up
+    # (floors asked for by number, the user's "the exterior looks like 3 stories" 2026-10-28: those the walls up there
+    # don't give are laid over the floor below, up to as many storeys as the building is tall over the door's sill)
+    if force and not tiles:
+        for k in range(1, min(want, FLOORS_MAX)):
+            if k not in per:
+                per[k] = set(per[k - 1])
+                notes.append('Floor %d laid over the floor below (the walls up there don\'t say where).' % (k + 1))
     # a door up high outside means a floor up there (the game's: 119 of 119), reaching the tile behind the door
-    st_ = (kits.stairs(db, kit) or {}).get('storey') or kp.get('height') or ss.STOREY
     for k, t_up in _upper_tiles(b, per.get(0, set()), T, st_):
         for kk in range(1, k + 1):
             if kk not in per:
@@ -717,7 +739,8 @@ def plan(db, b, kit=None, floors=None, tiles=None, tolerance='usual'):
             return pl
         except EditError as e:
             print('prefab tiles: %s; planning from the outline' % e)
-    pl0 = _plan(db, b, kit=kit, cover=COVER, floors=floors, ch=ch)
+    force = floors is not None
+    pl0 = _plan(db, b, kit=kit, cover=COVER, floors=floors, ch=ch, force=force)
     pr = pl0.get('prediction') or {}
     band, share = pr.get('ratio'), pr.get('share')
     want = len(pl0['floors']) if floors is None else floors
@@ -735,7 +758,7 @@ def plan(db, b, kit=None, floors=None, tiles=None, tolerance='usual'):
     cands, seen = [], set()
     for n in range(max(1, want), 0, -1):
         for cover in COVERS:
-            pl = pl0 if (cover == COVER and n == want) else _plan(db, b, kit=kit, cover=cover, floors=n, ch=ch)
+            pl = pl0 if (cover == COVER and n == want) else _plan(db, b, kit=kit, cover=cover, floors=n, ch=ch, force=force)
             sig = tuple(map(tuple, pl['tiles']))
             if sig in seen or not pl['tiles']:
                 continue
@@ -876,7 +899,7 @@ def plan_with_cellar(db, b, pl, cellar):
     return pl
 
 
-def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None):
+def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None, floors=None):
     """For the map: the building's check, the plan, and the planned tiles' corners in the world (to
     draw over the exterior), without building anything."""
     b = building_at(db, cell_key, ref_key, door_key)
@@ -897,11 +920,15 @@ def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None
                     'tiles': [], 'sill': round(b['frame'].z) if b['frame'] else 0, 'name': _suggest_name(db, b)})
         return out
     try:
-        pl = plan_with_cellar(db, b, plan(db, b, tolerance=tolerance), cellar)
+        pl = plan_with_cellar(db, b, plan(db, b, floors=floors, tolerance=tolerance), cellar)
     except EditError as e:
         ch = check(db, b)
         out.update({'ok': False, 'check': ch['lines'], 'error': str(e)})
         return out
+    # (the floors above ground: as many as asked, else the game's way for this building; up to its height in storeys)
+    out['floors_up'] = len([f for f in pl['floors'] if f >= 0])
+    out['floors_max'] = max(tall_floors(b), out['floors_up'])
+    out['floors_chosen'] = floors
     out['cellar'] = dict(cellar_band(((pl.get('prediction') or {}).get('style')) or ss.style_of_group(b['group'])), chosen=cellar or None)
     T, fr = pl['tile'], b['frame']
     polys = []

@@ -36,6 +36,21 @@ def join_subs(subs):
     return b''.join(sub(t, d) for t, d in subs)
 
 
+LAND_ORDER = ('INTV', 'DATA', 'VNML', 'VHGT', 'WNAM', 'VCLR', 'VTEX')
+
+
+def land_in_order(data):
+    """A land record's parts in the game's order. OpenMW reads them in that order and skips one out of place, so a
+    land saved before 2026-10-28 with its heights after its textures showed flat sea floor in game (landscape.write)."""
+    subs = [(t, bytes(d)) for t, d in iter_subrecords(data)]
+    known = sorted((s for s in subs if s[0] in LAND_ORDER), key=lambda s: LAND_ORDER.index(s[0]))
+    rest = [s for s in subs if s[0] not in LAND_ORDER]
+    out = known + rest
+    if [t for t, _d in out] == [t for t, _d in subs]:
+        return data
+    return join_subs(out)
+
+
 def _chain_order(infos):
     """Dialogue lines in the order of their "previous line" links (each after the one it follows)."""
     def link(r, tag):
@@ -415,6 +430,8 @@ class Project:
         count = 0
         def emit(r):
             data = unb64(r['data'])
+            if r['tag'] == 'LAND':
+                data = land_in_order(data)
             body.append(r['tag'].encode('ascii') + struct.pack('<III', len(data), 0, r['flags']) + data)
 
         cells = [(key, c) for key, c in self.cells.items() if c['refs'] or c.get('props')]

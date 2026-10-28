@@ -241,25 +241,18 @@ def write(db, gx, gy, heights=None, tex=None, colors=None, around=None):
         if len(colors) != N * N * 3:
             raise EditError('Vertex colours must be 65 x 65 RGB.')
         new['VCLR'] = colors
-    out, done = [], set()
-    for t, d in subs:
-        if t in new:
-            out.append((t, new[t]))
-            done.add(t)
-        elif t == 'DATA':
-            # (the record says what it carries: 1 heights and normals, 2 vertex colours, 4 textures)
-            out.append((t, struct.pack('<I', (struct.unpack_from('<I', d)[0] if len(d) >= 4 else 0) | 1 | 4 | (2 if 'VCLR' in new else 0))))
-        else:
-            out.append((t, d))
+    # always in the game's order, INTV DATA VNML VHGT WNAM VCLR VTEX: OpenMW reads a land's parts in that order and
+    # skips one out of place. Built on a record with textures only (Morrowind.esm's or Distant Seafloor's round Roth
+    # Roryn), the heights went after the textures: the Workshop showed the edit, the game flat sea floor (PIN2, 2026-10-28)
+    have = dict(subs)
+    flags_d = have.get('DATA', b'')
+    parts = {'INTV': have.get('INTV'), 'DATA': struct.pack('<I', (struct.unpack_from('<I', flags_d)[0] if len(flags_d) >= 4 else 0)
+                                                           | 1 | 4 | (2 if 'VCLR' in new or 'VCLR' in have else 0))}
     for t in ('VNML', 'VHGT', 'WNAM', 'VCLR', 'VTEX'):
-        if t in new and t not in done:
-            if t in ('WNAM', 'VCLR'):
-                # (the game's order: INTV DATA VNML VHGT WNAM VCLR VTEX)
-                later = ('VCLR', 'VTEX') if t == 'WNAM' else ('VTEX',)
-                at = next((n for n, (s, _d) in enumerate(out) if s in later), len(out))
-                out.insert(at, (t, new[t]))
-            else:
-                out.append((t, new[t]))
+        parts[t] = new.get(t, have.get(t))
+    order = ('INTV', 'DATA', 'VNML', 'VHGT', 'WNAM', 'VCLR', 'VTEX')
+    out = [(t, parts[t]) for t in order if parts.get(t) is not None]
+    out += [(t, d) for t, d in subs if t not in order]
     db.project.set_record('LAND', '%d,%d' % (gx, gy), flags & ~0x20, join_subs(out))
     return heights
 

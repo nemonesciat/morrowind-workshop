@@ -1728,6 +1728,7 @@ function v3Bind(el){
   });
   window.addEventListener('keydown', e => {
     if (!V3.on || !$('#world').classList.contains('on') || v3Typing(e)) return;
+    if (typeof BN !== 'undefined' && BN.open) return;     // (the prefab workbench over the view flies its own camera)
     const k = (e.key || '').toLowerCase(), mv = v3MoveKey(e);
     if (!e.repeat) V3.lastKey = mv || k;           // (the key Windows now repeats: only the last one pressed)
     if (mv && !e.ctrlKey && !e.altKey && !e.metaKey){

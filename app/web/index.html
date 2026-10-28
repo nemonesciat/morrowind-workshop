@@ -360,8 +360,7 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .wtools{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
 .wtools .btn{justify-content:flex-start;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .wtools .wt-wide{grid-column:1/-1;border-color:color-mix(in srgb,var(--gold) 45%,var(--line))}
-.wtools .wt-link{grid-column:1/-1;background:none;border-color:transparent;color:var(--muted);padding-left:2px}
-.wtools .wt-link:hover{color:var(--text)}
+.wtools .wt-full{grid-column:1/-1}
 .mapempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--faint);text-align:center;padding:30px}
 .me-card{width:min(440px,92%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px 16px;text-align:left;color:var(--text);box-shadow:0 10px 40px #0005}
 .me-card h3{font-family:Cinzel,serif;color:var(--gold2);font-weight:600;font-size:19px;margin:0 0 10px}
@@ -1921,7 +1920,8 @@ async function renderMyMod(){
   if (!P.changes.length) h += `<div class="card">No changes yet. Open anything in <b>Browse</b> and press <b>✎ Edit</b> or <b>⧉ Use as template</b>, or move things around on the <b>World map</b>.</div>`;
   for (const [t, list] of Object.entries(byType)){
     h += `<h3 style="margin:20px 0 6px;color:var(--muted);font-weight:500">${esc(S.typeLabels[t] || t)} <span class="msg">${list.length}</span></h3><table class="t">` +
-      list.map(c => `<tr><td><span class="lnk" data-open="${c.i}">${esc(c.name || c.id)}</span> <span class="msg">${esc(c.name ? c.id : '')}</span></td><td class="msg" style="width:260px">${esc(c.desc)}</td><td style="width:150px;text-align:right">${t === 'CELL' ? `<button class="btn sm" data-mapcell="${c.i}">Open on map</button>` : ''}</td></tr>`).join('') + `</table>`;
+      list.map(c => `<tr><td><span class="lnk" data-open="${c.i}">${esc(c.name || c.id)}</span> <span class="msg">${esc(c.name ? c.id : '')}</span></td><td class="msg" style="width:260px">${esc(c.desc)}</td><td style="width:${t === 'LAND' ? 220 : 150}px;text-align:right">${t === 'CELL' ? `<button class="btn sm" data-mapcell="${c.i}">Open on map</button>`
+        : t === 'LAND' ? `<button class="btn sm" data-mapland="${esc(c.id)}">Open on map</button> <button class="btn sm" data-landundo="${c.i}" title="Back to the ground as the game and your other mods have it">Undo</button>` : ''}</td></tr>`).join('') + `</table>`;
   }
   if (P.log.length){
     // changes nest under the change they build on (things placed in a place you built, lines in a quest you made...)
@@ -1989,6 +1989,14 @@ $('#mymodwrap').addEventListener('click', async e => {
   }
   const o = e.target.closest('[data-open]'); if (o) { openRecord(+o.dataset.open, true); return; }
   const m = e.target.closest('[data-mapcell]'); if (m) { showView('world'); worldOpenIndex(+m.dataset.mapcell); }
+  // (a changed piece of ground: its cell on the map, or its change undone; PIN2 couldn't find either, 2026-10-28)
+  const ml = e.target.closest('[data-mapland]'); if (ml) { showView('world'); worldOpen('#' + ml.dataset.mapland.replace(/\s+/g, '')); return; }
+  const lu = e.target.closest('[data-landundo]');
+  if (lu){
+    if (!confirm('Put this cell\'s ground back as the game and your other mods have it?')) return;
+    try { await post('/api/revert', {i: +lu.dataset.landundo}); toast('Ground put back. One Undo brings your change back.'); await afterChange(); W.lands = {}; renderMyMod(); }
+    catch (err){ toast(err.message, true); }
+  }
 });
 
 // ---------- world map ----------
@@ -3007,7 +3015,8 @@ function renderWside(){
   const sel = W.sel && findRef(W.sel.cell, W.sel.k);
   h += `<div class="whead"><h2>${esc(i.name || i.region || 'Wilderness')}</h2><div class="msg">${i.interior ? 'Interior' : `Outdoors · ${i.gx}, ${i.gy}${i.region ? ' · ' + esc(i.region) : ''}`} · <span class="lnk" data-cellrec="${i.i}">details</span></div>
     <div class="playrow"><button class="btn sm primary" id="w-play" title="${LINK.connected ? 'Go here in game: the game is running, this teleports you there' :'Starts OpenMW here with a quick test character, your whole load order and your mod. Your normal saves are untouched.'}">▶ ${LINK.connected ? 'Go here' : 'Play here'}</button><button class="btn sm" id="w-playspot" title="Click a spot on the map to start or teleport there">Pick a spot</button></div>
-    <div id="w-link"></div></div>`;
+    <div id="w-link"></div>
+    ${i.land_after && i.land_after.length ? `<div class="msg warn" style="margin-top:6px" title="Started from OpenMW's own launcher, the later plugin's ground wins. Play here always loads your mod last.">⚠ ${esc(i.land_after.join(', '))} loads after your mod and has its own ground here. <span class="lnk" onclick="showView('plugins')">Load order</span></div>` : ''}</div>`;
   PNL.badge('world', 'objs', fmtN(refs.length)); PNL.badge('world', 'sel', sel || W.multi.size > 1 ? '●' : '');
   // --- Place
   h += `<div class="wpane on" data-pane="place"><div id="w-placing"></div>
@@ -3015,7 +3024,7 @@ function renderWside(){
       <button class="btn sm" id="w-create" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
       <button class="btn sm" id="w-stylepal" title="Building pieces, furniture, decor and whole sets sorted by style (Hlaalu, Redoran, Telvanni, Nord, Imperial, Gold Coast...), the way the game's own places use them: see what goes with what, then click or drag to place">🎨 Style palette…</button>
       ${i.interior ? '<button class="btn sm wt-wide" id="w-furnish" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" title="Look over the place for what\'s wrong (floating things, chairs with nothing to sit at, gaps…), each with a marker and a fix where there is one">🩺 Check place…</button>' : ''}
-      <button class="btn sm wt-link" id="w-2win" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Open in a second window</button></div>
+      <button class="btn sm wt-full" id="w-2win" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Second window…</button></div>
     ${i.interior ? '<div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}

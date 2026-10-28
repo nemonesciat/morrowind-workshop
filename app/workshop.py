@@ -444,11 +444,11 @@ def _game_content_args():
     ours = (SPARE_NAME.lower(), CONTENT_NAME.lower())
     content = [c for c in db.cfg_content_all if c.lower() not in ours]
     if db.project and os.path.isfile(editing.plugin_path(db)):
-        if db.project.plugin.lower() not in [c.lower() for c in content]:
-            content.append(db.project.plugin)
+        # (last, even when openmw.cfg lists it earlier: there a plugin after it that changes the same cell won in
+        # the game while the Workshop shows the mod on top; PIN2's ground in Roth Roryn "broken" in game, 2026-10-28)
         lc = editing.lua_content(db)
-        if lc and lc.lower() not in [c.lower() for c in content]:
-            content.append(lc)                       # the mod's Lua scripts
+        mine = {db.project.plugin.lower()} | ({lc.lower()} if lc else set())
+        content = [c for c in content if c.lower() not in mine] + [db.project.plugin] + ([lc] if lc else [])
     # live link: the game will load exactly what the plugin holds now
     link.start_session()
     content += [SPARE_NAME, CONTENT_NAME]
@@ -825,7 +825,10 @@ class Handler(BaseHTTPRequestHandler):
                 key = q['key'] if 'key' in q else db.recs[int(q['i'])][7]
                 # (original=1: the place as the game and your other mods have it, without this mod: a
                 # "before" window, web/twowin.js)
-                self._json(mapdata.cellmap(db, key, original=q.get('original') == '1'))
+                m = mapdata.cellmap(db, key, original=q.get('original') == '1')
+                if isinstance(m, dict) and m.get('exists') and q.get('original') != '1':
+                    m['land_after'] = mapdata.land_after(db, key)
+                self._json(m)
             elif u.path == '/api/lands':
                 # many cells' ground for the 2D map; coarser when zoomed out, so it stays quick
                 x0, y0, x1, y1, step = (int(q[k]) for k in ('x0', 'y0', 'x1', 'y1', 'step'))
@@ -1265,7 +1268,7 @@ class Handler(BaseHTTPRequestHandler):
                 # interior that would be built in it (nothing is changed; frombuilding.py)
                 import frombuilding
                 self._json(frombuilding.preview(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None, q.get('tolerance') or 'usual',
-                                                q.get('cellar') or None))
+                                                q.get('cellar') or None, int(q['floors']) if q.get('floors') else None))
             elif u.path == '/api/build/snaps':
                 # where the game joins a model to the made pieces near a spot outdoors: the 3D view's snapping (housemodules.snaps)
                 import housemodules
@@ -1306,6 +1309,10 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/bench/building':
                 import bench
                 self._json(bench.building(db, q.get('key', '')))
+            elif u.path == '/api/bench/uses':
+                # the game's buildings that use a piece, to see it in use beside the bench's work
+                import bench
+                self._json(bench.uses(db, q.get('id', ''), q.get('style') or None))
             elif u.path == '/api/build/modules':
                 # whole buildings of the game's to put down outdoors, sized in interior tiles (housemodules.py)
                 import housemodules
@@ -2626,6 +2633,14 @@ def changes_list():
             rec = p.records.get(tag + '|' + key, {})
             created = rec.get('created', False)
             desc = 'new' if created else 'changed'
+        if tag == 'LAND':
+            # (your mod's own ground carries no ID of its own: named by its cell, "Roth Roryn (-9, -14)", so it can be
+            # found and opened; the list showed blank rows, PIN2 2026-10-28)
+            gx, gy = key.split(',')
+            info = mapdata.cell_info(db, '#' + key) or {}
+            out.append({'i': ri, 'type': tag, 'id': '%s, %s' % (gx, gy), 'name': '%s (%s, %s)' % (info.get('name') or 'Wilderness', gx, gy),
+                        'desc': 'ground ' + desc, 'created': created})
+            continue
         out.append({'i': ri, 'type': tag, 'id': r[1], 'name': r[2], 'desc': desc, 'created': created})
     out.sort(key=lambda x: (x['type'], x['id'].lower()))
     return out
