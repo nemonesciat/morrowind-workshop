@@ -48,7 +48,7 @@ def _survey(db):
 
 
 def _label(m):
-    st = m.get('style') or kits.friendly(m.get('kit') or '') or 'House'
+    st = look(m) or m.get('style') or kits.friendly(m.get('kit') or '') or 'House'
     wd = m.get('tiles_wd') or [0, 0]
     fl = m.get('floors') or 1
     return '%s %s: %d×%d tiles, %d floor%s' % (st, m['main'], wd[0], wd[1], fl, '' if fl == 1 else 's')
@@ -80,12 +80,16 @@ def catalogue(db, style=None, good=True, limit=60):
 
 
 def styles(db):
-    """{style: number of good modules}."""
+    """{look: number of the game's homes of that look the prefab planner can lay over a volume}: counted the
+    way fit_volume picks them (by the look of their outside pieces, homes only). (Counted by the interior style
+    the survey predicted, Redoran, Nordic, Reach and the rest never showed in Plan a prefab even once their
+    buildings were learnt, 2026-10-27.)"""
     s = _survey(db)
     c = {}
     for m in s['modules']:
-        if m.get('style') and m.get('tiles') and FILL_GOOD[0] <= m['fill'] <= FILL_GOOD[1]:
-            c[m['style']] = c.get(m['style'], 0) + 1
+        lk = look(m)
+        if lk and m.get('ftiles') and m.get('fpieces') and homely(m):
+            c[lk] = c.get(lk, 0) + 1
     return c
 
 
@@ -236,6 +240,87 @@ def join(db, cell_key, ref_key, rid, pose):
     return {'cell': key, 'ref': r['changed'][0]}
 
 
+# ---------------------------------------------------------------- snapping a piece the way the game joins it
+
+def snaps(db, rid, x, y, z, skip=None, radius=1600, limit=80):
+    """Where the game joins this model to the made pieces near (x, y, z) outdoors: [{p: [x, y, z, rx, ry, rz], n, to, side}],
+    the most used joins first. From the joins learnt in every exterior cell (exteriorsurvey 'outdoor'), both ways round:
+    the model standing against a neighbour, and a neighbour that stands against the model, worked back. For the 3D
+    view's snapping: the game's own joins first, flush faces where it has none. Measured 2026-10-27: 45% of the game's
+    joins (56% of Hlaalu's) are joins of the same two models on the same face elsewhere; the rest is improvised.
+    {'learning': True} while the survey is still being learnt."""
+    s = es.ready(db)
+    if s is None:
+        return {'learning': True, 'snaps': []}
+    return {'learning': False, 'snaps': snaps_among(db, s, rid, x, y, ss.near_items(db, x, y), skip, radius, limit)}
+
+
+def snaps_among(db, s, rid, x, y, items, skip=None, radius=1600, limit=80):
+    """snaps() among these items (the world's near a spot, or the prefab workbench's own pieces, bench.py): the
+    poses the game joins the model at, merged and the best backed first. s: the exterior survey."""
+    J = (s.get('outdoor') or {}).get('joins') or {}
+    E = (s.get('outdoor') or {}).get('exact') or {}
+    low = rid.lower()
+
+    def rel_of(model, side, rs):
+        # (the join's exact pose where it was learnt, else the grid key's)
+        e = ((E.get(model) or {}).get(side) or {}).get(rs)
+        if e:
+            return e
+        xyz, turn = rs.split('@')[1].split('/')
+        return [int(v) for v in xyz.split(',')] + [int(turn)]
+    items = [it for it in items if es.is_outdoor_piece(it) and it['k'] != skip]
+    near = sorted((it for it in items if math.hypot((it['box'][0] + it['box'][2]) / 2 - x, (it['box'][1] + it['box'][3]) / 2 - y) < radius),
+                  key=lambda it: math.hypot(it['p'][0] - x, it['p'][1] - y))[:16]
+    mine = J.get(low) or {}
+    out = []
+    for it in near:
+        A = es._piece(it)
+        # (the model against this neighbour, as the game puts it)
+        # (and 'in': one set into the other, a window in a wall, a door in its jamb; a quarter of the game's spots)
+        for side, rels in (J.get(it['low']) or {}).items():
+            for rs, n in rels.items():
+                bid = rs.split('@')[0]
+                if bid != low:
+                    continue
+                lx, ly, lz, turn = rel_of(it['low'], side, rs)
+                pl = adjacency.placed(A, (bid, lx, ly, lz, turn))
+                out.append({'p': pl['p'], 'n': n, 'to': it['id'], 'side': side})
+        # (this neighbour against the model: the model's pose worked back from it)
+        for side, rels in mine.items():
+            for rs, n in rels.items():
+                bid = rs.split('@')[0]
+                if bid != it['low']:
+                    continue
+                lx, ly, lz, turn = rel_of(low, side, rs)
+                rz = (A['rz'] - math.radians(turn)) % (2 * math.pi)
+                c, sn = math.cos(rz), math.sin(rz)
+                wx, wy = A['x'] - (lx * c + ly * sn), A['y'] - (-lx * sn + ly * c)
+                out.append({'p': [round(wx, 2), round(wy, 2), round(A['z'] - lz, 2), 0, 0, round(rz, 5)], 'n': n, 'to': it['id'],
+                            'side': 'to ' + side})
+    # (a spot where the same model stands already is taken)
+    same = [it for it in items if it['low'] == low]
+    out = [o for o in out if not any(math.hypot(o['p'][0] - it['p'][0], o['p'][1] - it['p'][1]) < 12 and abs(o['p'][2] - it['p'][2]) < 12
+                                     for it in same)]
+    # (one spot the game's way to two neighbours or more is one spot, and far likelier the real one: a rogue join used
+    # once lay nearer the dropped piece than its own spot in Balmora, 2026-10-27. k: the neighbours agreeing on it)
+    merged = []
+    for o in sorted(out, key=lambda o: -o['n']):
+        m = next((m for m in merged if math.hypot(m['p'][0] - o['p'][0], m['p'][1] - o['p'][1]) < 3 and abs(m['p'][2] - o['p'][2]) < 3
+                  and abs((m['p'][5] - o['p'][5] + math.pi) % (2 * math.pi) - math.pi) < 0.01), None)
+        if m is None:
+            merged.append(dict(o, k=1, _to={o['to']}))
+        else:
+            m['n'] += o['n']
+            if o['to'] not in m['_to']:
+                m['_to'].add(o['to'])
+                m['k'] += 1
+    for m in merged:
+        del m['_to']
+    merged.sort(key=lambda o: (-o['k'], -o['n']))
+    return merged[:limit]
+
+
 # ---------------------------------------------------------------- fitting the game's buildings to a volume
 
 OUT_MAX = 0.15                  # a module may stand out of the volume by this share of its tiles (one tile at least)
@@ -245,13 +330,30 @@ OUT_MAX = 0.15                  # a module may stand out of the volume by this s
 TOLERANCE = {'close': {'out': 0.06}, 'usual': {'out': OUT_MAX}, 'loose': {'out': 0.35}}
 # buildings that are not homes or shops: offered only for "any building" (kind='any')
 NOT_HOME = re.compile(r'tomb|ruin|dae_|daed|menhir|gazebo|shrine|barrow|fort|keep|guardtower|legion|wall|gate|bridge|stand|'
-                      r'market|chapel|temple|tower|mine|cave|dock|warehouse|stable|silt|canton|plaza|ent_|entrance|boat|ship|column|pillar')
+                      r'market|chapel|temple|tower|mine|cave|dock|warehouse|stable|silt|canton|plaza|ent_|entrance|boat|ship|column|pillar|'
+                      r'exit|ice_|iceberg|karstaag|dng|dungeon|grotto|sewer|striderport')
 
 
 def look(m):
-    """A module's style by its exterior pieces' names (the style the game's interior in it was built in is
-    another matter: a barrow's interior may be Hlaalu)."""
-    return mapdata.style_of(m['main']) or m.get('style')
+    """A module's style by its exterior pieces' names: its main piece's, else the one most of its pieces name;
+    None when they name none. (The style the game's interior in it was built in is another matter: a barrow's
+    interior may be Hlaalu. And never the survey's guess of the interior style: for a building it knew nothing
+    of, that guess was the commonest style, Hlaalu, and an ice-cave exit and a Reach house were offered as
+    Hlaalu homes, 2026-10-27.)"""
+    if 'look' not in m:
+        st = mapdata.style_of(m['main'])
+        if not st:
+            # (only when most of its pieces name one style: a Reach house with a High Elf door was a "High Elf home")
+            c = {}
+            ps = m.get('pieces') or ()
+            for p in ps:
+                s_ = mapdata.style_of(p['id'])
+                if s_:
+                    c[s_] = c.get(s_, 0) + 1
+            best = max(c, key=c.get) if c else None
+            st = best if best and c[best] > 0.6 * len(ps) else None
+        m['look'] = st
+    return m['look']
 
 
 def homely(m):
@@ -305,12 +407,120 @@ def _placements(m, vol, front=None):
                 yield q, (sx - fx, sy - fy), [{(t[0] + sx, t[1] + sy) for t in fp} for fp in turned]
 
 
-def fit_volume(db, style, volume, front='S', limit=6, skip=(), kind='homes', tolerance='usual'):
+VARIETY = 1.0                   # a building this much behind the best fit (in tiles) is still drawn among the choices
+REPEAT_COST = 3.0               # and one already in the plan is that much behind: used again only when nothing else covers
+
+
+SOLID_INSET = 32                # a tile taken in this much each way before a piece's mesh is looked for in it (64 let
+                                # a door frame 40 deep into its neighbour's wall through)
+SOLID_FOOT = 96                 # and only what reaches down to the ground (within this): what stands there
+SOLID_BELOW = 32                # (the band read: this far under the ground to SOLID_FOOT over it)
+
+
+def _solid(db, m, T):
+    """The frame tiles a module's own pieces stand on (not its trim), whatever its floor tiles: its walls, stairs,
+    porch and door reach past them, and two buildings laid side by side by their floor tiles alone put one's door
+    and stairs inside the other (948 of the clashes in 160 two-building prefabs, 2026-10-27). {(i, j)}
+    From the pieces' meshes at the ground, not their boxes: a Telvanni root, a Velothi wall run at an angle or a
+    curved stair claims the whole box round it, and blocked or let through placements wrongly (2026-10-28). A tile
+    is taken where a triangle of a piece crosses the band at the ground inside it, the tile taken in by SOLID_INSET
+    (a wall on the line between two tiles takes neither)."""
+    if '_solid' not in m:
+        out = set()
+        g = m.get('fground', -40.0)
+        for p in m.get('fpieces') or ():
+            if p.get('trim'):
+                continue
+            ri, b = adjacency._box(db, p['id'])
+            if not b or ri is None:
+                continue
+            s = p.get('s') or 1.0
+            tris = ss.world_tris(db, {'low': p['id'].lower(), 'p': [p['x'], p['y'], p['z'], p.get('rx', 0.0), p.get('ry', 0.0), p['rz']],
+                                      's': s, 'ri': ri})
+            # (its whole height, seen from above: an upper storey overhangs, and a Reach house's was over its neighbour's
+            # door and window, which a test at the ground let through, by box or by mesh, 2026-10-28)
+            cells = _foot_cells(tris, g)
+            # (a tile is taken where the piece stands inside it, the tile taken in by SOLID_INSET)
+            for (cx, cy) in cells:
+                x, y = (cx + 0.5) * FOOT_CELL, (cy + 0.5) * FOOT_CELL
+                i, j = int(math.floor(x / T + 0.5)), int(math.floor(y / T))
+                if abs(x - i * T) <= T / 2.0 - SOLID_INSET and abs(y - (j + 0.5) * T) <= T / 2.0 - SOLID_INSET:
+                    out.add((i, j))
+        m['_solid'] = out
+    return m['_solid']
+
+
+FOOT_CELL = 32                  # the grid a piece's footprint at the ground is drawn on
+FOOT_SHUT = 2                   # gaps in its walls up to twice this many cells each side (a doorway, 128) are closed
+
+
+def _foot_cells(tris, g):
+    """Where a piece stands at the ground, on a FOOT_CELL grid: the cells its mesh crosses in the band at the ground,
+    and those its mesh there closes round (a house shell is walls with a hollow inside: by its walls alone it took
+    almost nothing, and Reach houses were laid into their neighbours' doors, 2026-10-28). {(cx, cy)}"""
+    from placecheck import _tri_in_box
+    zc, zh = 0.0, 1e6                   # (every height: the piece seen from above)
+    h = (FOOT_CELL / 2.0, FOOT_CELL / 2.0, zh)
+    wall = set()
+    for t in tris:
+        xs_, ys_ = (t[0][0], t[1][0], t[2][0]), (t[0][1], t[1][1], t[2][1])
+        for cx in range(int(math.floor(min(xs_) / FOOT_CELL)), int(math.floor(max(xs_) / FOOT_CELL)) + 1):
+            for cy in range(int(math.floor(min(ys_) / FOOT_CELL)), int(math.floor(max(ys_) / FOOT_CELL)) + 1):
+                if (cx, cy) in wall:
+                    continue
+                ox, oy = (cx + 0.5) * FOOT_CELL, (cy + 0.5) * FOOT_CELL
+                if _tri_in_box((t[0][0] - ox, t[0][1] - oy, t[0][2] - zc), (t[1][0] - ox, t[1][1] - oy, t[1][2] - zc),
+                               (t[2][0] - ox, t[2][1] - oy, t[2][2] - zc), h):
+                    wall.add((cx, cy))
+    if not wall:
+        return wall
+    # (what the walls close round: everything in their box the outside can't reach, past gaps up to a doorway's width,
+    # the walls grown by FOOT_SHUT cells for it: the way in at the ground let the outside in, and nothing was inside)
+    shut = set(wall)
+    for (x, y) in wall:
+        for dx in range(-FOOT_SHUT, FOOT_SHUT + 1):
+            for dy in range(-FOOT_SHUT, FOOT_SHUT + 1):
+                shut.add((x + dx, y + dy))
+    x0, x1 = min(c[0] for c in shut) - 1, max(c[0] for c in shut) + 1
+    y0, y1 = min(c[1] for c in shut) - 1, max(c[1] for c in shut) + 1
+    seen, todo = {(x0, y0)}, [(x0, y0)]
+    while todo:
+        x, y = todo.pop()
+        for n in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if x0 <= n[0] <= x1 and y0 <= n[1] <= y1 and n not in seen and n not in shut:
+                seen.add(n)
+                todo.append(n)
+    inside = {(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1) if (x, y) not in seen and (x, y) not in shut}
+    # (the inside grown back out to the walls, and the walls themselves)
+    grown = set(inside)
+    for (x, y) in inside:
+        for dx in range(-FOOT_SHUT, FOOT_SHUT + 1):
+            for dy in range(-FOOT_SHUT, FOOT_SHUT + 1):
+                if (x + dx, y + dy) in shut:
+                    grown.add((x + dx, y + dy))
+    return wall | grown
+
+
+def _to_volume(tiles, q, at):
+    """Frame tiles of a module laid turned q and at `at`, as volume tiles (as _placements lays its floor tiles)."""
+    out = set()
+    for i, j in tiles:
+        x, y = _turn(i, j, q)
+        out.add((int(round(x + at[0])), int(round(y + at[1]))))
+    return out
+
+
+def fit_volume(db, style, volume, front='S', limit=6, skip=(), kind='homes', tolerance='usual', seed=None):
     """The game's buildings of a style laid over a volume of tiles: volume {'tiles': [[x, y, storey]]} (in
     the style's kit tiles; storey 0 the ground). Greedy: the module covering most of what is left, standing
     out of the volume least, first; the first one is the front one and keeps its door on the volume's front
     edge (front: the side the door faces, 'S' = -y). Returns {'modules': [{key, name, q, at, tiles}],
-    'items': a group for groups.place, 'covered', 'outside', 'missing': [[x, y, storey]], 'notes'}."""
+    'items': a group for groups.place, 'covered', 'outside', 'missing': [[x, y, storey]], 'notes'}.
+    seed: a draw among the fits nearly as good as the best (VARIETY), weighted by how often the game builds each,
+    so the same volume doesn't always give the same house (the user: not "cookie cutter"); None, the best one.
+    Either way a building already in the plan comes again only when nothing else covers (a Redoran hut x2 was)."""
+    import random
+    rng = random.Random(seed) if seed is not None else None
     s = _survey(db)
     vol = {}
     for x, y, k in volume.get('tiles') or ():
@@ -339,13 +549,23 @@ def fit_volume(db, style, volume, front='S', limit=6, skip=(), kind='homes', tol
     chosen, out_total = [], 0
     tol = TOLERANCE.get(tolerance) or TOLERANCE['usual']
     any_side = False
+    used = set()
+    taken = set()                   # the volume tiles the chosen buildings stand over, their pieces and floors both
+    floors_ = set()                 # and their floors alone (with the tile before the front door)
     for step in range(limit + 1):
         top = None
+        cands = []
         for m in mods:
             fps_n = sum(len(fp) for fp in _footprints(m))
+            sol = _solid(db, m, T)
             for q, at, laid in _placements(m, storeys, fq if (not chosen and not any_side) else None):
                 gain = sum(len(laid[k] & left[k]) for k in range(min(len(laid), len(left))))
                 if gain < 2:
+                    continue
+                # (never standing in a building already laid: its door, stairs or walls on the other's floor, or its
+                # floor over the other's. Outside both floors they may meet, eaves over a porch: forbidding that too
+                # fitted a second building almost never, cover 94% -> 69%)
+                if floors_ and (_to_volume(sol, q, at) & floors_ or laid[0] & taken):
                     continue
                 # (standing out of the volume, on the storeys it has; storeys above its top only weigh a little: a roof
                 # space reads as a storey, and its interior is not built anyway, the plan follows the volume)
@@ -356,7 +576,9 @@ def fit_volume(db, style, volume, front='S', limit=6, skip=(), kind='homes', tol
                     continue
                 if not chosen and not _door_on_front(m, q, at, storeys[0], q if any_side else fq):
                     continue
-                score = (gain - 2 * outside_ - overlap - 0.25 * above, m['uses'] > 1, -abs(1 - m['fill']))
+                score = (gain - 2 * outside_ - overlap - 0.25 * above - (REPEAT_COST if m['main'] in used else 0),
+                         m['uses'] > 1, -abs(1 - m['fill']))
+                cands.append((score, m, q, at, laid, outside_))
                 if top is None or score > top[0]:
                     top = (score, m, q, at, laid, outside_)
         if top is None and not chosen and not any_side:
@@ -364,7 +586,20 @@ def fit_volume(db, style, volume, front='S', limit=6, skip=(), kind='homes', tol
             continue
         if top is None:
             break
+        if rng is not None:
+            # (the near-best, one placement a building, drawn by how often the game builds it, softened)
+            near = {}
+            for c in cands:
+                if c[0][0] >= top[0][0] - VARIETY and (c[1]['main'] not in near or c[0] > near[c[1]['main']][0]):
+                    near[c[1]['main']] = c
+            pool = sorted(near.values(), key=lambda c: c[1]['main'])
+            top = rng.choices(pool, weights=[math.sqrt(max(1, c[1]['uses'])) for c in pool])[0]
         _sc, m, q, at, laid, o_ = top
+        used.add(m['main'])
+        taken |= _to_volume(_solid(db, m, T), q, at) | set().union(*laid)
+        floors_ |= set().union(*laid)
+        if not chosen:
+            floors_.add(_ahead(q, _door_tile(q, at)))        # (and the way to the front door stays open)
         for k in range(min(len(laid), len(left))):
             left[k] -= laid[k]
         out_total += o_
@@ -432,7 +667,14 @@ def _ahead(q, t):
 def _compose(chosen, T):
     """The modules' pieces as one group: offsets from the middle of the volume, dz from the ground."""
     rows = []
-    for ch in chosen:
+    # (whose tile each is: a building's trim on a tile its neighbour covers goes. Brought along with each building,
+    # its windows, chimneys and railings stood inside the next one's walls: 148 of 160 two-building prefabs had a
+    # piece cut into its neighbour, 2026-10-27)
+    owner = {}
+    for n, ch in enumerate(chosen):
+        for x, y, _k in ch['tiles']:
+            owner.setdefault((x, y), n)
+    for n, ch in enumerate(chosen):
         m = ch['_m']
         th = ch['q'] * math.pi / 2
         ax, ay = ch['at']
@@ -441,12 +683,15 @@ def _compose(chosen, T):
             # (frame units to tiles: the frame's tile centres sit at (i T, (j + 1/2) T))
             tx, ty = p['x'] / T, p['y'] / T
             wx, wy = outside._world(tx, ty, th)
+            if p.get('trim') and owner.get((int(round(wx + ax)), int(round(wy + ay))), n) != n:
+                continue
             rows.append({'id': p['id'], 'x': (wx + ax) * T, 'y': (wy + ay) * T, 'dz': round(p['z'] - g, 2), 'rx': p.get('rx', 0.0),
-                         'ry': p.get('ry', 0.0), 'rz': round((p['rz'] + th) % (2 * math.pi), 5), 's': p.get('s') or 1.0, 'door': p.get('door')})
+                         'ry': p.get('ry', 0.0), 'rz': round((p['rz'] + th) % (2 * math.pi), 5), 's': p.get('s') or 1.0, 'door': p.get('door'),
+                         'mod': n, 'trim': bool(p.get('trim'))})
     cx = (min(r['x'] for r in rows) + max(r['x'] for r in rows)) / 2
     cy = (min(r['y'] for r in rows) + max(r['y'] for r in rows)) / 2
     out = []
     for r in rows:
         out.append({'id': r['id'], 'dx': round(r['x'] - cx, 2), 'dy': round(r['y'] - cy, 2), 'dz': r['dz'], 'rx': r['rx'], 'ry': r['ry'],
-                    'rz': r['rz'], 's': r['s']})
+                    'rz': r['rz'], 's': r['s'], 'mod': r['mod'], 'trim': r['trim']})
     return out

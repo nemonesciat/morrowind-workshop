@@ -1156,6 +1156,12 @@ class Handler(BaseHTTPRequestHandler):
                                                         (lambda p: (p[0], p[1], float(p[2])))(bw.split(',')) if bw else None))
                 except ValueError as e:
                     return self._json({'error': str(e)}, 400)
+            elif u.path in ('/api/forge/looks', '/api/forge/worn'):
+                # the Forge's "Looks like": any piece of the slot in the load order, and an armour's worn parts (forgelooks.py)
+                import forgelooks
+                if u.path.endswith('worn'):
+                    return self._json({'parts': forgelooks.worn(db, int(q.get('i', -1)))})
+                return self._json(forgelooks.looks(db, q.get('kind') or '', q.get('type') or '', q.get('q') or '', int(q.get('limit', 60))))
             elif u.path in ('/api/forge/options', '/api/forge/propose', '/api/forge/like'):
                 # the Forge: a new weapon or armour piece with the numbers the game gives its type and material
                 import gearsurvey
@@ -1258,7 +1264,48 @@ class Handler(BaseHTTPRequestHandler):
                 # a building outdoors (the piece or door right-clicked): is it closed and sound, and the
                 # interior that would be built in it (nothing is changed; frombuilding.py)
                 import frombuilding
-                self._json(frombuilding.preview(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None, q.get('tolerance') or 'usual'))
+                self._json(frombuilding.preview(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None, q.get('tolerance') or 'usual',
+                                                q.get('cellar') or None))
+            elif u.path == '/api/build/snaps':
+                # where the game joins a model to the made pieces near a spot outdoors: the 3D view's snapping (housemodules.snaps)
+                import housemodules
+                self._json(housemodules.snaps(db, q.get('id', ''), float(q.get('x') or 0), float(q.get('y') or 0), float(q.get('z') or 0),
+                                              q.get('skip') or None))
+            elif u.path == '/api/build/check':
+                # a building outdoors checked by the game's rules for its style: standing on nothing, walls, roof
+                # (frombuilding.outdoor_check; nothing is changed)
+                import frombuilding
+                self._json(frombuilding.outdoor_check(db, q.get('cell', ''), q.get('ref', '')))
+            elif u.path == '/api/build/outsides':
+                # the game's buildings that fit an interior, to give it an outside (frombuilding.outsides_for)
+                import frombuilding
+                self._json(frombuilding.outsides_for(db, q.get('key', '')))
+            elif u.path == '/api/build/outside_items':
+                import frombuilding
+                items_, di_, label_ = frombuilding._outside_items(db, q.get('key', ''))
+                self._json({'items': items_, 'door': di_, 'label': label_})
+            elif u.path == '/api/build/game_interiors':
+                # the game's interiors behind buildings of the same shell: each a valid interior for this one
+                import frombuilding
+                self._json(frombuilding.game_interiors(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None))
+            elif u.path == '/api/bench':
+                # the prefab workbench, as it was left (bench.py, web/bench.js)
+                import bench
+                self._json(bench.load(q.get('name') or 'bench'))
+            elif u.path == '/api/bench/styles':
+                import bench
+                self._json(bench.styles(db))
+            elif u.path == '/api/bench/shelf':
+                # every building piece of a style, by kind, for the bench's shelf
+                import bench
+                self._json(bench.shelf(db, q.get('style') or 'Hlaalu'))
+            elif u.path == '/api/bench/buildings':
+                # the game's buildings of a style to start the bench from
+                import bench
+                self._json(bench.buildings(db, q.get('style') or 'Hlaalu'))
+            elif u.path == '/api/bench/building':
+                import bench
+                self._json(bench.building(db, q.get('key', '')))
             elif u.path == '/api/build/modules':
                 # whole buildings of the game's to put down outdoors, sized in interior tiles (housemodules.py)
                 import housemodules
@@ -1972,6 +2019,29 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(groups.save_prefab(db, body.get('name'), items_, body.get('source', '')))
                 if u.path == '/api/prefabs/delete':
                     return self._json(groups.delete_prefab(body.get('name', '')))
+                if u.path == '/api/build/give_outside':
+                    # one of the game's buildings set down outdoors as an interior's outside, doors linked (one Undo)
+                    import frombuilding
+                    return self._json(frombuilding.give_outside(db, body.get('interior', ''), body.get('key', ''), body.get('cell'),
+                                                                float(body['x']), float(body['y']), float(body['z']), float(body.get('yaw') or 0)))
+                if u.path == '/api/build/copy_interior':
+                    # one of the game's interiors for this building's shell, copied and linked to its door (one Undo)
+                    import frombuilding
+                    return self._json(frombuilding.copy_game_interior(db, body.get('cell', ''), body.get('ref', ''), body.get('template', ''),
+                                                                      body.get('name', ''), body.get('contents') or 'furnished', body.get('door')))
+                if u.path.startswith('/api/bench/'):
+                    # the prefab workbench (bench.py): kept, snapped, filled and checked; the world is not touched
+                    import bench
+                    pcs = body.get('pieces') or []
+                    if u.path == '/api/bench/save':
+                        return self._json(bench.save(body.get('name') or 'bench', body))
+                    if u.path == '/api/bench/snaps':
+                        return self._json(bench.snaps(db, pcs, body.get('id', ''), float(body.get('x') or 0), float(body.get('y') or 0),
+                                                      float(body.get('z') or 0), body.get('skip')))
+                    if u.path == '/api/bench/fill':
+                        return self._json(bench.fill(db, pcs))
+                    if u.path == '/api/bench/check':
+                        return self._json(bench.check(db, pcs))
                 if u.path == '/api/build/plans/save':
                     import plans
                     return self._json(plans.save_plan(body.get('name'), body.get('plan'), body.get('style'), body.get('options')))
@@ -1988,10 +2058,22 @@ class Handler(BaseHTTPRequestHandler):
                             body.get('armor') or [], body.get('weapons') or [])
                     try:
                         if u.path.endswith('setpreview'):
-                            return self._json({'pieces': gearsets.preview(db, *args)})
-                        return self._json(gearsets.make(db, *args, names=body.get('names') or {}))
+                            return self._json({'pieces': gearsets.preview(db, *args, looks=body.get('looks') or {})})
+                        return self._json(gearsets.make(db, *args, names=body.get('names') or {}, looks=body.get('looks') or {},
+                                                        style=body.get('style') or {}))
                     except ValueError as e:
                         return self._json({'error': str(e)}, 400)
+                if u.path == '/api/forge/make':
+                    # one Forge piece with its look's enchantment left out, and its own model or skin, one Undo
+                    import gearsets
+                    try:
+                        return self._json(gearsets.make_one(db, body))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path == '/api/forge/textures':
+                    # the pictures the pieces' models and worn parts use, for a skin (forgelooks.py)
+                    import forgelooks
+                    return self._json({'textures': forgelooks.textures(db, body.get('recs') or [])})
                 if u.path in ('/api/forge/setplaces', '/api/forge/placeset'):
                     # a whole set into the world: where each piece would go, or all of it placed, one Undo (gearplaces.py)
                     import gearplaces
@@ -2001,15 +2083,17 @@ class Handler(BaseHTTPRequestHandler):
                         if u.path.endswith('setplaces'):
                             return self._json(gearplaces.set_places(db, body.get('ids') or [], body.get('mat') or None, between))
                         return self._json(gearplaces.place_set(db, body.get('ids') or [], body.get('lists') or {}, body.get('classes') or [],
-                                                               body.get('sells') or [], body.get('mat') or None, between, body.get('name') or ''))
+                                                               body.get('sells') or [], body.get('mat') or None, between, body.get('name') or '',
+                                                               body.get('people') or [], body.get('gives') or [], body.get('own_list') or None))
                     except ValueError as e:
                         return self._json({'error': str(e)}, 400)
                 if u.path == '/api/forge/place':
                     # the piece into the world as chosen: lists, swaps, merchants' stock, one Undo (gearplaces.py)
                     import gearplaces
                     try:
-                        return self._json(gearplaces.place(db, body.get('id') or '', body.get('lists') or [], body.get('swaps') or [], body.get('sells') or []))
-                    except ValueError as e:
+                        return self._json(gearplaces.place(db, body.get('id') or '', body.get('lists') or [], body.get('swaps') or [], body.get('sells') or [],
+                                                           body.get('gives') or [], body.get('own_list') or None))
+                    except (ValueError, EditError) as e:
                         return self._json({'error': str(e)}, 400)
                 if u.path == '/api/forge/check':
                     import gearsurvey
@@ -2051,11 +2135,19 @@ class Handler(BaseHTTPRequestHandler):
                     if act == 'inspect':
                         return self._json(library.inspect_batch(body.get('batch', '')))
                     if act == 'import':
-                        return self._json({'added': library.import_batch(db, body.get('batch', ''), body.get('name'),
-                                                                         body.get('up') or 'y', body.get('size'), body.get('kind') or 'static',
-                                                                         body.get('collision') or 'shape', body.get('object'),
-                                                                         {'light': body.get('light'), 'door_sound': body.get('door_sound'),
-                                                                          'reach': body.get('reach')})})
+                        added = library.import_batch(db, body.get('batch', ''), body.get('name'),
+                                                     body.get('up') or 'y', body.get('size'), body.get('kind') or 'static',
+                                                     body.get('collision') or 'shape', body.get('object'),
+                                                     {'light': body.get('light'), 'door_sound': body.get('door_sound'),
+                                                      'reach': body.get('reach')})
+                        # (sorted as it comes in: "Armour › Helmet", or a group of your own)
+                        if body.get('cat') or body.get('sub'):
+                            library.set_group([a['id'] for a in added], body.get('cat'), body.get('sub'))
+                            for a in added:
+                                a['cat'], a['sub'] = (body.get('cat') or '').strip()[:40], (body.get('sub') or '').strip()[:40]
+                        return self._json({'added': added})
+                    if act == 'group':
+                        return self._json({'changed': library.set_group(body.get('ids') or [], body.get('cat'), body.get('sub'))})
                     if act == 'record':
                         return self._json(library.make_record(db, body.get('id', ''), body.get('kind'), body.get('name')))
                     if act == 'remove':
@@ -2144,7 +2236,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(frombuilding.build(db, body.get('cell') or '', body.get('ref') or '', body.get('name'),
                                                          body.get('door') or None, body.get('style') or None,
                                                          int(body['floors']) if body.get('floors') else None,
-                                                         body.get('tiles') or None, body.get('tolerance') or 'usual'))
+                                                         body.get('tiles') or None, body.get('tolerance') or 'usual',
+                                                         body.get('cellar') or None))
                 if u.path == '/api/build/groundfit':
                     # the ground fitted to a building outdoors, the way the game's meet theirs (groundfit.py)
                     import groundfit
@@ -2154,7 +2247,7 @@ class Handler(BaseHTTPRequestHandler):
                     import housemodules
                     return self._json(housemodules.fit_volume(db, body.get('style') or None, {'tiles': body.get('tiles') or []},
                                                               body.get('front') or 'S', kind=body.get('kind') or 'homes',
-                                                              tolerance=body.get('tolerance') or 'usual'))
+                                                              tolerance=body.get('tolerance') or 'usual', seed=body.get('seed')))
                 if u.path == '/api/build/modules/join':
                     import housemodules
                     return self._json(housemodules.join(db, body.get('cell') or '', body.get('ref') or '', body.get('id') or '',

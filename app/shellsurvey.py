@@ -38,7 +38,9 @@ import mapdata
 import outside
 from project import ref_info
 
-VERSION = 3
+VERSION = 6                   # (4: buildings whose interior is no tile kit are kept, marked outside_only; 5: row houses
+                              # split between their doors, big one-piece buildings, lighthouses, doors standing proud;
+                              # 6: the row houses marked 'split')
 CELL = 8192
 GRID = 32                     # the outline raster, in game units
 SLICES = (40, 100, 160)       # heights over the sill the walls are read at
@@ -105,13 +107,32 @@ def near_items(db, x, y, memo=None, bmemo=None):
     return out
 
 
-def is_building_piece(it):
+_LIGHTHOUSE = re.compile(r'lighthouse|lighth_|lightho')
+# (made buildings the game sets up as activators: the Telvanni player stronghold's pods and stems)
+_ACTI_PIECE = re.compile(r'^ex_|_x_')
+
+
+def is_building_piece(it, big=False):
+    """A piece a building is made of. big: also one wider than a usual piece (up to 6,000), for the piece a door is
+    set into: a Redoran barracks, a lighthouse, a Direnni dome, Anvil's house shells are one piece each.
+    (Kept on the item: a cell's items are asked again for every door round them, 22 million word checks a survey.)"""
+    k = '_bpb' if big else '_bp'
+    v = it.get(k)
+    if v is None:
+        v = it[k] = _is_building_piece(it, big)
+    return v
+
+
+def _is_building_piece(it, big):
     low = it['low']
-    if it['tag'] != 'STAT' or any(w in low for w in NOT_A_BUILDING):
+    if it['tag'] not in ('STAT', 'ACTI') or (it['tag'] == 'ACTI' and not _ACTI_PIECE.search(low)):
+        return False
+    words = low if not _LIGHTHOUSE.search(low) else _LIGHTHOUSE.sub('', low)      # (a lighthouse is no lamp)
+    if any(w in words for w in NOT_A_BUILDING):
         return False
     b, s = it['b'], it['s']
     w, d, h = (b[3] - b[0]) * s, (b[4] - b[1]) * s, (b[5] - b[2]) * s
-    return max(w, d) < 2400 and h >= 96 and max(w, d) >= 96
+    return max(w, d) < (6000 if big else 2400) and h >= 96 and max(w, d) >= 96
 
 
 def structure(items, seed_box, others=(), seed=None, max_pieces=MAX_PIECES, max_extent=MAX_EXTENT):
@@ -119,19 +140,31 @@ def structure(items, seed_box, others=(), seed=None, max_pieces=MAX_PIECES, max_
     grouping (touching boxes, never through a piece that holds another house's door). [] when it runs on
     into the rest of a town."""
     cand = [it for it in items if is_building_piece(it)]
+    structure.split = False
     if seed is not None:
         roots = [seed]
     else:
         roots = [it for it in cand if outside._touch(it['box'], seed_box, 40)]
+        if not roots:
+            # (no usual piece at the door: the one big piece it is set into, or a wall a little way behind a door that
+            # stands proud of it; measured 2026-10-27, ~250 of the game's buildings, lighthouses and barracks among them)
+            near = [it for it in items if is_building_piece(it, big=True)]
+            roots = [it for it in near if outside._touch(it['box'], seed_box, 40)] or \
+                [it for it in cand if outside._touch(it['box'], seed_box, 120)]
+            for it in roots:
+                if it not in cand:
+                    cand.append(it)
     if not roots:
         return []
     root = max(roots, key=lambda it: (it['box'][2] - it['box'][0]) * (it['box'][3] - it['box'][1]))
     group, todo = [root], [root]
+    ingroup = {id(root)}
     doubled = []
+    grid = _Grid(cand)
     while todo and len(group) < max_pieces:
         c = todo.pop()
-        for it in cand:
-            if it in group or not outside._touch(it['box'], c['box']):
+        for it in grid.near(c['box'], 24):
+            if id(it) in ingroup or not outside._touch(it['box'], c['box']):
                 continue
             if any(g['low'] == it['low'] and all(abs(g['p'][n] - it['p'][n]) < 1 for n in range(3)) for g in group):
                 doubled.append(it)
@@ -139,17 +172,96 @@ def structure(items, seed_box, others=(), seed=None, max_pieces=MAX_PIECES, max_
             if any(outside._touch(it['box'], o['box'], 4) for o in others):
                 continue
             group.append(it)
+            ingroup.add(id(it))
             todo.append(it)
             if len(group) >= max_pieces:
                 break
-    x0 = min(g['box'][0] for g in group)
-    y0 = min(g['box'][1] for g in group)
-    x1 = max(g['box'][2] for g in group)
-    y1 = max(g['box'][3] for g in group)
-    if max(x1 - x0, y1 - y0) > max_extent or len(group) >= max_pieces:
-        return []
+    if _extent(group) > max_extent or len(group) >= max_pieces:
+        # (a row of houses sharing their walls runs on into the street: the street's pieces shared out among its
+        # doors, each to the nearest, and this door's own connected part kept. Measured 2026-10-27: 905 of the
+        # game's buildings with a door ran on like this and were lost, Balmora's and Vivec's rows among them)
+        group = _own_part(cand, root, seed_box, others, max_pieces, max_extent, grid=grid)
+        if not group:
+            return []
+        structure.split = True
     structure.doubled = doubled
     return group
+
+
+class _Grid:
+    """The pieces by 512-unit squares, to find those near a box without looking at every piece. near() gives them
+    in the list's own order, so what is built from them comes out exactly as a look at every piece would make it
+    (the survey went from 17 minutes to a few, 2026-10-27)."""
+    G = 512.0
+
+    def __init__(self, items):
+        self.items = items
+        self.at = {}
+        for n, it in enumerate(items):
+            b = it['box']
+            for gx in range(int(math.floor(b[0] / self.G)), int(math.floor(b[2] / self.G)) + 1):
+                for gy in range(int(math.floor(b[1] / self.G)), int(math.floor(b[3] / self.G)) + 1):
+                    self.at.setdefault((gx, gy), []).append(n)
+
+    def near(self, box, pad):
+        found = set()
+        for gx in range(int(math.floor((box[0] - pad) / self.G)), int(math.floor((box[2] + pad) / self.G)) + 1):
+            for gy in range(int(math.floor((box[1] - pad) / self.G)), int(math.floor((box[3] + pad) / self.G)) + 1):
+                found.update(self.at.get((gx, gy), ()))
+        return [self.items[n] for n in sorted(found)]
+
+
+def _extent(group):
+    return max(max(g['box'][2] for g in group) - min(g['box'][0] for g in group),
+               max(g['box'][3] for g in group) - min(g['box'][1] for g in group))
+
+
+def _centre(box):
+    return ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+
+
+def _own_part(cand, root, seed_box, others, max_pieces, max_extent, reach=4, grid=None):
+    """The pieces of a run-on street that belong to this door: the street gathered (to a bound), each piece given
+    to the nearest door (this one, or another interior's door in it), and the part of this door's that joins
+    its root. [] when even that is too big, or there are no other doors to share with."""
+    if not others:
+        return []
+    grid = grid or _Grid(cand)
+    street, todo = [root], [root]
+    seen = {id(root)}
+    while todo and len(street) < max_pieces * 12:
+        c = todo.pop()
+        for it in grid.near(c['box'], 24):
+            if id(it) not in seen and outside._touch(it['box'], c['box']) and _centre_dist(it, root) < max_extent * reach:
+                street.append(it)
+                seen.add(id(it))
+                todo.append(it)
+    mine = _centre(seed_box if seed_box is not None else root['box'])
+    doors = [_centre(o['box']) for o in others]
+
+    def nearest_is_mine(it):
+        c = _centre(it['box'])
+        d0 = math.hypot(c[0] - mine[0], c[1] - mine[1])
+        return all(d0 <= math.hypot(c[0] - d[0], c[1] - d[1]) for d in doors)
+    keep = [it for it in street if it is root or nearest_is_mine(it)]
+    kgrid = _Grid(keep)
+    part, todo = [root], [root]
+    inpart = {id(root)}
+    while todo:
+        c = todo.pop()
+        for it in kgrid.near(c['box'], 24):
+            if id(it) not in inpart and outside._touch(it['box'], c['box']):
+                part.append(it)
+                inpart.add(id(it))
+                todo.append(it)
+    if len(part) >= max_pieces or _extent(part) > max_extent:
+        return []
+    return part
+
+
+def _centre_dist(a, b):
+    ca, cb = _centre(a['box']), _centre(b['box'])
+    return math.hypot(ca[0] - cb[0], ca[1] - cb[1])
 
 
 class Frame:
@@ -192,6 +304,18 @@ def _world_tris(db, it):
     return out
 
 
+def world_tris(db, it):
+    """A placed thing's mesh triangles in the world, kept for the next outline or check."""
+    key = (it['low'], tuple(round(v, 1) for v in it['p']), it['s'])
+    tris = _tri_cache.get(key)
+    if tris is None:
+        tris = _world_tris(db, it)
+        if len(_tri_cache) > 2500:          # (400 emptied it while the next outline still needed them)
+            _tri_cache.clear()
+        _tri_cache[key] = tris
+    return tris
+
+
 def _cut(tri, h):
     """The segment where a triangle meets the plane z = h, or None."""
     pts = []
@@ -210,13 +334,7 @@ def walls_at(db, group, frame, heights, fill=()):
     sill, with the boxes in fill (doors) drawn in solid: a set of (ix, iy)."""
     wall = set()
     for it in group:
-        key = (it['low'], tuple(round(v, 1) for v in it['p']), it['s'])
-        tris = _tri_cache.get(key)
-        if tris is None:
-            tris = _world_tris(db, it)
-            if len(_tri_cache) > 400:
-                _tri_cache.clear()
-            _tri_cache[key] = tris
+        tris = world_tris(db, it)
         for tri in tris:
             zs = (tri[0][2], tri[1][2], tri[2][2])
             lo, hi = min(zs), max(zs)
@@ -512,15 +630,26 @@ def pair(db, key, memo=None, bmemo=None):
         group = structure(items, edoor['box'], others)
         if not group:
             continue
+        split = structure.split
         esill = ep[2] + edoor['b'][2] * edoor['s']
         # inward outside: from where you arrive outside (in front of the door) towards the door
         eframe = Frame(ep[0], ep[1], esill, ep[0] - to['x'], ep[1] - to['y'])
         same = [it for it in items if it['tag'] == 'DOOR' and any(outside._touch(it['box'], g['box'], 8) for g in group)]
         bld = describe_building(db, group, eframe, same)
         if inside is None:
-            inside = interior_of(db, key)
-            if inside is None:
-                return None
+            inside = interior_of(db, key) or False
+        if inside is False:
+            # (an interior that is not built from a tile kit, a Redoran hall, a Telvanni pod, a yurt, most Dunmer homes:
+            # nothing to learn of the inside, but its building outside is one of the game's all the same, and the
+            # exterior survey learns from it. usable() leaves it out of what is learnt of interiors. Measured
+            # 2026-10-27: 1,700 of the game's 4,500 buildings with a door were dropped here, Redoran's all)
+            into = {it['to']['cell'].lower() for it in items if it['tag'] == 'DOOR' and it['to'] and it['to']['cell']
+                    and any(outside._touch(it['box'], g['box'], 8) for g in group)}
+            bld.pop('cells')
+            return {'key': key, 'name': m.get('name') or key, 'ext_cell': edoor['cell'], 'ext_door': edoor['id'],
+                    'building': bld, 'into': len(into), 'eframe': eframe.as_dict(), 'outside_only': True, 'split': split,
+                    'kit': None, 'style': None, 'tile': None, 'floors': 0, 'areas': {}, 'max_area': 0, 'ground_area': 0,
+                    'overlay': None, 'entrance': None}
         arrive = (edoor['to']['x'], edoor['to']['y'])
         iframe = _interior_frame(m, d, arrive)
         g_floor = min(inside['per_floor'], key=lambda f: abs(f - iframe.z)) if inside['per_floor'] else None
@@ -536,7 +665,7 @@ def pair(db, key, memo=None, bmemo=None):
                 and any(outside._touch(it['box'], g['box'], 8) for g in group)}
         bc = bld.pop('cells')
         return {'key': key, 'name': m.get('name') or key, 'ext_cell': edoor['cell'], 'ext_door': edoor['id'],
-                'building': bld, 'into': len(into), 'eframe': eframe.as_dict(), 'iframe': iframe.as_dict(),
+                'building': bld, 'into': len(into), 'eframe': eframe.as_dict(), 'iframe': iframe.as_dict(), 'split': split,
                 'door_x': round(-bld['box'][0] / float(max(1, bld['box'][2] - bld['box'][0])), 3) if bld['box'] else None,
                 'kit': inside['kit'], 'style': inside['style'], 'tile': T, 'floors': len(inside['floors']),
                 'floor_z': [round(f - iframe.z) for f in inside['floors']], 'areas': areas,
@@ -548,8 +677,9 @@ def pair(db, key, memo=None, bmemo=None):
     return None
 
 
-def survey(db, limit=None, keys=None):
-    """{'pairs': [...], 'learnt': learn(pairs)} for the game's interiors (kept on disk)."""
+def survey(db, limit=None, keys=None, stage=(0, 1)):
+    """{'pairs': [...], 'learnt': learn(pairs)} for the game's interiors (kept on disk). stage: which stage of the
+    survey that asked for it this is, for the Learning bar (background.progress)."""
     if keys is None and 'survey' in _cache and _cache['survey'][0] is db.recs:
         return _cache['survey'][1]
     path = None
@@ -563,9 +693,12 @@ def survey(db, limit=None, keys=None):
             return saved
         except Exception:
             pass
+    import background
     memo, bmemo = {}, {}
     pairs = []
-    for key in (keys or _interiors(db))[:limit]:
+    todo = (keys or _interiors(db))[:limit]
+    for n, key in enumerate(todo):
+        background.progress(n, len(todo), 'places with an interior', stage)
         try:
             p = pair(db, key, memo, bmemo)
         except Exception as e:
@@ -573,7 +706,7 @@ def survey(db, limit=None, keys=None):
             continue
         if p:
             pairs.append(p)
-        if len(memo) > 60:
+        if len(memo) > 600:                # (60 emptied it every few interiors of a town: its cells read again and again)
             memo.clear()
     out = {'version': VERSION, 'pairs': pairs, 'learnt': learn(pairs)}
     if keys is None:
@@ -614,6 +747,10 @@ def usable(p):
     """A pair to learn from: one place into its building, a closed outline, a kit interior, and not a
     tomb, cave or ruin (those lie under the landscape, behind a door in a rock: nothing to fit)."""
     import planfrom
+    if p.get('outside_only') or p.get('split'):
+        # (a row house's share of its street is the exterior builder's to learn from; for the interiors it made the
+        # bands worse, 2026-10-27: size in band 45.0% -> 44.4%, floors within one 81.6% -> 80.1% on the same buildings)
+        return False
     return bool(p.get('into', 1) <= 1 and p['building']['area'] and p['max_area'] and p.get('style') and
                 p['style'] not in planfrom.EXCLUDE_STYLES and not planfrom.EXCLUDE_NAME_RE.search(p.get('name') or p['key']))
 

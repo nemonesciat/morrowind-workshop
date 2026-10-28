@@ -866,6 +866,14 @@ function v3GhostMove(e){
   G.hit = h.world;
   G.g.position.set(h.point.x, h.point.y, h.point.z - G.minZ);
   G.g.rotation.set(0, 0, -G.yaw);
+  // (a building from the prefab workbench or Plan a prefab: shown as it will stand, on the lowest ground under its
+  // ground floor, so the preview on the land is what the click puts down; prefabplan.js pfGroundZ)
+  const P = W.groupPlace;
+  if (P && (P.bench || P.prefab || P.outside) && W.ext && typeof pfGroundZ === 'function'){
+    const z = pfGroundZ(P.items, h.world[0], h.world[1], G.yaw, h.world[2]);
+    G.hit = [h.world[0], h.world[1], z];
+    G.g.position.z = z - V3.origin[2];
+  }
   G.g.visible = true;
   return h;
 }
@@ -1775,7 +1783,9 @@ function v3Pick(e, any, skipKey){
     const world = [h.point.x + V3.origin[0], h.point.y + V3.origin[1], h.point.z + V3.origin[2]];
     // (the face's way out, for the grid's "Put the grid here": a floor or a wall)
     const normal = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : null;
-    if (o.userData.ground) return {key: null, point: h.point, world, normal};
+    // (a locked building in front of the ground is what's under the mouse, not the ground behind it: outdoors the
+    // right-click lost the building there, and with it "Check this building", 2026-10-27)
+    if (o.userData.ground) return lockedHit ? {locked: true} : {key: null, point: h.point, world, normal};
     if (o.userData.ref === skipKey) continue;
     const ob = V3.objs.get(o.userData.ref);
     if (!any && ob && ob.r.arch && W.lockArch){ lockedHit = true; continue; }
@@ -1807,6 +1817,10 @@ function v3Click(e){
     const G = V3.ghost;
     // (a prefab planned in its window is pinned by the click, and set down by the window's Place here; prefabplan.js)
     if (W.groupPlace && W.groupPlace.prefab && typeof pfPin === 'function'){ pfPin(); return; }
+    // (the prefab workbench's building: put down where the ghost stands on the land; bench.js)
+    if (W.groupPlace && W.groupPlace.bench && typeof benchPlaceClick === 'function'){ benchPlaceClick(); return; }
+    // (an interior's outside: put down where the ghost stands, its door linked with the interior's; frombuilding.js)
+    if (W.groupPlace && W.groupPlace.outside && typeof goPlaceClick === 'function'){ goPlaceClick(); return; }
     const h = G && G.hit ? {world: G.hit} : v3Pick(e, true);
     if (!h || !h.world) return toast('Click on the ground or a floor.');
     placeGroupAt(h.world[0], h.world[1], h.world[2]);
@@ -1937,8 +1951,99 @@ function v3DragStart(){
     const b = new T.Box3().setFromObject(x.g);
     if (!b.isEmpty()) near.push(b);
   }
-  V3.drag = {key: sk, o, rel: own.clone().translate(o.g.position.clone().negate()), near,
-             start: o.g.position.clone(), startRot: o.g.rotation.clone()};
+  const nearObjs = [];
+  for (const [key, x] of V3.objs){
+    if (key === sk || !x.r || ['NPC_', 'CREA', 'LEVC'].includes(x.r.type)) continue;
+    if (x.g.position.distanceTo(o.g.position) < 3000) nearObjs.push(x);
+  }
+  V3.drag = {key: sk, o, rel: own.clone().translate(o.g.position.clone().negate()), near, nearObjs,
+             start: o.g.position.clone(), startRot: o.g.rotation.clone(), startQ: o.g.quaternion.clone()};
+  if (W.ext && V3.pieces && V3.mode === 'translate') v3SnapsFetch(V3.drag);
+}
+
+// the spots where the game joins this model to the pieces near it (housemodules.snaps), asked once per drag and again
+// after it has been carried 800 units on
+async function v3SnapsFetch(D){
+  const g = D.o.g, at = g.position.clone();
+  D.snapsAt = at;
+  try {
+    const r = await api('/api/build/snaps?' + new URLSearchParams({id: D.o.r.id, skip: D.o.r.k, x: at.x + V3.origin[0], y: at.y + V3.origin[1], z: at.z + V3.origin[2]}));
+    if (V3.drag === D) D.snaps = r.snaps || [];
+  } catch (e) {}
+}
+
+// a made thing's own box (in its own frame, scaled), for the snapping
+function v3LocalBox(o){
+  if (!o._lbox){
+    const b = new THREE.Box3();
+    o.g.children.forEach(c => { if (c.geometry){ if (!c.geometry.boundingBox) c.geometry.computeBoundingBox(); b.union(c.geometry.boundingBox); } });
+    o._lbox = b;
+  }
+  const s = o.g.scale;
+  return new THREE.Box3(o._lbox.min.clone().multiply(s), o._lbox.max.clone().multiply(s));
+}
+
+// 1) the game's own joins: within 80 units of one, the piece stands exactly where (and turned as) the game joins it
+function v3SnapGame(D, g){
+  if (!D.snaps || !D.snaps.length) return null;
+  let best = null;
+  for (const s of D.snaps){
+    const dx = s.p[0] - V3.origin[0] - g.position.x, dy = s.p[1] - V3.origin[1] - g.position.y, dz = s.p[2] - V3.origin[2] - g.position.z;
+    // (nearer is better, and so is a spot the game's way to more neighbours at once (k), or a join it uses often)
+    const d = Math.hypot(dx, dy) + Math.abs(dz) * 0.5 - 30 * ((s.k || 1) - 1) - 6 * Math.log2(1 + s.n);
+    if (Math.hypot(dx, dy) < 80 && Math.abs(dz) < 80 && (!best || d < best.d)) best = {s, d};
+  }
+  if (!best) return null;
+  const s = best.s;
+  g.position.set(s.p[0] - V3.origin[0], s.p[1] - V3.origin[1], s.p[2] - V3.origin[2]);
+  g.rotation.set(-s.p[3], -s.p[4], -s.p[5], 'XYZ');
+  return s;
+}
+
+// 2) flush faces in the neighbour's own frame: beside a piece turned the same way (to a quarter turn), faces meet,
+// edges line up and heights match within 18 units, and a turn within 6 degrees of the neighbour's quarter turns is
+// made exact. (The old snapping lined boxes up on the world's axes only: nothing beside a building turned 30 degrees.)
+function v3SnapFlush(D, g){
+  const T = THREE, thr = 18, Ld = v3LocalBox(D.o);
+  let best = null;
+  for (const n of D.nearObjs){
+    const qn = n.g.quaternion, qi = qn.clone().invert();
+    const rel = qi.clone().multiply(g.quaternion);
+    const e = new T.Euler().setFromQuaternion(rel, 'ZYX');
+    if (Math.abs(e.x) > 0.02 || Math.abs(e.y) > 0.02) continue;          // (tilted against it: no faces to meet)
+    const quarter = Math.round(e.z / (Math.PI / 2)), off = e.z - quarter * Math.PI / 2;
+    if (Math.abs(off) > 6 * Math.PI / 180) continue;
+    const qq = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), quarter * Math.PI / 2);
+    // (the dragged box in the neighbour's frame, at the exact quarter turn)
+    const pn = g.position.clone().sub(n.g.position).applyQuaternion(qi);
+    const pts = [];
+    for (const x of [Ld.min.x, Ld.max.x]) for (const y of [Ld.min.y, Ld.max.y]) for (const z of [Ld.min.z, Ld.max.z]) pts.push(new T.Vector3(x, y, z).applyQuaternion(qq).add(pn));
+    const B = new T.Box3().setFromPoints(pts), N = v3LocalBox(n);
+    const dv = new T.Vector3(); let snapped = 0, cost = 0;
+    for (const a of ['x', 'y', 'z']){
+      const others = ['x', 'y', 'z'].filter(v => v !== a);
+      if (!others.every(v => B.min[v] < N.max[v] + thr && B.max[v] > N.min[v] - thr)) continue;
+      let pick = null;
+      for (const d of [N.min[a] - B.max[a], N.max[a] - B.min[a], N.min[a] - B.min[a], N.max[a] - B.max[a]]) if (Math.abs(d) < thr && (pick === null || Math.abs(d) < Math.abs(pick))) pick = d;
+      if (pick !== null){ dv[a] = pick; snapped++; cost += Math.abs(pick); }
+    }
+    if (!snapped) continue;
+    if (!best || snapped > best.snapped || (snapped === best.snapped && cost + Math.abs(off) * 100 < best.cost)) best = {n, dv, qq, qn, snapped, cost: cost + Math.abs(off) * 100};
+  }
+  if (!best) return null;
+  g.quaternion.copy(best.qn.clone().multiply(best.qq));
+  g.position.add(best.dv.clone().applyQuaternion(best.qn));
+  return best.n;
+}
+
+function v3SnapNote(text){
+  const t = Date.now();
+  if (text === V3.snapNoteText && t - (V3.snapNoteT || 0) < 4000) return;
+  V3.snapNoteText = text; V3.snapNoteT = t;
+  const el = $('#v3snapnote') || (() => { const d = document.createElement('div'); d.id = 'v3snapnote';
+    d.style.cssText = 'position:absolute;left:50%;bottom:44px;transform:translateX(-50%);background:#000b;color:#f0e2bf;padding:4px 10px;border-radius:6px;font-size:12px;pointer-events:none;z-index:5';
+    $('#v3wrap').appendChild(d); return d; })();
+  el.textContent = text; el.style.display = text ? 'block' : 'none';
 }
 
 // "Snap pieces together": while moving, line the edges up with nearby pieces
@@ -1959,7 +2064,21 @@ function v3Snap(){
   }
   V3.selBox.setFromObject(D.o.g);
   if (!V3.pieces || V3.mode !== 'translate') return;
-  const g = D.o.g, box = D.rel.clone().translate(g.position), thr = 18;
+  const g = D.o.g;
+  if (W.ext){
+    // outdoors: the game's own joins first, then flush faces in the neighbour's frame (the old world-axis lining up
+    // below stays for interiors, where the kits stand on the world's axes)
+    if (D.snapsAt && g.position.distanceTo(D.snapsAt) > 800) v3SnapsFetch(D);
+    const s = v3SnapGame(D, g);
+    D.snapped = s;
+    if (s){ v3SnapNote(`Joined to ${s.to} the way the game does it (${s.n}×)`); V3.selBox.setFromObject(g); return; }
+    if (D.startQ) g.quaternion.copy(D.startQ);         // (off the game's spots: its own turn back)
+    const n = v3SnapFlush(D, g);
+    v3SnapNote(n ? `Flush with ${n.r.id}` : '');
+    V3.selBox.setFromObject(g);
+    return;
+  }
+  const box = D.rel.clone().translate(g.position), thr = 18;
   const best = {x: null, y: null, z: null};
   for (const nb of D.near){
     for (const a of ['x', 'y', 'z']){
@@ -1977,6 +2096,7 @@ function v3Snap(){
 
 async function v3DragEnd(){
   const D = V3.drag; V3.drag = null;
+  if (typeof v3SnapNote === 'function') v3SnapNote('');
   if (!D) return;
   // (physics on: let go, it falls and rests; nothing is saved until Keep; physics.js)
   if (typeof phDragEnd === 'function' && phDragEnd(D)) return;
@@ -1997,7 +2117,8 @@ async function v3DragEnd(){
   if (g.position.distanceTo(D.start) < 0.05 && Math.abs(g.rotation.z - D.startRot.z) < 1e-4 &&
       Math.abs(g.rotation.x - D.startRot.x) < 1e-4 && Math.abs(g.rotation.y - D.startRot.y) < 1e-4) return;
   // "Land on surfaces": moved over a table, a shelf or the floor, it comes to rest on top of it
-  if (V3.rest && V3.mode === 'translate'){ const dz = v3RestDz(D.o, D.key, true); if (dz != null) g.position.z += dz; }
+  // (a piece snapped to one of the game's joins stands at that join's height: not dropped onto what is below)
+  if (V3.rest && V3.mode === 'translate' && !D.snapped){ const dz = v3RestDz(D.o, D.key, true); if (dz != null) g.position.z += dz; }
   await v3Commit(D.o, g);
 }
 
@@ -2182,7 +2303,11 @@ function v3GridTick(t){
   const G = V3.gridAt;
   G.key = W.key;
   const through = !!V3.view.gridThrough;
-  const sig = step + '|' + G.wall + '|' + G.yaw + '|' + through;
+  // (the bright lines and the cell borders reach as far as the view does; once, they stopped a cell from the camera
+  // and the user saw the edge on Very far, 2026-10-27. The faint lines stay near: there are four of them a bright one)
+  const big0 = step * 4, reachN = Math.min(400, 2 * Math.ceil((V3.camera.far || 40000) / big0));
+  const cellsN = Math.min(40, 2 * Math.ceil((V3.camera.far || 40000) / CELL));
+  const sig = step + '|' + G.wall + '|' + G.yaw + '|' + through + '|' + reachN;
   if (V3.gridFor !== sig){
     V3.gridFor = sig;
     for (const c of [...V3.gridGroup.children]){ V3.gridGroup.remove(c); c.traverse(o => o.geometry && o.geometry.dispose()); }
@@ -2194,13 +2319,13 @@ function v3GridTick(t){
     };
     // (the step's lines faint, every fourth brighter: distances read at a glance)
     V3.plane = new T.Group();
-    const fine = mk(step * 64, 64, 0xf0cd87, 0.16), major = mk(step * 64, 16, 0xf0cd87, 0.42);
+    const fine = mk(step * 64, 64, 0xf0cd87, 0.16), major = mk(big0 * Math.max(16, reachN), Math.max(16, reachN), 0xf0cd87, 0.42);
     // (GridHelper lies in its own x-z plane: turned up into x-y for a level grid; left upright for a wall)
     for (const g of [fine, major]){ if (!G.wall) g.rotation.x = Math.PI / 2; V3.plane.add(g); }
     V3.plane.rotation.z = G.wall ? G.yaw - Math.PI / 2 : G.yaw;
     V3.fine = V3.plane;
     V3.gridGroup.add(V3.plane);
-    V3.borders = v3GridLines(CELL * 6, 6, 0xffb347, 0.85); V3.gridGroup.add(V3.borders);
+    V3.borders = v3GridLines(CELL * Math.max(6, cellsN), Math.max(6, cellsN), 0xffb347, 0.85); V3.gridGroup.add(V3.borders);
   }
   // reach out along its own lines to under the camera, a whole number of the bright lines at a time
   const big = step * 4, c = Math.cos(G.yaw), s = Math.sin(G.yaw);
@@ -2302,7 +2427,9 @@ function v3Loop(){
     V3.marker.visible = !!here;
     if (here){ V3.marker.position.set(pl.x - V3.origin[0], pl.y - V3.origin[1], pl.z - V3.origin[2] + 150); V3.marker.rotation.set(0, 0, -pl.yaw); }
     // outdoors: load what's around as you fly
-    if (W.ext && t - v3CellCheck > 600){
+    // (only once the view is set up for this place: just opened from an interior, the camera is still where it was
+    // inside, 815, -2759 read as outdoors, and following it took you to cell 0, -1 first; the user, 2026-10-27)
+    if (W.ext && V3.homeFor && V3.homeFor.startsWith('#') && t - v3CellCheck > 600){
       v3CellCheck = t;
       const [x, y] = v3CamWorld();
       if (cellKeyAt(x, y) !== W.key || Math.hypot(x - W.cam.x, y - W.cam.y) > CELL){ W.cam.x = x; W.cam.y = y; recentre(); }

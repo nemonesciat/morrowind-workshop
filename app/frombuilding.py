@@ -37,6 +37,33 @@ ROOF_SAMPLE = 3               # every n-th outline cell is looked up from for th
 BIG_PIECES = 90
 BIG_EXTENT = 4600
 ROOF_OPEN = 0.30              # open to the sky over more of the floor than 9 in 10 of the game's buildings
+# Measured on 3,417 of the game's buildings, 2026-10-27 (prefab stage 2): per style, the share of its buildings whose
+# walls don't close round at the ground (Velothi cantons' arches, Dunmer and Redoran shells with open fronts) and the
+# share of the floor open to the sky at the style's 90th percentile (Hlaalu's terraces and flat roofs read 60% open).
+# Open walls outdoors are a warning, worded by how usual they are (OPEN_FAULT: past it, "usual"); the roof is a
+# warning past the style's own p90. Styles not listed use 'ALL'.
+STYLE_OPEN = {'Velothi': 0.481, 'Dunmer': 0.230, 'Hlaalu': 0.023, 'Imperial': 0.049, '(none)': 0.216, 'Telvanni': 0.009,
+              'Cave': 0.010, 'Reach': 0.050, 'Nordic': 0.031, 'Mournhold': 0.017, 'Redoran': 0.130, 'Ashlander': 0.0,
+              'Stronghold': 0.121, 'Common': 0.039, 'Indoril': 0.0, 'Daedric': 0.0, 'Dwemer': 0.0, 'Redguard': 0.0, 'ALL': 0.143}
+STYLE_ROOF_P90 = {'Velothi': 0.333, 'Dunmer': 0.422, 'Hlaalu': 0.603, 'Imperial': 0.185, '(none)': 0.534, 'Telvanni': 0.181,
+                  'Cave': 0.419, 'Reach': 0.263, 'Nordic': 0.308, 'Mournhold': 0.341, 'Redoran': 0.356, 'Ashlander': 0.357,
+                  'Stronghold': 0.321, 'Common': 1.0, 'Indoril': 0.184, 'Daedric': 0.125, 'Dwemer': 0.926, 'Redguard': 1.0, 'ALL': 0.422}
+OPEN_FAULT = 0.06
+FLOAT_MIN = 16                # a piece's bottom this far over the ground and over everything under it: standing on nothing
+                              # (the game's buildings: 0.3% have one)
+# (checklab on 888 of the game's buildings, 2026-10-27, with the faces rule, MOUNTED and NO_HOLD: none hung touching
+# nothing; 3.2% had a piece with nothing under it leaning on a neighbour, Telvanni's most at 10%. Pieces moved 300 up and
+# 400 out (liftout lab, 139): 23 hang touching nothing, 33 lean; the rest landed on the ground, a rock or another
+# building (61), or went past the building's reach (21). Lifted straight up, a piece is still most often held by a
+# ledge or floor of its neighbours in reach: a known limit)
+RATE_AIR = 'none in 888 of them'
+RATE_LEAN = 'in 1 in 30'
+# what hangs on a wall rather than standing on something (the game's windows were most of "standing on nothing" else)
+MOUNTED = re.compile(r'window|_win|winround|winplain|slit|decal|overhang|_ban_|banner|tapestry|dormer|railing|_rail|sign|'
+                     r'shutter|awning|lamp|lantern|ivy|vine|flag|brace|bracket|sconce|_trim|rope|pelt|clothes|marker', re.I)
+# what holds nothing up: plants and trees, and loose things laid on the ground or hung
+NO_HOLD = re.compile(r'flora|tree|palm|parasol|grass|bush|shrub|kelp|fern|ivy|vine|_plant|mushroom|'
+                     r'rug|rope|banner|basket|lightpost|lamp|lantern|_sign|guarskin|pelt', re.I)
 
 
 # ---------------------------------------------------------------- the building
@@ -57,13 +84,16 @@ def _door_inward(it, centre):
 def building_at(db, cell_key, ref_key, door_key=None):
     """The building a placed exterior piece (or door) belongs to: {'group', 'door', 'doors', 'frame',
     'cell'}; raises EditError when there is none."""
-    if not cell_key or not cell_key.startswith('#'):
+    # (outdoors, or in a place that behaves like outdoors: Mournhold's districts are interiors, and their buildings
+    # are buildings, the Winged Guar's in Godsreach, 2026-10-27)
+    like_ext = bool(cell_key) and not cell_key.startswith('#') and bool((mapdata.cell_info(db, cell_key) or {}).get('like_exterior'))
+    if not cell_key or not (cell_key.startswith('#') or like_ext):
         raise EditError('Pick a building outdoors: this works on exterior pieces.')
     m = mapdata.cellmap(db, cell_key)
     ref = next((r for r in m.get('refs', []) if r['k'] == ref_key), None)
     if ref is None:
         raise EditError('That piece is no longer there.')
-    items = ss.near_items(db, ref['p'][0], ref['p'][1])
+    items = ss._cell_items(db, cell_key, {}, {}) if like_ext else ss.near_items(db, ref['p'][0], ref['p'][1])
     it = next((i for i in items if i['k'] == ref_key and i['cell'] == cell_key), None)
     if it is None:
         raise EditError('That piece has no model the Workshop can read.')
@@ -170,11 +200,158 @@ def _roof(db, group, frame, cells):
     return len(open_) / float(len(cells)), open_
 
 
-def check(db, b):
+def _held(db, it, supp):
+    """Does something else's surface hold this piece up: a flat-ish face of another piece's mesh under the piece's
+    footprint, from FLOAT_MIN below its bottom to a little over it (sunk in: TR's Velothi walls go 230 down through
+    their platforms, Telvanni braces through theirs; Vivec's waistworks gap pieces sit level with their neighbours).
+    Boxes alone held nearly anything up (a lifted wall by a tower's or a palm tree's box: 1 in 157 caught,
+    2026-10-27), so it is the faces. A neighbour with no mesh read counts by its box top."""
+    bx = it['box']
+    bottom, T = bx[4], FLOAT_MIN
+    x0, y0, x1, y1 = bx[0] - T, bx[1] - T, bx[2] + T, bx[3] + T
+    # (nothing is held by a tree, a plant, a rug or a rope: a palm's box reached a window moved off its wall)
+    supp = [s for s in supp if s is not it and not NO_HOLD.search(s['id'])]
+    if MOUNTED.search(it['id']) or min(bx[2] - bx[0], bx[3] - bx[1]) < 40:
+        # (windows, arrow slits, decals, overhangs, banners: on a wall by design; held if they touch something
+        # made, its mesh and not only its box: a house's box took in a window moved 400 off it)
+        from placecheck import _tri_in_box
+        c = ((bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2, (bx[4] + bx[5]) / 2)
+        h = ((bx[2] - bx[0]) / 2 + T, (bx[3] - bx[1]) / 2 + T, (bx[5] - bx[4]) / 2 + T)
+        for s in supp:
+            sb = s['box']
+            if not (sb[0] <= x1 and sb[2] >= x0 and sb[1] <= y1 and sb[3] >= y0 and sb[4] <= bx[5] + T and sb[5] >= bottom - T):
+                continue
+            tris = ss.world_tris(db, s)
+            if not tris:
+                return True
+            for t in tris:
+                if _tri_in_box(*[(p[0] - c[0], p[1] - c[1], p[2] - c[2]) for p in t], h):
+                    return True
+        return False
+    reach = bottom + max(2 * T, min((bx[5] - bottom) / 2, 250))
+    # (and a window or an awning holds up nothing standing: a house moved onto its neighbour's windows)
+    supp = [s for s in supp if not MOUNTED.search(s['id'])]
+    cx, cy = (bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2
+    pts = [(cx, cy), (bx[0], bx[1]), (bx[2], bx[1]), (bx[0], bx[3]), (bx[2], bx[3]),
+           (cx, bx[1]), (cx, bx[3]), (bx[0], cy), (bx[2], cy)]
+    for s in supp:
+        sb = s['box']
+        if s is it or sb[0] > x1 or sb[2] < x0 or sb[1] > y1 or sb[3] < y0 or sb[5] < bottom - T or sb[4] > reach:
+            continue
+        tris = ss.world_tris(db, s)
+        if not tris:
+            if bottom - T <= sb[5] <= reach:
+                return True
+            continue
+        for t in tris:
+            (ax, ay, az), (bx_, by, bz), (qx, qy, qz) = t
+            if max(az, bz, qz) < bottom - T or min(az, bz, qz) > reach:
+                continue
+            # (flat-ish: a floor, a top, a ledge; not the side of a wall)
+            ux, uy, uz, vx, vy, vz = bx_ - ax, by - ay, bz - az, qx - ax, qy - ay, qz - az
+            nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            if nz * nz < 0.25 * (nx * nx + ny * ny + nz * nz):
+                # (the side of a wall holds by its top edge, a piece set right on it: the game's Imperial tower
+                # sections are four walls with no top, and the tower's crown rests on them; not sunk in)
+                hz = max(az, bz, qz)
+                if bottom - T <= hz <= bottom + 2 * T and any(
+                        z == hz and x0 <= x <= x1 and y0 <= y <= y1 for x, y, z in t):
+                    return True
+                continue
+            for x, y, z in t:
+                if x0 <= x <= x1 and y0 <= y <= y1 and bottom - T <= z <= reach:
+                    return True
+            d = ux * vy - uy * vx
+            if abs(d) < 1e-9:
+                continue
+            for x, y in pts:
+                # (the face's height over a point of the footprint inside it)
+                l1 = ((x - ax) * vy - (y - ay) * vx) / d
+                l2 = ((y - ay) * ux - (x - ax) * uy) / d
+                if l1 >= 0 and l2 >= 0 and l1 + l2 <= 1 and bottom - T <= az + l1 * uz + l2 * vz <= reach:
+                    return True
+    return False
+
+
+def floating(db, group, items, ground=None):
+    """The pieces of a building standing on nothing: their bottom over the ground (centre and corners) and over every
+    made thing under them by more than FLOAT_MIN. [(item, gap, touching)]: touching, it leans on something beside it
+    (a wall it was lifted along, or the game's own odd one); not touching, it hangs in the air on its own."""
+    supp = [it for it in items if it['tag'] in ('STAT', 'ACTI') and it.get('b')]
+    T = FLOAT_MIN
+    out = []
+    for it in group:
+        if 'marker' in it['id'].lower():
+            continue                     # (not seen in the game)
+        bx = it['box']
+        bottom = bx[4]
+        pts = [((bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2), (bx[0], bx[1]), (bx[2], bx[1]), (bx[0], bx[3]), (bx[2], bx[3])]
+        gz = [z for z in ((ground or (lambda x_, y_: mapdata.terrain_z(db, x_, y_)))(x, y) for x, y in pts) if z is not None]
+        if gz and bottom <= max(gz) + FLOAT_MIN:
+            continue
+        # (afloat: a boat's bottom at the sea, which outdoors is at 0; the game's longboats and harbour cutters)
+        if gz and max(gz) < 0 and bottom <= FLOAT_MIN * 4:
+            continue
+        if _held(db, it, supp):
+            continue
+        over = [s for s in supp if s is not it and s['box'][0] < bx[2] and bx[0] < s['box'][2] and s['box'][1] < bx[3] and bx[1] < s['box'][3]]
+        top = max([s['box'][5] for s in over if s['box'][5] < bottom] + (gz or [bottom - 9999]))
+        touching = any(s is not it and s['box'][0] <= bx[2] + T and s['box'][2] >= bx[0] - T and s['box'][1] <= bx[3] + T
+                       and s['box'][3] >= bx[1] - T and s['box'][4] <= bx[5] + T and s['box'][5] >= bottom - T for s in supp)
+        out.append((it, round(bottom - top), touching))
+    return out
+
+
+def outdoor_check(db, cell_key, ref_key):
+    """The building check for one put together outdoors (by hand, or Plan a prefab's): check() with the rules as the
+    game's own buildings set them for its style."""
+    b = building_at(db, cell_key, ref_key)
+    ch = check(db, b, outdoor=True)
+    return {'ok': ch['ok'], 'lines': ch['lines'], 'style': ss.style_of_group(b['group']) or None,
+            'pieces': [g['k'] for g in b['group']]}
+
+
+def check(db, b, outdoor=False, ground=None):
     """Is the building closed and sound? {'ok', 'lines': [{'sev': 'ok'|'warning'|'error', 'text', 'at'?}],
-    'outline', 'ups'}."""
+    'outline', 'ups'}. outdoor: as a building outdoors, by the game's rules for its style (open walls are a fault
+    only where the style's own buildings almost never have them); else as the shell of an interior to be built,
+    where the walls must close round."""
     lines = []
     group, frame, door = b['group'], b['frame'], b['door']
+    style = ss.style_of_group(group) or '(none)'
+    near = []
+    if outdoor and b.get('items'):
+        # (and made pieces beside it that touch nothing: a piece lifted off a building is no longer part of it, and
+        # hangs in the air beside it; a balcony 300 up went unseen, 2026-10-27)
+        import exteriorsurvey as es
+        x0, y0 = min(g['box'][0] for g in group) - 256, min(g['box'][1] for g in group) - 256
+        x1, y1 = max(g['box'][2] for g in group) + 256, max(g['box'][3] for g in group) + 256
+        ids = {id(g) for g in group}
+        # (building pieces only: a sign, a lantern or a banner hangs by design)
+        near = [it for it in b['items'] if id(it) not in ids and ss.is_building_piece(it, big=True) and it['box'][0] < x1 and it['box'][2] > x0
+                and it['box'][1] < y1 and it['box'][3] > y0]
+    # (ground: the ground's height at a point; the prefab workbench's is flat, at 0, bench.py)
+    fl = floating(db, group + near, b.get('items') or group, ground)
+    floats = []
+    # (in the air touching nothing: an error outdoors. Nothing under it but leaning on a neighbour: only a warning, as
+    # the game's own buildings have it too (RATE_LEAN), and a lifted piece most often still leans on its wall)
+    for lean in (False, True):
+        fl1 = [f for f in fl if f[2] == lean]
+        if not fl1:
+            continue
+        one = len(fl1) == 1
+        if lean:
+            what = ('1 piece has nothing under it, only a neighbour beside it' if one else
+                    '%d pieces have nothing under them, only a neighbour beside them' % len(fl1))
+            rate = 'Fine for something hung on a wall; the game\'s own buildings have one like it %s.' % RATE_LEAN
+        else:
+            what = '1 piece hangs in the air, touching nothing' if one else '%d pieces hang in the air, touching nothing' % len(fl1)
+            rate = 'The game\'s own buildings almost never do this (%s).' % RATE_AIR
+        floats.append({'sev': 'warning' if lean or not outdoor else 'error',
+                       'text': '%s (%s): set %s down (End in 3D), or put something under %s. %s' % (
+                           what, ', '.join('%s %d up' % (it['id'], g) for it, g, _t in fl1[:4]),
+                           'it' if one else 'them', 'it' if one else 'them', rate),
+                       'at': [[round(it['p'][0]), round(it['p'][1]), round(it['p'][2])] for it, _g, _t in fl1[:6]]})
     lines.append({'sev': 'ok', 'text': '%d piece%s, all joined (%s)' % (len(group), '' if len(group) == 1 else 's',
                                                                       ', '.join(sorted({g['id'] for g in group})[:6]) + ('…' if len(group) > 6 else ''))})
     if b.get('doubled'):
@@ -182,37 +359,54 @@ def check(db, b):
             len(b['doubled']), '' if len(b['doubled']) == 1 else 's', 's' if len(b['doubled']) == 1 else '',
             ', '.join(sorted({d['id'] for d in b['doubled']})[:4])),
             'at': [[round(d['p'][0]), round(d['p'][1]), round(d['p'][2])] for d in b['doubled'][:6]]})
+    lines += floats or [{'sev': 'ok', 'text': 'Every piece stands on the ground or on another'}]
     if door is None or frame is None:
+        if outdoor:
+            lines.append({'sev': 'ok', 'text': 'No door into it: the walls and roof are only checked from a door (one is not needed '
+                                               'outdoors: a tower, a wall or a ruin may have none)'})
+            return {'ok': not any(l['sev'] == 'error' for l in lines), 'lines': lines, 'outline': None, 'ups': []}
         lines.append({'sev': 'error', 'text': 'No door: put a door in one of its walls (Place, then a load door of the style), '
                                               'then right-click the door.'})
         return {'ok': False, 'lines': lines, 'outline': None, 'ups': []}
     if door['to'] and door['to']['cell']:
-        lines.append({'sev': 'warning', 'text': 'Door: %s. It leads to %s now; the new interior takes it over (Undo gives it back).' % (door['id'], door['to']['cell'])})
+        lines.append({'sev': 'ok' if outdoor else 'warning', 'text': ('Door: %s, into %s' % (door['id'], door['to']['cell'])) if outdoor else
+                      'Door: %s. It leads to %s now; the new interior takes it over (Undo gives it back).' % (door['id'], door['to']['cell'])})
     else:
-        lines.append({'sev': 'ok', 'text': 'Door: %s' % door['id']})
+        lines.append({'sev': 'ok', 'text': 'Door: %s' % door['id'] + (' (it leads nowhere yet)' if outdoor else '')})
     g0 = ss.outline(db, group, frame, b['doors'], 0)
+    open_share = STYLE_OPEN.get(style, STYLE_OPEN['ALL'])
     if g0['closed']:
         lines.append({'sev': 'ok', 'text': 'Walls round: closed at the ground floor (%d m² inside the walls)' % round(g0['area'] / 4900.0)})
     else:
         gaps = _gap_spots(g0['wall'], frame)
+        # (outdoors only a warning: even the styles that close round leave 5 to 11% of the game's buildings open
+        # (checklab, 2026-10-27: Reach, Imperial, Common), and it only matters for an interior. How usual it is says the rest)
+        sev = 'warning' if outdoor else 'error'
+        usual = ('' if not outdoor else
+                 ' %d%% of the game\'s %s buildings are open at the ground too (arches, open fronts)' % (round(open_share * 100), style)
+                 if open_share >= OPEN_FAULT else
+                 ' The game\'s %s buildings are nearly always closed (%s open); an interior needs the walls round' % (
+                     style, ('%d%%' % round(open_share * 100)) if open_share >= 0.01 else 'under 1%'))
         if gaps:
-            lines.append({'sev': 'error', 'text': 'The walls are open at the ground floor: %d gap%s (%s)' % (
-                len(gaps), '' if len(gaps) == 1 else 's', ', '.join('%d units wide at %d, %d' % (g[2], g[0], g[1]) for g in gaps[:4])),
+            lines.append({'sev': sev, 'text': 'The walls are open at the ground floor: %d gap%s (%s).%s' % (
+                len(gaps), '' if len(gaps) == 1 else 's', ', '.join('%d units wide at %d, %d' % (g[2], g[0], g[1]) for g in gaps[:4]), usual),
                 'at': [[g[0], g[1], round(frame.z + 100)] for g in gaps]})
         else:
-            lines.append({'sev': 'error', 'text': 'The walls don\'t go round: there is no inside to build in (a wall is missing, or this '
-                                                  'is not a building).'})
+            lines.append({'sev': sev, 'text': ('The walls don\'t go round.%s' % usual) if outdoor else
+                          'The walls don\'t go round: there is no inside to build in (a wall is missing, or this is not a building).'})
         g0b = ss.box_outline(group, frame)
-        return {'ok': False, 'lines': lines, 'outline': g0b, 'ups': []}
+        return {'ok': not any(l['sev'] == 'error' for l in lines), 'lines': lines, 'outline': g0b, 'ups': []}
     share, open_ = _roof(db, group, frame, g0['cells'])
-    # (measured on 260 of the game's buildings, 2026-10-24: open to the sky over 3% of the floor at the median,
-    # 30% at p90; towers with a walk on top read all open. So only a warning, past the game's p90)
-    if share > ROOF_OPEN:
-        lines.append({'sev': 'warning', 'text': 'Open to the sky over %d%% of the floor (9 in 10 of the game\'s buildings: under %d%%); '
-                                                'fine for a tower with a walk on top' % (round(share * 100), round(ROOF_OPEN * 100)),
+    # (measured on 260 of the game's buildings, 2026-10-24: open to the sky over 3% of the floor at the median, 30% at p90;
+    # and per style on 3,417, 2026-10-27: Hlaalu's p90 is 60% (terraces, flat roofs), Telvanni's 18%. So only a warning,
+    # past the style's own p90)
+    lim = STYLE_ROOF_P90.get(style, STYLE_ROOF_P90['ALL'])
+    if share > lim and lim < 1.0:
+        lines.append({'sev': 'warning', 'text': 'Open to the sky over %d%% of the floor (9 in 10 of the game\'s %s buildings: under %d%%); '
+                                                'fine for a tower with a walk on top' % (round(share * 100), style, round(lim * 100)),
                       'at': [[x, y, round(frame.z + 300)] for x, y in open_[:6]]})
     else:
-        lines.append({'sev': 'ok', 'text': 'Roofed over'})
+        lines.append({'sev': 'ok', 'text': 'Roofed over' if share < 0.05 else 'Roofed over, but for %d%% (as the game\'s %s buildings are)' % (round(share * 100), style)})
     ups = []
     for k in (1, 2):
         u = ss.outline(db, group, frame, b['doors'], k)
@@ -571,7 +765,118 @@ def plan(db, b, kit=None, floors=None, tiles=None, tolerance='usual'):
     pl0['problem'] = why
     return pl0
 
-def preview(db, cell_key, ref_key, door_key=None, tolerance='usual'):
+# The game's cellars, measured on 472 of its interiors behind buildings (scratchpad cellarlab.py, 2026-10-27): the
+# share of a style's houses with a floor below the one their door is on, and that floor's size against the ground
+# floor's (median, p90). They are bigger than the house more often than not, and run out past its walls: under the
+# ground nothing shows (the user's Council Club, Balmora: a plain Hlaalu shell over long cellar halls).
+CELLARS = {'Hlaalu': (0.57, 1.4, 3.0), 'Velothi': (0.36, 1.2, 4.1), 'Imperial': (0.49, 1.17, 3.0), 'Common': (0.32, 0.87, 1.0),
+           'Mournhold': (0.47, 1.07, 1.57), 'Indoril': (0.62, 1.4, 1.83), 'Dunmer': (0.5, 1.13, 1.5), 'ALL': (0.5, 1.3, 3.0)}
+ROOM_NAMES[-1] = ['Cellar', 'Storeroom', 'Wine Cellar', 'Cellar Room']
+
+
+def cellar_band(style):
+    s = CELLARS.get(style or '', CELLARS['ALL'])
+    return {'style': style if style in CELLARS else None, 'share': s[0], 'usual': s[1], 'big': s[2]}
+
+
+def _with_cellar(db, b, pl, size):
+    """The plan with a cellar under it (size 'usual' or 'big': the game's median or p90 for the style, against the ground
+    floor): under the house, and where the game's ratio wants more, a wing out past the walls to one side. Rooms on
+    floor -1 (the builder's cellar), doorways between them. A new plan; the given one is left as it was."""
+    import copy
+    pl = copy.deepcopy(pl)
+    ground = {(t[0], t[1]) for t in pl['tiles'] if t[2] == 0}
+    if not ground:
+        return pl
+    band = cellar_band(((pl.get('prediction') or {}).get('style')) or ss.style_of_group(b['group']))
+    want = max(2, int(round(len(ground) * (band['big'] if size == 'big' else band['usual']))))
+    if size == 'small':
+        want = min(want, len(ground))           # (the fallback: under the house alone)
+    xs, ys = [t[0] for t in ground], [t[1] for t in ground]
+    if want <= len(ground):
+        # (smaller than the house: the back of it, joined up from the back-most tile)
+        start = max(ground, key=lambda t: (t[1], -abs(t[0])))
+        cel, todo = {start}, [start]
+        while todo and len(cel) < want:
+            x, y = todo.pop(0)
+            for n in ((x, y - 1), (x + 1, y), (x - 1, y), (x, y + 1)):
+                if n in ground and n not in cel and len(cel) < want:
+                    cel.add(n)
+                    todo.append(n)
+    else:
+        # (under the house, then a wing out to one side, two or three tiles wide, as long as the rest takes)
+        cel = set(ground)
+        side = 1 if (hash(b['cell']) + len(ground)) % 2 else -1
+        cy = (min(ys) + max(ys)) // 2
+        wide = min(3, max(ys) - min(ys) + 1)
+        rows = list(range(cy - (wide - 1) // 2, cy - (wide - 1) // 2 + wide))
+        x = max(xs) + 1 if side > 0 else min(xs) - 1
+        while len(cel) < want:
+            for y in rows:
+                if len(cel) < want:
+                    cel.add((x, y))
+            x += side
+    rooms = pl['rooms']
+    where = {}
+    first = len(rooms)
+    for n, comp in enumerate(c for comp in _components(cel) for c in _split(comp)):
+        names = ROOM_NAMES[-1]
+        nm = names[min(n, len(names) - 1)] if n < len(names) else '%s %d' % (names[-1], n - len(names) + 2)
+        cx_, cy_ = [t[0] for t in comp], [t[1] for t in comp]
+        x0, y0 = min(cx_), min(cy_)
+        w, h = max(cx_) - x0 + 1, max(cy_) - y0 + 1
+        r = {'name': nm, 'x': x0, 'y': y0, 'w': w, 'h': h, 'floor': -1}
+        cut = [[xx, yy] for xx in range(x0, x0 + w) for yy in range(y0, y0 + h) if (xx, yy) not in comp]
+        if cut:
+            r['cut'] = cut
+        for t in comp:
+            where[t] = len(rooms)
+        rooms.append(r)
+    names_ = {r['name'].lower() for r in rooms[:first]}
+    for r in rooms[first:]:
+        while r['name'].lower() in names_:
+            r['name'] += ' Below'
+        names_.add(r['name'].lower())
+    for (x, y), a in where.items():
+        for nb in ((x + 1, y), (x, y + 1)):
+            c = where.get(nb)
+            if c is not None and c != a:
+                pair = [rooms[a]['name'], rooms[c]['name']]
+                if not any(sorted(d['rooms']) == sorted(pair) for d in pl['doors']):
+                    pl['doors'].append({'rooms': pair})
+    pl['tiles'] = [t for t in pl['tiles'] if t[2] != -1] + [[t[0], t[1], -1] for t in sorted(cel)]
+    pl['floors'] = sorted(set(pl['floors']) | {-1})
+    out_ = len(cel - ground)
+    pl['notes'].append('A cellar of %d tiles, %.1f times the ground floor (the game\'s %s houses: %d%% have one, %.1f times the ground '
+                       'floor at the median, %.1f for the big ones)%s.' % (
+                           len(cel), len(cel) / float(len(ground)), band['style'] or 'own', round(band['share'] * 100), band['usual'], band['big'],
+                           ', %d of them out past the walls, under the ground' % out_ if out_ else ', under the house'))
+    return pl
+
+
+def plan_with_cellar(db, b, pl, cellar):
+    """The plan with the cellar asked for, if the builder can put the way down in: the wing first, then a cellar
+    under the house alone; else the plan as it was, with a note why."""
+    if cellar not in ('usual', 'big'):
+        return pl
+    why = 'no room for it'
+    for size in (cellar, 'small'):
+        try:
+            p2 = _with_cellar(db, b, pl, size)
+        except Exception as e:
+            print('cellar: %s' % e)
+            continue
+        try:
+            builder.plan(db, p2['style'], p2['rooms'], None, 'auto', p2['doors'])
+            return p2
+        except EditError as e:
+            why = str(e)
+            continue
+    pl = dict(pl, notes=pl['notes'] + ['No cellar: the way down doesn\'t fit (%s).' % why])
+    return pl
+
+
+def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None):
     """For the map: the building's check, the plan, and the planned tiles' corners in the world (to
     draw over the exterior), without building anything."""
     b = building_at(db, cell_key, ref_key, door_key)
@@ -592,11 +897,12 @@ def preview(db, cell_key, ref_key, door_key=None, tolerance='usual'):
                     'tiles': [], 'sill': round(b['frame'].z) if b['frame'] else 0, 'name': _suggest_name(db, b)})
         return out
     try:
-        pl = plan(db, b, tolerance=tolerance)
+        pl = plan_with_cellar(db, b, plan(db, b, tolerance=tolerance), cellar)
     except EditError as e:
         ch = check(db, b)
         out.update({'ok': False, 'check': ch['lines'], 'error': str(e)})
         return out
+    out['cellar'] = dict(cellar_band(((pl.get('prediction') or {}).get('style')) or ss.style_of_group(b['group'])), chosen=cellar or None)
     T, fr = pl['tile'], b['frame']
     polys = []
     for i, j, f in pl['tiles']:
@@ -849,7 +1155,7 @@ def upper_ways(db, b, out, idoor):
 
 # ---------------------------------------------------------------- building it
 
-def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual'):
+def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None):
     """Plan, build, link the doors both ways and put the northmarker in."""
     import release
     b = building_at(db, cell_key, ref_key, door_key)
@@ -865,7 +1171,7 @@ def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, til
             out['fits'] = {'ok': True, 'share': 0.0, 'jut': 0, 'text': 'Each interior is the piece the game makes for that shell: '
                                                                        'it fits as the game\'s own do.'}
             return out
-    pl = plan(db, b, kit=kit, floors=floors, tiles=tiles, tolerance=tolerance)
+    pl = plan_with_cellar(db, b, plan(db, b, kit=kit, floors=floors, tiles=tiles, tolerance=tolerance), cellar)
     if not pl['ok']:
         raise EditError('The building isn\'t closed and sound: %s' % '; '.join(l['text'] for l in pl['check'] if l['sev'] == 'error'))
     out = None
@@ -933,6 +1239,235 @@ def link_both(db, b, int_key, idoor):
     editing._store(c2, idoor['k'], r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', out_pos))
     editing.commit(db, 'Linked %s both ways with its building outside (%s)' % (editing.cell_label(db, int_key), d['id']))
     return in_pos
+
+
+# ---------------------------------------------------------------- the game's own interiors for the same shell
+
+def game_interiors(db, cell_key, ref_key, door_key=None):
+    """The game's interiors behind buildings made of the same shell as this one: each is a valid interior for it
+    (the user, 2026-10-27: a Mournhold bar shell has the Emerald Haven Inn behind it, and the Miners Club, the
+    Laughing Goblin, Dreynim Spa and the Toiling Guar behind its other copies; 369 shells stand at the door of two
+    or more of the game's interiors, 3,310 of its 3,551 pairs). {'shell', 'interiors': [{key, name, style, floors,
+    area, same}]}: same, built round the same main piece; the closest in size first."""
+    b = building_at(db, cell_key, ref_key, door_key)
+    models = {g['low'] for g in b['group']}
+    shell = max(b['group'], key=lambda g: (g['box'][2] - g['box'][0]) * (g['box'][3] - g['box'][1]))
+    own = (b['door'] or {}).get('to') or {}
+    own_key = (own.get('cell') or '').lower()
+    pairs = ss.survey(db)['pairs'] + _like_ext_pairs(db)
+    mine = next((p for p in pairs if p['key'] == own_key), None)
+    area = (mine or {}).get('max_area') or None
+    rows, seen = [], set()
+    for p in pairs:
+        main = (p['building'].get('main') or '').lower()
+        same = _same_shell(db, shell, main)
+        if not (same or main in models) or p['key'] in seen or not db.by_key.get(('CELL', p['key'])):
+            continue
+        seen.add(p['key'])
+        info = mapdata.cell_info(db, p['key'])
+        fl = p.get('floors')
+        rows.append({'key': p['key'], 'name': (info or {}).get('name') or p['name'], 'style': p.get('style'),
+                     'floors': len(fl) if isinstance(fl, (list, tuple)) else (fl or 1),
+                     'area': round((p.get('max_area') or 0) / 4900.0), 'same': same, 'own': p['key'] == own_key})
+    rows.sort(key=lambda r: (not r['same'], r['own'], abs((r['area'] or 0) - (area or 0) / 4900.0) if area else 0, r['name'].lower()))
+    return {'shell': shell['id'], 'interiors': rows[:60]}
+
+
+# ---------------------------------------------------------------- an outside for an interior (the other way round)
+
+# How much bigger the game's interiors are than their buildings, across the door and along it (scratchpad
+# anvilshape.py, 2026-10-27, door on door): Anvil 1.23 x 1.24 (52), the other Imperial 1.22 x 1.25 (82), Hlaalu
+# 0.91 x 0.85 (253: a little inside the walls); the rest taken as 1. The user: Anvil's "should conform at least".
+INSIDE_RATIO = {'Imperial': (1.23, 1.24), 'Hlaalu': (0.91, 0.85)}
+
+
+def _interior_door(m):
+    """An interior's way out: a door leading outdoors or nowhere yet, a load door first."""
+    ds = [r for r in m['refs'] if r['type'] == 'DOOR' and (not r.get('to') or not r['to'].get('cell'))]
+    return min(ds, key=lambda r: ('load' not in r['id'].lower(), bool(r.get('to')))) if ds else None
+
+
+def outsides_for(db, int_key, limit=8):
+    """The game's buildings to give an interior an outside, the best fit first: each one's footprint, grown by how
+    much bigger the game makes its interiors than its buildings of that style (INSIDE_RATIO), against the interior's
+    ground floor laid door on door, its storeys against the interior's floors above the door's. {'style', 'interior':
+    {w, d, floors}, 'buildings': [{key, name, uses, w, d, floors, fit, text}]}"""
+    m = mapdata.cellmap(db, int_key)
+    if not m.get('exists') or not m.get('interior'):
+        raise EditError('Open an interior first: this gives a place indoors a building outside.')
+    inside = ss.interior_of(db, int_key)
+    d = _interior_door(m)
+    if not inside or d is None:
+        raise EditError('The Workshop can\'t read this place\'s rooms and way out (it reads places built from a style\'s pieces).')
+    ifr = ss._interior_frame(m, d, None)
+    T = inside['tile']
+    floors = sorted(inside['per_floor'])
+    g = min(floors, key=lambda f: abs(f - ifr.z))
+    pts = [ifr.to(x, y) for (x, y) in inside['per_floor'][g]]
+    ix0, ix1 = min(p[0] for p in pts) - T / 2, max(p[0] for p in pts) + T / 2
+    iy0, iy1 = min(p[1] for p in pts), max(p[1] for p in pts) + T
+    ups = sum(1 for f in floors if f > g + 64)
+    style = inside.get('style') or 'Imperial'
+    ra, rb = INSIDE_RATIO.get(style, (1.0, 1.0))
+    import exteriorsurvey as es
+    s = es.ready(db)
+    if s is None:
+        raise EditError('The Workshop is still learning how the game puts its buildings together (a few minutes, once). Try again shortly.')
+    import housemodules as hm
+    best = {}
+    for mo in s['modules']:
+        if hm.look(mo) != style or not mo.get('ftiles') or not mo.get('fpieces') or not hm.homely(mo):
+            continue
+        Tm = mo['tile']
+        xs, ys = [t[0] for t in mo['ftiles']], [t[1] for t in mo['ftiles']]
+        bx0, bx1, by0, by1 = (min(xs) - 0.5) * Tm, (max(xs) + 0.5) * Tm, min(ys) * Tm, (max(ys) + 1) * Tm
+        w_i, d_i, w_b, d_b = ix1 - ix0, iy1 - iy0, bx1 - bx0, by1 - by0
+        # (sizes against the grown footprint, the door's place along the front, the storeys: too few is a misfit, one
+        # more over a one-floor interior only an attic; weighed alike, a narrow house with one storey beat a wide one with
+        # two for one floor of rooms 1.8 times its width)
+        fu = len(mo.get('fup') or ())
+        fit = abs(math.log(w_i / (ra * w_b))) + abs(math.log(d_i / (rb * d_b))) + \
+            abs((ix0 + ix1) / 2 - ra * (bx0 + bx1) / 2) / max(w_i, 1) + 0.3 * max(0, ups - fu) + 0.05 * max(0, fu - ups)
+        if mo['main'] not in best or fit < best[mo['main']][0]:
+            best[mo['main']] = (fit, mo, w_b, d_b)
+    rows = []
+    for fit, mo, w_b, d_b in sorted(best.values(), key=lambda r: (r[0], -r[1]['uses']))[:limit]:
+        rows.append({'key': mo['main'], 'name': hm._label(mo), 'uses': mo['uses'], 'w': round(w_b), 'd': round(d_b),
+                     'floors': 1 + len(mo.get('fup') or ()), 'fit': round(fit, 3),
+                     'text': 'the rooms %.2f times as wide, %.2f as deep (the game\'s %s: %.2f, %.2f)' % (
+                         (ix1 - ix0) / w_b, (iy1 - iy0) / d_b, style, ra, rb)})
+    return {'style': style, 'interior': {'w': round(ix1 - ix0), 'd': round(iy1 - iy0), 'floors': 1 + ups}, 'buildings': rows}
+
+
+def _outside_items(db, key):
+    """A learnt building's pieces as a group to place: offsets from its door's frame (the door at 0, 0, inward +y,
+    its ground at dz 0), the pieces standing on the ground marked foot (prefabplan.pfGroundZ), the door's index."""
+    import exteriorsurvey as es
+    import housemodules as hm
+    s = es.ready(db) or {}
+    ms = [mo for mo in s.get('modules') or () if mo['main'] == key and mo.get('fpieces')]
+    if not ms:
+        raise EditError('The Workshop does not know that building.')
+    mo = max(ms, key=lambda mo: mo['uses'])
+    g = mo.get('fground', -40.0)
+    items, door = [], None
+    for p in mo['fpieces']:
+        ri = db.resolve_id(p['id'])
+        if ri is None:
+            continue
+        b = mapdata.object_bounds(db, ri) or [0, 0, 0, 0, 0, 0]
+        s_ = p.get('s') or 1.0
+        bot, top = p['z'] - g + b[2] * s_, p['z'] - g + b[5] * s_
+        if p.get('door') and door is None:
+            door = len(items)
+        items.append({'id': db.recs[ri][1], 'type': db.recs[ri][0], 'dx': round(p['x'], 2), 'dy': round(p['y'], 2), 'dz': round(p['z'] - g, 2),
+                      'rx': p.get('rx', 0.0), 'ry': p.get('ry', 0.0), 'rz': p['rz'], 's': s_, 'foot': bot <= 40 and top > 0, 'footUp': 0})
+    return items, door, hm._label(mo)
+
+
+def give_outside(db, int_key, key, cell_hint, x, y, z, yaw):
+    """One of the game's buildings set down outdoors as the interior's outside (groups.place), and its front door and
+    the interior's way out linked both ways: one change. {'placed', 'cells', 'door'}"""
+    import groups
+    m = mapdata.cellmap(db, int_key)
+    idoor = _interior_door(m) if m.get('exists') else None
+    if idoor is None:
+        raise EditError('The interior has no way out to link.')
+    items, di, label = _outside_items(db, key)
+    if di is None:
+        raise EditError('That building has no front door the Workshop knows.')
+    r = groups.place(db, cell_hint, items, x, y, z, yaw, '%s, outside %s' % (label, m.get('name') or int_key))
+    c_, s_ = math.cos(yaw), math.sin(yaw)
+    wx, wy = x + items[di]['dx'] * c_ + items[di]['dy'] * s_, y - items[di]['dx'] * s_ + items[di]['dy'] * c_
+    best = None
+    for pl in r['placed']:
+        ref = next((q for q in mapdata.cellmap(db, pl['cell'])['refs'] if q['k'] == pl['ref']), None)
+        if ref and ref['type'] == 'DOOR':
+            dist = math.hypot(ref['p'][0] - wx, ref['p'][1] - wy)
+            if best is None or dist < best[0]:
+                best = (dist, pl)
+    if best is None:
+        raise EditError('Placed the building, but found no door in it to link (Undo takes it back).')
+    b = building_at(db, best[1]['cell'], best[1]['ref'])
+    link_both(db, b, int_key, idoor)
+    editing.fold(db, 2, 'Gave %s an outside: %s (%d pieces), its door linked both ways' % (m.get('name') or int_key, label, len(r['placed'])))
+    return {'placed': r['placed'], 'cells': r['cells'], 'door': best[1]}
+
+
+def _same_shell(db, shell, main):
+    """Is the building round `main` made of the same shell as this one: the same piece, the same mesh, or one of the
+    same footprint and height (Tamriel Rebuilt's T_De_SetMH_X_B_Bar_01 is Tribunal's EX_MH_bar_01 to the unit, its
+    own mesh with a foundation 385 deeper: the bottom is let go)."""
+    if not main:
+        return False
+    if main == shell['low']:
+        return True
+    ri = db.resolve_id(main)
+    if ri is None:
+        return False
+    if str(db.recs[ri][5] or '').lower() == str(db.recs[shell['ri']][5] or '').lower():
+        return True
+    a, b2 = shell['b'], mapdata.object_bounds(db, ri)
+    if not b2:
+        return False
+    span = max(a[3] - a[0], a[4] - a[1], 1)
+    tol = max(24.0, 0.03 * span)
+    return all(abs(a[k] - b2[k]) <= tol for k in (0, 1, 3, 4, 5))
+
+
+_like_ext = {}
+
+
+def _like_ext_pairs(db):
+    """The buildings in places that behave like outdoors (Mournhold's districts) and the interiors behind their
+    doors, as shellsurvey's pairs ({'key', 'name', 'building': {'main'}, ...}); the shell survey reads only the
+    exterior cells, and the Winged Guar's in Godsreach went unseen. Kept a load order."""
+    if _like_ext.get('recs') is db.recs:
+        return _like_ext['pairs']
+    out = []
+    for (tag, key) in list(db.by_key):
+        if tag != 'CELL' or key.startswith('#') or not (mapdata.cell_info(db, key) or {}).get('like_exterior'):
+            continue
+        items = ss._cell_items(db, key, {}, {})
+        doors_ = [it for it in items if it['tag'] == 'DOOR' and it['to'] and it['to']['cell'] and not it['to']['cell'].startswith('#')]
+        for d in doors_:
+            others = [o for o in doors_ if o is not d]
+            try:
+                group = ss.structure(items, d['box'], others, None, BIG_PIECES, BIG_EXTENT)
+            except Exception:
+                continue
+            if not group:
+                continue
+            main = max(group, key=lambda g: (g['box'][2] - g['box'][0]) * (g['box'][3] - g['box'][1]))
+            to = d['to']['cell'].lower()
+            if db.by_key.get(('CELL', to)):
+                out.append({'key': to, 'name': d['to']['cell'], 'style': mapdata.style_of(main['id']), 'floors': 1, 'max_area': 0,
+                            'building': {'main': main['id']}})
+    _like_ext.update({'recs': db.recs, 'pairs': out})
+    return out
+
+
+def copy_game_interior(db, cell_key, ref_key, template, name, contents='furnished', door_key=None):
+    """One of the game's interiors for this building's shell (game_interiors), copied whole under a new name
+    (create.create_interior: people and creatures left out) and its front door linked with the building's both
+    ways, as one change. {'key', 'name'}"""
+    import create
+    b = building_at(db, cell_key, ref_key, door_key)
+    if b['door'] is None:
+        raise EditError('The building has no door to link the interior to: put a door in one of its walls first.')
+    # (the original's front door: the load door that leads outside; its copy stands where it stood)
+    tm = mapdata.cellmap(db, template)
+    front = next((r for r in tm.get('refs', []) if r['type'] == 'DOOR' and r.get('to') and (r['to'].get('cell') or '').startswith('#')), None) \
+        or next((r for r in tm.get('refs', []) if r['type'] == 'DOOR' and r.get('to')), None)
+    key = create.create_interior(db, template, name, contents, None)
+    m = mapdata.cellmap(db, key)
+    ds = [r for r in m['refs'] if r['type'] == 'DOOR']
+    if not ds:
+        raise EditError('Copied "%s", but found no door in it to link outside.' % name)
+    idoor = min(ds, key=lambda r: math.dist(r['p'][:3], front['p'][:3])) if front else ds[0]
+    link_both(db, b, key, idoor)
+    editing.fold(db, 2, 'Copied %s for the building at %s, its door linked both ways' % (name, editing.cell_label(db, cell_key)))
+    return {'key': key, 'name': name}
 
 
 # ---------------------------------------------------------------- does it fit?

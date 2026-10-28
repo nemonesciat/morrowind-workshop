@@ -435,6 +435,15 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .olist div.sel{background:var(--sel);color:var(--gold2)}
 .olist small{color:var(--faint);white-space:nowrap}
 /* (the theme's own green over its own panel: a fixed dark green box hid its dark text in the light themes) */
+/* (the button fills itself as the learning goes, behind its text: the accent at 35% into the button's colour keeps
+   the text at 5.8 to 1 or better in every theme, and the fill's edge is the full accent, seen even in Dagoth) */
+#learnbtn{position:relative;isolation:isolate;overflow:hidden}
+#learnbtn .learnbar{position:absolute;inset:0;z-index:-1;pointer-events:none}
+#learnbtn .learnbar i{display:block;height:100%;width:0;background:var(--panel2);background:color-mix(in srgb,var(--gold) 35%,var(--panel2));
+  box-shadow:inset -2px 0 0 var(--gold);transition:width .6s}
+#learnmenu{width:360px;padding:10px 12px}
+#learnmenu .learnbox b{display:block;margin-bottom:4px;color:var(--text-b)} #learnmenu .msg{margin:5px 0}
+.learnbig{height:8px;background:var(--bg3);border-radius:4px;overflow:hidden;margin:7px 0} .learnbig i{display:block;height:100%;background:var(--gold);transition:width .6s}
 .linkdot{font-size:12px;border-radius:14px;padding:3px 10px;border:1px solid color-mix(in srgb,var(--green) 50%,var(--panel));color:var(--green);background:color-mix(in srgb,var(--green) 14%,var(--panel));cursor:pointer}
 .linkdot.wait{border-color:var(--line2);color:var(--muted);background:var(--panel2)}
 .linkbox{border:1px solid color-mix(in srgb,var(--green) 50%,var(--panel));background:color-mix(in srgb,var(--green) 10%,var(--panel));color:var(--text);border-radius:9px;padding:7px 10px;margin-top:10px;font-size:12.5px}.linkbox summary{cursor:pointer;color:var(--faint);font-size:12px;margin-top:4px}
@@ -644,7 +653,7 @@ tr.bad td{color:#e08a7a}
 .glist div{display:flex;align-items:center;gap:7px;padding:3px 6px;font-size:12.5px;border-bottom:1px solid var(--line0)}
 .glist div span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile{position:relative}
-.pfdel{position:absolute;top:2px;right:2px;background:#000a;border:0;color:var(--muted);border-radius:4px;font-size:10px;cursor:pointer;display:none;padding:1px 4px}
+.pfdel{position:absolute;top:2px;right:2px;background:var(--panel);border:1px solid var(--line0);color:var(--text);border-radius:4px;font-size:10px;cursor:pointer;display:none;padding:1px 4px}
 .tile:hover .pfdel{display:block}
 svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2))}
 .statgrid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 10px}
@@ -752,7 +761,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
   </div>
   <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
   </div>
-  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
+  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><div class="omwwrap" id="learnwrap" style="display:none"><button class="btn" id="learnbtn" title="The Workshop is learning from your game's own places, once: click for what and why">📚<span class="tl"> Learning</span> <span id="learnn"></span><i class="learnbar"><i id="learnfill"></i></i></button><div class="omwmenu" id="learnmenu"></div></div><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
@@ -953,7 +962,56 @@ function surveyNote(sv){
   box.style.display = 'block';
   box.textContent = `Learning from the game's places: ${sv.running}${m ? ' (' + m + ' min so far)' : ''}${left ? ', ' + left + ' more to come' : ''}. This runs beside the Workshop, once; Auto-furnish waits for what it needs and says so.`;
 }
-setInterval(async () => { if (S.summary && S.summary.state === 'ready' && $('#w-surveys')) { try { surveyNote(await api('/api/surveys')); } catch (e) {} } }, 8000);
+// The learning, on every page: a button in the top bar while any survey runs ("📚 Learning 7 of 26" with a thin bar),
+// and under it what is being learnt, how far, what waits for it and why. (The user, 2026-10-27: people new to the
+// Workshop won't know why things look plainer at first or why they wait; the Place panel's line was the only sign)
+const LEARN = {sv: null, t: null, open: false};
+// (the bar: the surveys done, and how far the running ones have got, background.status 'part')
+function learnPct(sv){
+  const total = Math.max(1, sv.total || 1), done = Math.max(0, total - (sv.left || 0));
+  return Math.min(100, Math.round(100 * (done + Math.min(sv.left || 0, sv.part || 0)) / total));
+}
+function learnHtml(sv, short){
+  const total = Math.max(1, sv.total || 1), done = Math.max(0, total - (sv.left || 0)), m = Math.floor((sv.elapsed || 0) / 60);
+  const now = [sv.running, ...(sv.queued || [])].filter(Boolean);
+  // (how far each long one has got: "the buildings: 1,200 of 3,136", so a ten-minute one is seen to move)
+  const prog = (sv.progress || []).map(p => `<div class="msg">${esc(p.name)}: ${esc(p.what || 'done')} ${p.n.toLocaleString()} of ${p.total.toLocaleString()}</div>`).join('');
+  return `<div class="learnbox"><b>Learning from your game's own places</b>
+    <div class="msg">${done} of ${total} done${m ? ', ' + m + ' min so far' : ''}. Now: ${esc(now.slice(0, 3).join('; ') || '…')}${now.length > 3 ? '; and ' + (now.length - 3) + ' more' : ''}.</div>
+    ${prog}<div class="learnbig"><i style="width:${learnPct(sv)}%"></i></div>
+    ${short ? '' : `<div class="msg">So that what the Workshop builds and furnishes follows how the game itself does it, it studies the places in your load order: how rooms are furnished, how stairs, walls and buildings are put together, how the land is shaped. It happens once, and again only when your load order's places change; it is kept on your PC.</div>
+    <div class="msg">Meanwhile everything works. Auto-furnish, the furnishing of a new house, Plan a prefab and an interior from a building wait for what they need and show this bar; anything built before it is done may come out plainer.</div>
+    <div class="msg"><span class="lnk" data-help="learning">How the Workshop learns…</span></div>`}</div>`;
+}
+function learnShow(sv){
+  LEARN.sv = sv;
+  const wrap = $('#learnwrap'); if (!wrap) return;
+  const on = !!(sv && sv.left);
+  if ((wrap.style.display !== 'none') !== on){ wrap.style.display = on ? '' : 'none'; if (typeof hdrFit === 'function') hdrFit(); }
+  if (!on){ $('#learnmenu').style.display = 'none'; return; }
+  const total = Math.max(1, sv.total || 1), done = Math.max(0, total - sv.left);
+  $('#learnn').textContent = done + '/' + total;
+  $('#learnfill').style.width = learnPct(sv) + '%';
+  if ($('#learnmenu').style.display === 'block') $('#learnmenu').innerHTML = learnHtml(sv);
+}
+async function learnPoll(){
+  clearTimeout(LEARN.t);
+  try { const sv = await api('/api/surveys'); learnShow(sv); surveyNote(sv); } catch (e) {}
+  LEARN.t = setTimeout(learnPoll, LEARN.sv && LEARN.sv.left ? 3000 : 12000);
+}
+$('#learnbtn').onclick = e => {
+  e.stopPropagation();
+  const mn = $('#learnmenu'), open = mn.style.display !== 'block';
+  if (typeof topMenusClose === 'function') topMenusClose('learnmenu');
+  mn.style.display = 'none';
+  if (open && LEARN.sv){ mn.innerHTML = learnHtml(LEARN.sv); mn.style.display = 'block'; }
+};
+$('#learnmenu').addEventListener('click', e => {
+  e.stopPropagation();
+  if (e.target.closest('[data-help]') && typeof docModal === 'function'){ $('#learnmenu').style.display = 'none'; docModal('how-the-workshop-learns.md'); }
+});
+document.addEventListener('click', () => { const m = $('#learnmenu'); if (m) m.style.display = 'none'; });
+setTimeout(learnPoll, 1500);
 // the first Auto-furnish after an install (or a change of load order) has to wait for the learning: the
 // server answers {waiting: [survey names]} and this waits, showing the progress in `el`, until none of
 // them is running or queued any more (the learning is kept, so this happens once)
@@ -2001,12 +2059,18 @@ async function worldOpenIndex(i){
   worldOpen(m.key);
 }
 async function worldOpen(key, keepCam){
-  W.key = key; W.ext = key.startsWith('#'); $('#mapempty').style.display = 'none';
+  // (the new place only once its map is here: with its key set first and the old place's info still on, the 3D
+  // view reset itself for "outdoors" from an interior's info, with no grid spot, and opened cell 0, 0, the
+  // Ashlands, every time on the way out of an interior; the user's find, 2026-10-27. The last one asked wins)
+  const my = W.openSeq = (W.openSeq || 0) + 1;
+  $('#mapempty').style.display = 'none';
+  const m = await api('/api/cellmap?key=' + encodeURIComponent(key));
+  if (my !== W.openSeq) return;
+  if (!m.exists){ toast('That cell does not exist in your load order', true); return; }
+  W.key = key; W.ext = key.startsWith('#');
   if (!keepCam){ W.cells = {}; W.lands = {}; W.sel = null; W.cut = null; }
   else { W.cells = {}; }   // reload object lists (e.g. after a data reload)
   W.paletteKey = null;
-  const m = await api('/api/cellmap?key=' + encodeURIComponent(key));
-  if (!m.exists){ toast('That cell does not exist in your load order', true); return; }
   W.cells[key] = prepCell(m); W.info = m;
   if (!keepCam){ fitCell(m); V3.homeFor = null; }
   if (W.ext) await loadAround(m.gx, m.gy);
@@ -4553,6 +4617,7 @@ poll();
 <script src="/web/navmenu.js"></script>
 <script src="/web/frombuilding.js"></script>
 <script src="/web/prefabplan.js"></script>
+<script src="/web/bench.js"></script>
 <script src="/web/twowin.js"></script>
 <script src="/web/opentool.js"></script>
 <script src="/web/coach.js"></script>

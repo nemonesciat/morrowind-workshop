@@ -153,6 +153,8 @@ class Project:
         self.lua_files = d.get('lua_files', [])  # the Lua files last written, so old ones can be cleared
         self.grass = d.get('grass', {})         # groundcover: cell key -> [[id, x, y, z, rz, scale]] (own plugin)
         self.land = d.get('land', {})           # land shaping: {'marks': ['gx,gy', ...]} the cells marked on the land map
+        self.forged = d.get('forged', {})       # the Forge: piece id (lower) -> {'mat'} or {'between': [a, b, f]}, what it was
+                                                # forged as ("Duskglass" isn't glass); outside Undo, read only while the record is there
         # a plugin opened as the mod itself (adopt.py): the file it is saved into, the masters its header
         # listed (names and sizes, kept in that order so its objects' indices stay what saved games know),
         # its header's format version, and the dated copy made of it beside it when it was opened
@@ -204,6 +206,8 @@ class Project:
              'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass}
         if self.land:
             d['land'] = self.land
+        if self.forged:
+            d['forged'] = self.forged
         if self.source:
             d.update({'source': self.source, 'masters': self.masters, 'tes3_version': self.tes3_version,
                       'plugin_backup': self.plugin_backup, 'order': self.order, 'hedr': self.hedr_raw})

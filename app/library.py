@@ -1475,6 +1475,23 @@ def resolve(db, rid, lib, typ=None):
     return None
 
 
+def set_group(ids, cat=None, sub=None):
+    """Sort Library entries into a category and a kind of it ("Armour", "Helmet"; or names of your own), as they come
+    in or later; '' takes it off. The page offers the usual ones (library.js LIB_CATS) and the Forge looks there first
+    for a weapon's or armour piece's own model. How many changed."""
+    want = set(ids or [])
+    items = _index()
+    n = 0
+    for it in items:
+        if it['id'] in want:
+            it['cat'] = (cat or '').strip()[:40]
+            it['sub'] = (sub or '').strip()[:40]
+            n += 1
+    if n:
+        _save_index(items)
+    return n
+
+
 def remove(db, entry_id):
     """Take something out of the Library list. Its file stays (a mod may still use it)."""
     _save_index([i for i in _index() if i['id'] != entry_id])

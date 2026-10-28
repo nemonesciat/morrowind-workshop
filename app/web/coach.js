@@ -80,7 +80,10 @@ function coachNext(){
   }
   const s = COACH_STEPS[COACH.n];
   if (!s) return coachEnd(true);
-  if (s.start) s.start();
+  // (only on coming to the step: back to it after a stopped build keeps what it noted then. Noting the place again
+  // there took the new house, opened a moment before its map came, for the old one: stuck on 5 of 8, 2026-10-27)
+  if (s.start && !COACH.again) s.start();
+  COACH.again = false;
   COACH.busy = false;
   COACH.seen = null;                   // (what it points at is scrolled into view once it's there)
   const shown = COACH.n + 1 - COACH.skipped, all = COACH_STEPS.length - COACH.skipped;
@@ -103,7 +106,11 @@ function coachBusy(s, on){
   if (on === !!COACH.busy && !on) return;
   COACH.busy = on;
   const shown = COACH.n + 1 - COACH.skipped, all = COACH_STEPS.length - COACH.skipped;
-  if (!on){ COACH.n--; return coachNext(); }      // (back to the step as it was: the build stopped with an error)
+  if (!on){
+    // (the page went on to the World map: built, and the house is opening; keep saying so until it has)
+    if (!pageOn('createv')){ COACH.busy = true; return; }
+    COACH.n--; COACH.again = true; return coachNext();      // (back to the step as it was: the build stopped with an error)
+  }
   const src = s.busyAt && s.busyAt(), prog = src ? src.innerHTML : '';
   COACH.tip.innerHTML = `<b>${esc(s.busyTitle)}</b><div>${esc(s.busyText)}</div>
     <div class="coach-prog" style="margin-top:8px">${prog || '<span class="spin"></span>Working…'}</div>

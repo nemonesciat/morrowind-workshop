@@ -254,6 +254,9 @@ function vwCreateMenu(pt, at){
   const it = k => ({label: `${CR_CARDS[k][0]} ${CR_CARDS[k][1]}${['npc', 'container', 'item', 'book'].includes(k) ? where : k === 'build' && spot ? ' (a door from here)' : ''}`, act: () => vwCreate(k, spot)});
   const items = [{label: 'Make something new', disabled: true, head: true}, ...['build', 'npc', 'container', 'item', 'book', 'spell', 'effect', 'lists'].map(it),
     '-', {label: 'Change something that exists', disabled: true, head: true}, it('itemed')];
+  // (the prefab workbench: a building put together from the game's pieces of a style, then set down in one go;
+  // bench.js. It took Plan a prefab's place, 2026-10-27: "doesn't look anything like what I drew")
+  if (typeof benchOpen === 'function') items.splice(2, 0, {label: '🔨 Prefab workbench (build from the game\'s pieces)', act: () => benchOpen()});
   const m = pnlMenu(pt, items);
   m.querySelectorAll('button').forEach((b, n) => { const x = items.filter(y => y !== '-')[n]; if (x && x.head) b.className = 'phd'; });
   return m;

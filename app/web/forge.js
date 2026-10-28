@@ -49,9 +49,9 @@ function fgDraw(){
       <div class="fg-row"><button class="btn sm ${FG.kind === 'weapon' ? 'primary' : ''}" data-fgk="weapon">🗡 Weapon</button><button class="btn sm ${FG.kind === 'armor' ? 'primary' : ''}" data-fgk="armor">🛡 Armour</button></div>
       <select class="inp" id="fg-type">${fgTypes().map(t => `<option value="${t.id}" ${t.id === FG.type ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>
       <div class="fg-h" style="margin-top:10px">Material</div>
-      <label class="msg fg-radio"><input type="radio" name="fg-m" value="game" ${FG.between ? '' : 'checked'}> One of the game's</label>
-      <select class="inp" id="fg-mat" ${FG.between ? 'disabled' : ''}>${fgMats().map(m => `<option value="${m.id}" ${m.id === FG.mat ? 'selected' : ''}>${esc(FG_CAP(m.id))} (${m.n} in the game)</option>`).join('')}</select>
-      <label class="msg fg-radio" style="margin-top:6px"><input type="radio" name="fg-m" value="between" ${FG.between ? 'checked' : ''}> A new material between two of the game's</label>
+      <label class="msg fg-radio"><input type="radio" name="fg-m" value="game" ${FG.between ? '' : 'checked'}> An existing material</label>
+      <select class="inp" id="fg-mat" ${FG.between ? 'disabled' : ''}>${fgMats().map(m => `<option value="${m.id}" ${m.id === FG.mat ? 'selected' : ''}>${esc(FG_CAP(m.id))} (${m.n} like it)</option>`).join('')}</select>
+      <label class="msg fg-radio" style="margin-top:6px"><input type="radio" name="fg-m" value="between" ${FG.between ? 'checked' : ''}> A new material between two</label>
       <div class="fg-row" ${FG.between ? '' : 'style="opacity:.5;pointer-events:none"'}>
         <select class="inp" id="fg-a">${all.map(m => `<option ${FG.between && FG.between[0] === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
         <select class="inp" id="fg-b">${all.map(m => `<option ${FG.between && FG.between[1] === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
@@ -59,15 +59,18 @@ function fgDraw(){
       <div class="fg-h" style="margin-top:10px">Name</div>
       <input class="inp" id="fg-name" placeholder="e.g. Glass Saber of the Wolf" value="${esc(FG.name || '')}">
       <div class="msg" style="margin-top:4px">ID <input class="inp" id="fg-id" style="width:62%" value="${esc(FG.id || '')}" placeholder="made from the name"></div>
-      <div class="fg-h" style="margin-top:10px">Its look <span class="msg">(the game's ${FG.between ? 'pieces of either material' : 'pieces of this kind'})</span></div>
+      <div class="fg-h" style="margin-top:10px">Its look <span class="msg">(${FG.between ? 'pieces of either material' : 'pieces of this kind and material'})</span></div>
       <div class="fg-looks" id="fg-looks"></div>
+      <button class="btn sm" id="fg-more" style="margin-top:4px" title="Any piece of this kind in your load order">🔍 More looks…</button>
+      <div class="fg-h" style="margin-top:10px">Your own look</div>
+      <div id="fg-own"></div>
     </div>
     <div class="fg-main">
       <div class="fg-h">Its numbers <span class="msg" id="fg-basis"></span></div>
       <table class="t fg-t" id="fg-stats"></table>
       <div id="fg-class" class="msg" style="margin-top:6px"></div>
       <div id="fg-notes" style="margin-top:6px"></div>
-      <div class="msg" style="margin-top:8px;font-size:11.5px">Numbers start at the game's middle for this kind, with its lowest and highest beside them. A badge marks any you push well past the game's. Enchant it later in the item editor.</div>
+      <div class="msg" style="margin-top:8px;font-size:11.5px">Starts at the typical value; ▲ marks one far past the range. Enchant it in the item editor.</div>
     </div></div>`;
   box.querySelectorAll('[data-fgk]').forEach(b => b.onclick = () => { FG.kind = b.dataset.fgk; FG.type = fgTypes()[0].id; FG.mat = (fgMats()[Math.floor(fgMats().length / 2)] || {}).id; FG.edited = {}; fgDraw(); fgPropose(); });
   box.querySelector('#fg-type').onchange = e => { FG.type = e.target.value; if (!fgMats().some(m => m.id === FG.mat)) FG.mat = (fgMats()[Math.floor(fgMats().length / 2)] || {}).id; FG.edited = {}; fgDraw(); fgPropose(); };
@@ -82,6 +85,98 @@ function fgDraw(){
   const nm = box.querySelector('#fg-name'), idb = box.querySelector('#fg-id');
   nm.oninput = () => { FG.name = nm.value; fgIdSoon(); fgReady(); };
   idb.oninput = () => { FG.id = idb.value; FG.idEdited = !!idb.value; fgReady(); };
+  box.querySelector('#fg-more').onclick = () => fgLookPicker(FG.kind, FG.type, (fgTypes().find(t => t.id === FG.type) || {}).label, l => {
+    FG.picked = Object.assign({kind: FG.kind, type: FG.type}, l); FG.look = l.i; FG.style = {own: '', worn: {}, skin: {}}; fgLooksDraw(); fgOwnDraw(); fgReady();
+  });
+  fgOwnDraw();
+}
+
+// ---------- the look: any piece of its kind in the load order, your own model, its pictures (forgelooks.py) ----------
+async function fgLib(){
+  if (!FG.lib){ try { FG.lib = (await api('/api/library')).items || []; } catch (e){ FG.lib = []; } }
+  return FG.lib;
+}
+const fgLibModels = () => (FG.lib || []).filter(e => e.type === 'model' && e.model);
+const fgLibPics = () => (FG.lib || []).filter(e => e.type === 'texture' && e.texture);
+// (your Library's models, the ones sorted for this kind of piece first: "Armour › Helmet" for a helmet, then the
+// rest of Armour, then everything else; library.js LIB_CATS)
+function fgModelSel(attr, val, first, kind, label){
+  const cat = kind === 'weapon' ? 'Weapons' : kind === 'armor' ? 'Armour' : '';
+  const lab = String(label || '').toLowerCase();
+  const fits = e => e.sub && lab && lab.includes(e.sub.toLowerCase().replace(/s$/, ''));
+  const ms = fgLibModels(), opt = e => `<option value="${esc(e.id)}" ${e.id === val ? 'selected' : ''}>${esc(e.name || e.id)}${e.sub ? ' · ' + esc(e.sub) : ''}</option>`;
+  const a = ms.filter(e => e.cat === cat && fits(e)), b = ms.filter(e => e.cat === cat && !fits(e)), c = ms.filter(e => e.cat !== cat);
+  const grp = (l, xs) => xs.length ? `<optgroup label="${esc(l)}">${xs.map(opt).join('')}</optgroup>` : '';
+  return `<select class="inp" ${attr}><option value="">${esc(first)}</option>${grp(`${cat} › ${label || ''}`, a)}${grp(cat ? `Other ${cat.toLowerCase()}` : 'Your models', b)}${grp(cat ? 'Everything else' : '', c)}</select>`;
+}
+// (a window over the Forge: every piece of this kind and type, from every plugin, with a search)
+function fgLookPicker(kind, type, label, onPick){
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.style.zIndex = 1300;
+  const tt = kind === 'weapon' ? 'WEAP' : 'ARMO';
+  bg.innerHTML = `<div class="modal" style="width:min(880px,96vw)"><h2 title="Takes its model and icon${kind === 'armor' ? ' and how it is worn' : ''}; not its numbers or magic">🔍 Looks like: any ${esc((label || type).toLowerCase())}</h2>
+    <input class="inp" id="flp-q" placeholder="Name, ID, model or mod" style="margin:8px 0" autocomplete="off">
+    <div class="msg" id="flp-n"></div><div class="fg-looks flp-grid" id="flp-grid"></div>
+    <div class="actions"><button class="btn" id="flp-no">Cancel</button></div></div>`;
+  document.body.appendChild(bg);
+  const grid = bg.querySelector('#flp-grid'), qi = bg.querySelector('#flp-q');
+  let seq = 0, t;
+  const load = async () => {
+    const my = ++seq;
+    try {
+      const r = await api('/api/forge/looks?' + new URLSearchParams({kind, type, q: qi.value.trim(), limit: 120}));
+      if (my !== seq) return;
+      bg.querySelector('#flp-n').textContent = r.n > r.looks.length ? `${r.looks.length} of ${r.n}` : `${r.n}`;
+      grid.innerHTML = r.looks.map((l, n) => `<button class="fg-look" data-n="${n}" title="${esc(l.name)} (${esc(l.id)}) · ${esc(l.src)}${l.enchanted ? ' · enchanted' : ''}">
+        <img class="thumb" data-tid="${esc(l.id)}" data-tt="${tt}" data-ts="72" alt=""><span>${esc(l.name || l.id)}</span><small class="faint">${esc(l.src.replace(/\.(esm|esp|omwaddon)$/i, ''))}</small></button>`).join('') || '<span class="msg">Nothing like that.</span>';
+      grid.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { bg.remove(); onPick(r.looks[+b.dataset.n]); });
+      if (typeof v3ThumbScan === 'function') v3ThumbScan(grid);
+    } catch (e){ bg.querySelector('#flp-n').textContent = e.message; }
+  };
+  qi.oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
+  bg.querySelector('#flp-no').onclick = () => bg.remove();
+  qi.focus(); load();
+}
+// (your own model for it, your own worn parts, its pictures swapped: FG.style, sent with Forge it)
+async function fgOwnDraw(){
+  const box = FG.bg && FG.bg.querySelector('#fg-own'); if (!box) return;
+  FG.style = FG.style || {own: '', worn: {}, skin: {}};
+  await fgLib();
+  const S_ = FG.style, ns = Object.keys(S_.skin).length, models = fgLibModels().length;
+  let parts = [];
+  if (FG.kind === 'armor' && FG.look != null){ try { parts = (await api('/api/forge/worn?i=' + FG.look)).parts; } catch (e){} }
+  if (!FG.bg) return;
+  const tl = (fgTypes().find(t => t.id === FG.type) || {}).label || '';
+  box.innerHTML = `<div class="msg fg-ownl">${models ? 'Model ' + fgModelSel('id="fg-ownm"', S_.own, "The look's", FG.kind, tl)
+    : '<span title="Drop a .nif, .obj, .glb or .fbx on the Library page">Your own models come from the Library.</span>'}</div>
+    ${parts.length && models ? `<details class="fgw-more" ${Object.keys(S_.worn).length ? 'open' : ''}><summary title="Each worn mesh must be made for its place on the body; the Workshop doesn't fit it on">Worn parts (${parts.length})${Object.keys(S_.worn).length ? `, ${Object.keys(S_.worn).length} your own` : ''}</summary>
+      ${parts.map(p => `<div class="msg fg-ownl">${esc(p.label)} ${fgModelSel(`data-fgw="${p.part}"`, S_.worn[p.part] || '', "The look's", FG.kind, tl)}</div>`).join('')}</details>` : ''}
+    <button class="btn sm" id="fg-skin" style="margin-top:4px" ${FG.look == null ? 'disabled' : ''}>🎨 Its pictures${ns ? ` (${ns} swapped)` : '…'}</button>`;
+  const om = box.querySelector('#fg-ownm'); if (om) om.onchange = () => { S_.own = om.value; };
+  box.querySelectorAll('[data-fgw]').forEach(s => s.onchange = () => { if (s.value) S_.worn[s.dataset.fgw] = s.value; else delete S_.worn[s.dataset.fgw]; });
+  box.querySelector('#fg-skin').onclick = () => fgSkinPicker([FG.look], S_.skin, m => { S_.skin = m; fgOwnDraw(); });
+}
+// (the pictures the pieces use, each swapped for one of the Library's: a skin, over one piece or a whole set)
+async function fgSkinPicker(recs, mapping, onDone){
+  await fgLib();
+  let t;
+  try { t = (await post('/api/forge/textures', {recs})).textures; } catch (e){ return toast(e.message, true); }
+  if (!t.length) return toast('Its models have no pictures to swap.', true);
+  const pics = fgLibPics(), many = recs.length > 1;
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.style.zIndex = 1300;
+  bg.innerHTML = `<div class="modal" style="width:min(680px,96vw)"><h2 title="New copies of the models are made; the originals stay as they are">🎨 ${many ? 'The set\'s pictures' : 'Its pictures'}</h2>
+    ${many ? '<div class="msg">A swap changes every piece that uses it.</div>' : ''}
+    <div class="fg-skin">${t.map((x, n) => `<div class="fg-skinr">${x.path ? `<img src="/api/file?path=${encodeURIComponent(x.path)}" onerror="this.style.visibility='hidden'">` : '<span></span>'}
+      <div><div class="msg">${esc(x.name)}${many ? ` <span class="faint">· ${x.n} of ${recs.length}</span>` : ''}</div>
+      <select class="inp" data-sk="${n}"><option value="">Keep</option>${pics.map(l => `<option value="${esc(l.texture)}" ${mapping[x.name] === l.texture ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div></div>`).join('')}</div>
+    ${pics.length ? '' : '<div class="msg warn">No pictures in your Library yet.</div>'}
+    <div class="actions"><button class="btn primary" id="fsk-ok">Use these</button><button class="btn" id="fsk-no">Cancel</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#fsk-no').onclick = () => bg.remove();
+  bg.querySelector('#fsk-ok').onclick = () => {
+    const m = {};
+    bg.querySelectorAll('[data-sk]').forEach(s => { if (s.value) m[t[+s.dataset.sk].name] = s.value; });
+    bg.remove(); onDone(m);
+  };
 }
 
 async function fgPropose(){
@@ -93,8 +188,11 @@ async function fgPropose(){
     if (seq !== FG.seq) return;
     FG.p = p;
     FG.stats = Object.assign({}, p.stats, FG.edited);
-    if (!FG.look || !p.looks.some(l => l.i === FG.look)) FG.look = p.looks.length ? p.looks[0].i : null;
-    fgStatsDraw(); fgLooksDraw(); fgCheck(); fgReady();
+    // (a look picked from the whole load order stays while it is still that kind of piece)
+    if (FG.picked && (FG.picked.kind !== FG.kind || FG.picked.type !== FG.type)) FG.picked = null;
+    if (FG.picked) FG.look = FG.picked.i;
+    else if (!FG.look || !p.looks.some(l => l.i === FG.look)) FG.look = p.looks.length ? p.looks[0].i : null;
+    fgStatsDraw(); fgLooksDraw(); fgCheck(); fgReady(); fgOwnDraw();
   } catch (e){ fgMsg(esc(e.message), true); }
 }
 
@@ -117,9 +215,14 @@ function fgStatsDraw(){
 function fgLooksDraw(){
   const box = FG.bg && FG.bg.querySelector('#fg-looks'); if (!box || !FG.p) return;
   const tt = FG.kind === 'weapon' ? 'WEAP' : 'ARMO';
-  box.innerHTML = FG.p.looks.slice(0, 18).map(l => `<button class="fg-look ${l.i === FG.look ? 'on' : ''}" data-fgl="${l.i}" title="${esc(l.name)} (${esc(l.id)})">
-    <img class="thumb" data-tid="${esc(l.id)}" data-tt="${tt}" data-ts="72" alt=""><span>${esc(l.name)}</span></button>`).join('') || '<span class="msg">The game has no piece of this kind to take the look from.</span>';
-  box.querySelectorAll('[data-fgl]').forEach(b => b.onclick = () => { FG.look = +b.dataset.fgl; box.querySelectorAll('.fg-look').forEach(x => x.classList.toggle('on', x === b)); fgReady(); });
+  const ls = (FG.picked ? [FG.picked] : []).concat(FG.p.looks.filter(l => !FG.picked || l.i !== FG.picked.i)).slice(0, 18);
+  box.innerHTML = ls.map(l => `<button class="fg-look ${l.i === FG.look ? 'on' : ''}" data-fgl="${l.i}" title="${esc(l.name)} (${esc(l.id)})">
+    <img class="thumb" data-tid="${esc(l.id)}" data-tt="${tt}" data-ts="72" alt=""><span>${esc(l.name || l.id)}</span></button>`).join('') || '<span class="msg">None plain: search below.</span>';
+  box.querySelectorAll('[data-fgl]').forEach(b => b.onclick = () => {
+    FG.look = +b.dataset.fgl; if (FG.picked && FG.picked.i !== FG.look) FG.picked = null;
+    if (FG.style) FG.style.worn = {};
+    box.querySelectorAll('.fg-look').forEach(x => x.classList.toggle('on', x === b)); fgReady(); fgOwnDraw();
+  });
   if (typeof v3ThumbScan === 'function') v3ThumbScan(box);
 }
 let FG_T = 0, FG_ID = 0;
@@ -164,7 +267,11 @@ async function fgMake(){
   const stats = {};
   for (const [k, v] of Object.entries(FG.stats)) stats[k] = v;
   try {
-    const r = await post('/api/items/create', {template: FG.look, id: FG.id.trim(), name: FG.name.trim(), stats});
+    const S_ = FG.style || {};
+    const r = await post('/api/forge/make', {template: FG.look, id: FG.id.trim(), name: FG.name.trim(), stats,
+      mat: FG.between ? null : FG.mat, between: FG.between,
+      style: {own: S_.own || '', worn: S_.worn || {}, skin: S_.skin || {}}});
+    FG.style = {own: '', worn: {}, skin: {}};
     if (typeof afterChange === 'function') afterChange();
     const name = FG.name;
     FG.name = ''; FG.id = ''; FG.idEdited = false; FG.made = true;
@@ -224,12 +331,12 @@ function fgSetDraw(){
   box.innerHTML = `<div class="fg-grid">
     <div class="fg-side">
       <div class="fg-h">It looks like</div>
-      <select class="inp" id="fs-look">${st.opts.looks.map(l => `<option value="${l.material}" ${l.material === st.look ? 'selected' : ''}>The game's ${esc(l.material)} (${l.armor.length} armour pieces${l.weapons.length ? ', ' + l.weapons.length + ' weapons' : ''})</option>`).join('')}</select>
+      <select class="inp" id="fs-look">${st.opts.looks.map(l => `<option value="${l.material}" ${l.material === st.look ? 'selected' : ''}>${esc(FG_CAP(l.material))} (${l.armor.length} armour pieces${l.weapons.length ? ', ' + l.weapons.length + ' weapons' : ''})</option>`).join('')}</select>
       <div class="fg-h" style="margin-top:10px">Its numbers</div>
-      <label class="msg fg-radio"><input type="radio" name="fs-n" value="same" ${st.numbers === 'same' ? 'checked' : ''}> As the game's ${esc(st.look)}</label>
-      <label class="msg fg-radio"><input type="radio" name="fs-n" value="game" ${st.numbers === 'game' ? 'checked' : ''}> As another of the game's materials</label>
+      <label class="msg fg-radio"><input type="radio" name="fs-n" value="same" ${st.numbers === 'same' ? 'checked' : ''}> As ${esc(st.look)}</label>
+      <label class="msg fg-radio"><input type="radio" name="fs-n" value="game" ${st.numbers === 'game' ? 'checked' : ''}> As another material</label>
       <select class="inp" id="fs-mat" ${st.numbers === 'game' ? '' : 'disabled'}>${all.map(m => `<option ${m === st.mat ? 'selected' : ''}>${m}</option>`).join('')}</select>
-      <label class="msg fg-radio" style="margin-top:6px"><input type="radio" name="fs-n" value="between" ${st.numbers === 'between' ? 'checked' : ''}> A new material between two of the game's</label>
+      <label class="msg fg-radio" style="margin-top:6px"><input type="radio" name="fs-n" value="between" ${st.numbers === 'between' ? 'checked' : ''}> A new material between two</label>
       <div class="fg-row" ${st.numbers === 'between' ? '' : 'style="opacity:.5;pointer-events:none"'}>
         <select class="inp" id="fs-a">${all.map(m => `<option ${st.between[0] === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
         <select class="inp" id="fs-b">${all.map(m => `<option ${st.between[1] === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
@@ -244,19 +351,22 @@ function fgSetDraw(){
     <div class="fg-main">
       <div class="fg-h">The set <span class="msg" id="fs-count"></span></div>
       <div id="fs-pieces" class="fs-pieces"><div class="msg"><span class="spin"></span></div></div>
-      <div class="msg" style="margin-top:8px;font-size:11.5px">Each piece gets the game's numbers for its kind and material. Rename pieces here, change numbers later in the item editor. The whole set is one Undo.</div>
+      <div class="fg-row" style="margin-top:6px"><button class="btn sm" id="fs-skin" title="Swap a picture once and every piece that uses it changes">🎨 The set's pictures${Object.keys(st.skin || {}).length ? ` (${Object.keys(st.skin).length} swapped)` : '…'}</button></div>
+      <div class="msg" style="margin-top:8px;font-size:11.5px">Numbers are typical for each kind; change them later in the item editor. One Undo.</div>
     </div></div>`;
   const redo = () => { fgSetDraw(); fgSetPreview(); };
-  box.querySelector('#fs-look').onchange = e => { st.look = e.target.value; const L2 = fgSetLook(); st.armor = fgSetSlots(L2); st.weapons = new Set([...st.weapons].filter(t => L2.weapons.includes(t))); st.names = {}; redo(); };
+  box.querySelector('#fs-look').onchange = e => { st.look = e.target.value; const L2 = fgSetLook(); st.armor = fgSetSlots(L2); st.weapons = new Set([...st.weapons].filter(t => L2.weapons.includes(t))); st.names = {}; st.looks = {}; st.own = {}; st.skin = {}; redo(); };
   box.querySelectorAll('[name=fs-n]').forEach(r => r.onchange = () => { if (r.checked){ st.numbers = r.value; redo(); } });
   box.querySelector('#fs-mat').onchange = e => { st.mat = e.target.value; fgSetPreview(); };
   const bw = () => { st.between = [box.querySelector('#fs-a').value, box.querySelector('#fs-b').value, +box.querySelector('#fs-f').value]; fgSetPreview(); };
   box.querySelector('#fs-a').onchange = bw; box.querySelector('#fs-b').onchange = bw; box.querySelector('#fs-f').onchange = bw;
   let t_; box.querySelector('#fs-stem').oninput = e => { st.stem = e.target.value; st.names = {}; clearTimeout(t_); t_ = setTimeout(fgSetPreview, 300); fgSetReady(); };
   box.querySelectorAll('[data-sc]').forEach(c => c.onchange = () => { st[c.dataset.sc][c.checked ? 'add' : 'delete'](c.value); fgSetPreview(); });
+  box.querySelector('#fs-skin').onclick = () => { if (!st.pieces.length) return;
+    fgSkinPicker(st.pieces.map(p => p.look.i), st.skin || {}, m => { st.skin = m; fgSetDraw(); fgSetPreview(); }); };
 }
 function fgSetBody(){
-  const st = FG.set, b = {look: st.look, stem: st.stem.trim() || 'New', armor: [...st.armor], weapons: [...st.weapons]};
+  const st = FG.set, b = {look: st.look, stem: st.stem.trim() || 'New', armor: [...st.armor], weapons: [...st.weapons], looks: st.looks || {}};
   if (st.numbers === 'game') b.mat = st.mat; else if (st.numbers === 'between') b.between = st.between; else b.mat = st.look;
   return b;
 }
@@ -268,11 +378,19 @@ async function fgSetPreview(){
     st.pieces = r.pieces;
     const box = FG.bg.querySelector('#fs-pieces'); if (!box) return;
     const main = p => p.kind === 'armor' ? `armour ${p.stats['Armor Rating']}` : `damage ${Math.max(p.stats['Chop Max'] || 0, p.stats['Slash Max'] || 0, p.stats['Thrust Max'] || 0)}`;
+    await fgLib();
+    st.own = st.own || {};
+    const models = fgLibModels().length;
     box.innerHTML = r.pieces.map(p => `<div class="fs-piece"><img class="thumb" data-tid="${esc(p.look.id)}" data-tt="${p.kind === 'armor' ? 'ARMO' : 'WEAP'}" data-ts="48" alt="">
-        <div class="fs-pn"><input class="inp" data-sn="${esc(p.type)}" value="${esc(st.names[p.type] || p.name)}"><span class="msg">${esc(p.label)} · ${main(p)} · weight ${p.stats.Weight}${p.weight_class ? ' (' + p.weight_class + ')' : ''} · value ${fmtN(p.stats.Value)}</span></div></div>`).join('')
+        <div class="fs-pn"><input class="inp" data-sn="${esc(p.type)}" value="${esc(st.names[p.type] || p.name)}"><span class="msg">${esc(p.label)} · ${main(p)} · weight ${p.stats.Weight}${p.weight_class ? ' (' + p.weight_class + ')' : ''} · value ${fmtN(p.stats.Value)}</span>
+        <span class="msg fs-lk">${esc(p.look.name)} <span class="lnk" data-slk="${esc(p.type)}" data-sk="${p.kind}" data-sl="${esc(p.label)}" title="Take the look from any piece of this kind">change</span>
+          ${models ? fgModelSel(`data-som="${esc(p.type)}"`, st.own[p.type] || '', "the look's model", p.kind, p.label) : ''}</span></div></div>`).join('')
       || '<div class="msg">Pick at least one piece on the left.</div>';
     const c = FG.bg.querySelector('#fs-count'); if (c) c.textContent = r.pieces.length ? `(${r.pieces.length} piece${r.pieces.length === 1 ? '' : 's'})` : '';
     box.querySelectorAll('[data-sn]').forEach(inp => inp.oninput = () => { st.names[inp.dataset.sn] = inp.value; });
+    box.querySelectorAll('[data-slk]').forEach(b => b.onclick = () => fgLookPicker(b.dataset.sk, b.dataset.slk, b.dataset.sl, l => {
+      st.looks = st.looks || {}; st.looks[b.dataset.slk] = l.i; st.skin = {}; fgSetPreview(); }));
+    box.querySelectorAll('[data-som]').forEach(s => s.onchange = () => { if (s.value) st.own[s.dataset.som] = s.value; else delete st.own[s.dataset.som]; });
     if (typeof v3ThumbScan === 'function') v3ThumbScan(box);
     fgSetReady();
   } catch (e){ fgMsg(esc(e.message), true); }
@@ -288,7 +406,9 @@ async function fgSetMake(){
   const st = FG.set, go = FG.bg.querySelector('#fg-go'); go.disabled = true;
   fgMsg('<span class="spin"></span>Forging the set…');
   try {
-    const r = await post('/api/forge/set', Object.assign(fgSetBody(), {stem: st.stem.trim(), names: st.names}));
+    const r = await post('/api/forge/set', Object.assign(fgSetBody(), {stem: st.stem.trim(), names: st.names,
+      style: {own: st.own || {}, skin: st.skin || {}}}));
+    st.own = {}; st.skin = {}; st.looks = {};
     if (typeof afterChange === 'function') afterChange();
     toast(`Forged the ${st.stem.trim()} set: ${r.made.length} pieces, one Undo.`);
     // (then each piece into the world, one after another)
@@ -315,7 +435,7 @@ async function fgWorld(){
   if (!FG.bg) return;
   if (d.need_material){
     box.innerHTML = `<div class="fgw"><div class="fgw-head"><div><b>${esc(d.item.name || d.item.id)}</b><div class="msg">${esc(d.item.type_label)}</div></div></div>
-      <p class="msg">Nothing in its name or its model says what it is made of. Pick the material it is nearest to, and the Workshop shows where the game puts pieces of that.</p>
+      <p class="msg">Its material isn't clear. Which is it nearest?</p>
       <div class="fg-row" style="max-width:360px"><select class="inp" id="fgw-mat">${d.materials.map(m => `<option>${m}</option>`).join('')}</select><button class="btn sm primary" id="fgw-matgo">Show where</button></div></div>`;
     box.querySelector('#fgw-matgo').onclick = () => { FG.world.mat = box.querySelector('#fgw-mat').value; fgWorld(); };
     return;
@@ -325,46 +445,135 @@ async function fgWorld(){
   // until you say so)
   // (a new material between two: only the lists by level, where it gets its own level)
   let n = 0;
-  FG.world.lists = d.general.map(x => !x.in && (!d.item.between || x.why.startsWith('a list of')) && n++ < 3);
+  // (a stretched list, the nearest when the game has none, is offered but left for you to tick)
+  FG.world.lists = d.general.map(x => !x.in && !x.stretch && (!d.item.between || x.kind === 'type') && n++ < 3);
   FG.world.some = d.some.map(() => false);
-  FG.world.cls = d.classes.map(() => ({on: false, n: 3}));
+  FG.world.who = new Set();
   FG.world.sell = d.sellers.map(() => false);
+  fgExtrasInit(FG.world, d.item);
   fgWorldDraw();
+}
+
+// ---------- people by name: each class's people, where they are, what they carry now ----------
+function fgWhoHtml(classes, who, attr){
+  return classes.map((c, n) => {
+    const all = c.who.length && c.who.every(p => who.has(p.npc)), some = c.who.some(p => who.has(p.npc));
+    return `<details class="fgw-cls" ${some ? 'open' : ''}><summary><input type="checkbox" data-${attr}a="${n}" ${all ? 'checked' : ''} onclick="event.stopPropagation()" title="Everyone of this class">
+      <b>${esc(fgCls(c.cls))}</b> <span class="msg">${c.who.length} ${c.who.length === 1 ? 'person' : 'people'}${some ? ` · ${c.who.filter(p => who.has(p.npc)).length} ticked` : ''}</span></summary>
+      ${c.who.map(p => `<label class="fgw-row fgw-person"><input type="checkbox" data-${attr}="${esc(p.npc)}" ${who.has(p.npc) ? 'checked' : ''}>
+        <span class="fgw-nm">${esc(p.name)}</span><span class="msg fgw-why">${esc(p.where || 'not placed anywhere (a script or a list brings them)')}</span>
+        <span class="fgw-src">${esc(p.carries || '')}</span></label>`).join('')}</details>`;
+  }).join('');
+}
+function fgWhoBind(box, classes, who, attr, redraw){
+  box.querySelectorAll(`[data-${attr}]`).forEach(c => c.onchange = () => { c.checked ? who.add(c.dataset[attr]) : who.delete(c.dataset[attr]); redraw(); });
+  box.querySelectorAll(`[data-${attr}a]`).forEach(c => c.onchange = () => { classes[+c.dataset[attr + 'a']].who.forEach(p => c.checked ? who.add(p.npc) : who.delete(p.npc)); redraw(); });
+}
+
+// ---------- anyone, any merchant, a list of its own: the same for one piece and a whole set ----------
+function fgExtrasInit(W_, item){
+  W_.gives = W_.gives || []; W_.xsell = W_.xsell || [];
+  const stem = String(W_.setName || (item && item.id) || 'new').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 22);
+  W_.own = W_.own || {on: false, id: stem + '_lev', level: 1, chance: 0, into: [], gives: []};
+}
+function fgChips(list, attr, levels){
+  return list.map((x, n) => `<span class="fgw-chip on">${esc(x.name || x.id)} <span class="msg">${esc(x.what || '')}</span>${levels && x.type === 'LEVI' ? ` level <input class="inp num" data-${attr}lv="${n}" value="${x.level || 1}" style="width:48px">` : ''}<span class="lnk" data-${attr}x="${n}">✕</span></span>`).join('');
+}
+const FG_WHAT = {NPC_: 'person', CREA: 'creature', CONT: 'container', LEVI: 'loot list'};
+function fgExtrasHtml(W_, isSet){
+  const o = W_.own, it = isSet ? 'the set' : 'it';
+  return `<div class="fg-h" style="margin-top:14px" title="Added to what they hold; people wear the best armour they carry.">Give ${it} to</div>
+    <div class="dd"><input class="inp" id="fgx-give" placeholder="Person, creature or container" autocomplete="off"><div class="ddlist" id="fgx-give-l"></div></div>
+    <div class="fgw-chips" style="margin-top:4px">${fgChips(W_.gives, 'xg')}</div>
+    <div class="fg-h" style="margin-top:14px">Sold by</div>
+    <div class="dd"><input class="inp" id="fgx-sell" placeholder="Any merchant" autocomplete="off"><div class="ddlist" id="fgx-sell-l"></div></div>
+    <div class="fgw-chips" style="margin-top:4px">${fgChips(W_.xsell, 'xs')}</div>
+    <label class="msg fg-radio" style="margin-top:14px" title="${isSet ? 'Hands out one piece at random each time. ' : ''}Put it in a loot list, a chest or on a person."><input type="checkbox" id="fgx-own" ${o.on ? 'checked' : ''}> A loot list of ${isSet ? 'the set\'s' : 'its'} own</label>
+    ${o.on ? `<div class="fgx-own">
+      <div class="fg-row"><span class="msg">ID</span><input class="inp" id="fgx-oid" value="${esc(o.id)}" style="flex:1"><span class="msg">level</span><input class="inp num" id="fgx-olv" value="${o.level}" style="width:52px">
+        <span class="msg" title="Chance of nothing">none %</span><input class="inp num" id="fgx-ocn" value="${o.chance}" style="width:52px"></div>
+      <div class="dd"><input class="inp" id="fgx-oin" placeholder="Put it in: a loot list, chest or person" autocomplete="off"><div class="ddlist" id="fgx-oin-l"></div></div>
+      <div class="fgw-chips" style="margin-top:4px">${fgChips(o.into.concat(o.gives), 'xo', true)}</div></div>` : ''}`;
+}
+function fgExtrasBind(box, W_, redraw){
+  const o = W_.own;
+  const pick = (id, types, cb) => { if (box.querySelector('#' + id)) ddSearch(id, types, cb); };
+  pick('fgx-give', 'NPC_,CREA,CONT', r => { if (!W_.gives.some(x => x.id === r.id)) W_.gives.push({id: r.id, name: r.name, what: FG_WHAT[r.type] || ''}); redraw(); });
+  pick('fgx-sell', 'NPC_', r => { if (!W_.xsell.some(x => x.id === r.id)) W_.xsell.push({id: r.id, name: r.name, what: 'merchant'}); redraw(); });
+  pick('fgx-oin', 'LEVI,NPC_,CREA,CONT', r => {
+    const into = r.type === 'LEVI';
+    const lst = into ? o.into : o.gives;
+    if (!lst.some(x => x.id === r.id)) lst.push({id: r.id, name: r.name, type: r.type, what: FG_WHAT[r.type] || '', level: o.level});
+    redraw();
+  });
+  box.querySelectorAll('[data-xgx]').forEach(b => b.onclick = () => { W_.gives.splice(+b.dataset.xgx, 1); redraw(); });
+  box.querySelectorAll('[data-xsx]').forEach(b => b.onclick = () => { W_.xsell.splice(+b.dataset.xsx, 1); redraw(); });
+  box.querySelectorAll('[data-xox]').forEach(b => b.onclick = () => { const n = +b.dataset.xox; n < o.into.length ? o.into.splice(n, 1) : o.gives.splice(n - o.into.length, 1); redraw(); });
+  box.querySelectorAll('[data-xolv]').forEach(c => c.oninput = () => { const v = parseInt(c.value, 10); if (v > 0) o.into[+c.dataset.xolv].level = v; });
+  const on = box.querySelector('#fgx-own'); if (on) on.onchange = () => { o.on = on.checked; redraw(); };
+  const f = (id, k, num) => { const e = box.querySelector('#' + id); if (e) e.oninput = () => { o[k] = num ? Math.max(0, parseInt(e.value, 10) || 0) : e.value.trim(); fgWorldReady(); }; };
+  f('fgx-oid', 'id'); f('fgx-olv', 'level', true); f('fgx-ocn', 'chance', true);
+}
+function fgExtrasPicks(W_){
+  const o = W_.own;
+  return {gives: W_.gives.map(x => x.id), xsell: W_.xsell.map(x => x.id),
+          own_list: o.on && o.id && (o.into.length || o.gives.length) ? {id: o.id, level: o.level || 1, chance_none: o.chance || 0,
+            into: o.into.map(x => ({list: x.id, level: x.level || o.level || 1})), gives: o.gives.map(x => x.id)} : null};
+}
+// (what will happen, in plain words, under the choices)
+function fgSummary(p){
+  const bits = [];
+  if (p.nl) bits.push(`in ${p.nl} loot list${p.nl === 1 ? '' : 's'}`);
+  const who = l => l.slice(0, 3).join(', ') + (l.length > 3 ? ` +${l.length - 3}` : '');
+  if (p.people.length) bits.push(`${p.set ? 'worn' : 'carried'} by ${who(p.people)}`);
+  if (p.sellers.length) bits.push(`sold by ${who(p.sellers)}`);
+  if (p.gives.length) bits.push(`given to ${who(p.gives)}`);
+  if (p.own) bits.push(`its own list in ${p.own.into.length + p.own.gives.length} place${p.own.into.length + p.own.gives.length === 1 ? '' : 's'}`);
+  const s = bits.join('; ');
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : '';
 }
 function fgWorldDraw(){
   const box = FG.bg && FG.bg.querySelector('#fg-body'), W_ = FG.world, d = W_ && W_.data; if (!box || !d) return;
-  const it = d.item;
+  const it = d.item, mat = it.between ? `${it.between[0]} or ${it.between[1]}` : it.material;
+  // (the carriers by class, each person by name and place)
+  const byc = {};
+  d.carriers.forEach(p => (byc[p.cls] = byc[p.cls] || []).push({npc: p.npc, name: p.name, where: p.where, carries: 'has ' + (p.theirs_name || p.theirs)}));
+  W_.classes = Object.entries(byc).sort((a, b) => b[1].length - a[1].length).map(([cls, who]) => ({cls, who}));
   const row = (x, n, grp) => `<label class="fgw-row ${x.in ? 'in' : ''}"><input type="checkbox" data-wl="${grp}:${n}" ${x.in || W_[grp][n] ? 'checked' : ''} ${x.in ? 'disabled' : ''}>
-      <span class="fgw-nm">${esc(x.list)}</span><span class="msg fgw-why">${x.in ? 'it\'s in this one already' : esc(x.why)}</span>
+      <span class="fgw-nm">${esc(x.list)}</span><span class="msg fgw-why">${x.in ? 'already in' : esc(x.why)}</span>
       <span class="fgw-src">${esc(x.src)}</span><span class="fgw-lv">level <input class="inp num" data-wlv="${grp}:${n}" value="${x.level}" ${x.in ? 'disabled' : ''}></span></label>`;
-  const forged = W_.forged ? `<div class="cnote fgw-made">Forged <b>${esc(W_.forged)}</b>. Choose where the game finds it, or Close to keep it to yourself (right-click it later: Into the world).</div>` : '';
+  const forged = W_.forged ? `<div class="cnote fgw-made">Forged <b>${esc(W_.forged)}</b>. Where should the game have it?</div>` : '';
   // (a set just forged: all of it at once, or its pieces one at a time, each its own Undo)
   const setRow = W_.set ? `${fgWorldModes()}<div class="fgw-set"><span class="fg-h" style="margin:0 6px 0 0">The set</span>${W_.set.map((p, n) => `<button class="fgw-piece ${p.id === W_.id ? 'on' : ''} ${p.placed ? 'done' : ''}" data-wp="${n}" title="${esc(p.id)}">${p.placed ? '✓ ' : ''}${esc(p.name)}</button>`).join('')}</div>` : '';
   box.innerHTML = `<div class="fgw">${forged}${setRow}
     <div class="fgw-head"><img class="thumb" data-tid="${esc(it.id)}" data-tt="${it.kind === 'weapon' ? 'WEAP' : 'ARMO'}" data-ts="64" alt="">
-      <div><b>${esc(it.name || it.id)}</b><div class="msg">${esc(it.type_label)} · ${it.between ? `a new material between ${esc(it.between[0])} and ${esc(it.between[1])}` : esc(FG_CAP(it.material))}${it.enchanted ? ' · enchanted' : ''} · <span class="lnk" id="fgw-edit">open in the item editor</span></div></div></div>
-    <div class="fg-h">Random loot lists, for anyone</div>
-    <div class="msg fgw-note">Where the game puts its own ${it.between ? esc(it.between[0]) + ' and ' + esc(it.between[1]) : esc(it.material)} ${esc(fgPlural(it.type_label.split(' (')[0].split(',')[0].toLowerCase()))}, widest-used first, at the level ${it.between ? 'a material between the two' : 'its tier'} has in each.</div>
-    <div class="fgw-list">${d.general.map((x, n) => row(x, n, 'lists')).join('') || '<div class="msg">None: the game has no list for this kind.</div>'}</div>
-    ${d.some.length ? `<details class="fgw-more"><summary>Lists for a people, a faction or a place (${d.some.length})</summary><div class="fgw-list">${d.some.map((x, n) => row(x, n, 'some')).join('')}</div></details>` : ''}
-    <div class="fg-h" style="margin-top:14px">Carried by</div>
-    <div class="msg fgw-note">People carrying one like it get this instead, in as many as you choose.</div>
-    <div class="fgw-list">${d.classes.map(([c, k], n) => `<label class="fgw-row"><input type="checkbox" data-wc="${n}" ${W_.cls[n].on ? 'checked' : ''}>
-      <span class="fgw-nm">${esc(fgCls(c))}</span><span class="msg fgw-why">${k} carry one like it</span>
-      <span class="fgw-lv">in <input class="inp num" data-wcn="${n}" value="${W_.cls[n].n}"> of them</span></label>`).join('') || '<div class="msg">Nobody in the game carries one like it.</div>'}</div>
-    <div class="fg-h" style="margin-top:14px">Sold by</div>
-    <div class="fgw-chips">${d.sellers.map((s, n) => `<label class="fgw-chip"><input type="checkbox" data-ws="${n}" ${W_.sell[n] ? 'checked' : ''}>${esc(s.name)} <span class="msg">${esc(fgCls(s.cls))}</span></label>`).join('') || '<span class="msg">No merchant in the game sells one like it.</span>'}</div>
-    <div class="msg fgw-note" style="margin-top:12px">Each tick copies that list or person into your mod with the piece added. If another mod changes the same one, the one loaded last wins. One Undo takes it all back.</div></div>`;
+      <div><b>${esc(it.name || it.id)}</b><div class="msg">${esc(it.type_label)} · ${it.between ? `between ${esc(it.between[0])} and ${esc(it.between[1])}` : esc(FG_CAP(it.material))}${it.enchanted ? ' · enchanted' : ''} · <span class="lnk" id="fgw-edit">edit</span></div></div></div>
+    <div class="fg-h" title="Where its like are, widest-used first, at the level its material has in each">Loot lists</div>
+    ${d.fallback ? `<div class="msg warn fgw-note" title="${esc(d.fallback)}">None for ${esc(mat)}: the nearest, at their top level.</div>` : ''}
+    <div class="fgw-list">${d.general.map((x, n) => row(x, n, 'lists')).join('') || '<div class="msg">None for this kind.</div>'}</div>
+    ${d.some.length ? `<details class="fgw-more"><summary>For a people, faction or place (${d.some.length})</summary><div class="fgw-list">${d.some.map((x, n) => row(x, n, 'some')).join('')}</div></details>` : ''}
+    ${W_.classes.length ? `<div class="fg-h" style="margin-top:14px" title="Tick someone and the one like it they carry is swapped for yours">Carried by, instead of theirs</div>
+    <div class="fgw-list">${fgWhoHtml(W_.classes, W_.who, 'wq')}</div>` : ''}
+    ${d.sellers.length ? `<div class="fg-h" style="margin-top:14px">Merchants with one like it</div>
+    <div class="fgw-chips">${d.sellers.map((s, n) => `<label class="fgw-chip"><input type="checkbox" data-ws="${n}" ${W_.sell[n] ? 'checked' : ''}>${esc(s.name)} <span class="msg">${esc(s.where || fgCls(s.cls))}</span></label>`).join('')}</div>` : ''}
+    ${fgExtrasHtml(W_, false)}
+    <div class="msg fgw-note" style="margin-top:12px" title="Each change copies that list or person into your mod. If another mod changes the same one, the one loaded last wins.">One Undo takes it all back.</div></div>`;
   if (typeof v3ThumbScan === 'function') v3ThumbScan(box);
   const ed = box.querySelector('#fgw-edit'); if (ed) ed.onclick = () => { FG.bg.remove(); FG.bg = null; ieShow(it.id); };
   box.querySelectorAll('[data-wp]').forEach(b => b.onclick = () => { const p = W_.set[+b.dataset.wp]; W_.id = p.id; W_.forged = null; fgWorld(); });
   fgWorldModesBind(box);
   box.querySelectorAll('[data-wl]').forEach(c => c.onchange = () => { const [g, n] = c.dataset.wl.split(':'); W_[g][+n] = c.checked; fgWorldReady(); });
   box.querySelectorAll('[data-wlv]').forEach(c => c.oninput = () => { const [g, n] = c.dataset.wlv.split(':'); const v = parseInt(c.value, 10); if (v > 0) d[g === 'lists' ? 'general' : 'some'][+n].level = v; });
-  box.querySelectorAll('[data-wc]').forEach(c => c.onchange = () => { W_.cls[+c.dataset.wc].on = c.checked; fgWorldReady(); });
-  box.querySelectorAll('[data-wcn]').forEach(c => c.oninput = () => { const v = parseInt(c.value, 10); if (v >= 0) W_.cls[+c.dataset.wcn].n = v; fgWorldReady(); });
+  fgWhoBind(box, W_.classes, W_.who, 'wq', fgWorldRedraw);
   box.querySelectorAll('[data-ws]').forEach(c => c.onchange = () => { W_.sell[+c.dataset.ws] = c.checked; fgWorldReady(); });
+  fgExtrasBind(box, W_, fgWorldRedraw);
   fgWorldReady();
+}
+// (drawn again where it was scrolled to)
+function fgWorldRedraw(){
+  const win = FG.bg && FG.bg.querySelector('.fg-win'), y = win ? win.scrollTop : 0;
+  (FG.world && FG.world.whole ? fgWorldSetDraw : fgWorldDraw)();
+  if (win) win.scrollTop = y;
 }
 // ---------- a whole set into the world at once (gearplaces.set_places / place_set): each piece's own lists,
 // people of a class dressed in all of it, merchants stocking all of it, one Undo
@@ -385,38 +594,39 @@ async function fgWorldSet(){
   if (!FG.bg) return;
   W_.sd = d;
   // (each piece's own first lists ticked, as for one piece: only the lists by level for a material between two)
-  W_.slists = d.pieces.map(p => { let n = 0; return p.general.map(x => !x.in && (!p.item.between || x.why.startsWith('a list of')) && n++ < 3); });
-  W_.scls = d.classes.map(() => ({on: false, n: 3}));
+  W_.slists = d.pieces.map(p => { let n = 0; return p.general.map(x => !x.in && !x.stretch && (!p.item.between || x.kind === 'type') && n++ < 3); });
+  W_.swho = new Set();
+  W_.sclasses = d.classes.map(c => ({cls: c.cls, who: (c.who || []).map(p => ({npc: p.npc, name: p.name, where: p.where,
+    carries: `has ${p.slots} of the set's kinds`}))}));
   W_.ssell = d.sellers.map(() => false);
+  fgExtrasInit(W_, null);
   fgWorldSetDraw();
 }
 function fgWorldSetDraw(){
   const box = FG.bg && FG.bg.querySelector('#fg-body'), W_ = FG.world, d = W_ && W_.sd; if (!box || !d) return;
   const row = (x, pi, n) => `<label class="fgw-row ${x.in ? 'in' : ''}"><input type="checkbox" data-sl="${pi}:${n}" ${x.in || W_.slists[pi][n] ? 'checked' : ''} ${x.in ? 'disabled' : ''}>
-      <span class="fgw-nm">${esc(x.list)}</span><span class="msg fgw-why">${x.in ? 'it\'s in this one already' : esc(x.why)}</span>
+      <span class="fgw-nm">${esc(x.list)}</span><span class="msg fgw-why">${x.in ? 'already in' : esc(x.why)}</span>
       <span class="fgw-src">${esc(x.src)}</span><span class="fgw-lv">level <input class="inp num" data-slv="${pi}:${n}" value="${x.level}" ${x.in ? 'disabled' : ''}></span></label>`;
-  const forged = W_.forged ? `<div class="cnote fgw-made">Forged <b>${esc(W_.forged)}</b>. Choose where the game finds it, or Close to keep it to yourself (right-click a piece later: Into the world).</div>` : '';
+  const forged = W_.forged ? `<div class="cnote fgw-made">Forged <b>${esc(W_.forged)}</b>. Where should the game have it?</div>` : '';
   box.innerHTML = `<div class="fgw">${forged}${fgWorldModes()}
-    <div class="fg-h">Random loot lists, for anyone</div>
-    <div class="msg fgw-note">Each piece where the game puts its own of that kind, widest-used first.</div>
+    <div class="fg-h" title="Each piece where its like are, widest-used first">Loot lists</div>
     ${d.pieces.map((p, pi) => `<div class="fgws-piece"><div class="fgws-pn"><img class="thumb" data-tid="${esc(p.item.id)}" data-tt="${p.item.kind === 'weapon' ? 'WEAP' : 'ARMO'}" data-ts="32" alt=""><b>${esc(p.item.name || p.item.id)}</b><span class="msg">${esc(p.item.type_label)}</span></div>
-      <div class="fgw-list">${p.general.slice(0, 3).map((x, n) => row(x, pi, n)).join('') || '<div class="msg">No list for this kind.</div>'}</div>
+      ${p.fallback && p.general.length ? `<div class="msg warn" style="font-size:11.5px" title="${esc(p.fallback)}">None for its material: the nearest, at their top level.</div>` : ''}
+      <div class="fgw-list">${p.general.slice(0, 3).map((x, n) => row(x, pi, n)).join('') || '<div class="msg">None for this kind.</div>'}</div>
       ${p.general.length > 3 ? `<details class="fgw-more"><summary>${p.general.length - 3} more</summary><div class="fgw-list">${p.general.slice(3).map((x, n) => row(x, pi, n + 3)).join('')}</div></details>` : ''}</div>`).join('')}
-    <div class="fg-h" style="margin-top:14px">Worn by</div>
-    <div class="msg fgw-note">People of a class carrying pieces like these wear the whole set instead, those carrying the most first.</div>
-    <div class="fgw-list">${d.classes.map((c, n) => `<label class="fgw-row"><input type="checkbox" data-sc2="${n}" ${W_.scls[n].on ? 'checked' : ''}>
-      <span class="fgw-nm">${esc(fgCls(c.cls))}</span><span class="msg fgw-why">${c.people} carry pieces like it (up to ${c.slots} of the set's)</span>
-      <span class="fgw-lv">in <input class="inp num" data-sc2n="${n}" value="${W_.scls[n].n}"> of them</span></label>`).join('') || '<div class="msg">Nobody in the game carries pieces like these.</div>'}</div>
-    <div class="fg-h" style="margin-top:14px">Sold by</div>
-    <div class="fgw-chips">${d.sellers.map((s, n) => `<label class="fgw-chip"><input type="checkbox" data-ss="${n}" ${W_.ssell[n] ? 'checked' : ''}>${esc(s.name)} <span class="msg">${esc(fgCls(s.cls))}</span></label>`).join('') || '<span class="msg">No merchant in the game sells pieces like these.</span>'}</div>
-    <div class="msg fgw-note" style="margin-top:12px">A ticked merchant stocks every piece. If another mod changes the same list or person, the one loaded last wins. One Undo takes it all back.</div></div>`;
+    ${W_.sclasses.length ? `<div class="fg-h" style="margin-top:14px" title="Tick someone and they wear the whole set: their like pieces swapped, the rest added">Worn by, instead of theirs</div>
+    <div class="fgw-list">${fgWhoHtml(W_.sclasses, W_.swho, 'sq')}</div>` : ''}
+    ${d.sellers.length ? `<div class="fg-h" style="margin-top:14px">Merchants with pieces like these</div>
+    <div class="fgw-chips">${d.sellers.map((s, n) => `<label class="fgw-chip"><input type="checkbox" data-ss="${n}" ${W_.ssell[n] ? 'checked' : ''}>${esc(s.name)} <span class="msg">${esc(s.where || fgCls(s.cls))}</span></label>`).join('')}</div>` : ''}
+    ${fgExtrasHtml(W_, true)}
+    <div class="msg fgw-note" style="margin-top:12px" title="A merchant stocks every piece. If another mod changes the same list or person, the one loaded last wins.">One Undo takes it all back.</div></div>`;
   if (typeof v3ThumbScan === 'function') v3ThumbScan(box);
   fgWorldModesBind(box);
   box.querySelectorAll('[data-sl]').forEach(c => c.onchange = () => { const [p, n] = c.dataset.sl.split(':'); W_.slists[+p][+n] = c.checked; fgWorldReady(); });
   box.querySelectorAll('[data-slv]').forEach(c => c.oninput = () => { const [p, n] = c.dataset.slv.split(':'); const v = parseInt(c.value, 10); if (v > 0) d.pieces[+p].general[+n].level = v; });
-  box.querySelectorAll('[data-sc2]').forEach(c => c.onchange = () => { W_.scls[+c.dataset.sc2].on = c.checked; fgWorldReady(); });
-  box.querySelectorAll('[data-sc2n]').forEach(c => c.oninput = () => { const v = parseInt(c.value, 10); if (v >= 0) W_.scls[+c.dataset.sc2n].n = v; fgWorldReady(); });
+  fgWhoBind(box, W_.sclasses, W_.swho, 'sq', fgWorldRedraw);
   box.querySelectorAll('[data-ss]').forEach(c => c.onchange = () => { W_.ssell[+c.dataset.ss] = c.checked; fgWorldReady(); });
+  fgExtrasBind(box, W_, fgWorldRedraw);
   fgWorldReady();
 }
 function fgWorldSetPicks(){
@@ -424,9 +634,13 @@ function fgWorldSetPicks(){
   const lists = {};
   let nl = 0;
   d.pieces.forEach((p, pi) => { lists[p.item.id] = p.general.filter((x, n) => W_.slists[pi][n] && !x.in).map(x => ({list: x.list, level: x.level})); nl += lists[p.item.id].length; });
-  const classes = d.classes.filter((c, n) => W_.scls[n].on && W_.scls[n].n > 0).map((c, n) => ({cls: c.cls, n: W_.scls[d.classes.indexOf(c)].n}));
-  const sells = d.sellers.filter((s, n) => W_.ssell[n]).map(s => s.npc);
-  return {lists, classes, sells, nl, np: classes.reduce((a, c) => a + c.n, 0)};
+  const people = [...W_.swho];
+  const x = fgExtrasPicks(W_);
+  const sells = d.sellers.filter((s, n) => W_.ssell[n]).map(s => s.npc).concat(x.xsell);
+  const who = {}; W_.sclasses.forEach(c => c.who.forEach(p => { who[p.npc] = p.name; }));
+  const sname = id => { const s = d.sellers.find(c => c.npc === id) || W_.xsell.find(c => c.id === id); return s ? s.name : id; };
+  return {lists, classes: [], people, sells, gives: x.gives, own_list: x.own_list, nl, np: 0,
+          sum: {nl, it: 'the set', set: true, people: people.map(k => who[k] || k), sellers: sells.map(sname), gives: W_.gives.map(g => g.name || g.id), own: x.own_list}};
 }
 
 // (more than one: "cuirasses", "helmets", "boots" as they are)
@@ -437,28 +651,21 @@ function fgCls(c){ return String(c || '').replace(/^T_[A-Za-z]+_/, '').replace(/
 function fgWorldPicks(){
   const W_ = FG.world, d = W_ && W_.data; if (!d) return null;
   const lists = d.general.filter((x, n) => W_.lists[n] && !x.in).concat(d.some.filter((x, n) => W_.some[n] && !x.in)).map(x => ({list: x.list, level: x.level}));
-  const swaps = [];
-  d.classes.forEach(([c], n) => {
-    const pick = W_.cls[n]; if (!pick.on || !pick.n) return;
-    const of = d.carriers.filter(p => p.cls === c), k = Math.min(pick.n, of.length);
-    for (let i = 0; i < k; i++){ const p = of[Math.floor(i * of.length / k)]; swaps.push({npc: p.npc, theirs: p.theirs}); }
-  });
-  const sells = d.sellers.filter((s, n) => W_.sell[n]).map(s => s.npc);
-  return {lists, swaps, sells};
+  const swaps = d.carriers.filter(p => W_.who.has(p.npc)).map(p => ({npc: p.npc, theirs: p.theirs}));
+  const x = fgExtrasPicks(W_);
+  const sells = d.sellers.filter((s, n) => W_.sell[n]).map(s => s.npc).concat(x.xsell);
+  const names = id => { const p = d.carriers.find(c => c.npc === id) || d.sellers.find(c => c.npc === id) || W_.xsell.find(c => c.id === id); return p ? p.name : id; };
+  return {lists, swaps, sells, gives: x.gives, own_list: x.own_list,
+          sum: {nl: lists.length, it: 'it', people: swaps.map(s => names(s.npc)), sellers: sells.map(names), gives: W_.gives.map(g => g.name || g.id), own: x.own_list}};
 }
 function fgWorldReady(){
   const go = FG.bg && FG.bg.querySelector('#fg-go'); if (!go) return;
-  if (FG.world && FG.world.whole){
-    const q = fgWorldSetPicks(), n = q ? q.nl + q.np + q.sells.length : 0;
-    go.disabled = !n; go.innerHTML = '🌐 Put the whole set into the world';
-    if (q) fgMsg(n ? `${q.nl} list entr${q.nl === 1 ? 'y' : 'ies'}, up to ${q.np} ${q.np === 1 ? 'person' : 'people'} wearing it, ${q.sells.length} merchant${q.sells.length === 1 ? '' : 's'}` : 'Tick where the game should find it.');
-    return;
-  }
-  go.innerHTML = '🌐 Put it into the world';
-  const p = fgWorldPicks();
-  const n = p ? p.lists.length + p.swaps.length + p.sells.length : 0;
+  const whole = FG.world && FG.world.whole;
+  const p = whole ? fgWorldSetPicks() : fgWorldPicks();
+  go.innerHTML = whole ? '🌐 Put the whole set into the world' : '🌐 Put it into the world';
+  const n = p ? (whole ? p.nl + p.people.length + p.np : p.lists.length + p.swaps.length) + p.sells.length + p.gives.length + (p.own_list ? 1 : 0) : 0;
   go.disabled = !n;
-  if (p) fgMsg(n ? `${p.lists.length} list${p.lists.length === 1 ? '' : 's'}, ${p.swaps.length} ${p.swaps.length === 1 ? 'person' : 'people'}, ${p.sells.length} merchant${p.sells.length === 1 ? '' : 's'}` : 'Tick where the game should find it.');
+  if (p) fgMsg(n ? esc(fgSummary(p.sum)) : 'Tick where the game should find it.');
 }
 async function fgPlace(){
   if (!await needProject()) return;
@@ -470,7 +677,7 @@ async function fgPlace(){
     const r = await post('/api/forge/place', Object.assign({id: FG.world.id}, p));
     if (typeof afterChange === 'function') afterChange();
     toast(`${FG.world.data.item.name || FG.world.id} is in the world: ${fgMsgText(p)}. One Undo takes it back.`);
-    FG.world.forged = null;
+    FG.world.forged = null; FG.world.gives = []; FG.world.xsell = []; FG.world.own = null;
     // (in a set: this piece ticked off, and on to the next one not yet placed)
     if (FG.world.set){
       const cur = FG.world.set.find(x => x.id === FG.world.id); if (cur) cur.placed = true;
@@ -486,7 +693,8 @@ async function fgPlaceSet(){
   fgMsg('<span class="spin"></span>Putting the set into the world…');
   try {
     const r = await post('/api/forge/placeset', {ids: W_.set.map(p => p.id), lists: q.lists, classes: q.classes, sells: q.sells,
-      mat: W_.between ? null : W_.mat, between: W_.between, name: W_.setName || ''});
+      mat: W_.between ? null : W_.mat, between: W_.between, name: W_.setName || '', people: q.people, gives: q.gives, own_list: q.own_list});
+    W_.gives = []; W_.xsell = []; W_.own = null;
     if (typeof afterChange === 'function') afterChange();
     toast(`The set is in the world: ${r.lists} list entries, ${r.people} ${r.people === 1 ? 'person' : 'people'} wearing it, ${r.merchants} merchant${r.merchants === 1 ? '' : 's'}. One Undo takes it back.`);
     W_.forged = null; W_.set.forEach(p => p.placed = true);
@@ -544,6 +752,19 @@ function fgCss(){
   .fgw-chips{display:flex;flex-wrap:wrap;gap:6px}
   .modal .fgw-chip{margin:0;color:var(--text)}
   .fgw-chip{display:inline-flex;gap:6px;align-items:center;padding:4px 9px;border:1px solid var(--line2);border-radius:14px;font-size:12.5px;cursor:pointer;background:var(--panel2)}
-  .fgw-chip:has(input:checked){border-color:var(--gold)}`;
+  .fgw-chip:has(input:checked),.fgw-chip.on{border-color:var(--gold)}
+  .fgw-chip .lnk{margin-left:2px}
+  .fgw-cls{border-top:1px solid var(--line);padding:2px 0}.fgw-cls>summary{cursor:pointer;padding:4px 6px;font-size:13px;display:flex;gap:8px;align-items:center}
+  .fgw-cls>summary::before{content:'▸';color:var(--faint)}.fgw-cls[open]>summary::before{content:'▾'}
+  .fgw-cls>summary::-webkit-details-marker{display:none}
+  .modal .fgw-person{padding-left:26px}
+  .fgx-own{border-left:2px solid var(--line2);padding:4px 0 4px 10px;margin:4px 0}
+  .fg-ownl{display:flex;gap:6px;align-items:center;margin:3px 0}.fg-ownl select{flex:1;min-width:0}
+  .flp-grid{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:56vh}
+  .fg-look small{font-size:10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fs-lk{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.fs-lk select{max-width:200px;padding:2px 4px;font-size:12px}
+  .fg-skin{display:flex;flex-direction:column;gap:8px;margin:10px 0;max-height:56vh;overflow:auto}
+  .fg-skinr{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center}
+  .fg-skinr img{width:64px;height:64px;object-fit:cover;border-radius:6px;background:#000}`;
   document.head.appendChild(c);
 }

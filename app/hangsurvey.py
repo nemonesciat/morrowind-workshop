@@ -117,9 +117,12 @@ def _survey(db):
     # (every place read until PLACES; after that only places with a model seen fewer than WANT times, up to
     # MORE places in all: rarer pieces, the anchors and hanging planters, get their three)
     WANT, MORE = 3, PLACES * 3
+    import background
     for i, p in enumerate(places):
         if n >= MORE:
             break
+        # (for the Learning bar: places looked at, or places read of the most it reads, whichever is further)
+        background.progress(max(i, n * len(places) // MORE), len(places), 'places')
         try:
             m = mapdata.cellmap(db, p['key'], original=True)
         except Exception:

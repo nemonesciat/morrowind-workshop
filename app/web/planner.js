@@ -401,7 +401,7 @@ function plCss(){
   .pl-side .chips button:hover{border-color:var(--goldline);color:var(--gold2)}
   .pl-side .tip{color:var(--muted-b);font-size:12px;line-height:1.5} .pl-side .tip b{color:var(--text-b)}
   .pl-side .conn{display:flex;justify-content:space-between;gap:6px;align-items:center;margin:4px 0}
-  .pl-hint{position:absolute;left:10px;top:8px;font-size:12px;color:var(--text-b);background:#000a;padding:3px 8px;border-radius:6px;pointer-events:none}
+  .pl-hint{position:absolute;left:10px;top:8px;font-size:12px;color:var(--text);background:var(--panel);background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line0);padding:3px 8px;border-radius:6px;pointer-events:none}
   .pl-zoom{position:absolute;right:8px;bottom:8px;display:flex;gap:4px}
   .pl-zoom button{width:26px;height:26px;border-radius:6px;border:1px solid var(--line);background:color-mix(in srgb,var(--bg3) 80%,transparent);color:var(--text-b);cursor:pointer}
   .pl-note{padding:6px 10px;border-top:1px solid var(--line);font-size:12px;color:var(--muted-b);background:var(--deep-c)}

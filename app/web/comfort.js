@@ -314,7 +314,7 @@ function cfMenuAt(e, hit, at, locked){
     if (r.arch && W.info && W.info.interior && typeof extendMode === 'function') items.push({label: '⬚ Extend from here…', act: () => extendMode(true, ck, {ref: r.k})});
     // (outdoors, a building's piece or door: the interior built inside it; frombuilding.js)
     // (Fit the ground for the building piece itself, not for its door: a trapdoor was "not a building piece")
-    if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb){ items.push(fb); if (r.arch) items.push(gfMenuItem(ck, r)); } }
+    if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb){ items.push(fbCheckItem(ck, r)); items.push(fb); if (r.arch) items.push(gfMenuItem(ck, r)); } }
     if (r.arch && !(typeof FB_NOT_BUILDING !== 'undefined' && FB_NOT_BUILDING.test(r.id))) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
     // (how a person or a creature moves, straight from here: it was three clicks down, the user: "should be easier to find")
     if (r.ri != null && ['NPC_', 'CREA'].includes(r.type) && typeof anShow === 'function') items.push({label: '🎞 Animations and text keys…', act: () => anShow(r.ri, (r.name || r.id) + ': animation & text keys')});
@@ -341,12 +341,20 @@ function cfMenuAt(e, hit, at, locked){
     if (W.hide.size) items.push({label: `Show the ${W.hide.size} hidden again (Alt+H)`, act: () => cfRun('unhide')});
     if (W.clip) items.push(cfPasteItem(at));
     if (at) items.push({label: '🫳 Settle what\'s loose here…', act: () => cfSettleAsk(at)});
-    // (outdoors: a house stacked as a volume and fitted with the game's buildings; prefabplan.js)
-    if (W.ext && typeof pfOpen === 'function') items.push({label: '🏗 Plan a prefab…', act: () => pfOpen()});
+    // (a building put together from the game's pieces on the prefab workbench, then set down here in one go; bench.js)
+    if (W.ext && typeof benchOpen === 'function') items.push({label: '🔨 Prefab workbench…', act: () => benchOpen()});
+    // (indoors: one of the game's buildings that fits these rooms, set down outside with the doors linked; frombuilding.js)
+    if (typeof goMenuItem === 'function'){ const go = goMenuItem(); if (go) items.push(go); }
     if (at) items.push({label: '▶ Play here', act: () => playHere({cell: cellKeyAt(at[0], at[1]), x: at[0], y: at[1], z: V3.on && at[2] != null ? at[2] + 60 : groundZ(at[0], at[1]) + (W.ext ? 60 : 40), rz: 0})});
     // (a locked building piece under the mouse: Fix here on it without selecting it; else the edge nearest the spot)
     if (W.info && W.info.interior && locked && locked[1].arch && typeof fixhereMenu === 'function') items.push({label: `🧱 Fix here: what the game stands at ${locked[1].name || locked[1].id}…`, act: () => fixhereMenu(locked[0], locked[1].k, pt, null)});
     if (W.info && W.info.interior && locked && locked[1].arch && typeof extendStart === 'function') items.push({label: '➕ Add a room through this wall…', act: () => extendStart(locked[0], locked[1].k, at ? [at[0], at[1], V3.on && at[2] != null ? at[2] : null] : null)});
+    // (outdoors, a locked building under the mouse: checked, or given an interior, without unlocking it; neither
+    // moves it, and "Check this building" was out of reach with the lock on, 2026-10-27)
+    if ((W.ext || (W.info && W.info.like_exterior)) && locked && locked[1].arch && typeof fbMenuItem === 'function'){
+      const fb = fbMenuItem(locked[0], locked[1]);
+      if (fb){ sep(); const ck_ = fbCheckItem(locked[0], locked[1]); if (ck_) items.push(ck_); items.push(fb); }
+    }
     if (W.info && W.info.interior && typeof extendMode === 'function') items.push({label: (typeof EXM !== 'undefined' && EXM.on) ? '⬚ Leave Extend mode' : '⬚ Extend by piece (open edges lit, the game\'s candidates)…', act: () => extendMode(!(typeof EXM !== 'undefined' && EXM.on), W.info.key, locked && locked[1].arch ? {ref: locked[1].k} : null)});
     // (a locked piece that takes a dressing, a Daedric platform, a built-in shelf: dressed without unlocking
     // it, the user: "even if lock walls and buildings is checked, it should still be possible to dress

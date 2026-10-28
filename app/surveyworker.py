@@ -32,6 +32,7 @@ def main():
     mapdata.EXTRAS = False           # (the surveys never read a place's lighting or path grid: not parsed here)
     background.SUBPROCESS = False    # (a survey process never starts survey processes of its own: whatever a
     #                                  survey asks for on the way runs in a thread here, see gapsurvey.ready)
+    background.IN_WORKER[0] = True   # (and says how far it has got on its output, for the Learning bar)
     t0 = time.time()
     db = Database()
     if project_path and project_path != '-':

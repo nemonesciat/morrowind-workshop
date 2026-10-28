@@ -28,6 +28,7 @@ _worker = [None]
 _done = []                    # names finished, newest last (kept short)
 _batch = []                   # the jobs handed to survey processes now
 _threads = []                 # one thread per survey process running
+_round = {'total': 0, 't0': 0.0}  # the surveys queued since the queue was last empty, and when that began (the page's "7 of 26")
 SUBPROCESS = True             # (False: every task runs in the worker thread, as in the lab)
 PROCESSES = None              # survey processes at once; None: by the machine (slots()), 1 to 3
 project_path = [None]         # set by the server when a project is open (the surveys skip its own cells)
@@ -35,6 +36,28 @@ project_path = [None]         # set by the server when a project is open (the su
 COST = {'kits.learn_stairs': 60, 'layoutsurvey.survey': 40, 'catalogue.survey': 45, 'shelfsurvey.interest_survey': 50,
         'gapsurvey.survey': 15, 'hangsurvey.survey': 450, 'landsurvey.survey': 60}
 COST_OTHER = 12
+IN_WORKER = [False]           # set in a survey process: progress() goes to its output, for the server to read
+_tl = threading.local()       # .job: the job this thread runs; .last: when it last reported
+
+
+def progress(n, total, what='', stage=(0, 1)):
+    """How far the survey running now has got: n of total (of what, "buildings"), for the page's Learning bar,
+    which otherwise moved only when a survey finished and sat still through a ten-minute one (the user: "people
+    may wonder if the process is working"). stage (i, k): this is stage i of k of the survey, so the bar fills
+    on across stages. Cheap to call in a loop: reported once a second at most."""
+    if not total:
+        return
+    t = time.time()
+    if n < total and t - getattr(_tl, 'last', 0.0) < 1.0:
+        return
+    _tl.last = t
+    frac = (stage[0] + min(1.0, n / float(total))) / max(1, stage[1])
+    if IN_WORKER[0]:
+        print('progress %d %d %.4f %s' % (n, total, frac, ' '.join(str(what).split())), flush=True)
+        return
+    job = getattr(_tl, 'job', None)
+    if job is not None:
+        job.progress = (n, total, what, frac)
 
 
 class Job:
@@ -45,6 +68,8 @@ class Job:
         self.name, self.fn, self.task = name, fn, task
         self.state = 'queued'
         self.t0 = None
+        self.progress = None          # (n, total, what, share done) while running, from progress()
+        self.began = None             # when it really began: a survey process runs its jobs one after another
 
     def is_alive(self):
         return self.state in ('queued', 'running')
@@ -64,6 +89,9 @@ def start(name, fn, task=None):
         r = _running[0]
         if r is not None and r.name == name and r.is_alive():
             return r
+        if not _alive():
+            _round['total'], _round['t0'] = 0, time.time()
+        _round['total'] += 1
         _queue.append(job)
         if _worker[0] is None or not _worker[0].is_alive():
             t = threading.Thread(target=_run, name='surveys', daemon=True)
@@ -153,6 +181,8 @@ def _run():
             job.state = 'running'
             job.t0 = time.time()
             _running[0] = job
+            job.began = job.t0
+        _tl.job = job
         try:
             job.fn()
             job.state = 'done'
@@ -174,8 +204,10 @@ def _process_batch(part):
         if j in finished:
             continue
         with _lock:
-            j.t0 = time.time()
+            j.t0 = j.began = time.time()
+            j.progress = None
             _refresh_running()
+        _tl.job = j
         try:                            # (the process failed it: here, then)
             j.fn()
             j.state = 'done'
@@ -211,7 +243,19 @@ def _in_process(jobs):
         return set()
     # (the process reports each survey as it finishes: that one is done and the next is "running")
     finished, lines = set(), []
+    jobs[0].began = time.time()
     for line in p.stdout:
+        if line.startswith('progress '):
+            # (how far the survey it is running has got: the first of the jobs not reported done, as it runs
+            # them in order)
+            parts = line.rstrip('\n').split(' ', 4)
+            cur = next((j for j in jobs if j not in finished), None)
+            if cur is not None and len(parts) >= 4:
+                try:
+                    cur.progress = (int(parts[1]), int(parts[2]), parts[4] if len(parts) > 4 else '', float(parts[3]))
+                except ValueError:
+                    pass
+            continue
         lines.append(line)
         if line.startswith(('done ', 'failed ', 'loaded ')):
             print('survey process: ' + line.rstrip(), flush=True)     # (the log keeps each survey's time)
@@ -226,16 +270,46 @@ def _in_process(jobs):
                     for k in jobs:
                         if k.state == 'running' and k.t0 is None:
                             k.t0 = time.time()
+                    nxt = next((k for k in jobs if k not in finished), None)
+                    if nxt is not None and nxt.began is None:
+                        nxt.began = time.time()
     p.wait()
     if len(finished) < len(jobs):
         print('survey process left %d of %d undone:\n%s' % (len(jobs) - len(finished), len(jobs), ''.join(lines)[-2000:]))
     return finished
 
 
+def _alive():
+    """(under the lock) how many surveys are queued or running now."""
+    n = len(_queue) + sum(1 for j in _batch if j.is_alive())
+    r = _running[0]
+    if r is not None and r.is_alive() and r not in _batch:
+        n += 1
+    return n
+
+
 def status():
-    """{'running': name or None, 'since': seconds, 'queued': [names], 'done': [names]} for the page."""
+    """{'running': name or None, 'since': seconds, 'queued': [names], 'done': [names], 'total', 'left', 'elapsed'}
+    for the page: total = the surveys of this round (queued since the queue was last empty), left = those not
+    finished yet, elapsed = seconds since the round began."""
     with _lock:
         r = _running[0]
         waiting = [j.name for j in _batch if j.state == 'running' and j is not r] + [j.name for j in _queue]
-        return {'running': r.name if r else None, 'since': round(time.time() - r.t0) if r and r.t0 else 0,
-                'queued': waiting, 'done': list(_done)}
+        left = _alive()
+        # (how far each survey running now has got, and their sum as a share of one survey: the bar fills by it
+        # between surveys. One that says nothing is reckoned by its time against what it is known to take,
+        # never past 90%)
+        now = time.time()
+        run = [j for j in _batch if j.state == 'running' and j.t0] + ([r] if r is not None and r.state == 'running' and r.t0 and r not in _batch else [])
+        prog, part = [], 0.0
+        for j in run:
+            if j.progress:
+                n, tot, what, frac = j.progress
+                prog.append({'name': j.name, 'n': n, 'total': tot, 'what': what})
+                part += min(1.0, frac)
+            elif j.task and j.began:
+                part += min(0.9, (now - j.began) / float(_cost(j)))
+        return {'running': r.name if r else None, 'since': round(now - r.t0) if r and r.t0 else 0,
+                'queued': waiting, 'done': list(_done), 'total': max(_round['total'], left), 'left': left,
+                'elapsed': round(now - _round['t0']) if left and _round['t0'] else 0,
+                'progress': prog, 'part': round(part, 3)}

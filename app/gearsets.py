@@ -80,17 +80,22 @@ def _pair(db, s, mat, slots):
     return None
 
 
-def preview(db, look, mat=None, between=None, stem='', armor=(), weapons=()):
+def preview(db, look, mat=None, between=None, stem='', armor=(), weapons=(), looks=None):
     """What the set would be, piece by piece: [{'kind', 'type', 'label', 'look': {i, id, name}, 'name', 'stats',
-    'weight_class'}]."""
+    'weight_class'}]. looks {type: record index}: a slot's look picked by hand ("Looks like", forgelooks.py), from
+    any piece of that slot in the load order."""
     s = gearsurvey.survey(db)
     out = []
     for kind, types in (('armor', armor), ('weapon', weapons)):
         for ty in types:
             g = s['groups'].get((kind, ty, look))
-            if not g or not g['looks']:
+            pick = (looks or {}).get(ty)
+            if pick is not None and 0 <= int(pick) < len(db.recs) and db.recs[int(pick)] and db.recs[int(pick)][0] in ('WEAP', 'ARMO'):
+                li = int(pick)
+            elif not g or not g['looks']:
                 continue
-            li = _look_for(db, g, look)
+            else:
+                li = _look_for(db, g, look)
             r = db.recs[li]
             p = gearsurvey.propose(db, kind, ty, None if between else (mat or look), between)
             row = {'kind': kind, 'type': ty, 'label': gearsurvey.LABEL.get(ty, ty), 'look': {'i': li, 'id': r[1], 'name': r[2] or r[1]},
@@ -101,24 +106,72 @@ def preview(db, look, mat=None, between=None, stem='', armor=(), weapons=()):
     return out
 
 
-def make(db, look, mat=None, between=None, stem='', armor=(), weapons=(), names=None):
-    """Make the set: one record a piece, the whole set one Undo. names: {type: name} the user changed.
+def make(db, look, mat=None, between=None, stem='', armor=(), weapons=(), names=None, looks=None, style=None):
+    """Make the set: one record a piece, the whole set one Undo. names: {type: name} the user changed; looks
+    {type: record index} picked by hand; style {'own': {type: Library model}, 'worn': {type: {part: Library
+    model}}, 'skin': {texture: new texture}} (forgelooks.restyle; the skin goes over every piece).
     Returns {'made': [{'type', 'id', 'i', 'name'}]}."""
     import create
     import editing
+    import forgelooks
     import items
     if not (stem or '').strip():
         raise ValueError('Give the set a name, like "Sunsteel".')
-    rows = preview(db, look, mat, between, stem.strip(), armor, weapons)
+    rows = preview(db, look, mat, between, stem.strip(), armor, weapons, looks)
     if not rows:
         raise ValueError('Pick at least one piece for the set.')
     made = []
     prefix = create._prefix(db)
+    st = style or {}
+    steps = 0
     for row in rows:
         name = ((names or {}).get(row['type']) or row['name']).strip()[:31]
         rid = create.suggest_id(db, prefix, name)
-        r = items.create_item(db, {'template': row['look']['i'], 'id': rid, 'name': name, 'stats': row['stats']})
+        # (an enchanted look gives its look only: its enchantment is left behind)
+        r = items.create_item(db, {'template': row['look']['i'], 'id': rid, 'name': name, 'stats': row['stats'], 'enchant': {'effects': []}})
+        steps += 1
+        own, worn = (st.get('own') or {}).get(row['type']), (st.get('worn') or {}).get(row['type'])
+        if own or worn or st.get('skin'):
+            forgelooks.restyle(db, r.get('id', rid), own=own, worn_own=worn, skin=st.get('skin'))
+            editing.commit(db, 'Gave %s its look' % name)
+            steps += 1
+            r['i'] = db.resolve_id(r.get('id', rid))
         made.append({'type': row['type'], 'kind': row['kind'], 'id': r.get('id', rid), 'i': r.get('i'), 'name': name})
-    if len(made) > 1:
-        editing.fold(db, len(made), 'Forged the %s set (%d pieces)' % (stem.strip(), len(made)))
+        remember(db, r.get('id', rid), None if between else (mat or look), between)
+    if steps > 1:
+        editing.fold(db, steps, 'Forged the %s set (%d pieces)' % (stem.strip(), len(made)))
     return {'made': made}
+
+
+def remember(db, rid, mat=None, between=None):
+    """What a piece was forged as, kept with the mod (project.forged), for Into the world opened later: its name
+    can say another material ("Duskglass Helm" read as glass)."""
+    if not db.project or not rid or not (mat or between):
+        return
+    db.project.forged[rid.lower()] = {'between': [between[0], between[1], float(between[2])]} if between else {'mat': mat}
+    db.project.save()
+
+
+def forged_as(db, rid):
+    """(mat, between) a piece was forged as, or (None, None)."""
+    e = (getattr(db.project, 'forged', None) or {}).get((rid or '').lower()) if db.project else None
+    if not e:
+        return None, None
+    return e.get('mat'), (tuple(e['between']) if e.get('between') else None)
+
+
+def make_one(db, d):
+    """One Forge piece: items.create_item with its look's enchantment left behind, then its own model, worn
+    models or skin (d['style'], as make's), one Undo."""
+    import editing
+    import forgelooks
+    import items
+    r = items.create_item(db, dict(d, enchant={'effects': []}))
+    remember(db, r['id'], d.get('mat'), d.get('between'))
+    st = d.get('style') or {}
+    if st.get('own') or st.get('worn') or st.get('skin'):
+        forgelooks.restyle(db, r['id'], own=st.get('own'), worn_own=st.get('worn'), skin=st.get('skin'))
+        editing.commit(db, 'Gave %s its look' % d.get('name', r['id']))
+        editing.fold(db, 2, 'Forged %s' % d.get('name', r['id']))
+        r['i'] = db.resolve_id(r['id'])
+    return r

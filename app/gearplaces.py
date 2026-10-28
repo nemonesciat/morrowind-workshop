@@ -161,7 +161,21 @@ def tier_of(db, mat=None, between=None):
     return t.get(mat)
 
 
-def propose_lists(db, kind, ty, mat, skip=None, enchanted=False, tier=None):
+def _where(db, npc_id):
+    """Where a person stands in the world: the first place's name, and how many places ('' when nowhere: a
+    person only a script or a list brings in)."""
+    cells = []
+    for ri in sorted(db.used_in.get((npc_id or '').lower(), ())):
+        r = db.recs[ri]
+        if r is None or ri in db.dead or r[0] != 'CELL':
+            continue
+        lab = r[1] if r[7].startswith('#') else (r[2] or r[1])
+        if lab not in cells:
+            cells.append(lab)
+    return (cells[0] + (' and %d more' % (len(cells) - 1) if len(cells) > 1 else '')) if cells else ''
+
+
+def propose_lists(db, kind, ty, mat, skip=None, enchanted=False, tier=None, relaxed=False):
     """The game's lists a piece of this kind, type and material would join, the likeliest first: [{'list',
     'level', 'why', 'score'}]. Measured on the game's own pieces (measure()): the lists of mostly enchanted
     things take a plain piece one time in eighteen, so a plain piece leaves them out, an enchanted one keeps to
@@ -187,20 +201,27 @@ def propose_lists(db, kind, ty, mat, skip=None, enchanted=False, tier=None):
                 continue
             same_t = [(g, l) for g, l in ent if gear[g]['type'] == ty]
             lv = _level_at(s, same_t or ent, tier)
-            out.append({'list': lid, 'level': lv, 'why': 'the game\'s %s list' % mat, 'score': 2 + len(same_t) / float(len(ent))})
+            out.append({'list': lid, 'level': lv, 'why': '%s' % mat, 'kind': 'material', 'score': 2 + len(same_t) / float(len(ent))})
         elif lk[0] == 'type':
             if lk[1] != (kind, ty) or tier is None:
                 continue
             tt = [gear[g]['tier'] for g, _lv in ent if gear[g]['tier'] is not None]
-            if not tt or not (min(tt) - 0.05 <= tier <= max(tt) + 0.05):
+            if not tt:
+                continue
+            past = tier > max(tt) + 0.05
+            if not (min(tt) - 0.05 <= tier <= max(tt) + 0.05) and not (relaxed and past):
                 continue
             same_m = sum(1 for g, _lv in ent if gear[g]['mat'] == mat)
-            out.append({'list': lid, 'level': _level_at(s, ent, tier), 'why': 'a list of %s by level' % gearsurvey.LABEL.get(ty, ty).lower(),
-                        'score': 2 + same_m / float(len(ent))})
+            # (relaxed, when the game has nothing else: a list by level whose best is cheaper than this, at its top
+            # level and a little over)
+            lv = _level_at(s, ent, tier) + (5 if past else 0)
+            out.append({'list': lid, 'level': lv, 'why': '%s by level%s' % (fgplural(ty), ', at its top' if past else ''),
+                        'kind': 'type', 'score': 2 + same_m / float(len(ent)) - (1 if past else 0),
+                        'stretch': past})
         else:
             hits = [(g, l) for g, l in ent if gear[g]['kind'] == kind and gear[g]['type'] == ty and gear[g]['mat'] == mat]
             if hits:
-                out.append({'list': lid, 'level': sorted(l for _g, l in hits)[len(hits) // 2], 'why': 'holds %s of %s already' % (gearsurvey.LABEL.get(ty, ty).lower(), mat),
+                out.append({'list': lid, 'level': sorted(l for _g, l in hits)[len(hits) // 2], 'why': 'has %s %s' % (mat, fgplural(ty)), 'kind': 'mixed',
                             'score': 1 + len(hits) / float(len(ent))})
     # (the widely used lists first: the ones many people, containers and lists draw on, where the game's own
     # pieces mostly are, before a guard troop's or a vault's own)
@@ -276,6 +297,10 @@ def places(db, item_id, mat=None, between=None):
     a piece like it: theirs can be swapped for this], 'classes': [(class, n)], 'sellers': [merchants who sell
     pieces like it]}. Each offer says why, and the list's level for this piece."""
     s = survey(db)
+    # (opened later, from the right-click menu or the item editor: what it was forged as, not what its name says)
+    if not mat and not between:
+        import gearsets
+        mat, between = gearsets.forged_as(db, item_id)
     # (a new material between two: the lists of the nearer one, at the levels of its own tier between them)
     if between:
         a, b, f = between[0], between[1], float(between[2])
@@ -290,17 +315,32 @@ def places(db, item_id, mat=None, between=None):
     tier = tier_of(db, mat, between)
     have = {l.lower() for l, _lv in s['in_lists'].get(item_id.lower(), [])}
     general, some = [], []
-    for x in propose_lists(db, kind, ty, mat, skip=item_id.lower(), enchanted=it['enchanted'], tier=tier):
+    offers = propose_lists(db, kind, ty, mat, skip=item_id.lower(), enchanted=it['enchanted'], tier=tier)
+    fallback = ''
+    # (the game has no list for it: Morrowind has none for daedric or ebony helmets, they are placed by hand. Then the
+    # other material's lists for a new one between two, then the lists by level whose best is cheaper, at their top)
+    if not [x for x in offers if not any(t in x['list'].lower() for t in FOR_SOME)]:
+        if between:
+            other = between[1] if mat == between[0] else between[0]
+            offers = propose_lists(db, kind, ty, other, skip=item_id.lower(), enchanted=it['enchanted'], tier=tier) + offers
+            fallback = 'The game has no list of %s %s; these are its %s ones.' % (mat, fgplural(ty), other) if offers else ''
+        if not [x for x in offers if not any(t in x['list'].lower() for t in FOR_SOME)]:
+            offers = propose_lists(db, kind, ty, mat, skip=item_id.lower(), enchanted=it['enchanted'], tier=tier, relaxed=True) + offers
+            fallback = ('The game puts no %s like this in a list (it places them by hand). These lists by level are the nearest: '
+                        'their best pieces are cheaper, so it goes in at their top level.' % fgplural(ty)) if offers else ''
+    seen_l = set()
+    offers = [x for x in offers if not (x['list'].lower() in seen_l or seen_l.add(x['list'].lower()))]
+    for x in offers:
         lri = db.resolve_id(x['list'])
         x['src'] = db.plugins[db.recs[lri][3]]['name'] if lri is not None else ''
         x['in'] = x['list'].lower() in have or _holds(db, x['list'], item_id, 'INAM')
         low = x['list'].lower()
-        (some if any(t in low for t in FOR_SOME) or x['why'].startswith('holds') else general).append(x)
+        (some if any(t in low for t in FOR_SOME) or x['kind'] == 'mixed' else general).append(x)
     if between:
         # (a new material between two: the lists by level first, where its own tier gives it its level; a plain
         # material's list hands its pieces out at any level, and would give this one away with the cheaper ones)
         for x in general:
-            if x['why'].startswith('a list of'):
+            if x['kind'] == 'type':
                 x['score'] = round(x['score'] + 1.5, 3)
         general.sort(key=lambda x: -x['score'])
     # people who carry a piece of this type and material: theirs swapped for this one (a guard's steel sword for
@@ -318,18 +358,28 @@ def places(db, item_id, mat=None, between=None):
             if _holds(db, npc_id, item_id, 'NPCO'):
                 continue                  # (carries or sells this one already)
             row = {'npc': npc_id, 'name': (db.recs[ni][2] if ni is not None else '') or npc_id, 'cls': cls, 'race': race,
-                   'faction': fac, 'theirs': g, 'theirs_name': s['gear'][g]['name'] or g}
+                   'faction': fac, 'theirs': g, 'theirs_name': s['gear'][g]['name'] or g, 'where': _where(db, npc_id)}
             (sellers if sells else car).append(row)
     cls = Counter(c['cls'] for c in car)
     return {'item': {'id': item_id, 'name': it['name'], 'kind': kind, 'type': ty, 'type_label': gearsurvey.LABEL.get(ty, ty),
                      'material': mat, 'between': list(between) if between else None, 'enchanted': it['enchanted']},
-            'general': general[:12], 'some': some[:24], 'carriers': car, 'classes': cls.most_common(10), 'sellers': sellers}
+            'general': general[:12], 'some': some[:24], 'carriers': car, 'classes': cls.most_common(10), 'sellers': sellers,
+            'fallback': fallback}
 
 
-def place(db, item_id, lists=(), swaps=(), sells=()):
+def fgplural(ty):
+    """A type's label for more than one: "helmets", "boots", "long blades, one-handed"."""
+    w = gearsurvey.LABEL.get(ty, ty).split(' (')[0].lower()
+    head, _, rest = w.partition(',')
+    head = head if head.endswith(('s', 'greaves')) else head + ('es' if head.endswith(('sh', 'ch', 'x')) else 's')
+    return head + (',' + rest if rest else '')
+
+
+def place(db, item_id, lists=(), swaps=(), sells=(), gives=(), own_list=None):
     """Put the piece into the world as chosen in "Into the world", as one change (one Undo): into each list at
     its level; in place of the like piece a person carries; into a merchant's stock, restocked like the game's.
-    lists: [{'list', 'level'}]; swaps: [{'npc', 'theirs'}]; sells: [npc id]."""
+    lists: [{'list', 'level'}]; swaps: [{'npc', 'theirs'}]; sells: [npc id]; gives: [any person, creature or
+    container id: it is added to what they hold]; own_list: a loot list of its own (see _own_list)."""
     import editing
     it = _item(db, item_id)
     rid = db.recs[db.resolve_id(item_id)][1]
@@ -340,13 +390,49 @@ def place(db, item_id, lists=(), swaps=(), sells=()):
         by_npc[x['npc']].append((rid, x.get('theirs')))
     n += _put_people(db, by_npc)
     n += _put_stock(db, sells, [rid])
+    n += _put_gives(db, [rid], gives)
+    n += _own_list(db, [rid], own_list)
     if n > 1:
         editing.fold(db, n, 'Put %s into the world: %s' % (it['name'] or rid, ', '.join(w for w in (
             '%d list%s' % (len(lists), '' if len(lists) == 1 else 's') if lists else '',
             '%d %s' % (len(swaps), 'person' if len(swaps) == 1 else 'people') if swaps else '',
-            '%d merchant%s' % (len(sells), '' if len(sells) == 1 else 's') if sells else '') if w)))
+            '%d merchant%s' % (len(sells), '' if len(sells) == 1 else 's') if sells else '',
+            '%d given' % len(gives) if gives else '', 'a list of its own' if own_list else '') if w)))
     _cache.clear()
     return {'changed': n}
+
+
+def _put_gives(db, rids, gives):
+    """Each piece added to what these people, creatures or containers hold (one Undo step each); how many."""
+    import editing
+    import items
+    n = 0
+    for who in gives or []:
+        for rid in rids:
+            if _holds(db, who, rid, 'NPCO'):
+                continue
+            name = items._give(db, who, rid, 'item')
+            db.sync_project()
+            editing.commit(db, 'Gave %s to %s' % (rid, name))
+            n += 1
+    return n
+
+
+def _own_list(db, rids, o):
+    """A loot list of the pieces' own (a random one of them each time), then put where it is wanted: o {'id',
+    'level' (the pieces' level in it), 'chance_none', 'into': [{'list', 'level'}] (the game's lists it joins as
+    one entry), 'gives': [people or containers holding it]}. How many changes."""
+    import levlists
+    if not o or not rids:
+        return 0
+    lid = (o.get('id') or '').strip()
+    if not lid:
+        raise ValueError('Give the new list an ID.')
+    lv = max(1, int(o.get('level') or 1))
+    levlists.save(db, lid, {'kind': 'items', 'chance_none': int(o.get('chance_none') or 0), 'all_levels': True,
+                            'entries': [{'id': r, 'level': lv} for r in rids]}, create=True)
+    n = 1 + _put_lists(db, lid, o.get('into') or [])
+    return n + _put_gives(db, [lid], o.get('gives') or [])
 
 
 def _put_lists(db, rid, lists):
@@ -407,31 +493,48 @@ def set_places(db, ids, mat=None, between=None):
         p = places(db, iid, mat, between)
         if p.get('need_material'):
             continue
-        pieces.append({'item': p['item'], 'general': p['general'][:8]})
+        pieces.append({'item': p['item'], 'general': p['general'][:8], 'fallback': p.get('fallback') or ''})
         for c in p['carriers']:
             car[c['npc']].setdefault('cls', c['cls'])
             car[c['npc']].setdefault('name', c['name'])
+            car[c['npc']].setdefault('where', c.get('where') or '')
             car[c['npc']].setdefault('pairs', []).append((p['item']['id'], c['theirs']))
         for sl in p['sellers']:
             sellers.setdefault(sl['npc'], sl)
     by_cls = defaultdict(list)
     for npc_id, c in car.items():
-        by_cls[c['cls']].append(len(c['pairs']))
-    classes = sorted(({'cls': k, 'people': len(v), 'slots': max(v)} for k, v in by_cls.items()), key=lambda x: (-x['people'], -x['slots']))
+        by_cls[c['cls']].append((len(c['pairs']), npc_id))
+    # (each class with its people by name and place, those carrying the most of the set's kinds first)
+    classes = sorted(({'cls': k, 'people': len(v), 'slots': max(x[0] for x in v),
+                       'who': [{'npc': npc, 'name': car[npc]['name'], 'where': car[npc]['where'], 'slots': ns,
+                                'theirs': sorted({t for _i, t in car[npc]['pairs']})[:6]}
+                               for ns, npc in sorted(v, key=lambda x: (-x[0], car[x[1]]['name']))]}
+                      for k, v in by_cls.items()), key=lambda x: (-x['people'], -x['slots']))
     # (the merchants who sell the most kinds of the set's pieces first)
     return {'pieces': pieces, 'classes': classes[:10], 'sellers': list(sellers.values())}
 
 
-def place_set(db, ids, lists, classes, sells, mat=None, between=None, name=''):
+def place_set(db, ids, lists, classes, sells, mat=None, between=None, name='', people=(), gives=(), own_list=None):
     """The whole set into the world as one change (one Undo): lists {piece id: [{'list', 'level'}]}; classes
     [{'cls', 'n'}]: in each, the n people who carry the most pieces like the set's wear all of it (each of their
-    like pieces swapped); sells: merchants who stock every piece."""
+    like pieces swapped); people: those people by id instead (picked by name); sells: merchants who stock every
+    piece; gives: anyone or any container given all of it; own_list: a list of the set's own (_own_list)."""
     import editing
     rids = [db.recs[db.resolve_id(i)][1] for i in ids if db.resolve_id(i) is not None]
     n = 0
     for rid in rids:
         n += _put_lists(db, rid, (lists or {}).get(rid) or (lists or {}).get(rid.lower()) or [])
     by_npc = {}
+    if people:
+        car = defaultdict(lambda: {'pairs': []})
+        for iid in rids:
+            p = places(db, iid, mat, between)
+            for c in p.get('carriers', []):
+                car[c['npc']]['pairs'].append((iid, c['theirs']))
+        for k in people:
+            # (a piece they carry nothing like is added to what they hold: with the rest of the set they wear it)
+            got = {i.lower() for i, _t in car[k]['pairs']}
+            by_npc[k] = car[k]['pairs'] + [(r, None) for r in rids if r.lower() not in got]
     if classes:
         car = defaultdict(lambda: {'pairs': []})
         for iid in rids:
@@ -445,8 +548,10 @@ def place_set(db, ids, lists, classes, sells, mat=None, between=None, name=''):
                 by_npc[k] = car[k]['pairs']
     n_people = _put_people(db, by_npc)
     n_stock = _put_stock(db, sells or [], rids)
+    n_more = _put_gives(db, rids, gives) + _own_list(db, rids, own_list)
     n += n_people + n_stock
     n_lists = n - n_people - n_stock
+    n += n_more
     if n > 1:
         editing.fold(db, n, 'Put the %s set into the world: %s' % (name or 'new', ', '.join(w for w in (
             '%d list entr%s' % (n_lists, 'y' if n_lists == 1 else 'ies') if n_lists else '',
@@ -503,7 +608,7 @@ def measure(db, limit=None):
             for x in prop:
                 if x['list'] in lvl:
                     lv_err.append(abs(x['level'] - lvl[x['list']]))
-                    by_kind[x['why'].split(' ')[1] if x['why'].startswith('the game') else x['why'].split(' ')[0]] += 1
+                    by_kind[x['kind']] += 1
         if g in s['people']:
             real = Counter(c[1] for c in s['people'][g] if not c[4])
             if real:

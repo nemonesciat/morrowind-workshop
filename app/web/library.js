@@ -3,7 +3,62 @@
 // .bmp) here. Models from other programs become Morrowind models; everything goes into the folder your
 // mods live in, so the game can use it at once and a mod that uses it takes it along when shared.
 // Then place them like anything else, or retexture existing objects with your pictures.
-const LIB = {items: null, filter: 'all'};
+const LIB = {items: null, filter: 'all', cat: '', sub: '', q: ''};
+// Sorting what comes in: a category and a kind of it (set as it comes in, changed on its card), or names of your
+// own. The Forge offers a helmet's own model from "Armour › Helmet" first (library.set_group).
+const LIB_CATS = {
+  'Weapons': ['Short blade', 'Long blade', 'Axe', 'Blunt', 'Spear', 'Staff', 'Bow', 'Crossbow', 'Thrown', 'Arrows and bolts'],
+  'Armour': ['Helmet', 'Cuirass', 'Pauldron', 'Gauntlet', 'Bracer', 'Greaves', 'Boots', 'Shield'],
+  'Clothing': ['Shirt', 'Pants', 'Skirt', 'Robe', 'Shoes', 'Gloves', 'Belt', 'Amulet', 'Ring'],
+  'Furniture': ['Table', 'Chair', 'Bench', 'Bed', 'Shelf', 'Cupboard', 'Chest', 'Barrel and crate'],
+  'Decoration': ['Tapestry', 'Banner', 'Rug', 'Painting', 'Statue', 'Pot and urn', 'Plant'],
+  'Lights': ['Lamp', 'Candle', 'Lantern', 'Sconce', 'Fire'],
+  'Clutter': ['Tableware', 'Food', 'Book and paper', 'Tool', 'Ingredient'],
+  'Building': ['Wall', 'Floor', 'Roof', 'Door', 'Window', 'Stairs', 'Pillar', 'Fence'],
+  'Nature': ['Rock', 'Tree', 'Bush', 'Mushroom', 'Water'],
+};
+// (a first guess from the file name: "imperial_helm_02" → Armour › Helmet)
+const LIB_GUESS = [[/helm|hood|mask/, 'Armour', 'Helmet'], [/cuirass|breastplate/, 'Armour', 'Cuirass'], [/pauldron|shoulder/, 'Armour', 'Pauldron'],
+  [/gauntlet/, 'Armour', 'Gauntlet'], [/bracer/, 'Armour', 'Bracer'], [/greave/, 'Armour', 'Greaves'], [/boot/, 'Armour', 'Boots'], [/shield|buckler/, 'Armour', 'Shield'],
+  [/dagger|knife|tanto|shortsword|wakizashi/, 'Weapons', 'Short blade'], [/sword|saber|sabre|katana|claymore|scimitar|blade/, 'Weapons', 'Long blade'],
+  [/axe/, 'Weapons', 'Axe'], [/mace|club|hammer|flail/, 'Weapons', 'Blunt'], [/spear|halberd|pike|glaive/, 'Weapons', 'Spear'], [/staff/, 'Weapons', 'Staff'],
+  [/crossbow/, 'Weapons', 'Crossbow'], [/bow\b|_bow|longbow/, 'Weapons', 'Bow'], [/arrow|bolt/, 'Weapons', 'Arrows and bolts'], [/dart|star\b|throw/, 'Weapons', 'Thrown'],
+  [/robe/, 'Clothing', 'Robe'], [/shirt/, 'Clothing', 'Shirt'], [/pants|trouser/, 'Clothing', 'Pants'], [/shoe/, 'Clothing', 'Shoes'], [/amulet|necklace/, 'Clothing', 'Amulet'], [/ring\b|_ring/, 'Clothing', 'Ring'],
+  [/tapestr/, 'Decoration', 'Tapestry'], [/banner|flag/, 'Decoration', 'Banner'], [/rug|carpet/, 'Decoration', 'Rug'], [/painting|portrait/, 'Decoration', 'Painting'], [/statue|bust/, 'Decoration', 'Statue'],
+  [/table/, 'Furniture', 'Table'], [/chair|stool/, 'Furniture', 'Chair'], [/bench/, 'Furniture', 'Bench'], [/bed\b|_bed/, 'Furniture', 'Bed'], [/shelf|bookcase/, 'Furniture', 'Shelf'],
+  [/chest/, 'Furniture', 'Chest'], [/barrel|crate|sack/, 'Furniture', 'Barrel and crate'], [/lamp/, 'Lights', 'Lamp'], [/candle/, 'Lights', 'Candle'], [/lantern/, 'Lights', 'Lantern'],
+  [/wall/, 'Building', 'Wall'], [/roof/, 'Building', 'Roof'], [/door/, 'Building', 'Door'], [/window/, 'Building', 'Window'], [/stair/, 'Building', 'Stairs'], [/pillar|column/, 'Building', 'Pillar'],
+  [/rock|stone|boulder/, 'Nature', 'Rock'], [/tree/, 'Nature', 'Tree'], [/bush|shrub/, 'Nature', 'Bush']];
+function libGuess(name){
+  const s = String(name || '').toLowerCase();
+  const g = LIB_GUESS.find(([re]) => re.test(s));
+  return g ? {cat: g[1], sub: g[2]} : {cat: '', sub: ''};
+}
+// (two menus: the category, then its kind; "your own" for names that aren't listed)
+function libGroupHtml(p, cat, sub){
+  const own = cat && !LIB_CATS[cat], subs = LIB_CATS[cat] || [], ownSub = sub && !subs.includes(sub);
+  return `<div class="lib-grp"><select class="inp" id="${p}-cat"><option value="">None</option>${Object.keys(LIB_CATS).map(c => `<option ${c === cat ? 'selected' : ''}>${c}</option>`).join('')}
+      <option value="*own" ${own ? 'selected' : ''}>Your own…</option></select>
+    <input class="inp" id="${p}-catown" placeholder="Group" value="${own ? esc(cat) : ''}" style="${own ? '' : 'display:none'}">
+    <select class="inp" id="${p}-sub" style="${cat ? '' : 'display:none'}"><option value="">Any kind</option>${subs.map(s => `<option ${s === sub ? 'selected' : ''}>${s}</option>`).join('')}
+      <option value="*own" ${ownSub ? 'selected' : ''}>Your own…</option></select>
+    <input class="inp" id="${p}-subown" placeholder="Kind" value="${ownSub ? esc(sub) : ''}" style="${ownSub ? '' : 'display:none'}"></div>`;
+}
+function libGroupBind(p, onChange){
+  const c = $('#' + p + '-cat'), co = $('#' + p + '-catown'), s = $('#' + p + '-sub'), so = $('#' + p + '-subown');
+  const subs = () => { const k = c.value === '*own' ? co.value.trim() : c.value; const l = LIB_CATS[k] || [];
+    s.innerHTML = `<option value="">Any kind</option>${l.map(x => `<option>${x}</option>`).join('')}<option value="*own">Your own…</option>`; s.style.display = k ? '' : 'none'; so.style.display = 'none'; };
+  c.onchange = () => { co.style.display = c.value === '*own' ? '' : 'none'; subs(); onChange && onChange(); };
+  co.oninput = () => { s.style.display = co.value.trim() ? '' : 'none'; onChange && onChange(); };
+  s.onchange = () => { so.style.display = s.value === '*own' ? '' : 'none'; onChange && onChange(); };
+  so.oninput = () => onChange && onChange();
+}
+function libGroupVal(p){
+  const c = $('#' + p + '-cat'); if (!c) return {cat: '', sub: ''};
+  const cat = c.value === '*own' ? $('#' + p + '-catown').value.trim() : c.value;
+  const s = $('#' + p + '-sub'), sub = !cat ? '' : s.value === '*own' ? $('#' + p + '-subown').value.trim() : s.value;
+  return {cat, sub};
+}
 
 function libCss(){
   if ($('#lib-css')) return;
@@ -23,7 +78,12 @@ function libCss(){
   .lib-card .bd{padding:8px 10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
   .lib-card .nm{font:600 14px Inter,sans-serif;color:var(--text-c);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .lib-card .sub{color:var(--muted-b)} .lib-card .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
-  .lib-tabs{display:flex;gap:4px;margin-top:14px}`;
+  .lib-tabs{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+  .lib-cats{display:flex;gap:4px;flex-wrap:wrap}.lib-cats.sub{padding-left:14px}
+  .lib-cat{background:var(--panel2);border:1px solid var(--line2);border-radius:14px;padding:3px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer}
+  .lib-cat.on{border-color:var(--gold);color:var(--gold2)}.lib-cat span{color:var(--faint);margin-left:2px}
+  .lib-grpl{font-size:11.5px}
+  .lib-grp{display:flex;gap:6px;flex-wrap:wrap}.lib-grp .inp{flex:1;min-width:140px}`;
   document.head.appendChild(c);
 }
 
@@ -46,6 +106,9 @@ async function renderLibrary(){
       <span class="msg">Share prefabs, brushes and your models as one file, or open one someone shared.</span>
       <button class="btn sm primary" id="lib-browse">🗂 Browse packs…</button><button class="btn sm" id="lib-mkpack">⤓ Make a pack…</button><button class="btn sm" id="lib-oppack">⤒ Open a pack…</button>
       <input type="file" id="lib-packfile" accept=".wspack,.zip" style="display:none"></div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap"><b style="color:var(--gold2)">Prefabs</b>
+      <span class="msg">Put a building together from the game's own pieces, snapped the game's way, then set it down in the world in one go.</span>
+      <button class="btn sm primary" id="lib-bench">🔨 Prefab workbench</button></div>
     <div class="lib-tabs" id="lib-tabs"></div>
     <div class="lib-grid" id="lib-grid"><div class="msg"><span class="spin"></span>Loading…</div></div>`;
   const drop = $('#lib-drop');
@@ -53,6 +116,8 @@ async function renderLibrary(){
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = async e => { e.preventDefault(); drop.classList.remove('over'); libUpload(await libDropped(e.dataTransfer)); };
   $('#lib-mkpack').onclick = packMake;
+  // (the prefab workbench opens over the World map; bench.js)
+  $('#lib-bench').onclick = () => { if (typeof benchOpen === 'function') benchOpen(); };
   $('#lib-browse').onclick = packBrowse;
   $('#lib-oppack').onclick = () => $('#lib-packfile').click();
   $('#lib-packfile').onchange = e => { if (e.target.files[0]) packOpen(e.target.files[0]); e.target.value = ''; };
@@ -131,6 +196,7 @@ function libImportModal(batch, info){
       ${m.objects.map(o => `<option value="${esc(o.name)}">${esc(o.name)} · ${o.triangles} triangles</option>`).join('')}</select>
       <div class="msg">This file holds several objects (a kit or a bundle). Pick one, or bring them all in.</div>` : ''}
     <label>Name</label><input class="inp" id="li-name" value="${esc(many || snds.length > 1 ? '' : (only_snd ? snds[0].replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ') : base).replace(/^./, c => c.toUpperCase()))}" placeholder="${many || snds.length > 1 ? 'Each gets its file name' : ''}">
+    <label title="Find it again later; the Forge offers Armour › Helmet models first for a helmet">Group</label>${(() => { const g = libGuess((info.models[0] || info.pictures[0] || snds[0] || '')); return libGroupHtml('li-g', g.cat, g.sub); })()}
     ${only_snd ? `<label>How far it carries</label>${sel('li-reach', [['near', 'Close by only (a ticking clock, a small fire)'], ['room', 'Across a room (a fireplace, chimes)'], ['far', 'Far (a waterfall, a forge, a crowd)']], 'room')}
       <div class="msg">Place a sound like a model (it plays over and over where it stands, unseen), or select something on the map and choose 🔊 Add a sound. Scripts can play it too.</div>` : ''}
     ${only_pics ? '' : `<label>It is</label>${sel('li-kind', [['static', 'Scenery (stays where it is put)'], ['container', 'A container (holds things)'], ['activator', 'An activator (can be clicked, e.g. for a script)'], ['item', 'A small item (can be picked up)'], ['door', 'A door (opens, or leads to another place)'], ['light', 'A lamp or light (lights up what is round it)']], 'static')}
@@ -155,6 +221,7 @@ function libImportModal(batch, info){
     nm.placeholder = lo.value === '*each*' ? 'Each gets its object name' : '';
     nm.disabled = lo.value === '*each*';
   };
+  libGroupBind('li-g');
   $('#li-no').onclick = () => bg.remove();
   $('#li-go').onclick = async () => {
     // how tall it ends up: as made in metres (the Workshop scales it), as it is, or a height you give
@@ -163,6 +230,7 @@ function libImportModal(batch, info){
     const body = {batch, name: $('#li-name').value, up: (document.querySelector('[name=li-up]:checked') || {}).value || 'y',
       kind: ($('#li-kind') || {}).value || 'static', size, collision: (document.querySelector('[name=li-col]:checked') || {}).value || 'shape',
       object: lo ? lo.value : ''};
+    Object.assign(body, libGroupVal('li-g'));
     if (body.kind === 'door') body.door_sound = $('#li-dsnd').value;
     if ($('#li-reach')) body.reach = $('#li-reach').value;
     if (body.kind === 'light'){
@@ -188,16 +256,32 @@ async function libLoad(){
   const grid = $('#lib-grid'); if (!grid) return;
   try { LIB.items = (await api('/api/library')).items; } catch (e){ grid.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
   const n = t => LIB.items.filter(i => t === 'all' || i.type === t).length;
-  $('#lib-tabs').innerHTML = [['all', 'Everything'], ['model', 'Models'], ['texture', 'Pictures'], ['sound', 'Sounds']].map(([k, l]) =>
-    `<button class="btn sm ${LIB.filter === k ? 'primary' : ''}" data-lf="${k}">${l} ${n(k)}</button>`).join('');
+  const ofType = LIB.items.filter(i => LIB.filter === 'all' || i.type === LIB.filter);
+  // (the groups the things of this type are sorted into, with how many in each; then the kinds of the chosen one)
+  const cats = {}; ofType.forEach(i => { const c = i.cat || ''; cats[c] = (cats[c] || 0) + 1; });
+  if (LIB.cat && !cats[LIB.cat]) { LIB.cat = ''; LIB.sub = ''; }
+  const subs = {}; ofType.filter(i => (i.cat || '') === LIB.cat && LIB.cat).forEach(i => { const s = i.sub || ''; subs[s] = (subs[s] || 0) + 1; });
+  const order = Object.keys(LIB_CATS);
+  const catKeys = Object.keys(cats).filter(Boolean).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99) || a.localeCompare(b));
+  $('#lib-tabs').innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${[['all', 'Everything'], ['model', 'Models'], ['texture', 'Pictures'], ['sound', 'Sounds']].map(([k, l]) =>
+    `<button class="btn sm ${LIB.filter === k ? 'primary' : ''}" data-lf="${k}">${l} ${n(k)}</button>`).join('')}
+    <input class="inp" id="lib-q" placeholder="Search" value="${esc(LIB.q)}" style="width:180px;margin-left:8px" autocomplete="off"></div>
+    ${catKeys.length ? `<div class="lib-cats"><button class="lib-cat ${!LIB.cat ? 'on' : ''}" data-lc="">All groups</button>${catKeys.map(c => `<button class="lib-cat ${LIB.cat === c ? 'on' : ''}" data-lc="${esc(c)}">${esc(c)} <span>${cats[c]}</span></button>`).join('')}${cats[''] ? `<button class="lib-cat ${LIB.cat === '*none' ? 'on' : ''}" data-lc="*none">No group <span>${cats['']}</span></button>` : ''}</div>` : ''}
+    ${LIB.cat && LIB.cat !== '*none' && Object.keys(subs).length > 1 ? `<div class="lib-cats sub"><button class="lib-cat ${!LIB.sub ? 'on' : ''}" data-ls="">Every kind</button>${Object.keys(subs).filter(Boolean).sort().map(s => `<button class="lib-cat ${LIB.sub === s ? 'on' : ''}" data-ls="${esc(s)}">${esc(s)} <span>${subs[s]}</span></button>`).join('')}</div>` : ''}`;
   document.querySelectorAll('[data-lf]').forEach(b => b.onclick = () => { LIB.filter = b.dataset.lf; libLoad(); });
-  const items = LIB.items.filter(i => LIB.filter === 'all' || i.type === LIB.filter);
-  if (!items.length){ grid.innerHTML = `<div class="msg">${LIB.items.length ? 'Nothing of this kind yet.' : 'Nothing here yet. Drop a model or a picture above to start.'}</div>`; return; }
+  document.querySelectorAll('[data-lc]').forEach(b => b.onclick = () => { LIB.cat = b.dataset.lc; LIB.sub = ''; libLoad(); });
+  document.querySelectorAll('[data-ls]').forEach(b => b.onclick = () => { LIB.sub = b.dataset.ls; libLoad(); });
+  let qt; $('#lib-q').oninput = e => { LIB.q = e.target.value; clearTimeout(qt); qt = setTimeout(() => { libLoad().then(() => { const q = $('#lib-q'); if (q){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }); }, 250); };
+  const words = LIB.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const items = ofType.filter(i => (!LIB.cat || (LIB.cat === '*none' ? !i.cat : i.cat === LIB.cat)) && (!LIB.sub || i.sub === LIB.sub)
+    && words.every(w => `${i.name} ${i.cat || ''} ${i.sub || ''} ${i.from || ''}`.toLowerCase().includes(w)));
+  if (!items.length){ grid.innerHTML = `<div class="msg">${LIB.items.length ? 'Nothing like that here.' : 'Nothing here yet. Drop a model or a picture above to start.'}</div>`; return; }
   grid.innerHTML = items.map(it => `<div class="lib-card" data-li="${esc(it.id)}">
     <div class="pv" data-lpv="${esc(it.id)}">${it.type === 'texture' ? `<img src="/api/file?path=${encodeURIComponent(it.file)}" alt="">`
       : it.type === 'sound' ? `<div style="display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;padding:0 8px"><span style="font-size:28px">🔊</span>
           <audio controls preload="none" src="/api/file?path=${encodeURIComponent(it.file)}" style="width:100%;height:32px"></audio></div>` : '🧊 Click for a 3D look'}</div>
     <div class="bd"><span class="nm" title="${esc(it.name)}">${esc(it.name)}</span>
+      <span class="lnk lib-grpl" data-lg="${esc(it.id)}" title="Sort it into a group">${it.cat ? esc(it.cat) + (it.sub ? ' › ' + esc(it.sub) : '') : '＋ Group'}</span>
       <span class="sub">${it.type === 'model' ? (it.size ? `${it.size.map(Math.round).join(' × ')} units` : 'Model') : it.type === 'sound' ? `Sound${it.records && it.records.SOUN ? ` · for scripts: <code>PlaySound "${esc(it.records.SOUN)}"</code>` : ''}` : 'Picture'}${{door: ' · 🚪 door', light: ' · 💡 light', container: ' · container', activator: ' · activator', item: ' · item'}[it.kind] || ''} · from ${esc(it.from || '?')}${it.ok ? '' : ' · <span style="color:#ff8a6a">file missing</span>'}</span>
       <div class="acts">${it.type === 'sound' ? `<button class="btn sm primary" data-lplace="${esc(it.id)}" title="Put it in the world: it plays over and over where it stands, unseen">Place</button>
         <select class="inp" data-lreach="${esc(it.id)}" title="How far it carries" style="width:auto;padding:2px 4px">${[['near', 'Close by'], ['room', 'A room'], ['far', 'Far']].map(([v, l]) => `<option value="${v}" ${(it.reach || 'room') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -211,6 +295,7 @@ async function libLoad(){
     p.onclick = null; p.style.cursor = 'default'; showModel(p, {model: it.model}, 'library');
   });
   grid.querySelectorAll('[data-lplace]').forEach(b => b.onclick = () => libPlace(b.dataset.lplace));
+  grid.querySelectorAll('[data-lg]').forEach(b => b.onclick = () => libSortModal(LIB.items.find(i => i.id === b.dataset.lg)));
   // a sound: how far it carries, how loud, and a record scripts can play
   const sndSet = async (id, data) => { if (data.record && !await needProject()) return; try { await post('/api/library/sound', Object.assign({id}, data)); LIB.items = null; libLoad(); } catch (e){ toast(e.message, true); } };
   grid.querySelectorAll('[data-lreach]').forEach(s => s.onchange = () => sndSet(s.dataset.lreach, {reach: s.value}));
@@ -224,6 +309,23 @@ async function libLoad(){
     if (!confirm(`Take "${it.name}" off the Library? Its file stays, as mods may use it.`)) return;
     await post('/api/library/remove', {id: it.id}); libLoad();
   });
+}
+
+// sorting one thing into a group (or, ticked, every thing shown now that isn't sorted yet)
+function libSortModal(it){
+  if (!it) return;
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  const g = it.cat ? {cat: it.cat, sub: it.sub || ''} : libGuess(it.name + ' ' + (it.from || ''));
+  bg.innerHTML = `<div class="modal" style="width:min(480px,94vw)"><h2>${esc(it.name)}</h2>
+    ${libGroupHtml('ls-g', g.cat, g.sub)}
+    <div class="actions"><button class="btn primary" id="ls-go">Save</button><button class="btn" id="ls-no">Cancel</button><span class="msg" id="ls-msg"></span></div></div>`;
+  document.body.appendChild(bg);
+  libGroupBind('ls-g');
+  $('#ls-no').onclick = () => bg.remove();
+  $('#ls-go').onclick = async () => {
+    try { await post('/api/library/group', Object.assign({ids: [it.id]}, libGroupVal('ls-g'))); bg.remove(); LIB.items = null; libLoad(); }
+    catch (e){ $('#ls-msg').className = 'msg err'; $('#ls-msg').textContent = e.message; }
+  };
 }
 
 // placing: the Library model gets a record in the mod (once), then it's placed like anything else

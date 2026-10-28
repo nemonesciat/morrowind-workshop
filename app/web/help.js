@@ -3,7 +3,7 @@
 
 // ----- the Help menu at the top
 // (one top-bar menu open at a time: opening one closes the others)
-function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
+function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu', 'learnmenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
 $('#helpbtn').onclick = e => { e.stopPropagation(); topMenusClose('helpmenu'); const m = $('#helpmenu'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; };
 document.addEventListener('click', e => { if (!e.target.closest('#helpmenu')) $('#helpmenu').style.display = 'none'; });
 $('#helpmenu').addEventListener('click', e => {

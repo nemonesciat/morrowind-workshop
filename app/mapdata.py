@@ -35,7 +35,9 @@ def cell_info(db, cell_key):
     # own: the place itself was made by your mod (no other plugin has it)
     own = db.proj_pidx is not None and all(db.recs[v][3] == db.proj_pidx for v in lst)
     return {'i': w, 'key': cell_key, 'id': r[1], 'name': name, 'interior': interior,
-            'gx': gx, 'gy': gy, 'region': region, 'has_water': bool(flags & 2), 'own': own}
+            'gx': gx, 'gy': gy, 'region': region, 'has_water': bool(flags & 2), 'own': own,
+            # (an interior that behaves like outdoors, Mournhold's districts: its buildings are buildings, frombuilding.py)
+            'like_exterior': interior and bool(flags & 0x80)}
 
 
 def cellmap(db, cell_key, original=False):

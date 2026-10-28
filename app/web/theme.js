@@ -28,9 +28,12 @@ const TH_THEMES = {
     // (marble rather than parchment: cooler ivory panels with firm warm lines, the Legion's red for what
     // matters and a deep gold for the rest)
     // (the text darker than at first, 2026-10-26: "the text has to pop a little more", the user)
-    bg: '#e4dccb', panel: '#f3eee3', panel2: '#e9e1d0', line: '#c9b994', line2: '#a9956a', text: '#0f0a05', muted: '#3d3021', faint: '#4d3f2b',
-    gold: '#8e1d1d', gold2: '#5f1010', hover: '#e4d9c0', sel: '#e2c9a2', deep: '#faf7f0', bg2: '#dfd5c0', bg3: '#ece5d5', line0: '#d7cbb0', goldline: '#b8902f',
-    red: '#9f2d1d', amber: '#7d5408', blue: '#2e5d97', green: '#4b7833'}},
+    // (2026-10-27: the user's own Custom theme made from this one, "slightly modified but looks better": a warmer
+    // sandstone ground, whiter panels, firmer gold lines, pale rose main buttons; shades worked out as thCustomVars does)
+    bg: '#dcceb7', panel: '#f7f4ed', panel2: '#e9e6df', line: '#b3944d', line2: '#8f763d', text: '#0f0a05', muted: '#3d3021', faint: '#554838',
+    gold: '#931a1a', gold2: '#671212', hover: '#e0ddd6', sel: '#dbb7b2', deep: '#e6ddcd', bg2: '#e4d9c7', bg3: '#efe9dd', line0: '#c5ae7d', goldline: '#b06259',
+    // (amber, blue and green then a little darker, the user agreeing: 3.7 to 1 on the panels before, 4.6 now)
+    red: '#a22a1a', amber: '#94630a', blue: '#4170aa', green: '#4c7a34', view3d: '#0d0c0a'}, btn: '#e8d4c9'},
   indoril: {label: 'Indoril', about: 'Light: Mournhold grey stone and pale blue panels, with deep Almalexia blue', light: true, v: {
     // (the user's own theme, made from High contrast and liked enough to be the light preset, 2026-10-24:
     // near-black text and lines on grey and pale blue, white main buttons, a dark 3D view)

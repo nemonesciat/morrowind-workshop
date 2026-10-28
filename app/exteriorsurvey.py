@@ -31,7 +31,15 @@ import kits
 import outside
 import shellsurvey as ss
 
-VERSION = 4
+VERSION = 11                  # (5: buildings behind one-piece interiors too, and 'outdoor': joins from every cell;
+                               # 6: row houses, one-piece buildings and lighthouses, shellsurvey v5; 7: shellsurvey v6;
+                               # 8: outdoor joins kept up to 60 a face; 9: and their exact poses; 10: modules keep
+                               # their own trim; 11: and their other doors)
+KEEP = 200                     # outdoor joins kept a face, the most used first
+# what is no building's trim: plants, rocks, loose things, lights, and a shop's or a guild's sign (not for a new house)
+NOT_TRIM = re.compile(r'flora|tree|grass|rock|terrain|kelp|bush|shrub|mushroom|misc_|light_|contain|crate|barrel|sack|basket|'
+                      r'sign|marker|_bed|chair|bench|table|furn_(?!.*(overhang|awning|banner|shade|canopy))|'
+                      r'canal|dock|piling|icicle|_x_house_?\d|_hut_?\d|_wall_gate|collision')
 CLIMB = re.compile(r'stair|step|ramp|ladder|platform|walkway|landing')
 _cache = {}
 
@@ -41,7 +49,31 @@ def _disk(db):
     import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'exteriorsurvey_%s_v%d.json' % (taste.sig(db), VERSION))
+    return os.path.join(folder, 'exteriorsurvey_%s_v%d.json' % (taste.sig(db) + _outdoor_sig(db), VERSION))
+
+
+_osig = {}
+
+
+def _outdoor_sig(db):
+    """The plugins with outdoor places but no interiors, each with its size, for the cache's name: taste.sig keys
+    the surveys on the interior plugins only, and this survey learns from every exterior cell too, so a mod of
+    outdoor buildings alone must make it learn again (promised the user, 2026-10-27). '' when there are none, so
+    the caches of a load order without such plugins keep their names."""
+    if _osig.get('recs') is db.recs:
+        return _osig['sig']
+    import hashlib
+    plugins = db.plugins or []
+    proj = getattr(db, 'proj_pidx', None)
+    inside, outside_ = set(), set()
+    for r in db.recs:
+        if r[0] == 'CELL':
+            (inside if r[5] == 'interior' else outside_).add(r[3])
+    parts = sorted('%s:%s' % (plugins[i]['name'].lower(), plugins[i].get('size') or 0)
+                   for i in outside_ - inside if i != proj and i < len(plugins))
+    s = ('x' + hashlib.md5('|'.join(parts).encode('utf-8')).hexdigest()[:8]) if parts else ''
+    _osig.update({'recs': db.recs, 'sig': s})
+    return s
 
 
 def _piece(it):
@@ -86,9 +118,77 @@ def _kit_tile(db, kit):
     return kp['tile'] if kp else 256
 
 
+def is_outdoor_piece(it):
+    """A made thing standing outdoors that buildings are put together from or dressed with: walls, towers, wings,
+    porches, stairs, fences, awnings, foundations, bridges, docks. Not the land's rocks and plants, not clutter."""
+    import landscape
+    if it['tag'] != 'STAT' or landscape.NATURAL.search(it['low']):
+        return False
+    b, s = it['b'], it['s'] or 1.0
+    w, d, h = (b[3] - b[0]) * s, (b[4] - b[1]) * s, (b[5] - b[2]) * s
+    return max(w, d) >= 64 and h >= 24 and max(w, d) < 6000
+
+
+def outdoor_joins(db, stage=(0, 1)):
+    """How the game joins its made pieces anywhere outdoors, in a building with a door or not (a town wall, a
+    tower, a bridge, a dock, a stair up to a door): {'joins': {model: {side: {rel: n}}}, 'placed': {model: n}}.
+    Every two touching pieces in every exterior cell, each in the other's frame as adjacency.py records it.
+    Measured 2026-10-27: the buildings with a door into a kit interior had only ~8% of the game's outdoor
+    building pieces in them; this is what gives the rest a place in the builder."""
+    joins = defaultdict(lambda: defaultdict(Counter))
+    # (each join's exact pose too, summed: the key is on the kits' grid (8 units, 15 degrees), and outdoors the game
+    # turns its pieces any way, so a pose rebuilt from the key alone fell units off the real one, 2026-10-27)
+    exact = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
+    placed = Counter()
+    memo, bmemo = {}, {}
+    cells = sorted(key for (tag, key) in db.by_key if tag == 'CELL' and key.startswith('#'))
+    import background
+    for n, ek in enumerate(cells):
+        background.progress(n, len(cells), 'outdoor places', stage)
+        items = [it for it in ss._cell_items(db, ek, memo, bmemo) if is_outdoor_piece(it)]
+        memo.clear()
+        for it in items:
+            placed[it['low']] += 1
+        items.sort(key=lambda it: it['box'][0])
+        ps = [_piece(it) for it in items]
+        for i, A in enumerate(items):
+            for j in range(i + 1, len(items)):
+                B = items[j]
+                if B['box'][0] > A['box'][2] + 8:
+                    break                        # (sorted by west edge: nothing further east can touch)
+                if not outside._touch(A['box'], B['box'], 8):
+                    continue
+                for P, Q in ((ps[i], ps[j]), (ps[j], ps[i])):
+                    s_ = adjacency.side_of(P, Q)
+                    if s_ is None:
+                        a = adjacency.own_box(P)
+                        L = adjacency.local_box(P, Q)
+                        if not (all(L[k] >= a[k] - 24 for k in range(3)) and all(L[k] <= a[k] + 24 for k in range(3, 6))):
+                            continue
+                        s_ = 'in'
+                    rel = adjacency.relation(P, Q)
+                    rs = rel_str(rel)
+                    joins[P['id']][s_][rs] += 1
+                    lx, ly = adjacency.to_local(P, Q['x'], Q['y'])
+                    turn = (math.degrees((Q['rz'] - P['rz']) % (2 * math.pi)) - rel[4] + 180) % 360 - 180
+                    e = exact[(P['id'], s_, rs)]
+                    e[0] += lx; e[1] += ly; e[2] += Q['z'] - P['z']; e[3] += turn
+    # (up to KEEP per face: a house has canal pieces, neighbours and its own balcony against one face, and with 12 the
+    # balcony's own join was lost; snapping offers what the game did, the rarer joins too)
+    kept = {k: {s_: dict(c.most_common(KEEP)) for s_, c in v.items()} for k, v in joins.items()}
+    ex = {}
+    for k, v in kept.items():
+        for s_, rels in v.items():
+            for rs, n in rels.items():
+                e = exact[(k, s_, rs)]
+                ex.setdefault(k, {}).setdefault(s_, {})[rs] = [round(e[0] / n, 2), round(e[1] / n, 2), round(e[2] / n, 2),
+                                                                round(int(rs.rsplit('/', 1)[1]) + e[3] / n, 3)]
+    return {'joins': kept, 'exact': ex, 'placed': dict(placed)}
+
+
 def survey(db):
     """{'joins': {model: {'n': buildings, 'sides': {side: {rel: n}}}}, 'sets': {families: n},
-    'modules': [...]} (kept on disk)."""
+    'modules': [...], 'outdoor': outdoor_joins()} (kept on disk)."""
     if 'survey' in _cache and _cache['survey'][0] is db.recs:
         return _cache['survey'][1]
     path = _disk(db)
@@ -99,7 +199,10 @@ def survey(db):
         return saved
     except Exception:
         pass
-    shells = ss.survey(db)
+    # (three stages for the Learning bar: the places with an interior, unless learnt already; the buildings outside
+    # their doors; every outdoor place's joins)
+    import background
+    shells = ss.survey(db, stage=(0, 3))
     learnt = shells['learnt']
     memo, bmemo = {}, {}
     joins = defaultdict(lambda: {'n': 0, 'sides': defaultdict(Counter)})
@@ -107,10 +210,11 @@ def survey(db):
     counted = set()
     sets = Counter()
     modules = {}
-    for p in shells['pairs']:
+    for n_p, p in enumerate(shells['pairs']):
+        background.progress(n_p, len(shells['pairs']), 'buildings', (1, 3))
         ef = p['eframe']
         items = ss.near_items(db, ef['x'], ef['y'], memo, bmemo)
-        if len(memo) > 60:
+        if len(memo) > 600:
             memo.clear()
         d = next((it for it in items if it['tag'] == 'DOOR' and it['to'] and it['to']['cell'].lower() == p['key']
                   and math.hypot(it['p'][0] - ef['x'], it['p'][1] - ef['y']) < 5), None)
@@ -172,10 +276,34 @@ def survey(db):
         # leaves them out of the building itself, and a prefab without them had a door no one could reach)
         climb = [it for it in items if CLIMB.search(it['low']) and it['tag'] == 'STAT' and it not in group
                  and any(outside._touch(it['box'], g['box'], 24) for g in group)]
-        for g in group + climb + [d]:
+        # (and its trim, as the game dressed this building: windows, awnings, chimneys, patios, foundations, a Reach
+        # house's roof and beams. The building reader keeps to the big pieces, and a prefab came out barer than the
+        # game's own: Hlaalu's windows 1.5 a building beside it, 0.1 in it; Reach's roofs and beams 11, measured
+        # 2026-10-27. Its own: touching it, its middle over it)
+        x0, y0 = min(g['box'][0] for g in group) - 64, min(g['box'][1] for g in group) - 64
+        x1, y1 = max(g['box'][2] for g in group) + 64, max(g['box'][3] for g in group) + 64
+        taken = {id(g) for g in group + climb} | {id(d)}
+        # (a big building piece only when it lies over the building, nearly all of it: a Reach house's roof is its own;
+        # a canal, a town wall or a dock running past is the town's)
+        def over(it):
+            b = it['box']
+            a = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+            return max(0, min(b[2], x1) - max(b[0], x0)) * max(0, min(b[3], y1) - max(b[1], y0)) / a >= 0.8
+        trim = [it for it in items if id(it) not in taken and it['tag'] in ('STAT', 'ACTI') and it.get('b') and not NOT_TRIM.search(it['low'])
+                and (not ss.is_building_piece(it, big=True) or over(it))
+                and x0 <= (it['box'][0] + it['box'][2]) / 2 <= x1 and y0 <= (it['box'][1] + it['box'][3]) / 2 <= y1
+                and any(outside._touch(it['box'], g['box'], 24) for g in group)]
+        trim_ids = {id(it) for it in trim}
+        # (and its other doors, to its other interiors or an upper floor: without them a prefab had a door-sized hole
+        # in its wall where the game's has a door, "walls open, 1 gap 128 wide", 2026-10-27. Placed, they are plain
+        # doors; a load door's way is the placed reference's, not the model's)
+        doors2 = [it for it in same if it is not d and id(it) not in taken]
+        for g in group + climb + [d] + doors2 + trim:
             lx, ly = frame.to(g['p'][0], g['p'][1])
             fpieces.append({'id': g['id'], 'x': round(lx, 1), 'y': round(ly, 1), 'z': round(g['p'][2] - frame.z, 1), 'rx': g['p'][3],
                             'ry': g['p'][4], 'rz': round((g['p'][5] - th) % (2 * math.pi), 4), 's': g['s'], 'door': g is d})
+            if id(g) in trim_ids:
+                fpieces[-1]['trim'] = True
         fup = []
         below = set(tiles)
         for k in (1, 2):
@@ -199,7 +327,7 @@ def survey(db):
     out = {'version': VERSION, 'buildings': sum(m['uses'] for m in mods),
            'joins': {k: {'n': v['n'], 'sides': {s_: dict(c.most_common(12)) for s_, c in v['sides'].items()}} for k, v in joins.items()},
            'big': {k: {s_: dict(c) for s_, c in v.items()} for k, v in bigj.items()},
-           'sets': dict(sets.most_common(60)), 'modules': mods}
+           'sets': dict(sets.most_common(60)), 'modules': mods, 'outdoor': outdoor_joins(db, (2, 3))}
     _cache['survey'] = (db.recs, out)
     try:
         with open(path, 'w', encoding='utf-8') as f:

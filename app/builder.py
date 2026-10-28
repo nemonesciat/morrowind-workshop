@@ -521,6 +521,102 @@ def _stub_columns(db, kp, grid, need, choice, centre, zf, z0, T, doorway_sides, 
                 refs.append((rid, (px, py, z0 + zf(t) + piece['zmin'] - b[2], 0, 0, 0), []))
 
 
+def _corner_open(db, refs, wx, wy, z, near=40, touch=3, gap=40):
+    """Is there a slit at the corner (wx, wy) at height z? The pieces' faces are cut at that height; an interior
+    wall is one face, so where two walls meet each one's end lies on the other's face, or inside a post. A slit is
+    two walls of two pieces at right angles, each ending within `near` of the corner on nothing, their ends within
+    `gap` of each other: each stopped short of the corner they make (the user's Hlaalu house "Ass": a hall's wall
+    ending at 886, 896, the next room's corner wall starting at 896, 906, beside the stairwell). One free end alone
+    is a wall ending at an opening, as at a stair's foot, and is right. Boxes can't tell."""
+    import shellsurvey as ss
+    segs, owner, solids = [], [], []
+
+    def dist(q, sg):
+        (ax, ay), (bx, by) = sg
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        f = 0.0 if L2 < 1e-9 else max(0.0, min(1.0, ((q[0] - ax) * dx + (q[1] - ay) * dy) / L2))
+        return math.hypot(ax + dx * f - q[0], ay + dy * f - q[1])
+    for k, r_ in enumerate(refs):
+        rid, p = r_[0], r_[1]
+        if abs(p[0] - wx) > 400 or abs(p[1] - wy) > 400 or abs(p[2] - z) > 400:
+            continue
+        ri = db.resolve_id(rid)
+        if ri is None:
+            continue
+        it = {'low': rid.lower(), 'p': list(p), 's': 1.0, 'ri': ri}
+        own = []
+        for tri in ss.world_tris(db, it):
+            sg = ss._cut(tri, z)
+            if sg and min(math.hypot(q[0] - wx, q[1] - wy) for q in sg) < near + 200:
+                own.append(sg)
+        segs += own
+        owner += [k] * len(own)
+        # (a closed outline, a post's or a pillar's: a wall end hidden inside it is covered, as the game hides
+        # its wall ends 12 behind a post's face)
+        if own and all(any(m != n and dist(q, o) <= 1 for m, o in enumerate(own)) for n, sg in enumerate(own) for q in sg):
+            solids.append(own)
+
+    def inside(q):
+        for own in solids:
+            hits = 0
+            for (ax, ay), (bx, by) in own:
+                if (ay > q[1]) != (by > q[1]) and q[0] < ax + (q[1] - ay) * (bx - ax) / (by - ay):
+                    hits += 1
+            if hits % 2:
+                return True
+        return False
+    free = []                 # (end, its face's direction, whose)
+    for n, sg in enumerate(segs):
+        for q in sg:
+            if math.hypot(q[0] - wx, q[1] - wy) > near:
+                continue
+            if not any(m != n and dist(q, o) <= touch for m, o in enumerate(segs)) and not inside(q):
+                dx, dy = sg[1][0] - sg[0][0], sg[1][1] - sg[0][1]
+                L = math.hypot(dx, dy) or 1.0
+                free.append((q, (dx / L, dy / L), owner[n]))
+    # (a door or its jamb ends at the opening it frames, square to the wall: never one of a slit's two walls; the
+    # game's Hlaalu doorways read as slits without this)
+    free = [f for f in free if not re.search(r'door|jamb', refs[f[2]][0], re.I)]
+    for i, (qa, da, oa) in enumerate(free):
+        for qb, db_, ob in free[i + 1:]:
+            if oa != ob and abs(da[0] * db_[0] + da[1] * db_[1]) < 0.5 and math.hypot(qa[0] - qb[0], qa[1] - qb[1]) < gap:
+                return True
+    return False
+
+
+def _slit_posts(db, kp, grid, choice, centre, zf, z0, T, refs):
+    """A post on every corner of the house where two walls of two pieces each stop short of the corner they make
+    (_corner_open), wherever it is: by a stairwell, at a cellar's hall, where a hall meets a room. The style's own
+    narrow piece, as the game's places close such corners with theirs. Measured on the user's Hlaalu house "Ass"
+    rebuilt from its plan, 2026-10-28 (see the caller)."""
+    import fixit
+    narrow = fixit._narrow_pieces(db, kp)
+    if not narrow:
+        return 0
+    rid, ri, b = narrow[0]
+    done, n = set(), 0
+    for t in sorted(grid):
+        ch = choice.get(t, (None,))
+        if ch[0] is None:
+            continue
+        cx, cy = centre(t)
+        floor = z0 + zf(t) + ch[0]['zmin']
+        for sx in (-0.5, 0.5):
+            for sy in (-0.5, 0.5):
+                wx, wy = cx + sx * T, cy + sy * T
+                key = (round(wx), round(wy), round(floor))
+                if key in done:
+                    continue
+                done.add(key)
+                if not _corner_open(db, refs, wx, wy, floor + 0.4 * (ch[0].get('height') or T)):
+                    continue
+                px, py = _centred(db, ri, wx, wy, 0)
+                refs.append((rid, (px, py, z0 + zf(t) + ch[0]['zmin'] - b[2], 0, 0, 0), []))
+                n += 1
+    return n
+
+
 def _stair_edge_columns(db, kp, grid, choice, stair_list, centre, zf, z0, T, refs):
     """A pillar where a room's wall ends at the edge of the stairwell: on the floor the stairs come out
     on, the tiles the stairwell takes have no room piece, so the wall of the piece beside them stops
@@ -531,11 +627,13 @@ def _stair_edge_columns(db, kp, grid, choice, stair_list, centre, zf, z0, T, ref
     the stairs' outer corner against the void is the stair piece's own."""
     import fixit
     narrow = fixit._narrow_pieces(db, kp)
-    # (only in styles whose own places stand posts at a fair share of their corners, the Common and Gold
-    # Coast sets; in the others the stair pieces close their own edges, and a pillar would be one the game
-    # never has there)
-    if not narrow or not stair_list or not fixit.uses_posts(db, kp.get('prefix')):
+    # (in styles whose own places stand posts at a fair share of their corners, the Common and Gold Coast sets,
+    # at every wall end there; in the others the stair pieces close their own edges, so only where two walls
+    # meeting at the stairwell's edge leave their corner open, which the mesh test says: Hlaalu's hall beside
+    # its stairwell, 2026-10-28)
+    if not narrow or not stair_list:
         return
+    posts = fixit.uses_posts(db, kp.get('prefix'))
     rid, ri, b = narrow[0]
     well = set()
     feet = set()             # the two corners at the foot of each flight: the stair piece's own side walls end there
@@ -574,12 +672,17 @@ def _stair_edge_columns(db, kp, grid, choice, stair_list, centre, zf, z0, T, ref
             # (one wall ending here; or none, at the foot of the flight, where the stair piece's own side
             # wall stops in open floor with nothing to meet it: the user's "missing column again" at a
             # Common tall stair's foot. Two or more: walls meeting, a corner of their own)
-            if key not in feet and len(lines) != 1:
+            # (two meeting as an L, one from each side: a corner of their own, unless their ends stop short of it)
+            ell = len(lines) == 2 and {l_[0] for l_ in lines} == {'v', 'h'}
+            if not ell and (not posts or (key not in feet and len(lines) != 1)):
                 continue
             t = have[0]
             cx, cy = centre(t)
             wx, wy = cx + (cx_ - t[0]) * T, cy + (cy_ - t[1]) * T
             zt = z0 + zf(t)
+            # (cut at waist height over the floor, where a slit shows)
+            if ell and not _corner_open(db, refs, wx, wy, zt + choice[t][0]['zmin'] + 0.4 * (choice[t][0].get('height') or T)):
+                continue
             if any(COLUMN_WORDS_RE.search(r_[0].lower()) and math.hypot(r_[1][0] - wx, r_[1][1] - wy) < 60 and abs(r_[1][2] - zt) < 100 for r_ in refs):
                 continue
             px, py = _centred(db, ri, wx, wy, 0)
@@ -3714,6 +3817,9 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
     if dressing:
         _dress(db, style, dressing, kp, grid, need, choice, tile_piece, refs, centre, zf, z0, T, H, loose_at, doorway_sides,
                windowed, stair_tiles, wells, voids, rooms, extras.seeded(name + ' dressing'))
+    # ---- the last slits: two walls stopping short of the corner they make, anywhere in the house (_slit_posts);
+    # after the dressing, whose pilasters close some of them
+    _slit_posts(db, kp, grid, choice, centre, zf, z0, T, refs)
     # ---- some light to see by
     if lights:
         # a hanging lantern of the kind used in places like this, from the ceiling

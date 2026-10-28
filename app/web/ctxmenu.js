@@ -26,7 +26,7 @@ const CM_GROUPS = [
   ['Secret entrance', '🔐', [/^make (it|this) a hidden door/i, /^make this a door to/i, /^rotating panel/i, /^sliding panel/i, /^make it an activator/i,
     /^make this an ordinary object/i]],
   ['Build', '🧱', [/^fix here/i, /^fix this edge/i, /^add a room through/i, /^extend (from here|by piece)|^leave extend mode/i, /^other pieces that fit/i,
-    /^build an interior inside/i, /^fit the ground/i, /^plan a prefab/i, /^make this (place|dungeon) again/i]],
+    /^check this building/i, /^build an interior inside/i, /^fit the ground/i, /^plan a prefab/i, /^prefab workbench/i, /^give this place an outside/i, /^make this (place|dungeon) again/i]],
   ['This room', '🪑', [/^furnish the .* again|^furnish the [^.]*\(the game/i, /^furnish the .* as…/i, /^furnish like/i, /^dress everything in/i, /^remove the .*(its pieces|wall closes)/i]],
   ['This place', '🏠', [/^create here/i, /^populate this place/i, /^someone who.d live here/i, /^settle what.s loose/i, /^play here/i, /^find gaps/i,
     /^check this place/i, /^redraw the walking paths/i, /^copy the lighting/i, /^back to/i]],

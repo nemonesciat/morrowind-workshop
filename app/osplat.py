@@ -187,8 +187,16 @@ def process_running(program='openmw'):
             if pid.isdigit():
                 try:
                     with open('/proc/%s/comm' % pid, encoding='utf-8', errors='replace') as f:
-                        if f.read().strip() == program:
-                            return True
+                        if f.read().strip() != program:
+                            continue
+                    # (a zombie, a game that has quit but not been collected yet, is not running: one started from
+                    # the Workshop stayed listed as "openmw" until the Workshop closed, so quitting the game wasn't
+                    # seen; PIN2's report on Linux, 2026-10-28. The state is the field after the name in stat)
+                    with open('/proc/%s/stat' % pid, encoding='utf-8', errors='replace') as f:
+                        st = f.read()
+                    if st[st.rfind(')') + 2:st.rfind(')') + 3] in ('Z', 'X'):
+                        continue
+                    return True
                 except OSError:
                     pass
         return False
@@ -245,8 +253,12 @@ def detached(argv, cwd=None, env=None):
     of ours, nothing of ours left open on Linux."""
     if WINDOWS:
         return subprocess.Popen(argv, cwd=cwd, env=env, creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
-    return subprocess.Popen(argv, cwd=cwd, env=env, start_new_session=True, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.Popen(argv, cwd=cwd, env=env, start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # (collected when it ends, so it doesn't linger as a zombie: see process_running)
+    import threading
+    threading.Thread(target=p.wait, daemon=True).start()
+    return p
 
 
 # ------------------------------------------------------------------ files and folders

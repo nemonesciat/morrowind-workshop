@@ -36,11 +36,23 @@ async function pfOpen(){
   if (!V3.on && typeof v3Enable === 'function') await v3Enable(true);
   vwOpen('prefabv');
   vwTitle('prefabv');
-  if (!Object.keys(PF.styles).length){
-    try { const r = await api('/api/build/modules'); PF.styles = r.styles || {}; } catch (e){ toast(e.message, true); }
-    if (!PF.style) PF.style = Object.entries(PF.styles).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || 'Hlaalu';
-  }
+  await pfStyles();
   pfRender();
+}
+
+// (the first time, the Workshop has to learn how the game puts its buildings together, about nine minutes: the
+// window says so with the learning's own bar, and fills in by itself when it is done, instead of an error)
+async function pfStyles(){
+  if (Object.keys(PF.styles).length) return;
+  try {
+    const r = await api('/api/build/modules'); PF.styles = r.styles || {}; PF.learning = false;
+    if (!PF.style) PF.style = Object.entries(PF.styles).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || 'Hlaalu';
+  } catch (e){
+    if (!/still learning/i.test(e.message)) return toast(e.message, true);
+    PF.learning = true;
+    clearTimeout(PF.learnT);
+    PF.learnT = setTimeout(async () => { if (!$('#prefabv')) return; await pfStyles(); pfRender(); }, 5000);
+  }
 }
 
 function pfRender(){
@@ -65,6 +77,16 @@ function pfRender(){
     });
     pfBindRes(P);
     if (H == null) api('/api/build/modules/ready').then(r => { PF.homes = r; pfRender(); }).catch(e => toast(e.message, true));
+    // (still learning: asked again every few seconds, so it fills in by itself; it asked once and then sat on
+    // "try again shortly", the user: "never populates", 2026-10-27)
+    else if (!H.ready){ clearTimeout(PF.homesT); PF.homesT = setTimeout(() => { if ($('#prefabv') && PF.tab === 'ready'){ PF.homes = null; pfRender(); } }, 5000); }
+    return;
+  }
+  if (PF.learning){
+    P.innerHTML = tabs + `<div class="msg" style="margin:6px 0"><b>Learning how the game puts its buildings together</b>: every building
+      in your load order, once (about nine minutes), so the buildings fitted here are the game's own. This window fills in by itself
+      when it is done; the rest of the Workshop works meanwhile.</div>${typeof learnHtml === 'function' && LEARN.sv && LEARN.sv.left ? learnHtml(LEARN.sv, true) : '<div class="msg"><span class="spin"></span>Starting…</div>'}`;
+    P.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { PF.tab = b.dataset.tab; pfDrop(); pfRender(); });
     return;
   }
   P.innerHTML = tabs + `
@@ -112,6 +134,7 @@ function pfBindRes(P){
   bind('#pf-left', () => pfTurn(-Math.PI / 2)); bind('#pf-right', () => pfTurn(Math.PI / 2));
   bind('#pf-move', () => { if (V3.ghost){ V3.ghost.pinned = false; } pfRender(); });
   bind('#pf-place', pfPlace);
+  bind('#pf-again', pfFit);
   bind('#pf-build', pfBuild);
   bind('#pf-ghost', pfGhost);
   bind('#pf-ground', () => { const p = PF.placed; if (p && p.door && typeof gfFit === 'function') gfFit(p.door.cell, p.door.ref); });
@@ -158,21 +181,28 @@ function pfDrop(){
   if (W.mode === 'group' && W.groupPlace && W.groupPlace.prefab) setMode(null);
 }
 
+// (each Fit, and each Another, draws afresh among the game's buildings that fit nearly as well as the best, by
+// how often the game builds them: the same volume gives a different house, not a cookie-cutter one)
 async function pfFit(){
   const tiles = pfVolume(); if (!tiles.length) return;
   const b = $('#pf-fit'); if (b){ b.disabled = true; b.textContent = 'Fitting…'; }
+  const a = $('#pf-again'); if (a){ a.disabled = true; }
   let r;
-  try { r = await post('/api/build/modules/fit', {style: PF.style, tiles, front: 'S', tolerance: PF.tol}); }
+  try { r = await post('/api/build/modules/fit', {style: PF.style, tiles, front: 'S', tolerance: PF.tol, seed: Math.floor(Math.random() * 1e9)}); }
   catch (e){ toast(e.message, true); pfRender(); return; }
   r.ox = 0; r.oy = 0;
   PF.fit = r; PF.placed = null;
   pfRender();
   pfGhost();
+  pfShowRes();
 }
+// (the result and its buttons sit below the grid: brought into sight, or they went unseen)
+function pfShowRes(){ const el = $('#pf-res'); if (el && el.firstElementChild) el.scrollIntoView({block: 'nearest'}); }
 
 function pfResHtml(f){
   let h = f.ready ? '<div style="margin-top:6px"><b>A ready-made home of the game\'s</b></div>' : `<div style="margin-top:6px"><b>${f.modules.length} of the game's building${f.modules.length === 1 ? '' : 's'}</b>, ${Math.round(f.covered * 100)}% of the tiles under them</div>`;
   h += `<div class="msg">${f.modules.map(m => esc(m.name)).join('<br>')}</div>`;
+  if (!f.ready && !PF.placed) h += `<div class="pfrow"><button class="btn sm" id="pf-again" title="Other buildings of the game's that fit as well, drawn by how often the game builds each">↻ Another</button></div>`;
   for (const n of f.notes || []) h += `<div class="msg" style="margin:3px 0">${esc(n)}</div>`;
   if (!PF.placed){
     const pinned = V3.ghost && V3.ghost.pinned;
@@ -181,7 +211,7 @@ function pfResHtml(f){
       <button class="btn sm" id="pf-left" title="Turn it a quarter left">⟲</button><button class="btn sm" id="pf-right" title="Turn it a quarter right">⟳</button>
       ${pinned ? '<button class="btn sm" id="pf-move" title="Let it follow the mouse again">Move</button>' : ''}
       <button class="btn" id="pf-place" ${pinned ? '' : 'disabled'} title="${pinned ? 'Set the whole structure down here' : 'Point in the 3D view and click to pin it first'}">Place here</button></div>
-      <div class="msg">${pinned ? 'Pinned. Turn it, Move it, or Place here.' : 'Point in the 3D view where it goes and click to pin it there (the wheel turns it).'}</div>`;
+      <div class="msg">${pinned ? 'Pinned. Turn it, Move it, or Place here.' : 'Point in the 3D view where it goes (the wheel turns it) and click to put it down. It is set on the lowest ground under it, so on a slope it sinks into the hill rather than standing in the air.'}</div>`;
   } else {
     const p = PF.placed;
     h += `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #fff2">Placed (${p.n} objects). <button class="btn sm" id="pf-ground" title="Raise the ground round its foot where it stands over it, and a landing at its door, the way the game's buildings meet the ground (the building stays put; Undo takes it back)">⛰ Fit the ground</button> ${p.built ? '' : `
@@ -208,16 +238,46 @@ function pfTurn(a){
   v3Refresh();
 }
 
-// (world3d.js: a click in the view while a prefab is being placed pins the ghost where it stands)
+// (world3d.js: a click in the view while a prefab is being placed puts it down there, as the banner says; it
+// only pinned it once, and the Place here that followed sat below the grid, out of sight: the user found no way
+// to make the building, 2026-10-27)
 function pfPin(){
   const G = V3.ghost; if (!G || !G.hit) return toast('Point at the ground first.', true);
   G.pinned = true;
-  pfRender();
+  pfPlace();
+}
+
+// The height to set it at: the lowest ground under its ground-floor pieces, so on a slope the uphill side sinks
+// into the hill as the game's own buildings do, rather than the downhill side standing in the air (the user saw
+// buildings floating where the foundation could go into the ground). Set at the point under the mouse, it floated
+// wherever the ground fell away.
+function pfGroundZ(items, x, y, yaw, z0){
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  // (the prefab workbench marks the pieces standing on its floor, and how far its floor is over the lowest point:
+  // those set it, bench.js)
+  const foot = items.filter(i => i.foot);
+  if (foot.length){
+    let z = null;
+    for (const i of foot){
+      const g = groundZ(x + i.dx * c + i.dy * s, y - i.dx * s + i.dy * c);
+      if (g != null && isFinite(g)) z = z == null ? g : Math.min(z, g);
+    }
+    return z == null ? z0 : z - (foot[0].footUp || 0);
+  }
+  const low = Math.min(...items.map(i => i.dz || 0));
+  let z = null;
+  for (const i of items){
+    if ((i.dz || 0) > low + 100) continue;
+    const g = groundZ(x + i.dx * c + i.dy * s, y - i.dx * s + i.dy * c);
+    if (g != null && isFinite(g)) z = z == null ? g : Math.min(z, g);
+  }
+  return z == null ? z0 : z;
 }
 
 async function pfPlace(){
   const G = V3.ghost, f = PF.fit; if (!G || !G.pinned || !G.hit || !f) return;
-  const [x, y, z] = G.hit;
+  const [x, y] = G.hit;
+  const z = W.ext ? pfGroundZ(f.items, x, y, G.yaw, G.hit[2]) : G.hit[2];
   const label = 'prefab: ' + f.modules.map(m => m.key).join(' + ');
   const r = await groupAction('/api/group/place', {cell: cellKeyAt(x, y), items: f.items, x, y, z, yaw: G.yaw, label}, `Placed ${label}`);
   if (!r) return;
@@ -231,7 +291,7 @@ async function pfPlace(){
   }
   PF.placed = {n: r.placed.length, door, name: ''};
   try { const pv = await api('/api/build/from_building?cell=' + encodeURIComponent(door.cell) + '&ref=' + encodeURIComponent(door.ref)); PF.placed.name = pv.name || ''; } catch (e){}
-  pfRender();
+  pfRender(); pfShowRes();
   drawMap(); if (V3.on) v3Refresh();
 }
 
