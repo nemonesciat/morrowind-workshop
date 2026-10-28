@@ -1016,6 +1016,108 @@ def everyday_pool(db, purpose, rid=None):
     return out
 
 
+# everyday clutter any shelf or table may hold when nothing better is known: the game's commonest cups, bowls,
+# plates, bottles and the like (those in the load order are used)
+GENERIC_CLUTTER = ('misc_com_bottle_01', 'misc_com_bottle_02', 'misc_com_bottle_05', 'misc_com_bottle_07', 'misc_com_bottle_10',
+                   'misc_com_wood_cup_01', 'misc_com_wood_cup_02', 'misc_com_wood_bowl_01', 'misc_com_wood_bowl_02',
+                   'misc_com_tankard_01', 'misc_com_metal_goblet_01', 'misc_com_metal_plate_03', 'misc_com_plate_02',
+                   'misc_com_plate_06', 'misc_com_redware_cup', 'misc_com_redware_bowl', 'misc_com_redware_flask',
+                   'misc_de_goblet_01', 'misc_de_goblet_04', 'misc_de_bowl_01', 'misc_de_cloth10', 'misc_de_pot_redware_01',
+                   'misc_com_basket_01', 'misc_flask_01', 'misc_flask_02', 'misc_lw_cup', 'misc_imp_silverware_cup')
+_make_cache = {}
+
+
+def make_of(rid):
+    """A piece's make by its ID: the prefix before its own name (furn_dwrv for furn_dwrv_bookshelf00, t_dwe_furn
+    for Tamriel Data's Dwemer furniture)."""
+    parts = rid.lower().split('_')
+    n = 3 if parts[0] in ('t', 'tr', 'pc', 'sky', 'ab') and len(parts) > 3 else 2
+    return '_'.join(parts[:n]) if len(parts) > n else None
+
+
+def make_pool(db, rid, limit=12):
+    """{'own': Counter, 'make': Counter} of the plain things the game stands on this model and on every piece of
+    its make (a Dwemer shelf: what the game's ruins put on Dwemer furniture), by id (lower case)."""
+    own = Counter(o['id'].lower() for d in survey(db, rid)['dressings'] for o in d['objects'] if plain(db, o['id'], 2))
+    mk = make_of(rid)
+    return {'own': own, 'make': make_items(db, mk, limit) if mk else Counter()}
+
+
+def place_make(db, refs, rid=None):
+    """The furniture make of the place these refs make up (a generated Dwemer ruin: furn_dwrv), so a piece of
+    another make laid there takes the place's own loot: the make its architecture is of (in_dwrv halls:
+    furn_dwrv) when the game has furniture of that make, else the commonest make among its dressable pieces.
+    (The halls first: a few tables of another make put in a ruin made the ruin's own shelves "foreign" in it.)"""
+    arch = Counter(r['id'].lower().split('_')[1] for r in refs if r.get('arch') and r['id'].lower().startswith('in_') and r['id'].count('_') >= 2)
+    for a, _n in arch.most_common(3):
+        cand = 'furn_' + a
+        if any(tag in ('STAT', 'ACTI', 'CONT') and k.startswith(cand + '_') and kind_of(k) for (tag, k) in db.by_key):
+            return cand
+    mk = Counter(make_of(r['id']) for r in refs if not r.get('arch') and kind_of(r['id']) and r['id'].lower() != (rid or '').lower())
+    mk.pop(None, None)
+    return mk.most_common(1)[0][0] if mk else None
+
+
+def make_items(db, mk, limit=12):
+    """Counter of the plain things the game stands on the furniture of this make (furn_dwrv: what the game's
+    Dwemer ruins put on their shelves and tables)."""
+    key = (mk, id(db.recs))
+    if key in _make_cache:
+        return _make_cache[key]
+    pool = Counter()
+    n = 0
+    for (tag, k), lst in db.by_key.items():
+        if tag not in ('STAT', 'ACTI', 'CONT') or not k.startswith(mk + '_') or not kind_of(k) or not lst or lst[-1] in db.dead:
+            continue
+        if kits.game_uses(db, k) < 1:
+            continue
+        for d in survey(db, k, 40)['dressings']:
+            pool.update(o['id'].lower() for o in d['objects'] if plain(db, o['id'], 2))
+        n += 1
+        if n >= limit:
+            break
+    _make_cache[key] = pool
+    return pool
+
+
+_pose_cache = {}
+
+
+def upright_book_pose(db):
+    """How the game stands a book up on a bookshelf, in the shelf's own frame: the commonest (rx, ry, rz) of the
+    upright books in the game's dressings of its most used bookshelves (their thickness along the board, spine
+    out), or None. lay_any stands its books so, put on a piece with compose_on as a dressing's things are."""
+    key = id(db.recs)
+    if key in _pose_cache:
+        return _pose_cache[key]
+    seen = Counter()
+    n = 0
+    for rid in models(db, min_uses=5):
+        if kind_of(rid) != 'bookshelf':
+            continue
+        for d in survey(db, rid, 40)['dressings']:
+            for o in d['objects']:
+                if o['kind'] == 'BOOK' and (abs(o['rx']) > 1.2 or abs(o['ry']) > 1.2) and o['id'].lower().startswith(('bk_', 't_bk')):
+                    seen[(round(o['rx'], 1), round(o['ry'], 1), round(o['rz'], 1))] += 1
+        n += 1
+        if n >= 6:
+            break
+    out = seen.most_common(1)[0][0] if seen else None
+    _pose_cache[key] = out
+    return out
+
+
+def generic_pool(db, purpose, books):
+    """The last list: the game's everyday books, or its everyday clutter (by the rooms of this purpose when the
+    whole-game survey has run), else GENERIC_CLUTTER; only ids in the load order."""
+    if books:
+        out = [b.lower() for b in _everyday_books(db)]
+        if out:
+            return out
+    out = [x for x in everyday_pool(db, purpose) if db.resolve_id(x) is not None]
+    return out or [x for x in GENERIC_CLUTTER if db.resolve_id(x) is not None]
+
+
 def dressing(db, rid, purpose, rng, books=(), min_uses=2, theme='house', used=None, cap=None, rate_k=1.0, max_value=None,
              band=None, budget=None, fill_books=False, bare=True):
     """A dressing for a new piece of this furniture, from what the game puts on it: one of the game's own

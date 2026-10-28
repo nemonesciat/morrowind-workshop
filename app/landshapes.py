@@ -5,7 +5,9 @@ it as one Undo step.
 
 Each layer acts on the ground as the layers before it left it (the land as it is, or the sea bed where there is
 none), in order:
-  coast    an outline: inside rises to its height over the coast width, outside sinks to the sea bed (-2048, where
+  coast    an outline, which is the waterline: inside rises out of the water to its height over the coast width;
+           just outside, a shore band goes under the water (so the outline is the shore) and the sea floor gets a
+           shelf; land further out stays as it is, unless "sea outside" sinks it all to the sea bed (-2048, where
            the game's open sea lies); the waterline wanders as the raise does (landrange)
   plateau  an outline: a level top at its height, reached over the cliff width, in steps if it has terraces
   ridge    a line: a range along it, its crest at the height (tapering at the ends), its foot the width out,
@@ -17,6 +19,8 @@ none), in order:
   lake     an outline: a basin under the water line, its shore eased down to it
   stamp    a point: a cone, volcano, caldera, crater, dome or mesa of its radius and height, or a piece of the game's
            own land (cells of it, their shape over their own surroundings) set down at that size and turn
+  spring   a point: the way down from it found by the water (landwater.trace), a dry ravine while the ground is
+           over the height it rises at, then a river winding where the land is flat, to the water
 Then rolling ground as rough as the region's on all of the plan's land, the fade at the edge of the marked cells
 (nothing changes on an edge shared with a cell not marked), and for apply: steps too steep for the record eased,
 textures by the region, things and paths following the ground."""
@@ -28,20 +32,22 @@ import landscape
 import mapdata
 from editing import EditError, commit, _require_project
 
-KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp')
+KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring')
 DEFAULTS = {
-    'coast': {'height': 600, 'width': 6144, 'wander': 1.0},
+    'coast': {'height': 600, 'width': 6144, 'wander': 1.0, 'sea': 0},
     'plateau': {'height': 2000, 'width': 768, 'terraces': 0},
-    'ridge': {'height': 3500, 'width': 8192, 'sharp': 0.5, 'spurs': 1.0},
+    # (width 3072, was 8192: that wide, the flanks covered the whole island and a ridge read as a swelling)
+    'ridge': {'height': 3500, 'width': 3072, 'sharp': 0.5, 'spurs': 1.0, 'crags': 0.0},
     'river': {'depth': 256, 'width': 256, 'banks': 2048, 'canyon': 0},
     'valley': {'depth': 900, 'width': 4096, 'round': 0.6},
     'lake': {'depth': 400, 'width': 1536},
     'stamp': {'shape': 'volcano', 'radius': 8192, 'height': 4000, 'turn': 0, 'src': None},
+    'spring': {'depth': 256, 'width': 256, 'banks': 2048, 'canyon': 0, 'wander': 1.0, 'rise': 800},
 }
 SHAPES = ('cone', 'volcano', 'caldera', 'crater', 'dome', 'mesa', 'game')
 SEA_BED = -2048.0
 FLOOR = -2560.0
-WATER = ('river', 'lake')
+WATER = ('river', 'lake', 'spring')
 
 
 def _smooth(t):
@@ -63,7 +69,8 @@ def save_plan(db, plan):
              'fade': max(256.0, min(8192.0, float(plan.get('fade', 1024)))),
              'paint': plan.get('paint', True) is not False, 'seed': int(plan.get('seed') or 1),
              'passes': _clean_opts(plan.get('passes'), PASSES), 'dress': _clean_opts(plan.get('dress'), DRESS),
-             'protect': _clean_opts(plan.get('protect'), PROTECT)}
+             'protect': _clean_opts(plan.get('protect'), PROTECT),
+             'only': [str(r).lower()[:64] for r in (plan.get('only') or []) if r][:20]}
     p.land = dict(p.land or {}, plan=clean)
     p.save()
     return clean
@@ -71,8 +78,10 @@ def save_plan(db, plan):
 
 # stage 3 and 4 settings (landpasses, landdress), with their defaults
 PASSES = {'detail': True, 'detail_k': 1.0, 'settle': True, 'angle': 0.0, 'gullies': 0.0, 'terraces': False, 'tstep': 256.0,
-          'tsharp': 0.6, 'tslope': 20.0}
-DRESS = {'variety': -1.0, 'tints': True, 'seams': True, 'hollows': True, 'shade': 1.0, 'region': '', 'assign': False}
+          'tsharp': 0.6, 'tslope': 20.0, 'valleys': 0.0,
+          'rock': 0.0, 'rthick': 512.0, 'rdip': 0.0, 'rdir': 0.0, 'rshare': 0.45, 'ronly': ''}
+DRESS = {'variety': -1.0, 'tints': True, 'seams': True, 'hollows': True, 'shade': 1.0, 'region': '', 'assign': False,
+         'rocks': 1.0}
 
 
 def _clean_opts(d, base):
@@ -97,15 +106,19 @@ def _clean(L):
     if kind not in KINDS:
         raise EditError('Unknown shape "%s".' % kind)
     pts = [[float(a), float(b)] for a, b in (L.get('pts') or [])][:400]
-    need = 1 if kind == 'stamp' else 3 if kind in ('coast', 'plateau', 'lake') else 2
+    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake') else 2
     if len(pts) < need:
         raise EditError('A %s needs at least %d point%s.' % (kind, need, '' if need == 1 else 's'))
     prm = dict(DEFAULTS[kind])
     for k, v in (L.get('p') or {}).items():
         if k in prm:
             prm[k] = v
+    # (only: the regions it acts in, fading at their border; like: the region whose character its ground takes, its
+    # roughness and slopes, while the textures stay the cell's own region's. Not for coasts, worked out together.)
+    only = [str(r).lower()[:64] for r in (L.get('only') or []) if r][:20] if kind != 'coast' else []
+    like = str(L.get('like') or '').lower()[:64] if kind != 'coast' else ''
     return {'id': str(L.get('id') or ''), 'kind': kind, 'name': str(L.get('name') or '')[:60], 'on': L.get('on', True) is not False,
-            'pts': pts, 'p': prm}
+            'pts': pts, 'p': prm, 'only': only, 'like': like}
 
 
 # ---------- the working grid: every s-th point of the stitched cells ----------
@@ -182,22 +195,56 @@ def _outline(F, L, reach):
 # ---------- the layers ----------
 
 def _coast(F, L, seed):
-    P = L['p']
-    width, height, wander = float(P['width']), float(P['height']), float(P['wander'])
-    ins, sd = _outline(F, L, width * 1.6)
-    for i, d in sd.items():
-        x, y = F.world(i)
-        e = d + (landrange.noise(x, y, seed + 7, width * 0.45 * wander) * min(1.0, abs(d) / 1024.0) if wander else 0.0)
-        # (the waterline at the outline, full height a coast width in, the sea bed a coast width out to sea)
-        if e >= 0:
-            F.z[i] = max(F.z[i], -64 + (height + 64) * _smooth(e / width))
+    _coasts(F, [L], seed)
+
+
+def _coasts(F, Ls, seed):
+    """All the plan's coasts as one coastline: each point takes the coast it lies furthest inside (or nearest
+    outside), in coast widths. One at a time, each coast sank everything outside it, the other islands too: two
+    islands drawn near each other fought over who won (PIN2, 2026-10-28); now the sea between them is a channel."""
+    best, ins_any = {}, set()
+    sea = any(L['p'].get('sea') for L in Ls)
+    for L in Ls:
+        P = L['p']
+        width, height, wander = max(128.0, float(P['width'])), float(P['height']), float(P['wander'])
+        ins, sd = _outline(F, L, width * 2.0)
+        ins_any |= ins
+        for i, d in sd.items():
+            x, y = F.world(i)
+            # (the waterline wanders by bays and headlands a few hundred units across, about the line drawn: it
+            # was 0.45 of the coast width, 2,800 at 6,144, and sank half of a small island drawn by its shore, the
+            # user 2026-10-28)
+            e = d + (landrange.noise(x, y, seed + 7, min(width * 0.45, 320.0) * wander) * min(1.0, abs(d) / 1024.0) if wander else 0.0)
+            k = e / width
+            if i not in best or k > best[i][0]:
+                best[i] = (k, height, width)
+    for i, (k, height, width) in best.items():
+        if k >= 0:
+            # (just over the water at the outline, full height a coast width in; land already higher stays)
+            F.z[i] = max(F.z[i], 8 + (height - 8) * _smooth(k))
+            continue
+        # Outside: the outline is the shore. A band out from it (a quarter of the coast width, 1,536 at most) goes
+        # under the water, to a shallow 256 at its edge; beyond, the shelf falls to the sea bed over the coast
+        # width. Land beyond the band stays as it is unless the coast has "sea outside": every land at all out
+        # there had sunk to the sea bed, so an island drawn by the mainland drowned it, the user 2026-10-28.
+        d = -k * width
+        band = min(1536.0, max(256.0, width * 0.25))
+        if d <= band:
+            target = -16 - 240 * _smooth(d / band)
         else:
-            # (the shelf out to sea is the coast's own: no wall where the old sea bed met the shore)
-            F.z[i] = -64 + (SEA_BED + 64) * _smooth(-e / width)
-    # (the rest of the plan's area, out beyond the coast: the sea bed)
-    for i in range(len(F.z)):
-        if i not in sd and i not in ins:
-            F.z[i] = min(F.z[i], SEA_BED)
+            target = -256 + (SEA_BED + 256) * _smooth(min(1.0, (d - band) / width))
+        z = F.z[i]
+        if z > target:
+            if d <= band or sea:
+                F.z[i] = target
+        elif z < 0:
+            # (the sea floor rises to the shelf round the land: no wall where the old sea bed met the shore)
+            F.z[i] = target
+    # (with "sea outside", the rest of the plan's area, beyond every coast: the sea bed)
+    if sea:
+        for i in range(len(F.z)):
+            if i not in best and i not in ins_any:
+                F.z[i] = min(F.z[i], SEA_BED)
 
 
 def _plateau(F, L, seed):
@@ -221,6 +268,9 @@ def _plateau(F, L, seed):
 def _ridge(F, L, seed):
     P = L['p']
     peak, W, sharp, spurs = float(P['height']), max(512.0, float(P['width'])), float(P['sharp']), float(P['spurs'])
+    crags = float(P.get('crags') or 0)
+    if crags:
+        import landrock
     near, total = _line_dist(F, L['pts'], W * 1.5)
     for i, (d, a) in near.items():
         x, y = F.world(i)
@@ -234,6 +284,9 @@ def _ridge(F, L, seed):
         old = F.z[i]
         if crest > old:
             F.z[i] = old + (crest - old) * p
+            if crags:
+                # (crags: sharp arêtes and spurs near the crest, none at the foot, landrock.ridged)
+                F.z[i] += crags * 0.3 * (crest - old) * (landrock.ridged(x, y, seed + 53) - 0.3) * p ** 0.6
 
 
 def _river(F, L, seed):
@@ -279,6 +332,28 @@ def _lake(F, L, seed):
             t = -d / shore
             if old > -24:
                 F.z[i] = min(old, -24 + (old + 24) * _smooth(t))
+
+
+def _spring(F, L, seed, inside):
+    """The way down from the spring, found by the water over the ground as the shapes before it left it: a ravine
+    while the ground is over the height it rises at, then a river (_river) winding where the land is flat. Returns
+    the way, for the map."""
+    import landwater
+    P = L['p']
+    way = landwater.trace(F, inside, L['pts'][0][0], L['pts'][0][1])
+    if len(way) < 2:
+        return []
+    rise = float(P['rise'])
+    k = next((n for n, p in enumerate(way) if p[2] <= rise), len(way))
+    dry = []
+    if k > 0:
+        # (above it, a dry ravine down the slope: the water hasn't gathered yet; smoothed, not the grid's steps)
+        dry = landwater.wind(way[:k + 1], 0)
+        _valley(F, {'p': {'depth': 400, 'width': max(1024.0, float(P['banks'])), 'round': 0.25}, 'pts': dry}, seed)
+    wet = landwater.wind(way[max(0, k - 1):], float(P['wander']), float(P['width']), seed + int(abs(way[0][0])) % 97) if k < len(way) else []
+    if len(wet) >= 2:
+        _river(F, {'p': P, 'pts': wet}, seed)
+    return [[round(v) for v in p] for p in dry + wet]
 
 
 def _stamp_shape(shape, r):
@@ -358,10 +433,63 @@ def _stamp(F, L, seed, db):
 
 # ---------- the whole plan ----------
 
+CELL = 8192.0
+
+
+def _region_weights(db, F, want=''):
+    """{region: [its weight at each point]}, the weights at a point summing to 1: the region of the cell it is in,
+    blended with the next cell's from the middle of one cell to the middle of the next (smoothly), so a plan across a
+    border keeps each side's own character with no line between them. want: every point that one region's."""
+    if want:
+        return {want.lower(): [1.0] * len(F.z)}
+    cols = []
+    for x in range(F.w):
+        u = (F.ox + x * F.step) / CELL - 0.5
+        c = math.floor(u)
+        cols.append((int(c), _smooth(u - c)))
+    rows = []
+    for y in range(F.h):
+        u = (F.oy + y * F.step) / CELL - 0.5
+        c = math.floor(u)
+        rows.append((int(c), _smooth(u - c)))
+    of = {}
+    for cx in range(cols[0][0], cols[-1][0] + 2):
+        for cy in range(rows[0][0], rows[-1][0] + 2):
+            of[(cx, cy)] = landrange._region_of(db, cx, cy)
+    W = {r: [0.0] * len(F.z) for r in set(of.values())}
+    i = 0
+    for cy, ty in rows:
+        for cx, tx in cols:
+            for (dx, dy), k in (((0, 0), (1 - tx) * (1 - ty)), ((1, 0), tx * (1 - ty)), ((0, 1), (1 - tx) * ty), ((1, 1), tx * ty)):
+                if k:
+                    W[of[(cx + dx, cy + dy)]][i] += k
+            i += 1
+    return W
+
+
+def _per_point(db, W, table, key, default, k=1.0):
+    """A land survey figure at each point, its regions' figures by their weights there."""
+    vals = {r: region_figure(db, [r], table, key, default) * k for r in W}
+    out = [0.0] * len(next(iter(W.values())))
+    for r, w in W.items():
+        v = vals[r]
+        for i, a in enumerate(w):
+            if a:
+                out[i] += a * v
+    return out
+
+
 def _work(db, cells, plan, s):
     keys = sorted({landrange._key(k) for k in cells or []})
     if not keys:
         raise EditError('Mark the cells to shape on the land map first.')
+    # (the plan only in some regions: the marked cells in them; the fade at the edge does the rest)
+    only = [r.lower() for r in plan.get('only') or []]
+    marked_regions = sorted({landrange._region_of(db, k[0], k[1]) for k in keys} - {''})
+    if only:
+        keys = [k for k in keys if landrange._region_of(db, k[0], k[1]) in only]
+        if not keys:
+            raise EditError('None of the marked cells is in %s.' % ('that region' if len(only) == 1 else 'those regions'))
     if len(keys) > landrange.MAX_CELLS:
         raise EditError('That is %d cells; shape at most %d at once.' % (len(keys), landrange.MAX_CELLS))
     layers = [_clean(L) for L in (plan.get('layers') or []) if L.get('on', True) is not False]
@@ -373,28 +501,11 @@ def _work(db, cells, plan, s):
     F = Field(G, s)
     before = list(F.z)
     seed = int(plan.get('seed') or 1)
-    for L in layers:
-        fn = {'coast': _coast, 'plateau': _plateau, 'ridge': _ridge, 'river': _river, 'valley': _valley, 'lake': _lake}.get(L['kind'])
-        if fn:
-            fn(F, L, seed)
-        else:
-            _stamp(F, L, seed, db)
-    # (nothing much under the game's own lowest ground, -2448 in TR: a crater stamped into the sea stops there)
-    for i in range(len(F.z)):
-        if F.z[i] < FLOOR:
-            F.z[i] = min(before[i], FLOOR)
-    # rolling ground on the plan's land, as rough as the region's (none under the sea: the bed stays smooth)
-    rough = float(plan.get('rough', 1.0))
     dress = _clean_opts(plan.get('dress'), DRESS)
-    reg = {k: (dress['region'] or landrange._region_of(db, k[0], k[1])).lower() for k in keys}
-    if rough > 0 and layers:
-        amp = rough * landrange._roughness(db, sorted(set(reg.values()))) / 1.8 * 0.6
-        for i in range(len(F.z)):
-            z = F.z[i]
-            if z > 0 and z != before[i]:
-                x, y = F.world(i)
-                # (fainter near the water, and never dipping dry land under it: half its height over 32 at most)
-                F.z[i] = max(z + landrange.noise(x, y, seed, amp) * min(1.0, z / 1500.0), 32 + 0.5 * (z - 32) if z > 32 else z)
+    # each point's regions (blended over a cell at a border): where it is (for "only in"), and whose character its
+    # ground takes (the same, but for the ground a layer "like" another region made)
+    here = _region_weights(db, F, dress['region'])
+    like = {r: list(w) for r, w in here.items()}
     # the marked cells' own points (an edge shared with a cell that isn't marked is not theirs)
     marked = set(keys)
     inside = bytearray(F.w * F.h)
@@ -405,25 +516,133 @@ def _work(db, cells, plan, s):
             cxs = {G.x0 + (x - 1) // per, G.x0 + x // per} if x % per == 0 else {G.x0 + x // per}
             if all((cx, cy) in marked for cx in cxs for cy in cys):
                 inside[y * F.w + x] = 1
+    springs = {}
+    # (the coasts together, where the first of them stands in the order: see _coasts)
+    coasts = [L for L in layers if L['kind'] == 'coast']
+    for L in layers:
+        if L['kind'] == 'coast':
+            if L is coasts[0]:
+                _coasts(F, coasts, seed)
+            continue
+        zb = list(F.z) if L['only'] or L['like'] else None
+        fn = {'plateau': _plateau, 'ridge': _ridge, 'river': _river, 'valley': _valley, 'lake': _lake}.get(L['kind'])
+        if fn:
+            fn(F, L, seed)
+        elif L['kind'] == 'spring':
+            springs[L['id'] or str(len(springs))] = _spring(F, L, seed, inside)
+        else:
+            _stamp(F, L, seed, db)
+        if zb is None:
+            continue
+        if L['only']:
+            ws = [here[r] for r in L['only'] if r in here]
+            for i in range(len(F.z)):
+                if F.z[i] != zb[i]:
+                    F.z[i] = zb[i] + (F.z[i] - zb[i]) * min(1.0, sum(w[i] for w in ws))
+        if L['like']:
+            # (fully the other region's where the layer moved the ground 256 or more, partly where less)
+            to = like.setdefault(L['like'], [0.0] * len(F.z))
+            for i in range(len(F.z)):
+                k = min(1.0, abs(F.z[i] - zb[i]) / 256.0)
+                if k:
+                    for r, w in like.items():
+                        w[i] *= 1 - k
+                    to[i] += k
+    # (nothing much under the game's own lowest ground, -2448 in TR: a crater stamped into the sea stops there)
+    for i in range(len(F.z)):
+        if F.z[i] < FLOOR:
+            F.z[i] = min(before[i], FLOOR)
+    # rolling ground on the plan's land, as rough as the region's (none under the sea: the bed stays smooth)
+    shaped = [min(1.0, abs(F.z[i] - before[i]) / 256.0) for i in range(len(F.z))]     # (how far the shapes moved it)
+    F.shaped = shaped
+    rough = float(plan.get('rough', 1.0))
+    reg = {k: (dress['region'] or landrange._region_of(db, k[0], k[1])).lower() for k in keys}
+    if rough > 0 and layers:
+        amps = {r: rough * landrange._roughness(db, [r]) / 1.8 * 0.6 for r in like}
+        for i in range(len(F.z)):
+            z = F.z[i]
+            if z > 0 and z != before[i]:
+                x, y = F.world(i)
+                # (in proportion to how far the shapes moved the ground, up to 256: full on what they made, none on
+                # the game's land a shape's faded edge or an "only in" barely touched, lab 2026-10-28)
+                amp = sum(amps[r] * w[i] for r, w in like.items()) * shaped[i]
+                # (fainter near the water, and never dipping dry land under it: half its height over 32 at most)
+                F.z[i] = max(z + landrange.noise(x, y, seed, amp) * min(1.0, z / 1500.0), 32 + 0.5 * (z - 32) if z > 32 else z)
+    # (the regions whose character the marked cells' ground takes, with any weight there)
+    used_regions = sorted(r for r, w in like.items() if any(w[i] for i in range(len(w)) if inside[i]))
     # the natural passes (landpasses): terraces, rain gullies, then settling the steepest slopes to the region's
-    F.info = {}
+    F.info = {'regions': used_regions, 'marked_regions': marked_regions}
+    if springs:
+        F.info['springs'] = springs
     P = _clean_opts(plan.get('passes'), PASSES)
+    # the valleys the rain carves on the plan's ground (landwater), before the detail goes on: the big flows cut deep,
+    # the small ones hardly, so they branch as real valleys do
+    # (the rock's layers, by the heights the shapes left: the valleys cut slow through the hard ones, and the
+    # settling below leaves them standing as cliffs over scree, landrock)
+    hard = None
+    if layers and P['rock'] > 0:
+        import landrock
+        hard = landrock.hardness(F, inside, {'thick': P['rthick'], 'dip': P['rdip'], 'dir': P['rdir'], 'share': P['rshare']}, seed)
+        # (only on the plan's own ground: the game's land a shape barely touched keeps its own; and only in one
+        # region if asked, fading out over its border as the region weights do)
+        ronly = P['ronly'].lower()
+        inr = here.get(ronly) if ronly else None
+        rw = [shaped[i] * (1.0 if not ronly else min(1.0, inr[i]) if inr else 0.0) for i in range(len(F.z))]
+        hard = [h * rw[i] for i, h in enumerate(hard)]
+    if layers and P['valleys'] > 0:
+        import landwater
+        wgt = [shaped[i] if inside[i] else 0.0 for i in range(len(F.z))]
+        _A, _w, deep = landwater.valleys(F, inside, wgt, P['valleys'], seed, hard)
+        F.info['valleys'] = round(deep)
     if layers or P['gullies'] > 0 or P['terraces']:
         import landpasses
         if P['detail'] and layers:
             changed = bytearray(1 if F.z[i] != before[i] else 0 for i in range(len(F.z)))
-            rs = sorted(set(reg.values()))
-            want = region_figure(db, rs, 'rough', '1024', 430.0) * P['detail_k']
-            want128 = region_figure(db, rs, 'rough', '128', 62.0) * P['detail_k']
-            F.info['detail'] = round(landpasses.match_roughness(F, inside, changed, want, seed, target128=want128))
+            live = [r for r in used_regions if any(like[r][i] for i in range(len(F.z)) if changed[i] and inside[i])]
+            if len(live) == 1:
+                r = live[0]
+                want = region_figure(db, [r], 'rough', '1024', 430.0) * P['detail_k']
+                want128 = region_figure(db, [r], 'rough', '128', 62.0) * P['detail_k']
+                F.info['detail'] = round(landpasses.match_roughness(F, inside, changed, want, seed, target128=want128))
+            else:
+                # (each region's own amount, measured on its own ground and fading into the next one's: the same
+                # detail at every point, so nothing breaks at the border. Measured only where the plan really made
+                # the ground (moved 256 or more) and laid on in proportion to how far it moved it: the game's own
+                # land at a layer's faded edge, or outside an "only in", was smoothed flat as if the plan's, lab
+                # 2026-10-28)
+                F.info['detail'] = {}
+                for r in live:
+                    w = [a * m for a, m in zip(like[r], shaped)]
+                    own = bytearray(1 if changed[i] and w[i] >= 0.5 else 0 for i in range(len(F.z)))
+                    area = bytearray(1 if changed[i] and w[i] > 0 else 0 for i in range(len(F.z)))
+                    if not any(own):
+                        continue
+                    want = region_figure(db, [r], 'rough', '1024', 430.0) * P['detail_k']
+                    want128 = region_figure(db, [r], 'rough', '128', 62.0) * P['detail_k']
+                    F.info['detail'][r] = round(landpasses.match_roughness(F, inside, own, want, seed, target128=want128,
+                                                                           area=area, wgt=w))
+        if hard is not None:
+            F.info['stepped'] = landrock.stratify(F, inside, {'thick': P['rthick'], 'dip': P['rdip'], 'dir': P['rdir'], 'share': P['rshare']},
+                                                  rw, P['rock'], seed)
         if P['terraces']:
             F.info['terraced'] = landpasses.terraces(F, inside, P['tstep'], P['tsharp'], P['tslope'])
         if P['gullies'] > 0:
             F.info['drops'] = landpasses.gullies(F, inside, P['gullies'], seed)
-        if P['settle']:
-            ang = P['angle'] or region_figure(db, sorted(set(reg.values())), 'slope', '99', 62.0)
-            F.info['settle_angle'] = round(ang, 1)
-            F.info['too_steep'] = landpasses.settle(F, inside, ang)
+        if P['settle'] or hard is not None:
+            if P['angle'] or len(used_regions) <= 1:
+                ang = P['angle'] or region_figure(db, used_regions, 'slope', '99', 62.0)
+                F.info['settle_angle'] = round(ang, 1)
+            else:
+                # (each point its own region's angle: the Ashlands' cliffs stay beside the Bitter Coast's gentle banks)
+                ang = _per_point(db, like, 'slope', '99', 62.0)
+                F.info['settle_angle'] = {r: round(region_figure(db, [r], 'slope', '99', 62.0), 1) for r in used_regions}
+            if hard is not None:
+                # (hard bands stand as cliffs, soft ones slide back to scree: more rounds, so the soft ones go back
+                # far enough to leave ledges)
+                ang = landrock.angles(ang, hard, inside, P['rock'], rw)
+                F.info['too_steep'] = landpasses.settle(F, inside, ang, rounds=60)
+            else:
+                F.info['too_steep'] = landpasses.settle(F, inside, ang)
     # the ground held under what is built on it: buildings, ruins, doors (the loose things move with the ground)
     prot = _clean_opts(plan.get('protect'), PROTECT)
     F.hold, F.held = None, []
@@ -535,8 +754,13 @@ def measure(F, keys):
 
 def preview(db, cells, plan):
     """{'cells': {'gx,gy': {'n': 17, 'h': [...], 't': [256 texture files]}}, 'textures': {file: count}, 'info'}: the
-    plan's land at every 4th point, for the map, with the textures it would lay; nothing written."""
-    keys, G, F, _ins, reg = _work(db, cells, plan, 4)
+    plan's land at every 4th point, for the map, with the textures it would lay; nothing written. With rock layers,
+    every 2nd point on a plan of 36 cells or fewer: at every 4th (512 apart) a band's cliff was a single step and
+    the layers hardly showed until applied."""
+    rock = float(((plan.get('passes') or {}).get('rock')) or 0) > 0
+    s = 2 if rock and len({landrange._key(k) for k in cells or []}) <= 36 else 4
+    keys, G, F, _ins, reg = _work(db, cells, plan, s)
+    per = 64 // s
     out = {}
     files = {}
     if plan.get('paint', True) is not False:
@@ -545,8 +769,8 @@ def preview(db, cells, plan):
         _ids, files = landdress.textures(db, F, keys, reg, dress['variety'], int(plan.get('seed') or 1))
     used = {}
     for gx, gy in keys:
-        ox, oy = (gx - G.x0) * 16, (gy - G.y0) * 16
-        c = {'n': 17, 'h': [int(round(F.z[(oy + y) * F.w + ox + x])) for y in range(17) for x in range(17)]}
+        ox, oy = (gx - G.x0) * per, (gy - G.y0) * per
+        c = {'n': per + 1, 'h': [int(round(F.z[(oy + y) * F.w + ox + x])) for y in range(per + 1) for x in range(per + 1)]}
         t = files.get((gx, gy))
         if t:
             c['t'] = t
@@ -612,6 +836,16 @@ def apply(db, cells, plan):
         moved += landscape._follow_ground(db, gx, gy, before[k], after, skip=held_keys)
         paths += landscape._follow_paths(db, gx, gy, before[k], after)
     db.sync_project()
+    # rocks on the plan's slopes and cliffs, as thickly as the game sets them on such ground in the region
+    # (cliffrocks), on the ground as written (eased), not where it is held under a building
+    rocks = 0
+    if dress['rocks'] > 0 and plan.get('layers'):
+        import cliffrocks
+        F.z = list(G.z)
+        region_of = lambda x, y: reg.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
+        rocks = cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, region_of, float(dress['rocks']),
+                                                          int(plan.get('seed') or 1), F.hold))
+        db.sync_project()
     shaded = [m for m in ('texture', 'seams', 'hollows') if m in shaded]
     cl = ['%d,%d' % k for k in keys]
     # the cells into the region, so its weather, sounds and creatures go with the land
@@ -628,10 +862,10 @@ def apply(db, cells, plan):
     commit(db, 'Shaped %d cell%s with %d shape%s%s' % (len(keys), '' if len(keys) == 1 else 's', n, '' if n == 1 else 's',
                                                        (' (%d new)' % made) if made else ''))
     texn = sorted(len(set(v)) for v in ids.values())
-    return {'cells': len(keys), 'new': made, 'eased': eased, 'moved': moved, 'paths': paths, 'info': F.info,
+    return {'cells': len(keys), 'new': made, 'eased': eased, 'moved': moved, 'paths': paths, 'info': F.info, 'rocks': rocks,
             'shaded': shaded, 'assigned': assigned, 'measured': m,
             'textures_a_cell': texn[len(texn) // 2] if texn else 0,
-            'region_figures': _figures(db, sorted(set(reg.values())))}
+            'region_figures': _figures(db, sorted(set(reg.values()) | set(F.info.get('regions') or [])))}
 
 
 def _figures(db, regions):

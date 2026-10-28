@@ -32,7 +32,7 @@ async function cMine(){
     : `<div class="msg" style="padding:4px 2px">Characters you create or change show up here.</div>`;
 }
 function cWelcome(){
-  $('#cmain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Characters</h1>
+  $('#cmain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Characters${typeof guideLink === 'function' ? guideLink('people-and-creatures.md', 'The Characters page') : ''}</h1>
     <p class="msg" style="font-size:14px;line-height:1.7">Open anyone on the left, from your own characters to Fargoth, and change their looks, skills, behaviour, wares and belongings.
     The game's own stay safe: your version goes into your mod.</p>
     <div class="cgrid">

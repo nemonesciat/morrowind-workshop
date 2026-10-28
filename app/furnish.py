@@ -125,6 +125,7 @@ last_trace = []                 # why recipe items were left out: (room, kind, i
 last_clutter = []               # how the clutter groups went (for tests)
 last_dress = []                 # (model, room, things in the dressing, things that stood) per dressed piece (for tests)
 last_why = Counter()            # (why things of a dressing were left out in the last furnish: wall, taken, under...)
+last_lay_why = Counter()        # (lay_any's tries by board, top or inside, and what became of them: for the lab)
 
 # what goes in a kind of room: (kind of thing, how many, where). Rugs go where the game puts them: under
 # the table, beside the bed, in front of a shrine or counter (where people stand); a long one down a hall;
@@ -1874,7 +1875,13 @@ def piece_info(db, cell_key, ref):
         # (how many of them are mostly books: "Fill with books" shows when there are any)
         nb = sum(1 for d in ds_ if d['objects'] and sum(1 for o in d['objects'] if o['kind'] == 'BOOK') >= 0.6 * len(d['objects']))
     dressed = bool(c) and any(v.get('on') == ref and not v.get('deleted') for v in c['refs'].values())
-    return {'dressable': n > 0, 'dressed': dressed, 'model': rid, 'kind': fam_, 'dressings_known': n, 'book_dressings': nb if n else 0}
+    # (every shelf, table, desk and counter can be dressed, the game's dressings of it known or not: lay_any. The
+    # user's "I want shelves and tables to be furnishable no matter what"; a shelf always takes books)
+    import shelfsurvey as _ss
+    kind_ = _ss.kind_of(rid) if tag in ('STAT', 'ACTI', 'CONT') else None
+    any_ = bool(kind_) and fam_ not in ('planter', 'fire', 'shrine')
+    return {'dressable': n > 0 or any_, 'dressed': dressed, 'model': rid, 'kind': fam_, 'dressings_known': n,
+            'book_dressings': (nb if n else 0) or (1 if kind_ in ('bookshelf', 'shelf') else 0)}
 
 
 def room_at(db, cell_key, at):
@@ -2055,10 +2062,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             removed += 1
         db.sync_project()
     info = rooms(db, cell_key)
-    if not info['rooms']:
+    if not info['rooms'] and piece is None:
         raise EditError('No rooms found here: no floor a person could stand on was found in the building\'s pieces '
                         '(Auto-furnish reads the floors, walls and doorways of any interior, room pieces or not).')
-    T = info['tile']
+    T = info['tile'] or (128 if piece is not None else info['tile'])    # (one piece in a place of no rooms: a room is made round it)
     rooms_by_name = {r['name']: r['id'] for r in info['rooms']}     # (put() tags each thing with its room)
     fam, style = candidates(db, cell_key)
     house_culture = STYLE_SET.get(style)            # (put(): no furniture of another culture, by any path)
@@ -2230,7 +2237,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             ax, ay = (T * 1.5, T * 0.5) if along_x else (T * 0.5, T * 1.5)
             zb, zt = span(r)
             taken.append(((r['p'][0] - ax, r['p'][1] - ay, r['p'][0] + ax, r['p'][1] + ay), zb - 40, zt + 40, True))
-    T = info['tile']
+    T = info['tile'] or (128 if piece is not None else info['tile'])    # (as above: one piece in a place of no rooms)
     surf = [dict(r) for r in refs]           # for finding floor and table heights as things are added
     placed = []
     # the rugs here (box, floor height): rugs don't lie next to or over each other
@@ -2658,6 +2665,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
     book_budget = {'left': 3, 'titles': set(), 'stems': set()} if theme == 'house' else None
 
     dress_why = last_why          # (why a dressing's things were left out, for Dress this's message and the lab)
+    lay_why = last_lay_why
+    lay_why.clear()
     dress_why.clear()
 
     def dress(rec, purpose, min_z=None, fill_books=False):
@@ -2733,8 +2742,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if bottom > pz + rec['b'][5] * (rec.get('s') or 1.0) + 40:
                 dress_why['above'] += 1
                 continue
-            # (and nothing through the ceiling: the game's lilypads and mosses stand in tall halls' beds)
-            if room_top and room_d is not None and ob and pz + o['z'] + shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])[5] > room_d['floor'] + room_top:
+            # (and nothing through the ceiling: the game's lilypads and mosses stand in tall halls' beds. Not for a
+            # thing within the piece's own height: the piece stands there already, and a Dwemer hall read lower than
+            # its shelves, "none of the game's 42 dressings fit: through the ceiling")
+            if room_top and room_d is not None and ob and pz + o['z'] + shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])[5] > room_d['floor'] + room_top \
+                    and (piece is None or pz + o['z'] + shelfsurvey.box_turned(ob, orx, ory, orz, o['s'])[5] > pz + rec['b'][5] * (rec.get('s') or 1.0) + 4):
                 dress_why['ceiling'] += 1
                 continue
             # (not for a wine rack: a bottle lies across two slats of the lattice, nothing straight under its
@@ -2924,6 +2936,169 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 return {'placed': n_, 'added': o['id'], 'name': name_, 'kind': o['kind'], 'with': with_}
         return {'placed': 0, 'note': 'No room left on it: every spot the game uses on this model is taken.'}
 
+    def lay_any(rec, purpose, books_=False, one=False):
+        """The last way, so a shelf or a table is never left bare whatever stands round it (clipped into a wall,
+        in a ruin, in an empty room): the spots read off the piece's own mesh (every board and top a thing can
+        stand on, with the clear height over it), and the things from the best list there is: what the game
+        stands on this model, then on any piece of its make (a Dwemer shelf: what the game's ruins put on
+        Dwemer furniture), then the game's everyday books or clutter. The user: "I want shelves and tables to
+        be furnishable no matter what". Returns the placed records."""
+        import shelfsurvey
+        import seethrough
+        px, py, pz, rz = rec['p'][0], rec['p'][1], rec['p'][2], rec['p'][5]
+        sc = rec.get('s') or 1.0
+        fb = rec['b']
+        own = seethrough.overlay(db, [{'op': 'place', 'id': rec['id'], 'p': list(rec['p']), 's': sc}])
+        top_z, bot_z = pz + fb[5] * sc, pz + fb[2] * sc
+        pbox = shelfsurvey.box_turned(fb, 0, 0, rz, sc)
+        # the spots: every 12 units across the piece, each board met by rays down from over its top
+        spots = []
+        step = 12.0
+        nx = max(1, int((fb[3] - fb[0]) * sc / step))
+        ny = max(1, int((fb[4] - fb[1]) * sc / step))
+        for i in range(nx):
+            for j in range(ny):
+                lx = fb[0] * sc + (i + 0.5) * (fb[3] - fb[0]) * sc / nx
+                ly = fb[1] * sc + (j + 0.5) * (fb[4] - fb[1]) * sc / ny
+                wx, wy = shelfsurvey.to_world(lx, ly, rz)
+                x, y = px + wx, py + wy
+                if not own.tris:
+                    spots.append((x, y, top_z, 200.0))      # (no mesh to read: its box's top)
+                    continue
+                z = top_z + 20
+                for _b in range(10):
+                    h = own.nearest_any((x, y, z), (0.0, 0.0, -1.0), z - bot_z + 2)
+                    if h is None:
+                        break
+                    zh = z - h[0]
+                    if zh < bot_z + 12:
+                        break                    # (the piece's feet: on the floor, not on it)
+                    up = own.nearest_any((x, y, zh + 0.5), (0.0, 0.0, 1.0), 400)
+                    if up is None or up[0] >= 4:
+                        spots.append((x, y, zh, 200.0 if up is None else up[0] + 0.5))
+                    z = zh - 0.5                 # (on down: the board's underside, then the board below)
+        if not spots:
+            return []
+        # (a tall bookshelf or cupboard holds its things on its boards, not on its top: the game's dressings of
+        # furn_com_rm_bookshelf_02 use its four inner levels only; a table's top is its board)
+        if (fb[5] - fb[2]) * sc > 120 and any(s_[2] < top_z - 6 for s_ in spots):
+            spots = [s_ for s_ in spots if s_[2] < top_z - 6]
+        # what stands on and round it already (the dungeon's loot, a dressing laid before): nothing goes into it
+        have = []
+        for r_ in surf:
+            if r_.get('arch') or not r_.get('b') or r_.get('k') == rec.get('k') or (r_['type'] not in mapdata.ITEM_TYPES and r_['type'] not in ('STAT', 'ACTI', 'CONT')):
+                continue
+            if r_['type'] not in mapdata.ITEM_TYPES and max(r_['b'][3] - r_['b'][0], r_['b'][4] - r_['b'][1], r_['b'][5] - r_['b'][2]) * (r_.get('s') or 1.0) > shelfsurvey.MAX_SMALL:
+                continue                         # (big furniture's box fills the open space inside a shelf: only small things block a spot)
+            if not (pbox[0] - 40 <= r_['p'][0] - px <= pbox[3] + 40 and pbox[1] - 40 <= r_['p'][1] - py <= pbox[4] + 40):
+                continue
+            tb_ = shelfsurvey.box_turned(r_['b'], r_['p'][3], r_['p'][4], r_['p'][5], r_.get('s') or 1.0)
+            have.append((r_['p'][0] + tb_[0], r_['p'][1] + tb_[1], r_['p'][2] + tb_[2], r_['p'][0] + tb_[3], r_['p'][1] + tb_[4], r_['p'][2] + tb_[5]))
+        # the lists, best first
+        pools = shelfsurvey.make_pool(db, rec['id'])
+        wants_books = books_ or shelfsurvey.kind_of(rec['id']) == 'bookshelf'
+
+        def is_book(i):
+            ri = db.resolve_id(i)
+            return ri is not None and db.recs[ri][0] == 'BOOK'
+        # (the place's own loot before the piece's make: a Common table in a Dwemer ruin takes the ruin's things.
+        # The user: "If it's in a location with an appropriate loot table, use that. If not, a generic list")
+        pmk = shelfsurvey.place_make(db, refs, rec['id'])
+        place_items = shelfsurvey.make_items(db, pmk) if pmk and pmk != shelfsurvey.make_of(rec['id']) else Counter()
+        lists = []
+        # (a piece of another make than the place's takes the place's loot first: a Dwemer ruin's table holds a
+        # Dwemer ruin's things, whatever table it is. The user: "a dwemer dungeon should give those furnishables
+        # appropriate loot for a dwemer dungeon")
+        for src in ((place_items, pools['own'], pools['make']) if place_items else (pools['own'], pools['make'])):
+            ids = [i for i, _n in src.most_common(80) if db.resolve_id(i) is not None]
+            if books_:
+                ids = [i for i in ids if is_book(i)]
+            if ids:
+                lists.append(([i for i in ids], [src[i] for i in ids]))
+        gen = shelfsurvey.generic_pool(db, purpose, wants_books)
+        if gen:
+            lists.append((gen, [1.0] * len(gen)))
+        if wants_books and not books_:
+            gen2 = shelfsurvey.generic_pool(db, purpose, False)
+            if gen2:
+                lists.append((gen2, [1.0] * len(gen2)))
+        if not lists:
+            return []
+        area = len(spots) * step * step
+        want = 1 if one else max(3, min(24, int(area / (420.0 if wants_books else 1100.0))))
+        tries = max(150, want * 25)              # (one thing on a shelf already full: many spots to try)
+        up_pose = shelfsurvey.upright_book_pose(db)
+        out_ = []
+        bnd = {}
+        for _t in range(tries):
+            if len(out_) >= want:
+                break
+            # (the first list most of the time, the later ones as it runs short of what fits)
+            li = 0
+            while li < len(lists) - 1 and rng.random() < 0.25 + 0.5 * (_t / float(tries)):
+                li += 1
+            ids, ws = lists[li]
+            rid = rng.choices(ids, weights=ws)[0]
+            if books_ and not is_book(rid):
+                continue
+            if is_book(rid) and any(o_['id'].lower() == rid.lower() for o_ in out_):
+                continue                         # (never two copies of a book on one piece: the user's "identical books")
+            ob, _tag = shelfsurvey._bounds_of(db, bnd, rid)
+            if not ob:
+                continue
+            x, y, zs_, clear = spots[rng.randrange(len(spots))]
+            lv_ = 'top' if zs_ > top_z - 6 else 'inside'
+            # (a book stands upright on a shelf, spine out, its thin side along the board, when it fits under the
+            # board above; else it lies flat. A flat book is wider than a shelf is deep: only one fitted)
+            tilt_ = (0.0, 0.0)
+            if is_book(rid):
+                rot = rz + rng.choice((0.0, math.pi))
+                # (a real book stands up the way the game stands its books on its bookshelves, in the shelf's own
+                # frame: thickness along the board, spine out. Guessed turns stood them cover out, like tiles, the
+                # user's "identical books". A paper or a scroll lies flat.)
+                if up_pose and rid.lower().startswith(('bk_', 't_bk')):
+                    prz_ = up_pose[2] + (math.pi / 2 if (fb[3] - fb[0]) < (fb[4] - fb[1]) else 0.0)
+                    orx_, ory_, orz_ = shelfsurvey.compose_on(up_pose[0], up_pose[1], prz_, rz)
+                    if shelfsurvey.box_turned(ob, orx_, ory_, orz_, 1.0)[5] - shelfsurvey.box_turned(ob, orx_, ory_, orz_, 1.0)[2] <= clear - 2:
+                        tilt_, rot = (orx_, ory_), orz_
+            else:
+                rot = rz + rng.choice((0.0, math.pi / 2, math.pi, -math.pi / 2)) + rng.uniform(-0.3, 0.3)
+            tb = shelfsurvey.box_turned(ob, tilt_[0], tilt_[1], rot, 1.0)
+            if tb[5] - tb[2] > clear - 1:
+                lay_why[lv_ + ' too tall'] += 1
+                continue
+            wb = (x + tb[0], y + tb[1], zs_, x + tb[3], y + tb[4], zs_ + tb[5] - tb[2])
+            if wb[0] < px + pbox[0] - 2 or wb[3] > px + pbox[3] + 2 or wb[1] < py + pbox[1] - 2 or wb[4] > py + pbox[4] + 2:
+                lay_why[lv_ + ' over the edge'] += 1
+                continue                         # (over the piece's edge)
+            if any(wb[0] < hb[3] - 1 and hb[0] < wb[3] - 1 and wb[1] < hb[4] - 1 and hb[1] < wb[4] - 1 and wb[2] < hb[5] - 1 and hb[2] < wb[5] - 1 for hb in have):
+                lay_why[lv_ + ' into something'] += 1
+                continue                         # (into something standing there)
+            if own.tris:
+                # (resting on the board under its middle and three of its corners at least: never over the edge of a board)
+                ins = [(x, y)] + [(x + (wb[0] - x) * 0.6 if a else x + (wb[3] - x) * 0.6, y + (wb[1] - y) * 0.6 if b_ else y + (wb[4] - y) * 0.6)
+                                  for a in (0, 1) for b_ in (0, 1)]
+                ok_n = 0
+                for cx_, cy_ in ins:
+                    h = own.nearest_any((cx_, cy_, zs_ + 3), (0.0, 0.0, -1.0), 10)
+                    if h is not None and h[0] <= 7:
+                        ok_n += 1
+                if ok_n < 4:
+                    lay_why[lv_ + ' not on the board'] += 1
+                    continue
+                up_ = shelfsurvey.board_over(own, x, y, zs_)
+                if up_ is not None and tb[5] - tb[2] > up_ - 1:
+                    lay_why[lv_ + ' under the board above'] += 1
+                    continue
+            r_new = put(rid, x, y, rot, at_z=zs_ - tb[2], tilt=tilt_, room=rec.get('room'), on_ref=rec.get('k'))
+            if r_new:
+                out_.append(r_new)
+                have.append(wb)
+                lay_why[lv_ + ' laid'] += 1
+            else:
+                lay_why[lv_ + ' refused by put'] += 1
+        return out_
+
     def shrine_ok(rid):
         """May this shrine model be laid: the game stands it somewhere (a model the game never uses is
         an unknown: the user's "blank monoliths"), where the game stands it (a home's shrine in a home,
@@ -3080,16 +3255,43 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             raise EditError('That thing is not here any more.')
     piece_out = None
     piece_room = None
+    piece_any = False                        # (laid by lay_any: the game's own dressings of the model didn't fit, or none is known)
     if piece is not None:
         # (one piece: the room it stands in, whatever that room is for. Of the rooms under it, the one whose
         # floor is nearest below its bottom: a house's storeys have rooms of the same outline, and the ground
         # floor's room also "held" a bookshelf upstairs, 262 over its floor; every book on the shelf then came
         # out through that room's ceiling and Dress this said none of 80 dressings fit. The user's Test Home)
-        pb_ = piece_rec['p'][2] + piece_rec['b'][2] * (piece_rec.get('s') or 1.0)
-        under_ = [rm for rm in info['rooms'] if rm['x_min'] <= piece_rec['p'][0] <= rm['x_max'] and rm['y_min'] <= piece_rec['p'][1] <= rm['y_max']
+        # A piece against a wall has its middle on the wall line, just outside the room's outline: three of five
+        # Dwemer shelves in the user's generated ruin (Nchudjak) stood 14 to 37 past it, right on the floor, and
+        # Dress this said "no room". So the room may be as far off as the piece's own half-size reaches, nearest first.
+        ps_ = piece_rec.get('s') or 1.0
+        pb_ = piece_rec['p'][2] + piece_rec['b'][2] * ps_
+        reach_ = max(piece_rec['b'][3] - piece_rec['b'][0], piece_rec['b'][4] - piece_rec['b'][1]) * ps_ / 2 + 16
+
+        def off_(rm):
+            dx = max(rm['x_min'] - piece_rec['p'][0], 0, piece_rec['p'][0] - rm['x_max'])
+            dy = max(rm['y_min'] - piece_rec['p'][1], 0, piece_rec['p'][1] - rm['y_max'])
+            return math.hypot(dx, dy)
+        under_ = [rm for rm in info['rooms'] if off_(rm) <= reach_
                   and -60 <= pb_ - rm['floor'] < 300]             # (a wall shelf hangs well above the floor)
         if under_:
-            piece_room = min(under_, key=lambda rm: (pb_ - rm['floor'] < -60, abs(pb_ - rm['floor']) if pb_ >= rm['floor'] - 60 else 1e9))['id']
+            piece_room = min(under_, key=lambda rm: (off_(rm) > 0, abs(pb_ - rm['floor']), off_(rm)))['id']
+        else:
+            # (in no room at all: an empty interior, a cave's scrap, a piece deep in a wall. A room of open tiles
+            # round the piece, so it is dressed all the same: the user's "no matter what")
+            T_ = info['tile'] or 128
+            fp_ = _footprint([v * ps_ for v in piece_rec['b']], piece_rec['p'][5], piece_rec['p'][0], piece_rec['p'][1])
+            tiles_ = []
+            for tx_ in range(int(math.floor((fp_[0] - T_) / T_)), int(math.ceil((fp_[2] + T_) / T_)) + 1):
+                for ty_ in range(int(math.floor((fp_[1] - T_) / T_)), int(math.ceil((fp_[3] + T_) / T_)) + 1):
+                    tiles_.append({'x': tx_ * T_ + T_ / 2, 'y': ty_ * T_ + T_ / 2, 'floor': pb_,
+                                   'pat': {'N': 'open', 'E': 'open', 'S': 'open', 'W': 'open', 'offset': {}}})
+            vr_ = {'id': -1, 'name': 'Round the %s' % piece_rec['id'], 'tiles': len(tiles_), 'w': 1, 'h': 1, 'purpose': 'living',
+                   'x_min': min(t['x'] for t in tiles_) - T_ / 2, 'x_max': max(t['x'] for t in tiles_) + T_ / 2,
+                   'y_min': min(t['y'] for t in tiles_) - T_ / 2, 'y_max': max(t['y'] for t in tiles_) + T_ / 2,
+                   'floor': pb_, '_tiles': tiles_, 'traced': True}
+            info = dict(info, rooms=list(info['rooms']) + [vr_])     # (a copy: rooms() may hand out its kept answer)
+            piece_room = -1
     for room in info['rooms']:
         purpose = wanted.get(room['id'], room['purpose']) if plan is not None else room['purpose']
         if plan is not None and room['id'] not in wanted and piece is None:
@@ -5953,6 +6155,26 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             prec['room'] = room['name']
             fam_ = roomsurvey.family_of(db, prec['id'], prec['type'])
             got_ = []
+            # (a piece of another make than the place's, a Common table in a Dwemer ruin: the place's loot, not the
+            # model's own house dressing; lay_any takes the place's list first)
+            import shelfsurvey as _ss
+            pmk_ = _ss.place_make(db, refs, prec['id'])
+            foreign_ = bool(pmk_) and pmk_ != _ss.make_of(prec['id']) and fam_ not in ('planter', 'fire', 'shrine') \
+                and bool(_ss.make_items(db, pmk_))
+            if add and foreign_:
+                got1_ = lay_any(prec, purpose, one=True)
+                ri1_ = db.resolve_id(got1_[0]['id']) if got1_ else None
+                res_ = ({'placed': 1, 'added': got1_[0]['id'], 'name': (db.recs[ri1_][2] or got1_[0]['id']) if ri1_ is not None else got1_[0]['id'],
+                         'kind': got1_[0]['type'], 'with': []} if got1_ else {'placed': 0, 'note': 'No room left on it.'})
+                piece_out = dict(res_, model=prec['id'], kind=fam_, room=room['name'])
+                report.append({'room': room['name'], 'purpose': purpose, 'placed': res_['placed']})
+                break
+            if foreign_ and not books:
+                got_ = [r_['id'] for r_ in lay_any(prec, purpose)]
+                piece_any = True
+                piece_out = {'placed': len(got_), 'model': prec['id'], 'kind': fam_, 'room': room['name']}
+                report.append({'room': room['name'], 'purpose': purpose, 'placed': len(got_)})
+                break
             if add:
                 # (one more thing on it, everything on it kept; a bare desk draws a whole scene, the scribe's
                 # inkwell, quill and papers together, as often as the game's tables of the kind carry one)
@@ -5962,6 +6184,15 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     res_ = {'placed': n_sc, 'added': sk_, 'name': 'the %s\'s things (%d of them)' % (sk_, n_sc), 'kind': 'scene', 'with': []}
                 else:
                     res_ = add_one(prec, purpose)
+                if not res_.get('placed') and fam_ not in ('planter', 'fire', 'shrine'):
+                    # (nothing of the game's own spots free or known: one thing at any spot it can stand)
+                    got1_ = lay_any(prec, purpose, one=True)
+                    if got1_:
+                        ri1_ = db.resolve_id(got1_[0]['id'])
+                        res_ = {'placed': 1, 'added': got1_[0]['id'], 'name': (db.recs[ri1_][2] or got1_[0]['id']) if ri1_ is not None else got1_[0]['id'],
+                                'kind': got1_[0]['type'], 'with': []}
+                    else:
+                        res_ = {'placed': 0, 'note': 'No room left on it.'}
                 piece_out = dict(res_, model=prec['id'], kind=fam_, room=room['name'])
                 report.append({'room': room['name'], 'purpose': purpose, 'placed': res_['placed']})
                 break
@@ -5992,6 +6223,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         if d_ or d_ is None:
                             break
                     got_ = [o['id'] for o in (d_ or [])]
+            if not got_ and fam_ not in ('planter', 'fire', 'shrine'):
+                # (none of the game's dressings of the model fit this copy of it, or none is known: never bare)
+                got_ = [r_['id'] for r_ in lay_any(prec, purpose, books_=books)]
+                piece_any = True
             piece_out = {'placed': len(got_), 'model': prec['id'], 'kind': fam_, 'room': room['name']}
             report.append({'room': room['name'], 'purpose': purpose, 'placed': len(got_)})
             break
@@ -7074,6 +7309,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             editing.commit(db, 'Added %s to %s' % (piece_out.get('name') or piece_out.get('added'), piece_out['model']))
             return {'placed': len(placed), 'removed': 0, 'model': piece_out['model'], 'kind': piece_out.get('kind'), 'dressings_known': known,
                     'added': piece_out.get('added'), 'name': piece_out.get('name'), 'with': piece_out.get('with') or []}
+        if not placed and piece_out.get('kind') not in ('planter', 'fire', 'shrine'):
+            # (lay_any found no spot: the piece has no board or top with room over it, or all of it is taken)
+            raise EditError('Nothing fits on %s: no free board or top with room over it.' % piece_out['model'])
         if not placed:
             if not known:
                 raise EditError('The game never puts anything on this (%s), so there is nothing to copy.' % piece_out['model'])
@@ -7097,8 +7335,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     pathgrid.generate(db, cell_key, note=False)
                 except EditError:
                     pass
-            editing.commit(db, 'Dressed %s the game\'s way (%d things)' % (piece_out['model'], len(placed)))
-        return {'placed': len(placed), 'removed': removed, 'model': piece_out['model'], 'kind': piece_out['kind'], 'dressings_known': known}
+            editing.commit(db, ('Dressed %s (%d things)' if piece_any else 'Dressed %s the game\'s way (%d things)') % (piece_out['model'], len(placed)))
+        return {'placed': len(placed), 'removed': removed, 'model': piece_out['model'], 'kind': piece_out['kind'], 'dressings_known': known,
+                'any': piece_any}
     if room_rec is not None:
         if not placed:
             raise EditError('Nothing of the game\'s fits in the %s as a %s (no spot clear of its doorways, or no such furniture in the load order).' % (room_rec['name'], plan[0]['purpose']))

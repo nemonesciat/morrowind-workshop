@@ -66,7 +66,7 @@ async function dList(more){
 }
 
 function dWelcome(){
-  $('#dmain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Dialogue &amp; quests</h1>
+  $('#dmain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Dialogue &amp; quests${typeof guideLink === 'function' ? guideLink('dialogue-and-quests.md', 'How Morrowind picks a line') : ''}</h1>
     <p class="msg" style="font-size:14px;line-height:1.7">This is where your characters get their words and your mod gets its quests.</p>
     <div class="cgrid">
       <div class="ccard" data-dw="npc"><div style="font-size:26px">👤</div><b>Give a character lines</b><div class="msg">Open a character on the left and add a greeting or topics. Lines can depend on quest stages, items and more.</div></div>

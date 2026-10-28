@@ -31,7 +31,7 @@ async function regionsOnMap(id){
     W.cam.z = Math.max(0.004, Math.min(0.05, Math.min(W.w, W.h) / span));
   } else W.cam.z = Math.min(W.cam.z, 0.02);
   if (id) regPaint(id);
-  W.tab = 'view'; renderWside(); drawMap();
+  W.tab = 'sky'; renderWside(); drawMap();
 }
 
 function regColor(id, a){
@@ -114,12 +114,12 @@ async function regUp(){
   } catch (e){ toast(e.message, true); await regLoad(true); drawMap(); }
 }
 
-// ----- the View tab outdoors: this cell's region, the overlay and the weather preview
+// ----- the Sky panel outdoors: this cell's region, the overlay and the weather preview
 function regViewHtml(i){
   if (!i || i.interior) return '';
   const regs = REG.data ? REG.data.regions : [];
   const cur = (i.region || '').toLowerCase();
-  return `<h3>Region &amp; weather</h3>
+  return `<h3>Region &amp; weather${typeof guideLink === 'function' ? guideLink('sky-regions-and-weather.md', 'Regions') : ''}</h3>
     <div class="msg">This cell (${i.gx}, ${i.gy}) is in:</div>
     <div style="display:flex;gap:6px;margin-top:4px"><select class="inp" id="reg-cell"><option value="">(no region)</option>${regs.map(r => `<option value="${esc(r.id)}" ${r.id.toLowerCase() === cur ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
       ${cur ? `<button class="btn sm" id="reg-edit" title="Weather, sounds, sleep encounters">✎</button>` : ''}</div>

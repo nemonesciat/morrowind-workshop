@@ -99,7 +99,7 @@ function ruinFormHtml(what){
   setTimeout(dtStart, 0);
   return `<div class="dtool">
     <div class="dt-side">
-      <div class="dt-h">Kind</div>
+      <div class="dt-h">Kind${typeof guideLink === 'function' ? guideLink('dungeons-and-ruins.md', 'Making one') : ''}</div>
       <input type="hidden" id="ru-kind" value="${DT.kind}">
       <div class="dt-kinds">${RUIN_KINDS.map(k => `<button type="button" class="dt-k ${k[0] === DT.kind ? 'on' : ''}" data-dk="${k[0]}" title="${esc(k[4])}">
         <span class="dt-ki" ${DT_ROCK[k[0]] ? `style="color:${DT_ROCK[k[0]]}"` : ''}>${DT_ICON[k[0]]}</span>${esc(k[1].replace('Cave: ', 'Cave, '))}</button>`).join('')}</div>

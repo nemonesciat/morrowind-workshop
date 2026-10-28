@@ -90,7 +90,7 @@ function libCss(){
 async function renderLibrary(){
   libCss();
   const box = $('#librarywrap'); if (!box) return;
-  box.innerHTML = `<h1 style="margin:0 0 4px">Library</h1>
+  box.innerHTML = `<h1 style="margin:0 0 4px">Library${typeof guideLink === 'function' ? guideLink('library-and-assets.md', 'The Library') : ''}</h1>
     <p class="msg" style="max-width:820px">Your own models, pictures and sounds, ready for every mod you make.</p>
     <div class="lib-kinds">
       <div><b>📦 Models</b><span class="msg">From Blender and the like (.blend .obj .fbx .dae .gltf .glb) turned into game models; .nif as they are.</span></div>

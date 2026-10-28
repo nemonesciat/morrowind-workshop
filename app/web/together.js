@@ -127,7 +127,7 @@ function togRender(){
   } else {
     const proj = S.summary && S.summary.project;
     const copy = togIsCopy();
-    m.innerHTML = `<h2>👥 Build together</h2>
+    m.innerHTML = `<h2>👥 Build together${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'Build together') : ''}</h2>
       <div class="msg">Work on one mod with other people at the same time, from wherever they are. One person hosts; the others join with an invite code.
         Everyone sees every change within a second or so, in the Workshop and in their own game.</div>
       ${st.error ? `<div class="msg err" style="margin-top:6px">${esc(st.error)}</div>` : ''}

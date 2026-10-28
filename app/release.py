@@ -130,11 +130,11 @@ def lean_masters(db, with_reasons=False):
             add(_definer(db, 'DIAL', key.split('|', 1)[0], own), 'you add lines to topic "%s"' % key.split('|', 1)[0])
         for s in _strings_in(tag, unb64(rec['data'])):
             uses(s, label + ' uses "%s"' % s)
-    for ck, c in p.cells.items():
+    for ck, c in list(p.cells.items()):
         if not c['refs'] and not c.get('props'):
             continue
         add(_definer(db, 'CELL', ck, own), 'you change the place "%s"' % ck)
-        for r in c['refs'].values():
+        for r in list(c['refs'].values()):
             if r['origin'] != p.plugin.lower():
                 add(db.plugin_index(r['origin']), 'you move or remove objects in "%s"' % ck)
             else:
@@ -193,9 +193,9 @@ def _tiny_moves(db):
     """Objects from other files that your mod 'changes' by almost nothing."""
     p = db.project
     out = []
-    for ck, c in p.cells.items():
+    for ck, c in list(p.cells.items()):
         orig = None
-        for rk, r in c['refs'].items():
+        for rk, r in list(c['refs'].items()):
             if r['origin'] == p.plugin.lower() or r.get('deleted'):
                 continue
             if orig is None:
@@ -220,7 +220,7 @@ def _tiny_moves(db):
 
 def _deleted(db):
     p = db.project
-    return [(ck, rk) for ck, c in p.cells.items() for rk, r in c['refs'].items()
+    return [(ck, rk) for ck, c in list(p.cells.items()) for rk, r in list(c['refs'].items())
             if r.get('deleted') and r['origin'] != p.plugin.lower()]
 
 
@@ -247,8 +247,8 @@ def _missing_links(db):
             s = zstr(d[4:36]) if t == 'NPCO' else zstr(d)
             if s and db.resolve_id(s) is None and s.lower() != 'player':
                 out.append({'label': '%s "%s" mentions "%s", which doesn\'t exist' % (tag, rec['key'], s)})
-    for ck, c in p.cells.items():
-        for rk, r in c['refs'].items():
+    for ck, c in list(p.cells.items()):
+        for rk, r in list(c['refs'].items()):
             if r.get('deleted'):
                 continue
             subs = [(t, unb64(d)) for t, d in r['subs']]
@@ -516,8 +516,8 @@ def _conflicts(db, masters):
         for v in _versions(db, rec['tag'], rec['key'], own):
             what = ('the ground at %s' % rec['key']) if rec['tag'] == 'LAND' else '%s "%s"' % (rec['tag'], rec['key'])
             note(db.recs[v][3], what)
-    for ck, c in p.cells.items():
-        moved = {rk for rk, r in c['refs'].items() if r['origin'] != p.plugin.lower()}
+    for ck, c in list(p.cells.items()):
+        moved = {rk for rk, r in list(c['refs'].items()) if r['origin'] != p.plugin.lower()}
         if not moved:
             continue
         for v in _versions(db, 'CELL', ck, own):
@@ -541,7 +541,7 @@ def checks(db):
     _require_project(db)
     p = db.project
     out = []
-    if not p.records and not any(c['refs'] for c in p.cells.values()) and not p.lua:
+    if not p.records and not any(c['refs'] for c in list(p.cells.values())) and not p.lua:
         out.append({'id': 'empty', 'sev': 'error', 'title': 'Your mod is empty', 'detail': 'Make something first.', 'items': []})
         return {'checks': out, 'masters': [], 'assets': None, 'conflicts': []}
     ms = lean_masters(db, with_reasons=True)
@@ -748,7 +748,7 @@ def fix(db, action):
         st = stale_edits(db)
         for _f, ck, rk in st:
             p.cells[ck]['refs'].pop(rk, None)
-        for ck in [ck for ck, c in p.cells.items() if not c['refs'] and not c.get('props')]:
+        for ck in [ck for ck, c in list(p.cells.items()) if not c['refs'] and not c.get('props')]:
             p.cells.pop(ck, None)
         db.sync_project()
         commit(db, 'Release check: removed %d change%s to objects of files not in the load order' % (len(st), '' if len(st) == 1 else 's'))
@@ -799,7 +799,7 @@ def settings_faults(db):
     import doors
     p = db.project
     out = {'sun': [], 'sleep': [], 'crowded': [], 'north': []}
-    for ck, c in p.cells.items():
+    for ck, c in list(p.cells.items()):
         if ck.startswith('#'):
             continue
         # (the mod's own places: its cell record is the mod's, or the place was built from a plan)
@@ -907,8 +907,8 @@ def stale_edits(db):
     p = db.project
     own = p.plugin.lower()
     out = []
-    for ck, c in p.cells.items():
-        for rk, r in c['refs'].items():
+    for ck, c in list(p.cells.items()):
+        for rk, r in list(c['refs'].items()):
             o = r.get('origin') or ''
             if o != own and db.plugin_index(o) is None:
                 out.append((o, ck, rk))
@@ -948,16 +948,16 @@ def summary(db):
                     pass
     lines = sum(1 for r in p.records.values() if r['tag'] == 'INFO')
     places, new_places, entrances = [], [], []
-    for ck, c in p.cells.items():
+    for ck, c in list(p.cells.items()):
         if not c['refs']:
             continue
         is_new = not _versions(db, 'CELL', ck, own)
         (new_places if is_new else places).append(_cell_label(db, ck))
     newset = {ck for ck in p.cells if not _versions(db, 'CELL', ck, own)}
-    for ck, c in p.cells.items():
+    for ck, c in list(p.cells.items()):
         if ck in newset:
             continue
-        for rk, r in c['refs'].items():
+        for rk, r in list(c['refs'].items()):
             for t, d in r['subs']:
                 if t == 'DNAM':
                     dest = zstr(unb64(d))

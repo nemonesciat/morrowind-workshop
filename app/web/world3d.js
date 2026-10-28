@@ -901,17 +901,20 @@ function v3Terrain(){
   for (const [dx, dy] of spots){
     const gx = cx + dx, gy = cy + dy, k = gx + ',' + gy;
     if (V3.lands[k]) continue;
-    V3.lands[k] = {loading: true};
+    // (each load numbered: one asked before an Undo dropped the ground came back after the new ask, laid the old
+    // heights down, and the new mesh then went on beside it, so the undone ground stayed drawn)
+    const n = V3.landN = (V3.landN || 0) + 1;
+    V3.lands[k] = {loading: true, n};
     api(`/api/land?gx=${gx}&gy=${gy}&tex=1`).then(L => {
-      if (!V3.lands[k]) return;
-      V3.lands[k] = {loading: false, gx, gy};
+      if (!V3.lands[k] || V3.lands[k].n !== n) return;
+      V3.lands[k] = {loading: false, gx, gy, n};
       if (L.exists){
         // the ground textures by name, so painting can add new ones: slot list + one slot number per patch
         L.paths = L.tex.slice(); L.ids = L.t.map(i => L.paths[i]); L.origId = L.tid || L.t.map(() => '');
         V3.lands[k].L = L; V3.lands[k].mesh = v3LandMesh(gx, gy, L); V3.ground.add(V3.lands[k].mesh);
         v3LandNeighbours(gx, gy);                    // their edges now blend into this one
       }
-    }).catch(() => { delete V3.lands[k]; });
+    }).catch(() => { if (V3.lands[k] && V3.lands[k].n === n) delete V3.lands[k]; });
   }
   for (const k of Object.keys(V3.lands)){
     const [x, y] = k.split(',').map(Number);
@@ -1174,6 +1177,7 @@ function v3StrokeAt(at, e){
     }
     const H = L.h, old = tool === 'smooth' ? H.slice() : null;
     let any = false;
+    const brushed = [];
     for (let y = 0; y <= 64; y++) for (let x = 0; x <= 64; x++){
       const d = Math.hypot(ox + x * 128 - at[0], oy + y * 128 - at[1]); if (d >= R) continue;
       const w = fall(d), v = y * 65 + x;
@@ -1188,7 +1192,22 @@ function v3StrokeAt(at, e){
         }
         H[v] += (s / n - H[v]) * Math.min(1, 0.5 * k * w);
       }
+      brushed.push(v);
       any = true;
+    }
+    // (no step between neighbouring points over what the land record holds, 127 steps of 8 units: the save eased
+    // a steeper one on its own, so the game had other ground than the Workshop showed, and each cell eased apart
+    // from the next. Raised again and again on one spot, a small brush made them; only brushed points move)
+    if (tool === 'raise' || tool === 'lower'){
+      const MAXSTEP = 1000;
+      for (let pass = 0; pass < 3; pass++) for (const v of brushed){
+        const x = v % 65, y = (v - x) / 65;
+        for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){
+          if (x + i < 0 || x + i > 64 || y + j < 0 || y + j > 64) continue;
+          const nv = H[(y + j) * 65 + x + i];
+          if (H[v] > nv + MAXSTEP) H[v] = nv + MAXSTEP; else if (H[v] < nv - MAXSTEP) H[v] = nv - MAXSTEP;
+        }
+      }
     }
     if (any){ v3StrokeMark(ck, 'h'); touched.add(ck); }
   }
@@ -1202,6 +1221,13 @@ function v3StrokeAt(at, e){
         const theirs = dx === 1 ? i * 65 : dx === -1 ? i * 65 + 64 : dy === 1 ? i : 64 * 65 + i;
         if (nb.L.h[theirs] !== L.h[mine]){ nb.L.h[theirs] = L.h[mine]; v3StrokeMark((c.gx + dx) + ',' + (c.gy + dy), 'h'); }
       }
+    }
+    // (and the corner point it shares with the cell across the diagonal, which the sides above don't reach: after
+    // Smooth, where four cells met, the fourth could keep its own corner and leave a crack)
+    for (const [dx, dy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]){
+      const nb = V3.lands[(c.gx + dx) + ',' + (c.gy + dy)]; if (!nb || !nb.L) continue;
+      const mine = (dy === 1 ? 64 : 0) * 65 + (dx === 1 ? 64 : 0), theirs = (dy === 1 ? 0 : 64) * 65 + (dx === 1 ? 0 : 64);
+      if (nb.L.h[theirs] !== L.h[mine]){ nb.L.h[theirs] = L.h[mine]; v3StrokeMark((c.gx + dx) + ',' + (c.gy + dy), 'h'); }
     }
   }
   for (const ck of S_.cells.keys()){
@@ -1266,6 +1292,8 @@ const V3_LANDTOOLS = [['raise', '▲ Raise', 'Raise the ground (Ctrl: lower)'], 
   ['scatter', '🌿 Scatter', 'Scatter grass, plants, rocks or trees of this region (Ctrl: clear them away)']];
 // how far apart things of each kind usually grow (at thickness 5)
 const V3_SCATTER_GAP = {grass: 110, plants: 200, rocks: 380, trees: 650, logs: 700};
+// the most one stroke makes: objects in the mod, and groundcover tufts in its grass file
+const V3_SCATTER_MAX = {things: 1500, grass: 15000};
 function v3LandToggle(on){
   if (on && !W.ext) return toast('The ground tools are for outdoor places.', true);
   if (on){
@@ -1284,10 +1312,10 @@ async function v3LandPanel(){
   if (!V3.landOpen || !W.ext){ if (p) p.remove(); return; }
   if (!p){ p = document.createElement('div'); p.id = 'v3land'; $('#v3wrap').appendChild(p); if (typeof cfMovable === 'function') cfMovable(p, '.v3lhead', 'ground'); }
   const B = V3.land;
-  p.innerHTML = `<div class="v3lhead"><b>Ground</b><button class="btn sm" data-lt="close" title="Close the ground tools">✕</button></div>
+  p.innerHTML = `<div class="v3lhead"><b>Ground${typeof guideLink === 'function' ? guideLink('shaping-the-land.md', 'The Ground brush', 'How the Ground brush works') : ''}</b><button class="btn sm" data-lt="close" title="Close the ground tools">✕</button></div>
     <div class="v3lrow">${V3_LANDTOOLS.map(([k, l, t]) => `<button class="btn sm ${B.tool === k ? 'primary' : ''}" data-lt="${k}" title="${t}">${l}</button>`).join('')}</div>
     <label class="v3lrow">Size <input type="range" id="v3lsize" min="128" max="4096" step="64" value="${B.size}"><span>${B.size}</span></label>
-    <label class="v3lrow">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
+    <label class="v3lrow" style="display:${B.tool === 'scatter' ? 'none' : ''}">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
     <label class="v3lrow" title="Things standing on the ground move up and down with it"><input type="checkbox" id="v3lfollow" ${B.follow !== false ? 'checked' : ''}> Objects follow the ground</label>
     <div id="v3ltex" style="display:${B.tool === 'paint' ? 'block' : 'none'}">
       <div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id)}</span>` : '<span class="faint">Pick a texture below, or Shift+click the ground</span>'}</div>
@@ -1376,7 +1404,7 @@ async function v3ScatterPanel(){
   B.scatThick = B.scatThick || 5;
   box.innerHTML = `<div class="v3lrow" style="flex-wrap:wrap">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="${s.mine ? 'One of your own brushes' : 'What grows in this region'}">${s.mine ? '★ ' : ''}${esc(s.label)}</button>`).join('')}
       <button class="btn sm" id="v3lnewbr" title="A brush of your own: any objects, from mods too">+ New brush</button></div>
-    <label class="v3lrow">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>` +
+    <label class="v3lrow" title="How thickly things grow: 5 as the game has this kind, 10 about three times as thick, 1 under half">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>` +
     (set.mine ? '' : `<div class="faint" style="margin:4px 0">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</div>
     <div class="v3scat">${set.items.map(it => `<label class="${B.scatOff[it.id.toLowerCase()] ? '' : 'on'}" title="${esc(it.id)} — used ${it.n} times nearby"><input type="checkbox" data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}> ${esc(it.name || it.id)}</label>`).join('')}</div>`);
   if (set.mine) brEditor(box, set);
@@ -1481,8 +1509,31 @@ function v3ScatterDab(at, erase){
     v3ScatterShow(); return;
   }
   const cur = V3.scatSets && V3.scatSets.sets.find(s => s.key === B.scatSet);
-  const gap = (V3_SCATTER_GAP[B.scatSet] || (cur && cur.gap) || 200) * (11 - B.scatThick) / 6;
-  const tries = Math.max(1, Math.round(Math.PI * R * R / (gap * gap)));
+  // (a gentle step each way: 10 about three times the game's density, 1 under half. It was (11 - t) / 6 of the
+  // gap, so 10 was 36 times as dense, "way too dense", the user 2026-10-28)
+  const gap = (V3_SCATTER_GAP[B.scatSet] || (cur && cur.gap) || 200) * Math.pow(0.9, B.scatThick - 5);
+  // (never more than V3_SCATTER_MAX a stroke nor 400 spots a dab, and the spacing checked on a grid: at the old
+  // Thickness 10 a big brush tried 160,000 spots a dab, each against every one before, and the whole Workshop
+  // stopped, PIN2 on Discord 2026-10-28)
+  const cap = S_.grass ? V3_SCATTER_MAX.grass : V3_SCATTER_MAX.things;
+  if (S_.add.length >= cap){
+    if (!S_.capped){ S_.capped = true; toast(`That's as many as one stroke makes (${fmtN(cap)}). Let go and paint again for more.`); }
+    return;
+  }
+  const tries = Math.min(400, Math.max(1, Math.round(Math.PI * R * R / (gap * gap))));
+  const cs = Math.max(32, gap * 0.4);
+  if (!S_.grid || S_.gridCs !== cs){
+    S_.grid = new Map(); S_.gridCs = cs;
+    for (const p of S_.near){ const k = Math.floor(p[0] / cs) + ',' + Math.floor(p[1] / cs); (S_.grid.get(k) || S_.grid.set(k, []).get(k)).push(p); }
+  }
+  const taken = (x, y) => {
+    const gx = Math.floor(x / cs), gy = Math.floor(y / cs);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++){
+      const l = S_.grid.get((gx + dx) + ',' + (gy + dy));
+      if (l && l.some(p => Math.hypot(p[0] - x, p[1] - y) < cs)) return true;
+    }
+    return false;
+  };
   const total = items.reduce((a, i) => a + i.n, 0);
   // in clusters, with the odd one on its own (Project Tamriel's exterior tutorial: "stagger things, don't
   // space them evenly: a cluster of trees there, one by itself there"); not on top of one another
@@ -1498,7 +1549,8 @@ function v3ScatterDab(at, erase){
       if (Math.hypot(x - at[0], y - at[1]) > R) continue;
     }
     const g = v3GroundAt(x, y); if (g == null) continue;
-    if (S_.near.some(p => Math.hypot(p[0] - x, p[1] - y) < gap * 0.4)) continue;
+    if (taken(x, y)) continue;
+    if (S_.add.length >= cap) break;
     // the game's own mix: things used more often come up more often
     let pick = Math.random() * total, it = items[0];
     for (const i of items){ pick -= i.n; if (pick <= 0){ it = i; break; } }
@@ -1508,6 +1560,7 @@ function v3ScatterDab(at, erase){
     const rx = lean ? (Math.random() * 2 - 1) * lean : 0, ry = lean ? (Math.random() * 2 - 1) * lean : 0;
     S_.add.push({id: it.id, lib: it.lib, x, y, z: g - it.sink * s - it.zmin * s, rx, ry, rz: Math.random() * Math.PI * 2, s: Math.round(s * 100) / 100});
     S_.near.push([x, y]);
+    const gk = Math.floor(x / cs) + ',' + Math.floor(y / cs); (S_.grid.get(gk) || S_.grid.set(gk, []).get(gk)).push([x, y]);
   }
   v3ScatterShow();
 }

@@ -28,7 +28,7 @@ function loRender(){
   const probs = {};
   for (const p of LO.problems) (probs[p.plugin.toLowerCase()] = probs[p.plugin.toLowerCase()] || []).push(p.text);
   const orderProblem = LO.problems.some(p => p.text.includes('loads after it'));
-  let h = `<h1>Load order</h1>
+  let h = `<h1>Load order${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'Load order') : ''}</h1>
     <p class="lead">The mods OpenMW loads, top to bottom: when two change the same thing, the lower one wins.
       Tick to switch one on or off, drag to reorder, then <b>Save</b>.</p>
     ${!I.cfg_exists ? `<div class="card msg err" style="margin-bottom:12px">OpenMW's settings file wasn't found (${esc(I.cfg || '')}). Run the OpenMW Launcher once, so it sets up Morrowind, then press Reload.</div>` : ''}

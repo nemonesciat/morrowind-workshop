@@ -19,24 +19,28 @@ DEG = math.pi / 180
 
 
 def settle(F, inside, angle, rounds=24, rate=0.5):
-    """Thermal erosion: the steepest steps eased down to the angle. Returns how many steps were over it at first."""
+    """Thermal erosion: the steepest steps eased down to the angle (one for all, or a list with one a point: each
+    point's region's, landshapes._region_weights; a pair takes its two points' mean). Returns how many steps were
+    over it at first."""
     w, h, z = F.w, F.h, F.z
-    T = math.tan(angle * DEG) * F.step
-    Td = T * math.sqrt(2)
+    if isinstance(angle, (int, float)):
+        T = math.tan(angle * DEG) * F.step
+        at = None
+    else:
+        at = [math.tan(a * DEG) * F.step for a in angle]
+    r2 = math.sqrt(2)
     pairs = []
     for y in range(h):
         for x in range(w):
             i = y * w + x
             if not inside[i]:
                 continue
-            if x + 1 < w and inside[i + 1]:
-                pairs.append((i, i + 1, T))
-            if y + 1 < h and inside[i + w]:
-                pairs.append((i, i + w, T))
-            if x + 1 < w and y + 1 < h and inside[i + w + 1]:
-                pairs.append((i, i + w + 1, Td))
-            if x > 0 and y + 1 < h and inside[i + w - 1]:
-                pairs.append((i, i + w - 1, Td))
+            for j, ok, diag in ((i + 1, x + 1 < w, False), (i + w, y + 1 < h, False),
+                                (i + w + 1, x + 1 < w and y + 1 < h, True), (i + w - 1, x > 0 and y + 1 < h, True)):
+                if not ok or not inside[j]:
+                    continue
+                t = T if at is None else (at[i] + at[j]) * 0.5
+                pairs.append((i, j, t * r2 if diag else t))
     first = sum(1 for a, b, t in pairs if abs(z[a] - z[b]) > t)
     # Each round goes through the pairs in order, as a sweep over all of them would, but only the pairs one of whose
     # points has moved since that pair was last looked at: any other is as it was, under the angle, and would be
@@ -95,14 +99,16 @@ def _rms(F, inside, lag, mask=None):
     return math.sqrt(a / n) if n else 0.0
 
 
-def match_roughness(F, inside, mask, target, seed=1, rounds=3, target128=None):
+def match_roughness(F, inside, mask, target, seed=1, rounds=3, target128=None, area=None, wgt=None):
     """match_roughness_once, again while the land is still short of the target by more than 5% (the guards near the
     water take some of each round away), and no further once it is as rough close up as the region (target128, the
     figure 128 apart that goes with its slopes: the detail is rougher close up than the game's land, and topping
-    up 1024 apart past it made the Ashlands 32% steep against the game's 23%). Returns the amplitudes, summed."""
+    up 1024 apart past it made the Ashlands 32% steep against the game's 23%). Returns the amplitudes, summed.
+    For one region of several (landshapes): measured over mask (its own points), changing the points of area by
+    their weight in it (wgt), so the same detail fades from one region's amount to the next across a border."""
     total = 0.0
     for k in range(rounds):
-        a = match_roughness_once(F, inside, mask, target, seed + 31 * k)
+        a = match_roughness_once(F, inside, mask, target, seed + 31 * k, area, wgt)
         if a <= 0:
             return total + a if not total else total
         total += a
@@ -116,15 +122,16 @@ def match_roughness(F, inside, mask, target, seed=1, rounds=3, target128=None):
     return total
 
 
-def match_roughness_once(F, inside, mask, target, seed=1):
+def match_roughness_once(F, inside, mask, target, seed=1, area=None, wgt=None):
     """Rolling detail added to the plan's land (mask: the points the plan made) until its roughness 1024 units apart
     is the region's (target, landsurvey 'rough' '1024'): layers 4096 down to 512 across, each smaller one fainter
-    by the game's exponent (0.78). Never takes dry land under the water. Returns the amplitude used."""
+    by the game's exponent (0.78). Never takes dry land under the water. Returns the amplitude used. (area, wgt:
+    see match_roughness.)"""
     import landrange
     lag = max(1, int(round(1024 / F.step)))
     have = _rms(F, inside, lag, mask)
     if have > target * 1.1:
-        return -_smooth_to(F, inside, mask, lag, target)
+        return -_smooth_to(F, inside, mask, lag, target, area, wgt)
     need = math.sqrt(max(0.0, target * target - have * have))
     if need < 8:
         return 0.0
@@ -145,17 +152,23 @@ def match_roughness_once(F, inside, mask, target, seed=1):
             n += 1
     unit = math.sqrt(a / n) if n else 1.0
     amp = need / max(1e-6, unit)
+    if area is not None:
+        idx = [i for i in range(len(F.z)) if inside[i] and area[i] and F.z[i] > 0 and (wgt is None or wgt[i] > 0)]
+        for i in idx:
+            if not mask[i]:
+                x, y = F.world(i)
+                probe[i] = _detail(x, y, seed)
     for i in idx:
         z = F.z[i]
-        v = z + probe[i] * amp * min(1.0, z / 400.0)
+        v = z + probe[i] * amp * min(1.0, z / 400.0) * (1.0 if wgt is None else wgt[i])
         F.z[i] = max(v, 32 + 0.5 * (z - 32) if z > 32 else z)
     return amp
 
 
-def _smooth_to(F, inside, mask, lag, target):
+def _smooth_to(F, inside, mask, lag, target, area=None, wgt=None):
     """The plan's land softened towards a blur as wide as the distance measured (lag points), by just enough that its
     roughness there comes down to the target, a softer region's (the Bitter Coast's 300 against the shapes' 340).
-    Dry land stays dry. Returns how far towards the blur it went, in hundredths."""
+    Dry land stays dry. Returns how far towards the blur it went, in hundredths. (area, wgt: see match_roughness.)"""
     w, h, z = F.w, F.h, F.z
     r = max(1, lag // 2)
     src = list(z)
@@ -171,11 +184,12 @@ def _smooth_to(F, inside, mask, lag, target):
         for y in range(h):
             a, b = max(0, y - r), min(h - 1, y + r)
             blur[y * w + x] = sum(tmp[k * w + x] for k in range(a, b + 1)) / (b - a + 1)
-    idx = [i for i in range(len(z)) if inside[i] and mask[i] and src[i] > 0]
+    idx = [i for i in range(len(z)) if inside[i] and (mask if area is None else area)[i] and src[i] > 0
+           and (wgt is None or wgt[i] > 0)]
 
     def at(t):
         for i in idx:
-            v = src[i] + (blur[i] - src[i]) * t
+            v = src[i] + (blur[i] - src[i]) * t * (1.0 if wgt is None else wgt[i])
             z[i] = v if v > 16 else max(16.0, min(src[i], v)) if src[i] > 16 else src[i]
         return _rms(F, inside, lag, mask)
     lo, hi = 0.0, 1.0

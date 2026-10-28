@@ -364,17 +364,25 @@ def play(body):
         with open(script, 'w', encoding='cp1252', errors='replace') as f:
             f.write('\n'.join(cmds) + '\n')
     if save and target:
-        # (a copy of the save with the player already there: the game loads this place straight away instead
-        # of where they were saved and then moving them, saves.moved_copy; the move commands go, the rest stay)
+        # (a copy of the save with the player put down near here, saves.moved_copy, and the move commands then
+        # bring them in. Not straight onto the spot: OpenMW loads a save with no cell change, so a place's scripts
+        # never see "CellChanged" there, and the ones that set the place up as you arrive never ran; Project
+        # Cyrodiil's lock-down guards in Anvil (Fight 100, hidden by their script as you come in) attacked on
+        # sight, the user 2026-10-28. Moved in by the commands it is a real arrival, as in play: outdoors from two
+        # cells away (not loaded yet, so the game changes cell), indoors from the game's small ToddTest cell)
         try:
-            copy = saves.moved_copy(save, target, name=info['name'] if info['interior'] else None,
-                                    grid=None if info['interior'] else (math.floor(target[0] / 8192), math.floor(target[1] / 8192)),
-                                    cell_label=info['name'] or '')
-            cmds = [c for c in cmds if not c.startswith(('player->PositionCell ', 'player->Position '))]
-            with open(script, 'w', encoding='cp1252', errors='replace') as f:
-                f.write('\n'.join(cmds) + '\n')
+            if info['interior']:
+                if not db.by_key.get(('CELL', 'toddtest')):
+                    raise ValueError('no ToddTest cell to start from')
+                copy = saves.moved_copy(save, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), name='ToddTest', cell_label=info['name'] or '')
+            else:
+                fx = target[0] - 2 * 8192
+                copy = saves.moved_copy(save, (fx,) + tuple(target[1:]), grid=(math.floor(fx / 8192), math.floor(target[1] / 8192)),
+                                        cell_label=info['name'] or '')
+            if not any(c.startswith(('player->PositionCell ', 'player->Position ')) for c in cmds):
+                raise ValueError('no move command')
             save = copy
-        except Exception as e:           # (a save laid out otherwise, a locked file: the save as it is)
+        except Exception as e:           # (a save laid out otherwise, a locked file: the save as it is, moved by the commands)
             print('play here: the save is loaded as it is (%s)' % e)
     if save:
         args = ['--load-savegame', save, '--script-run', script] + _game_content_args()
@@ -492,87 +500,6 @@ def open_folder(path):
     os.makedirs(path, exist_ok=True)
     osplat.open_path(path)
     return {'ok': True, 'path': path}
-
-
-# ----- for the Workshop's own developer (My mod > Get ready to share, at the bottom): the Workshop's own
-# source copied into the GitHub folder, then GitHub Desktop opened for the commit. The folder is chosen
-# once and kept in workshop_settings.json under dev_github_folder.
-SRC_APP = os.path.dirname(os.path.abspath(__file__))              # (this app folder: what runs is what is synced)
-SRC_ROOT = os.path.dirname(SRC_APP)
-GITHUB_FOLDER_DEFAULT = os.path.join(os.path.expanduser('~'), 'Desktop', 'Morrowind Workshop', 'github', 'morrowind-workshop')
-PACKAGING_FILES = ('*.cs', '*.py', '*.txt', '*.manifest', '*.md')     # (never packaging\nexus, never the build output)
-
-
-def github_desktop_exe():
-    exe = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'GitHubDesktop', 'GitHubDesktop.exe')
-    return exe if os.path.isfile(exe) else None
-
-
-def github_status():
-    folder = load_settings().get('dev_github_folder') or ''
-    return {'folder': folder, 'exists': bool(folder and os.path.isdir(folder)),
-            'is_repo': bool(folder and os.path.isdir(os.path.join(folder, '.git'))),
-            'suggested': GITHUB_FOLDER_DEFAULT, 'source': SRC_ROOT,
-            'packaging': os.path.isdir(os.path.join(SRC_ROOT, 'packaging')), 'desktop': bool(github_desktop_exe())}
-
-
-def github_pick():
-    """Ask for the GitHub folder with Windows' own folder picker (starting at the one chosen before, or the usual
-    place); remember it."""
-    cur = load_settings().get('dev_github_folder') or GITHUB_FOLDER_DEFAULT
-    path = osplat.pick_folder('Choose your GitHub folder for the Workshop (the one GitHub Desktop commits from)', cur)
-    if path is None:
-        raise editing.EditError(osplat.NO_PICKER)
-    if not path:
-        return dict(github_status(), cancelled=True)
-    if os.path.normcase(os.path.abspath(path)) == os.path.normcase(SRC_ROOT):
-        raise editing.EditError("That is the Workshop's own folder: choose the GitHub copy, not the source.")
-    s = load_settings()
-    s['dev_github_folder'] = path
-    save_settings(s)
-    return github_status()
-
-
-def _robocopy(src, dst, args):
-    r = subprocess.run(['robocopy', src, dst] + args + ['/NFL', '/NDL', '/NJH', '/NP', '/R:2', '/W:1'],
-                       capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    if r.returncode >= 8:              # (0-7 are the ways robocopy says it worked)
-        raise editing.EditError('Copying %s failed: %s' % (os.path.basename(src), (r.stdout or r.stderr or '').strip()[-400:]))
-    m = re.search(r'^\s*Files\s*:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', r.stdout or '', re.M)
-    return {'total': int(m.group(1)), 'copied': int(m.group(2)), 'removed': int(m.group(6))} if m else {}
-
-
-def github_sync(body):
-    """app\\ mirrored (less __pycache__) and packaging's source files copied into the GitHub folder, then GitHub
-    Desktop opened on it for the commit (the commit itself is the user's)."""
-    if not osplat.WINDOWS:
-        raise editing.EditError('Copying to the GitHub folder works on Windows only (it uses robocopy and GitHub Desktop).')
-    folder = load_settings().get('dev_github_folder') or ''
-    if not folder or not os.path.isdir(folder):
-        raise editing.EditError('Choose your GitHub folder first.')
-    if os.path.normcase(os.path.abspath(folder)) == os.path.normcase(SRC_ROOT):
-        raise editing.EditError("That is the Workshop's own folder: choose the GitHub copy, not the source.")
-    out = {'folder': folder, 'app': _robocopy(SRC_APP, os.path.join(folder, 'app'), ['/MIR', '/XD', '__pycache__'])}
-    pk = os.path.join(SRC_ROOT, 'packaging')
-    if os.path.isdir(pk):
-        out['packaging'] = _robocopy(pk, os.path.join(folder, 'packaging'), list(PACKAGING_FILES))    # (top level only)
-    out['opened'] = False
-    if body.get('open', True):
-        exe = github_desktop_exe()
-        try:
-            if exe:
-                # (what GitHub Desktop's own "github <path>" command does: open this repository)
-                from urllib.parse import quote
-                os.startfile('x-github-client://openLocalRepo/' + quote(folder, safe=''))
-            else:
-                os.startfile('github-windows://')
-            out['opened'] = True
-        except OSError as e:
-            out['open_error'] = str(e)
-            if exe:
-                subprocess.Popen([exe], creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
-                out['opened'] = True
-    return out
 
 
 def open_project_file(path):
@@ -1438,8 +1365,6 @@ class Handler(BaseHTTPRequestHandler):
                             'model': ai.MODEL, 'busy': assistant.lock.locked(), 'status': assistant.status,
                             'steps': assistant.steps, 'turns': sum(1 for m in assistant.messages if m['role'] == 'user'
                                                                    and isinstance(m['content'], str))})
-            elif u.path == '/api/dev/github':
-                self._json(github_status())
             elif u.path == '/api/changes':
                 # (asked every second or so by each window: what the other windows changed since)
                 self._json(dict(editing.changes_since(int(q.get('since', 0))),
@@ -1596,10 +1521,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(r)
             if u.path == '/api/report':
                 return self._json(helpinfo.report(db, link, body.get('what', ''), body.get('page')))
-            if u.path == '/api/dev/github/pick':
-                return self._json(github_pick())
-            if u.path == '/api/dev/github/sync':
-                return self._json(github_sync(body))
             if u.path == '/api/open_place':
                 where = {'projects': PROJECTS_DIR, 'backups': backups.BACKUP_DIR,
                          'reports': os.path.join(APP_DIR, 'reports'), 'app': APP_DIR,

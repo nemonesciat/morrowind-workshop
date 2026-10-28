@@ -17,7 +17,7 @@ async function qsPlayAs(){
         <div class="msg">Level ${c.level}${c.class ? ' ' + esc(c.class) : ''} · in ${esc(c.cell || 'the wilds')}</div>
         <div class="msg">${esc(c.desc)} · saved ${esc(when(c.time))} · ${c.saves} save${c.saves === 1 ? '' : 's'}</div>
         ${c.missing.length ? `<div class="msg" style="color:var(--amber)">Needs ${c.missing.length} mod${c.missing.length === 1 ? '' : 's'} that aren't in your load order: ${esc(c.missing.slice(0, 4).join(', '))}${c.missing.length > 4 ? '…' : ''}. The game asks before loading it.</div>` : ''}</div></div>`;
-  bg.innerHTML = `<div class="modal qs-modal" style="width:min(680px,96vw);max-height:92vh;overflow:auto"><h2>Play as</h2>
+  bg.innerHTML = `<div class="modal qs-modal" style="width:min(680px,96vw);max-height:92vh;overflow:auto"><h2>Play as${typeof guideLink === 'function' ? guideLink('playing-and-testing.md', 'Who you play as') : ''}</h2>
     <div class="msg">Who <b>Play here</b> starts as. One of your characters starts from their latest save and is moved to the spot you pick, with their own gear, spells and quests. Saving there makes a new save, as in any game.</div>
     <div class="qs-chars">
       <div class="qs-char ${!r.play_as ? 'on' : ''}" data-f=""><div class="qs-new">＋</div><div><b>A new character</b><div class="msg">As before: a fresh start, with nothing but the test setup.</div></div></div>
@@ -133,7 +133,7 @@ async function qolSetups(){
 
   const draw = () => {
     const x = sel();
-    bg.innerHTML = `<div class="modal qs-modal" style="width:min(860px,96vw);max-height:92vh;overflow:auto"><h2>Test setups</h2>
+    bg.innerHTML = `<div class="modal qs-modal" style="width:min(860px,96vw);max-height:92vh;overflow:auto"><h2>Test setups${typeof guideLink === 'function' ? guideLink('playing-and-testing.md', 'Test setups') : ''}</h2>
       <div class="msg">What you get on top when <b>Play here</b> starts the game, so you can try something without playing up to it. Pick one with the round button.</div>
       <div class="msg" style="margin-top:6px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">Playing as: <b>${esc(QOL.playAs || 'a new character')}</b> <button class="btn sm" id="qs-as">👤 Change…</button>
         <label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Start invincible (god mode)"><input type="checkbox" id="qs-god" ${W.god ? 'checked' : ''}> God mode</label></div>

@@ -115,7 +115,12 @@ def fill(db, cells, thickness=5, ids=None, seed=None):
     _require_project(db)
     p = db.project
     rng = random.Random(seed if seed is not None else ','.join(cells))
-    gap = 150 * (11 - max(1, min(10, int(thickness)))) / 6.0          # thickness 5: a tuft every ~150 units
+    # (thickness 5: a tuft every ~150 units; each step a tenth closer or further, as the brush: 10 about three times
+    # as thick. It was (11 - t) / 6, 36 times as thick at 10)
+    gap = 150 * 0.9 ** (max(1, min(10, int(thickness))) - 5)
+    # (never closer than a tuft every 60 units, 18,600 a cell at most, whatever asks: a grow that packs them tighter
+    # can stop the whole Workshop, PIN2 2026-10-28)
+    gap = max(60.0, gap)
     made, cells_done = 0, 0
     for ck in cells:
         gx, gy = (int(v) for v in ck[1:].split(','))

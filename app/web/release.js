@@ -17,7 +17,7 @@ async function renderRelease(){
 function rlRender(){
   const c = RL.checks, i = RL.info, wrap = $('#relwrap');
   const n = s => c.checks.filter(x => x.sev === s).length;
-  wrap.innerHTML = `<div class="chead"><div><h1 style="margin:0">📦 ${esc(i.name)}</h1>
+  wrap.innerHTML = `<div class="chead"><div><h1 style="margin:0">📦 ${esc(i.name)}${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'Get ready to share') : ''}</h1>
       <div class="msg">Check it, describe it, try it on a clean setup, then pack a zip for Nexus or friends.</div></div>
       <button class="btn sm" id="rl-back">← My mod</button></div>
     <section class="rlstep"><h2><span class="rlnum">1</span> Check <span class="msg">${n('error') ? `<b class="sev-error">${n('error')} to fix</b> · ` : ''}${n('warning') ? n('warning') + ' worth a look · ' : ''}${n('ok')} fine</span>
@@ -50,12 +50,7 @@ function rlRender(){
       <div class="actions"><button class="btn primary" id="rl-pack">📦 Make the zip</button><button class="btn" id="rl-openrel">📂 Open the releases folder</button></div>
       <div id="rl-packmsg"></div>
       ${i.releases.length ? `<table class="t" style="margin-top:10px">${i.releases.map(r => `<tr><td>${esc(r.file)}</td><td class="msg">${(r.size / 1024).toFixed(0)} KB</td><td class="msg">${esc(r.t)}</td></tr>`).join('')}</table>` : ''}
-    </section>
-    <details class="rlstep" id="rl-dev" ${RL.devOpen ? 'open' : ''}><summary class="msg" style="cursor:pointer;color:var(--muted)">For the Workshop's own developer</summary>
-      <p class="msg" style="line-height:1.6;margin-top:8px">Copies the Workshop's own source (its <b>app</b> folder, and the installer's files in <b>packaging</b>: .cs, .py, .txt, .manifest and .md, never the Nexus notes) into your GitHub folder, then opens GitHub Desktop for the commit. For whoever builds the Workshop itself; a mod needs none of this.</p>
-      <div class="crow" style="align-items:center;flex-wrap:wrap;gap:8px"><span class="path" id="rl-ghfolder">…</span><button class="btn sm" id="rl-ghpick" title="Choose the folder GitHub Desktop commits from (asked once; kept in the Workshop's settings)">Choose the folder…</button>
-        <button class="btn sm primary" id="rl-ghsync" title="Copy the source there and open GitHub Desktop">⇄ Sync to my GitHub folder</button></div>
-      <div class="msg" id="rl-ghmsg" style="margin-top:6px"></div></details>`;
+    </section>`;
   $('#rl-back').onclick = () => showView('mymod');
   $('#rl-recheck').onclick = renderRelease;
   wrap.querySelectorAll('[data-rlfix]').forEach(b => b.onclick = () => rlFix(b.dataset.rlfix, b));
@@ -72,43 +67,7 @@ function rlRender(){
   $('#rl-pack').onclick = rlPack;
   $('#rl-openrel').onclick = () => post('/api/release/open', {what: 'releases'}).catch(e => toast(e.message, true));
   $('#rl-extra').onclick = e => { e.preventDefault(); post('/api/release/open', {what: 'extra'}).then(r => toast('Opened ' + r.path)).catch(err => toast(err.message, true)); };
-  $('#rl-dev').ontoggle = () => { RL.devOpen = $('#rl-dev').open; if (RL.devOpen) rlGithub(); };
-  $('#rl-ghpick').onclick = () => rlGithubPick();
-  $('#rl-ghsync').onclick = () => rlGithubSync();
-  if (RL.devOpen) rlGithub();
   rlReadme();
-}
-// ----- the developer's corner: the source to the GitHub folder, GitHub Desktop opened for the commit
-function rlGithubShow(s){
-  RL.gh = s;
-  const f = $('#rl-ghfolder'); if (!f) return;
-  f.textContent = s.folder ? s.folder : 'No folder chosen yet (the usual one is ' + s.suggested + ')';
-  f.style.color = s.folder && !s.exists ? 'var(--red)' : '';
-  const m = $('#rl-ghmsg');
-  m.textContent = (s.folder && !s.exists ? 'That folder is gone: choose it again. ' : s.folder && !s.is_repo ? 'There is no .git in that folder, so GitHub Desktop will not know it: choose the repository folder. ' : '') +
-    `Copies from ${s.source}${s.packaging ? '' : ' (no packaging folder there, so only app is copied)'}.` + (s.desktop ? '' : ' GitHub Desktop was not found under %LOCALAPPDATA%\\GitHubDesktop; the files are copied all the same.');
-}
-async function rlGithub(){
-  try { rlGithubShow(await api('/api/dev/github')); } catch (e){ const m = $('#rl-ghmsg'); if (m) m.textContent = e.message; }
-}
-async function rlGithubPick(){
-  const b = $('#rl-ghpick'); b.disabled = true;
-  try { const s = await post('/api/dev/github/pick'); rlGithubShow(s); if (!s.cancelled) toast('GitHub folder: ' + s.folder); }
-  catch (e){ toast(e.message, true); }
-  b.disabled = false;
-}
-async function rlGithubSync(){
-  if (!RL.gh) await rlGithub();
-  if (!RL.gh || !RL.gh.folder){ await rlGithubPick(); if (!RL.gh || !RL.gh.folder) return; }
-  if (!confirm(`Copy the Workshop's source into\n${RL.gh.folder}\n(app mirrored, packaging's source files copied), then open GitHub Desktop for the commit?`)) return;
-  const b = $('#rl-ghsync'); b.disabled = true; b.innerHTML = '<span class="spin"></span>Copying…';
-  try {
-    const r = await post('/api/dev/github/sync', {});
-    const n = x => x ? `${x.copied} of ${x.total} file${x.total === 1 ? '' : 's'} changed${x.removed ? `, ${x.removed} removed` : ''}` : 'nothing';
-    $('#rl-ghmsg').innerHTML = `✓ Synced to <b>${esc(r.folder)}</b>: app ${esc(n(r.app))}${r.packaging ? `; packaging ${esc(n(r.packaging))}` : ''}. ${r.opened ? 'GitHub Desktop is opening: write the commit message there and push.' : 'Open GitHub Desktop to commit' + (r.open_error ? ' (it could not be opened from here: ' + esc(r.open_error) + ')' : '') + '.'}`;
-    toast('Synced. The commit is yours, in GitHub Desktop.');
-  } catch (e){ toast(e.message, true); }
-  b.disabled = false; b.textContent = '⇄ Sync to my GitHub folder';
 }
 function rlCheck(c){
   const [ic] = RL_SEV[c.sev] || ['•'];

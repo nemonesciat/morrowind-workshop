@@ -12,7 +12,7 @@ async function forgeShow(start){
   const bg = document.createElement('div'); bg.className = 'modal-bg'; FG.bg = bg;
   FG.tab = start && start.world ? 'world' : 'piece';
   if (start && start.world) FG.world = {id: start.world};
-  bg.innerHTML = `<div class="modal fg-win"><h2>⚒ The Forge</h2>
+  bg.innerHTML = `<div class="modal fg-win"><h2>⚒ The Forge${typeof guideLink === 'function' ? guideLink('items-spells-and-the-forge.md', 'The Forge: weapons and armour') : ''}</h2>
     <div class="fg-tabs"><button data-fgtab="piece">A piece</button><button data-fgtab="set">A whole set</button><span class="fg-tsep">then</span><button data-fgtab="world">Into the world</button></div>
     <div id="fg-body"><div class="msg"><span class="spin"></span>Reading the game's weapons and armour…</div></div>
     <div class="foot"><span class="msg" id="fg-msg" style="flex:1"></span><button class="btn" id="fg-close">Close</button><button class="btn primary" id="fg-go" disabled>⚒ Forge it</button></div></div>`;

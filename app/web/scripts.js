@@ -32,7 +32,7 @@ function sMine(){
     : '<div class="msg" style="padding:4px 2px">Scripts you write or change show up here.</div>';
 }
 function sWelcome(){
-  $('#smain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Scripts</h1>
+  $('#smain').innerHTML = `<div class="wrap" style="max-width:820px"><h1>Scripts${typeof guideLink === 'function' ? guideLink('scripts-and-game-rules.md', 'Morrowind scripts (MWScript)') : ''}</h1>
     <p class="msg" style="font-size:14px;line-height:1.7">Scripts make things happen: a door that opens only after a quest stage, a note that starts a quest when picked up.
     The editor checks what you type and explains mistakes in plain words; the list beside it has every command, with an example.</p>
     <div class="cgrid">

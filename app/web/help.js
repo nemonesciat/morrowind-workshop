@@ -15,21 +15,92 @@ $('#helpmenu').addEventListener('click', e => {
   else if (a === 'messages') recentMessages();
   else if (a === 'about') aboutModal();
   else if (a === 'learning') docModal('how-the-workshop-learns.md');
+  else if (a === 'guides') guidesModal();
 });
 
+// ----- guides: how to do things, to read when you want to (no walkthrough). Each is a paper in web/docs, opened
+// from Help > Guides or from a "?" beside the tool it explains, at its section
+const GUIDES = [
+  {file: 'getting-around.md', title: 'Getting around', what: 'Your mod, the pages, finding any record in Browse, panels, shortcuts, settings, backups.'},
+  {file: 'the-world-map.md', title: 'The World map', what: 'Opening places, moving about in 2D and 3D, selecting, placing and changing things, the panels.'},
+  {file: 'building-interiors.md', title: 'Building interiors', what: 'The room planner, styles and stairs, adding rooms, Extend, interiors for buildings, the prefab workbench, the Style palette, hidden doors.'},
+  {file: 'furnishing-and-checking.md', title: 'Furnishing and checking', what: 'Auto-furnish, one room at a time, shelves and books, lighting and fog, Find gaps, Fix here, Check this place.'},
+  {file: 'dungeons-and-ruins.md', title: 'Dungeons and ruins', what: 'Caves, Dwemer ruins, Velothi tombs and Daedric shrines, grown and stocked the game\'s way.'},
+  {file: 'shaping-the-land.md', title: 'Shaping the land', what: 'The Ground brush, land shaping over many cells (coasts, ridges, rivers, rock), height maps, and recipes.'},
+  {file: 'sky-regions-and-weather.md', title: 'Sky, regions and weather', what: 'Regions and painting them, weather and sounds, previewing the sky and time of day.'},
+  {file: 'people-and-creatures.md', title: 'People and creatures', what: 'New people, the Characters page, Populate a place, leveled lists, teaching spells.'},
+  {file: 'dialogue-and-quests.md', title: 'Dialogue and quests', what: 'How the game picks a line, conditions, the conversation builder and map, quests, testing.'},
+  {file: 'items-spells-and-the-forge.md', title: 'Items, spells and the Forge', what: 'New items and books, the item editor, weapons and armour from the Forge and into the world, spells, your own magic effects.'},
+  {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
+  {file: 'scripts-and-game-rules.md', title: 'Scripts and game rules', what: 'MWScript and Lua, global variables, game settings, factions, classes, races and the rest.'},
+  {file: 'playing-and-testing.md', title: 'Playing and testing', what: 'Play here, playing as your own character, test setups, the live link, the OpenMW menu.'},
+  {file: 'sharing-your-mod.md', title: 'Sharing your mod', what: 'My mod, Get ready to share, Health check, Load order, merging, .esp files, building together, backups.'},
+  {file: 'how-the-workshop-learns.md', title: 'How the Workshop learns', what: 'Where its building and decorating know-how comes from: your own game, on your PC.'},
+];
+const GUIDE_TEXT = {};
+async function guideText(file){
+  if (!(file in GUIDE_TEXT)){ try { const r = await fetch('/web/docs/' + file, {cache: 'no-store'}); GUIDE_TEXT[file] = r.ok ? await r.text() : ''; } catch (e){ GUIDE_TEXT[file] = ''; } }
+  return GUIDE_TEXT[file];
+}
+function guidesModal(){
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(560px,95vw)"><h3 style="margin-top:0">Guides</h3>
+    <input class="inp" id="gd-q" placeholder="Search the guides… (e.g. river, cliffs, height map)" style="width:100%;box-sizing:border-box">
+    <div id="gd-list" class="gd-list"></div>
+    <div class="foot"><button class="btn" id="gd-close">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const list = bg.querySelector('#gd-list'), q = bg.querySelector('#gd-q');
+  const draw = async () => {
+    const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const rows = [];
+    for (const g of GUIDES){
+      if (!words.length){ rows.push({g, hits: []}); continue; }
+      const md = (await guideText(g.file)).replace(/\r/g, '');
+      // (the sections the words are all in, to open the guide there)
+      const secs = md.split(/\n(?=#{2,3} )/).filter(s => words.every(w => s.toLowerCase().includes(w)));
+      if (secs.length || words.every(w => (g.title + ' ' + g.what).toLowerCase().includes(w)))
+        rows.push({g, hits: secs.map(s => s.match(/^#{1,3} (.*)/)).filter(Boolean).map(m => m[1]).slice(0, 6)});
+    }
+    list.innerHTML = rows.length ? rows.map(({g, hits}) => `<button class="gd-row" data-gd="${esc(g.file)}"><b>${esc(g.title)}</b><small>${esc(g.what)}</small></button>
+      ${hits.map(h => `<button class="gd-hit" data-gd="${esc(g.file)}" data-at="${esc(docSlug(h))}">→ ${esc(h)}</button>`).join('')}`).join('')
+      : '<div class="msg">Nothing found.</div>';
+    list.querySelectorAll('[data-gd]').forEach(b => b.onclick = () => { bg.remove(); docModal(b.dataset.gd, b.dataset.at); });
+  };
+  q.oninput = draw; draw(); q.focus();
+  bg.querySelector('#gd-close').onclick = () => bg.remove();
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+}
+// a "?" that opens a guide at one of its sections (beside the tools it explains)
+function guideLink(file, section, tip){
+  return `<button class="gd-q" data-guide="${esc(file)}" data-at="${esc(docSlug(section))}" title="${esc(tip || 'How this works')}">?</button>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-guide]'); if (!b) return;
+  e.preventDefault(); e.stopPropagation(); docModal(b.dataset.guide, b.dataset.at);
+}, true);
+function docSlug(s){ return String(s).toLowerCase().replace(/[`*]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+
 // ----- the Workshop's own papers (web/docs/*.md), read in a window: headings, paragraphs, lists (one level
-// nested), tables, bold, italics, code and links; the same file is the one on GitHub
-async function docModal(name){
+// nested), tables, bold, italics, code and links; the same file is the one on GitHub. at: a heading to open at
+async function docModal(name, at){
   let md;
   try { const r = await fetch('/web/docs/' + name, {cache: 'no-store'}); if (!r.ok) throw new Error('The paper is missing.'); md = await r.text(); }
   catch (e){ return toast(e.message, true); }
   const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal doc" style="width:min(820px,95vw);max-height:88vh;overflow:auto">${docHtml(md)}
-    <div class="foot"><button class="btn primary" id="doc-close">Close</button></div></div>`;
+  bg.innerHTML = `<div class="modal doc" style="width:min(820px,95vw);max-height:88vh;overflow:auto">${docHtml(md, true)}
+    <div class="foot"><button class="btn" id="doc-guides">All guides…</button><button class="btn primary" id="doc-close">Close</button></div></div>`;
   document.body.appendChild(bg);
   bg.querySelector('#doc-close').onclick = () => bg.remove();
+  bg.querySelector('#doc-guides').onclick = () => { bg.remove(); guidesModal(); };
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   bg.querySelectorAll('a[href^="http"]').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  // (links inside the paper to its own sections, and the contents list)
+  const box = bg.querySelector('.modal');
+  const goTo = h => { box.scrollTop += h.getBoundingClientRect().top - box.getBoundingClientRect().top - 8; };
+  bg.querySelectorAll('a[href^="#"]').forEach(a => a.onclick = e => {
+    e.preventDefault(); const h = box.querySelector('#doc-' + a.getAttribute('href').slice(1)); if (h) goTo(h);
+  });
+  if (at){ const h = box.querySelector('#doc-' + docSlug(at)); if (h){ goTo(h); h.classList.add('doc-here'); } }
 }
 function docInline(s){
   return esc(s)
@@ -37,18 +108,26 @@ function docInline(s){
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>')
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\[([^\]]+)\]\(#([a-z0-9-]+)\)/g, '<a href="#$2">$1</a>')
     .replace(/&lt;(https?:[^&\s]+)&gt;/g, '<a href="$1">$1</a>');
 }
-function docHtml(md){
+function docHtml(md, contents){
   const L = md.replace(/\r/g, '').split('\n'), out = [];
   let i = 0;
   const para = [];
   const flush = () => { if (para.length){ out.push('<p>' + docInline(para.join(' ')) + '</p>'); para.length = 0; } };
+  // (headings carry ids to open the paper at; a long paper gets a list of its sections after its title)
+  const secs = L.filter(l => /^## /.test(l)).map(l => l.slice(3).trim());
+  let listed = !(contents && secs.length >= 4);
   while (i < L.length){
     const line = L[i];
     if (!line.trim()){ flush(); i++; continue; }
     const h = line.match(/^(#{1,3})\s+(.*)$/);
-    if (h){ flush(); const n = h[1].length; out.push(`<h${n + 1}>${docInline(h[2])}</h${n + 1}>`); i++; continue; }
+    if (h){
+      flush(); const n = h[1].length;
+      if (n === 2 && !listed){ listed = true; out.push(`<nav class="doc-toc"><b>In this guide</b>${secs.map(s => `<a href="#${docSlug(s)}">${docInline(s)}</a>`).join('')}</nav>`); }
+      out.push(`<h${n + 1} id="doc-${docSlug(h[2])}">${docInline(h[2])}</h${n + 1}>`); i++; continue;
+    }
     if (/^\|/.test(line)){
       flush();
       const rows = [];
@@ -228,7 +307,7 @@ async function renderSettings(){
   catch (e){ w.innerHTML = `<h1>Settings</h1><div class="msg err">${esc(e.message)}</div>`; return; }
   const p = S.summary && S.summary.project;
   const when = t => new Date(t * 1000).toLocaleString();
-  w.innerHTML = `<h1>Settings</h1>${typeof thSection === 'function' ? thSection() : ''}
+  w.innerHTML = `<h1>Settings${typeof guideLink === 'function' ? guideLink('getting-around.md', 'Settings') : ''}</h1>${typeof thSection === 'function' ? thSection() : ''}
   <section class="card setsec"><h3>OpenMW</h3>
     <div class="setrow"><span>Installed in</span><b>${st.openmw_install ? esc(st.openmw_install) : '<span style="color:var(--amber)">not found</span>'}</b></div>
     <div class="setrow"><span>Its settings (load order)</span><span class="msg">${esc(st.openmw_cfg || '')}</span></div>

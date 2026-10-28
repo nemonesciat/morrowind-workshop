@@ -5,12 +5,12 @@
 const WP = {places: (() => { try { return JSON.parse(localStorage.getItem('ws-places') || '[]'); } catch (e){ return []; } })()};
 
 const WP_PRESETS = {
-  'Building': {right: {size: 340, groups: [{tabs: ['place', 'sel', 'objs', 'view', 'paths'], on: 'place', grow: 1}]},
+  'Building': {right: {size: 340, groups: [{tabs: ['place', 'sel', 'objs', 'view', 'sky', 'land', 'paths'], on: 'place', grow: 1}]},
                left: {size: 300, groups: []}, bottom: {size: 220, groups: []}, floats: []},
   'Furnishing': {right: {size: 360, groups: [{tabs: ['place', 'library', 'prefabs'], on: 'place', grow: 1.3}, {tabs: ['sel', 'objs'], on: 'sel', grow: 1}]},
                  left: {size: 300, groups: []}, bottom: {size: 220, groups: []}, floats: []},
   'Two sides': {left: {size: 300, groups: [{tabs: ['place', 'library'], on: 'place', grow: 1}, {tabs: ['places'], on: 'places', grow: 0.5}]},
-                right: {size: 330, groups: [{tabs: ['sel', 'objs', 'view', 'paths'], on: 'sel', grow: 1}]}, bottom: {size: 200, groups: []}, floats: []},
+                right: {size: 330, groups: [{tabs: ['sel', 'objs', 'view', 'sky', 'land', 'paths'], on: 'sel', grow: 1}]}, bottom: {size: 200, groups: []}, floats: []},
   'Big view': {left: {size: 300, groups: []}, right: {size: 340, groups: []}, bottom: {size: 220, groups: []},
                floats: [{tabs: ['place', 'objs'], on: 'place', x: 16, y: 56, w: 330, h: 420}, {tabs: ['sel'], on: 'sel', x: -16, y: 56, w: 320, h: 380}]},
 };
@@ -32,6 +32,8 @@ function worldPanelsInit(){
     cloneState: () => ({filter: ''}), titleFor: it => it.state && it.state.filter ? 'Objects: ' + it.state.filter : 'Objects'});
   PNL.define('world', 'view', {title: 'View', cls: 'wside'});
   PNL.define('world', 'paths', {title: 'Paths', icon: '🚶', cls: 'wside'});   // (drawn with the others, by renderWside)
+  PNL.define('world', 'sky', {title: 'Sky', icon: '🌤', cls: 'wside'});
+  PNL.define('world', 'land', {title: 'Land', icon: '⛰', cls: 'wside'});
   PNL.define('world', 'pin', {title: 'Pinned', hidden: true, multi: true, home: 'float', cls: 'wside', w: 330, h: 470,
     titleFor: it => '📌 ' + (it.state.name || 'Pinned'), render: wpRenderPin, onShow: scan});
   PNL.define('world', 'library', {title: 'Library', icon: '📦', cls: 'wside', render: wpRenderLibrary, onShow: it => wpRenderLibrary(it)});
@@ -58,7 +60,7 @@ function worldPanelsInit(){
   PNL.spaces.world.types.objs.render = it => { if (it.id !== 'objs') wpRenderObjList(it); };
   if (typeof qolPanels === 'function') qolPanels();
   PNL.start('world');
-  wpAddPathsTab();
+  wpAddPathsTab(); wpAddSkyLandTabs();
   for (const it of Object.values(PNL.spaces.world.inst)){ const t = PNL.spaces.world.types[it.type]; if (t.render && it.id !== 'objs') t.render(it); }
   // the button that lists every panel and the layouts
   const sw = $('#viewsw');
@@ -78,6 +80,18 @@ function wpAddPathsTab(){
   const g = groups.find(g => g.tabs.includes('view')) || groups.find(g => g.tabs.includes('place'));
   if (!g) return;
   g.tabs.splice(g.tabs.indexOf('view') + 1 || g.tabs.length, 0, 'paths');
+  PNL.useLayout('world', L);
+}
+
+// (2.5.4) a layout kept from before View was split: Sky and Land go once beside View, as tabs
+function wpAddSkyLandTabs(){
+  try { if (localStorage.getItem('ws-skyland-tabs')) return; localStorage.setItem('ws-skyland-tabs', '1'); } catch (e){ return; }
+  const L = PNL.spaces.world.layout;
+  const groups = [...['left', 'right', 'bottom'].flatMap(s => (L[s] || {}).groups || []), ...(L.floats || [])];
+  if (groups.some(g => g.tabs.includes('sky') || g.tabs.includes('land'))) return;
+  const g = groups.find(g => g.tabs.includes('view')) || groups.find(g => g.tabs.includes('place'));
+  if (!g) return;
+  g.tabs.splice(g.tabs.indexOf('view') + 1 || g.tabs.length, 0, 'sky', 'land');
   PNL.useLayout('world', L);
 }
 
@@ -199,7 +213,8 @@ async function wpRenderActivity(it){
   b.innerHTML = log.length ? `<div class="olist">${log.map(e => `<div style="${e.undone ? 'opacity:.5;text-decoration:line-through' : ''}"><span>${esc(e.text || '')}</span><small>${esc((e.t || '').slice(11))}${e.can_undo ? ` <button class="btn sm" data-wpu="${e.id}" title="Take back this change">↶</button>` : ''}</small></div>`).join('')}</div>`
     : '<div class="msg" style="padding:10px 0">No changes yet.</div>';
   b.querySelectorAll('[data-wpu]').forEach(x => x.onclick = async () => {
-    try { await post('/api/undo_entry', {id: +x.dataset.wpu, only: true}); toast('Taken back.'); if (typeof afterChange === 'function') await afterChange(); if (W.key) await worldReloadCell(W.key); wpRenderActivity(it); }
+    // (everything again, as the Undo button does: reloading the open cell alone left undone ground in the 3D view)
+    try { await post('/api/undo_entry', {id: +x.dataset.wpu, only: true}); toast('Taken back.'); await refreshAfterEdits(); wpRenderActivity(it); }
     catch (e){ toast(e.message, true); }
   });
 }

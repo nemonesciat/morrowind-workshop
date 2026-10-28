@@ -211,8 +211,8 @@ def findings(db):
 
     # placed objects
     import mapdata
-    for ck, c in p.cells.items():
-        for rk, r in c['refs'].items():
+    for ck, c in list(p.cells.items()):
+        for rk, r in list(c['refs'].items()):
             if r.get('deleted'):
                 continue
             subs = [(t, unb64(d)) for t, d in r['subs']]

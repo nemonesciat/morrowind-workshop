@@ -332,6 +332,15 @@ body.embed #outdated{display:none}
 .modal.doc h3{margin:18px 0 6px}.modal.doc ul{margin:4px 0 8px;padding-left:22px}.modal.doc li{margin:2px 0}
 .modal.doc code{font-size:12.5px;background:var(--panel2);padding:0 4px;border-radius:4px}
 .modal.doc .doc-t{font-size:13px;margin:6px 0 10px}.modal.doc .doc-t th{text-align:left}
+.doc-toc{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 14px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.doc-toc b{width:100%;font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+.modal.doc .doc-here{color:var(--gold2)}
+.gd-list{display:flex;flex-direction:column;gap:4px;margin:10px 0;max-height:60vh;overflow:auto}
+.gd-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--text);cursor:pointer}
+.gd-row small{color:var(--muted)}.gd-row:hover{border-color:var(--gold)}
+.gd-hit{text-align:left;padding:2px 10px 2px 22px;border:0;background:none;color:var(--muted);cursor:pointer;font-size:12.5px}.gd-hit:hover{color:var(--gold2)}
+.gd-q{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:6px;padding:0;border:1px solid var(--line);border-radius:50%;
+  background:none;color:var(--muted);font-size:10.5px;line-height:1;cursor:pointer;vertical-align:1px}.gd-q:hover{color:var(--gold2);border-color:var(--gold)}
 /* (in a second view the 3D tools stay one row that scrolls sideways, so they don't cover the small view; no
    Panels button, as it shows no panels) */
 body.embed #v3tools{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
@@ -383,7 +392,7 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .legend label{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted)}
 .legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
 /* world sidebar: header, tabs, tiles */
-.whead{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:0}
+.whead{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:10px}
 .playrow{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .playrow label{display:flex;gap:4px;align-items:center;font-size:12px;color:var(--faint);margin-left:auto;cursor:pointer}
 .playrow .btn,.playrow label{white-space:nowrap}
@@ -765,6 +774,7 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
+        <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
         <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
@@ -1486,7 +1496,8 @@ function renderHealth(){
   $('#hbadge').innerHTML = n.error ? `<span class="badge">${n.error}</span>` : '';
   const shown = H.issues.filter(i => hFilter === 'all' || i.severity === hFilter);
   const sevName = {error:'Needs fixing', warning:'Worth a look', info:'Good to know'};
-  let h = `<h1>Health check</h1><p class="lead">Instead of a wall of pop-up errors, here is everything that could go wrong with your current setup, grouped by plugin and explained in plain language. Nothing here was changed. This is only a report.</p>
+  // (drawn at start, before help.js is in: guideLink's button written out; help.js's click handler opens it)
+  let h = `<h1>Health check<button class="gd-q" data-guide="sharing-your-mod.md" data-at="health-check" title="How this works">?</button></h1><p class="lead">Instead of a wall of pop-up errors, here is everything that could go wrong with your current setup, grouped by plugin and explained in plain language. Nothing here was changed. This is only a report.</p>
   <div class="cards">
     <div class="card"><div class="big ${n.error?'sev-error':'sev-ok'}">${n.error}</div><div class="lab">Needs fixing: missing masters or plugins</div></div>
     <div class="card"><div class="big ${n.warning?'sev-warning':'sev-ok'}">${n.warning}</div><div class="lab">Worth a look: missing meshes or icons</div></div>
@@ -1897,7 +1908,7 @@ async function renderMyMod(){
   const p = P.project;
   const byType = {};
   P.changes.forEach(c => (byType[c.type] = byType[c.type] || []).push(c));
-  let h = `<h1>${esc(p.name)}</h1>
+  let h = `<h1>${esc(p.name)}${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'My mod') : ''}</h1>
     <p class="lead">Saved automatically after every change. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span> (📁 Show folder opens it)</p>
     ${p.source ? `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): this mod <b>is</b> that file, opened as your mod. Its objects keep the numbers the file gave them, its masters stay as the file listed them, and a dated copy of the file as it was is kept beside it (later copies under Backups).${p.plain_esp ? ' A plain .esp holds no Lua scripts: any you write stay in the project and are not written out.' : ''}</p>`
                : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
@@ -2562,11 +2573,14 @@ cv.addEventListener('mousedown', e => {
   }
   else W.drag = {kind: 'pan', sx: e.offsetX, sy: e.offsetY, cx: W.cam.x, cy: W.cam.y, moved: false, pick: hit ? [hit[0], hit[1].k] : null};
 });
+cv.addEventListener('mouseleave', () => { $('#maptip').style.display = 'none'; });
 cv.addEventListener('mousemove', e => {
   if (W.mode === 'region' && REG.drag){ regMove(e); return; }
-  if (W.mode === 'landmap'){ if (!lmMove(e)) lmHover(e); return; }
-  if (W.mode === 'landshape'){ lsMoveMouse(e); return; }
-  if (typeof LM !== 'undefined' && LM.hdrag){ lmHandleMove(e); return; }
+  // (marking cells or drawing a shape: no hover card, it sat over the very cells being picked and stayed there,
+  // the user 2026-10-28; the bar under the map names the cell under the mouse)
+  if (W.mode === 'landmap'){ $('#maptip').style.display = 'none'; lmMove(e); return; }
+  if (W.mode === 'landshape'){ $('#maptip').style.display = 'none'; lsMoveMouse(e); return; }
+  if (typeof LM !== 'undefined' && LM.hdrag){ $('#maptip').style.display = 'none'; lmHandleMove(e); return; }
   const D = W.drag;
   if (D){
     const dx = e.offsetX - D.sx, dy = e.offsetY - D.sy;
@@ -3008,7 +3022,7 @@ function renderWside(){
   let h = `<div class="dd"><input class="inp" id="w-goto" placeholder="Go to a place… (Balmora, or -4, -14)" title="A place's name, a cell's coordinates (-4, -14), or a spot in game units (x y, or x y z as the game's console gives it)" autocomplete="off"><div class="ddlist" id="w-goto-l"></div></div>`;
   if (!i){
     body('place').innerHTML = h;
-    for (const p of ['sel', 'objs', 'view', 'paths']) if (body(p)) body(p).innerHTML = '<div class="msg" style="padding:10px 0">Open a place first (Place, at the top).</div>';
+    for (const p of ['sel', 'objs', 'view', 'paths', 'sky', 'land']) if (body(p)) body(p).innerHTML = '<div class="msg" style="padding:10px 0">Open a place first (Place, at the top).</div>';
     bindWside(); return;
   }
   const refs = (W.cells[W.key] || {refs: []}).refs;
@@ -3072,9 +3086,8 @@ function renderWside(){
   h += `<div class="wpane on" data-pane="objs"><input class="inp" id="w-filter" placeholder="Filter…" value="${esc(W.filter)}" style="margin-bottom:6px"><div class="olist" id="w-olist"></div></div>`;
   cut.push(h.length);
   // --- View
-  h += `<div class="wpane on" data-pane="view"><h3 style="margin-top:4px">Show</h3><div class="legend">${LAYERS.map((L, n) => `<label><input type="checkbox" data-layer="${n}" ${W.hidden.has(n) ? '' : 'checked'}><i style="background:${L[2]}"></i>${L[0]}</label>`).join('')}</div>
-    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="w-lock" ${W.lockArch ? 'checked' : ''}> Lock walls &amp; buildings (so you can't move them by accident)</label>
-    ${i.interior ? `<h3>Lighting &amp; settings</h3><div id="w-placeset"></div>` : regViewHtml(i) + (typeof lmViewHtml === 'function' ? lmViewHtml(i) : '')}`;
+  h += `<div class="wpane on" data-pane="view"><h3 style="margin-top:4px">Show${typeof guideLink === 'function' ? guideLink('the-world-map.md', 'The panels') : ''}</h3><div class="legend">${LAYERS.map((L, n) => `<label><input type="checkbox" data-layer="${n}" ${W.hidden.has(n) ? '' : 'checked'}><i style="background:${L[2]}"></i>${L[0]}</label>`).join('')}</div>
+    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="w-lock" ${W.lockArch ? 'checked' : ''}> Lock walls &amp; buildings (so you can't move them by accident)</label>`;
   if (i.interior && refs.length){
     const zs = refs.map(r => r.p[2]), lo = Math.floor(Math.min(...zs)), hi = Math.ceil(Math.max(...zs));
     if (hi - lo > 300) h += `<h3>Floors</h3><label class="msg">Hide everything above height: <b id="w-cutv">${W.cut == null ? 'show all' : Math.round(W.cut)}</b></label>
@@ -3089,6 +3102,9 @@ function renderWside(){
   body('objs').innerHTML = h.slice(cut[1], cut[2]);
   body('view').innerHTML = h.slice(cut[2]);
   if (body('paths')) body('paths').innerHTML = pathsPanelHtml(i);
+  // Sky: region, weather and time outdoors, the lighting indoors; Land: shaping and height maps
+  if (body('sky')) body('sky').innerHTML = `<div class="wpane on" data-pane="sky">${i.interior ? `<h3 style="margin-top:4px">Lighting &amp; settings${typeof guideLink === 'function' ? guideLink('furnishing-and-checking.md', 'Lighting, fog and water') : ''}</h3><div id="w-placeset"></div>` : regViewHtml(i)}</div>`;
+  if (body('land')) body('land').innerHTML = `<div class="wpane on" data-pane="land">${i.interior ? '<div class="msg" style="padding:10px 0">Outdoors only.</div>' : typeof lmViewHtml === 'function' ? lmViewHtml(i) : ''}</div>`;
   renderOList(refs);
   renderRecent(); renderPlacing(); renderPrefabs();
   bindWside();
@@ -3096,14 +3112,14 @@ function renderWside(){
   if (typeof refPropsRender === 'function') refPropsRender();
   if (sel) dressProbe(W.sel.cell, sel);
   disposeViews('sel');
-  for (const p of ['place', 'sel', 'objs', 'view']) if (PNL.isShown('world', p)) v3ThumbScan(body(p));
+  for (const p of ['place', 'sel', 'objs', 'view', 'sky', 'land']) if (PNL.isShown('world', p)) v3ThumbScan(body(p));
   for (const [id, v, s] of keepTyped){ const e = $('#' + id); if (e){ e.value = v; e.focus(); try { e.setSelectionRange(s, s); } catch (x){} } }
   // the tab the Workshop wants in front (Selected after a click on something): if that panel is open
   if (W.tab !== W.tabShown){ W.tabShown = W.tab; wsTab(W.tab); }
   wpAfterRender();
   if (typeof qolAfterRender === 'function') qolAfterRender();
 }
-// ----- an interior's lighting, fog, water and rules (View tab). Changes show in 3D straight away; Save keeps them.
+// ----- an interior's lighting, fog, water and rules (Sky panel). Changes show in 3D straight away; Save keeps them.
 let PL_PRESETS = null;
 function plHex(a){ return '#' + a.map(v => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join(''); }
 function plRgb(h){ return [1, 3, 5].map(n => parseInt(h.slice(n, n + 2), 16)); }
@@ -3368,7 +3384,7 @@ async function furnishDialog(cellKey){
   document.querySelectorAll('.modal-bg[data-fu]').forEach(x => x.remove());
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.fu = '1';
   const opts = [...info.purposes, 'none'];
-  bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Auto-furnish</h2>
+  bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Auto-furnish${typeof guideLink === 'function' ? guideLink('furnishing-and-checking.md', 'Auto-furnish a whole place') : ''}</h2>
     <div class="msg">Furniture and clutter from similar places in your load order: beds and shelves against the walls, a table with chairs, things on the tables. It all goes in as <b>one change</b>, so one Undo takes it back.</div>
     ${info.rooms.map(r => `<label>${esc(r.name)} <span class="msg">${r.w} × ${r.h} tiles</span></label>
       <select class="inp" data-fr="${r.id}">${opts.map(o => `<option value="${o}" ${o === r.purpose ? 'selected' : ''}>${PURPOSE_LABEL[o] || o}</option>`).join('')}</select>`).join('')}
@@ -3530,9 +3546,11 @@ W.dressable = W.dressable || {};
 function dressKey(ck, k){ return ck + '|' + k; }
 function dressButtonHtml(d){
   if (!d || !d.dressable) return '';
-  return `<button class="btn sm" data-sa="dress" title="${esc(d.dressed ? 'Take its dressing off and lay a fresh one, drawn from the game\'s ' + d.dressings_known + ' dressings of this model' : 'Put on it what the game puts on this model (' + d.dressings_known + ' dressings seen); one undoable change')}">${d.dressed ? '🎲 Dress again' : '🪄 Dress this (the game\'s way)'}</button>` +
-    `<button class="btn sm" data-sa="addone" title="One more thing the game stands on this model, at a free spot, keeping all that is on it; press again for another">➕ Add one thing</button>` +
-    (d.book_dressings ? `<button class="btn sm" data-sa="books" title="A shelf of books: one of the game's ${d.book_dressings} dressings of this model that are mostly books, whatever the room">📚 Fill with books</button>` : '');
+  // (a shelf or table the game never dresses is dressed all the same, with what suits its make)
+  const seen = d.dressings_known ? ` (${d.dressings_known} dressings seen)` : ' (things that suit its make)';
+  return `<button class="btn sm" data-sa="dress" title="${esc(d.dressed ? 'Take its dressing off and lay a fresh one' + seen : 'Put on it what the game puts on this model' + seen + '; one undoable change')}">${d.dressed ? '🎲 Dress again' : '🪄 Dress this (the game\'s way)'}</button>` +
+    `<button class="btn sm" data-sa="addone" title="One more thing at a free spot, keeping all that is on it; press again for another">➕ Add one thing</button>` +
+    (d.book_dressings ? `<button class="btn sm" data-sa="books" title="A shelf of books, whatever the room">📚 Fill with books</button>` : '');
 }
 async function addOne(ck, k, name){
   try {
@@ -3563,7 +3581,7 @@ async function dressPiece(ck, k, name, books){
   try {
     const m = await post('/api/furnish/piece', {cell: ck, ref: k, replace: true, books: books ? 1 : 0});
     delete W.dressable[dressKey(ck, k)];
-    toast((m.removed ? 'Took ' + m.removed + ' things off and ' : '') + 'laid ' + m.placed + ' on ' + (name || m.model) + (books ? ' (a shelf of books, as the game fills it)' : ' (one of the game\'s ' + m.dressings_known + ' dressings of it)'));
+    toast((m.removed ? 'Took ' + m.removed + ' things off and ' : '') + 'laid ' + m.placed + ' on ' + (name || m.model) + (m.any ? '' : books ? ' (a shelf of books, as the game fills it)' : ' (one of the game\'s ' + m.dressings_known + ' dressings of it)'));
     await refreshAfterEdits();
     if (findRef(ck, k)) selectRef(ck, k, true);
   } catch (err){ toast(err.message, true); }
@@ -3784,7 +3802,7 @@ async function renderCreate(){
   // page the cards fold into a slim row of tabs over it)
   const inWin = typeof vwHosting === 'function' && vwHosting('createv');
   const tab = k => { const c = CR_CARDS[k]; return `<button class="ctab ${CR.kind === k ? 'on' : ''}" data-ck="${k}" title="${esc(c[2])}"><span>${c[0]}</span>${c[1]}</button>`; };
-  let h = !CR.kind ? `<h1>Create</h1><p class="lead">Quick starts for the things you make most. Each goes into your mod as one change that one Undo takes back, and you can fine-tune it afterwards in Browse.</p>
+  let h = !CR.kind ? `<h1>Create${typeof guideLink === 'function' ? guideLink('getting-around.md', 'The pages') : ''}</h1><p class="lead">Quick starts for the things you make most. Each goes into your mod as one change that one Undo takes back, and you can fine-tune it afterwards in Browse.</p>
     <div class="cgroups">${CR_GROUPS.map(([name, kinds, aside]) => `<div class="cgh">${name}${aside ? `<span class="msg">${aside}</span>` : ''}</div><div class="cgrid">${kinds.map(card).join('')}</div>`).join('')}</div>`
     : inWin ? '' : `<div class="ctabs"><button class="ctab" data-ckall title="Every kind of thing to make, as cards">▦ All</button><span class="ctsep"></span>${CR_GROUPS.map(([_n, kinds]) => kinds.filter(k => CR_CARDS[k]).map(tab).join('')).join('<span class="ctsep"></span>')}</div>`;
   // (a form that cannot be drawn says so in its place, with a way to start the page afresh, instead of
@@ -3901,7 +3919,7 @@ function formHtml(kind){
   if (kind === 'ruin' && typeof ruinFormHtml === 'function') return ruinFormHtml(what);
   if (kind === 'build'){
     const copy = CR.bmode === 'copy';
-    return `<h2>Build from pieces</h2><p class="msg">Lay out rooms on a grid. The Workshop builds them from the style's own walls, floors, doorways and stairs, and furnishes them the way the game's own places are. <b>Plans ▾</b> has ready-made layouts and your saved ones, and can start from a house the game made, as a plan or copied whole.</p>
+    return `<h2>Build from pieces${typeof guideLink === 'function' ? guideLink('building-interiors.md', 'The room planner (Create → Build from pieces)') : ''}</h2><p class="msg">Lay out rooms on a grid. The Workshop builds them from the style's own walls, floors, doorways and stairs, and furnishes them the way the game's own places are. <b>Plans ▾</b> has ready-made layouts and your saved ones, and can start from a house the game made, as a plan or copied whole.</p>
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
       <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
       <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div>
