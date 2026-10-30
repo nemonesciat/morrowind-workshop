@@ -59,6 +59,7 @@ function worldPanelsInit(){
   // (the extra Objects lists draw themselves; the first one is the sidebar's own)
   PNL.spaces.world.types.objs.render = it => { if (it.id !== 'objs') wpRenderObjList(it); };
   if (typeof qolPanels === 'function') qolPanels();
+  if (typeof spPanels === 'function') spPanels();      // (the Style palette, docked: stylepal.js)
   PNL.start('world');
   wpAddPathsTab(); wpAddSkyLandTabs();
   for (const it of Object.values(PNL.spaces.world.inst)){ const t = PNL.spaces.world.types[it.type]; if (t.render && it.id !== 'objs') t.render(it); }

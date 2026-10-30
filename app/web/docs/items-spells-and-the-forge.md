@@ -39,6 +39,11 @@ Three tabs: **A piece**, **A whole set**, then **Into the world**.
 - **The look** is taken from one of the game's pieces of that kind (any in your load order, mods' too), or your own
   model from the Library. **Skins** swap its pictures: swap one and every piece that uses it changes. The originals
   stay as they are; new copies are made.
+- **✋ Fit to the hand** (your own weapon model): turned, placed and sized so the hand holds it as the game's own of
+  that kind, shown over a faint game weapon. **⇅ Flip**, **⟳ Turn**, **Grip** and **Length** fix it; **Use it**
+  makes a fitted copy in the Library.
+- **✋** beside a worn part of yours (a helmet, pauldron, greave, bracer or shield) lays it over the game's own piece
+  for that part. Parts that bend with the body (a cuirass, gauntlets) show **⚠**: they need weighting in Blender.
 - The Forge remembers each piece's material.
 
 **A whole set** makes every piece of a set at once, with the same choices.

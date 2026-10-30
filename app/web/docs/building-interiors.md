@@ -78,6 +78,12 @@ building is closed and sound, draws the floors the interior would have over it o
 an interior that fits its outline (about as roomy inside as the game's own), with its door and the building's
 linked both ways.
 
+- **Floors** and **Cellar** (None, Usual, Big: the game's own sizes for the style; a cellar can reach past the
+  walls, under the ground).
+- The rooms are cut the way the game's own storeys are: a big room and smaller ones round it. **🎲** gives
+  other rooms in the same space.
+- **Furnish** (Bare, or how well off), **Light** and **Lanterns**: it is furnished and lit as it is made.
+
 **🔍 Check this building** looks it over by the game's own rules for its style: pieces standing on nothing, gaps
 in the walls, the roof.
 
@@ -89,10 +95,15 @@ empty space with a floor grid and its own camera.
 - Pick a style; its pieces are on the shelf on the left. Drag them in. They **snap** the way the game joins
   them, else flush with the piece beside them. A door or window dragged to a frame, doorway or window hole drops
   into it. **🚪 Fill openings** fills them all the game's way.
+- **Moving** (toolbar): **Joins & flush**, **Joins only** or **Free**; hold **Alt** while dragging to move freely
+  once. For fine moves: the **arrow keys** (1 unit, Shift 16), **Page Up / Down**, or type **X Y Z**. **Turn 15°** /
+  **Turn free** sets the turn ring's steps.
 - It's **checked as it grows**, with marks on what's wrong.
 - Fly with **W A S D** (Q / E down and up, Shift faster); right-drag looks, middle-drag pans. Left-drag on empty
   space selects several. **[ ]** turn by 15° (Shift: 1°); the **Turn**, **Tilt** and **Size** boxes are exact;
   **⊥ Straighten** undoes a tilt. Right-click for a menu.
+- **✛ World axes / ⟀ Own axes** (toolbar): the handles move and turn a piece along the world's lines or along its
+  own sides. The selected piece always shows its own axes: red its length, green across, blue up.
 - **Ctrl+D** puts a copy of the selection straight down beside it, end to end along the selected piece's own red
   axis (**Shift**: the other way); press again to carry the row on. **Ctrl+M** puts a mirrored copy against the
   selection's far side across X (**Shift**: across Y), for the other half of a symmetrical building.
@@ -121,6 +132,10 @@ them:
 - **🪑 Furniture** and **🕯 Decor**.
 - **🧩 Sets**: what the game puts together, such as a table with its chairs or a bed with its chest. A set goes down
   whole, as one Undo.
+
+**🔍 All** (first in the list) searches every style's palette at once; each result shows the style that has it
+most. **⇲** on the palette's title bar docks it as a panel, beside Place or wherever you drag its tab; its panel
+menu (⋮) has **Float it as a window**. It opens the way you left it.
 
 Under **Regions**, each region has its own palette (◆ the open place's): **🪨 Rocks & cliffs**, grouped by set
 (the models of one family the game uses together), and **🌿 Trees and plants**, learnt from the region's own land.

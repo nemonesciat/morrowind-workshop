@@ -95,7 +95,7 @@ def start_server():
     log = open(LOG, 'w', encoding='utf-8')
     log.write('%s %s started %s (Python %s)\n' % (NAME, version(), time.strftime('%Y-%m-%d %H:%M:%S'), sys.version.split()[0]))
     log.flush()
-    env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8', WORKSHOP_NO_BROWSER='1')
+    env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8', WORKSHOP_NO_BROWSER='1', PYTHONHASHSEED='0')
     for k in ('PYTHONHOME', 'PYTHONPATH'):
         env.pop(k, None)
     return subprocess.Popen([python(), '-X', 'utf8', os.path.join(ROOT, 'app', 'workshop.py')], cwd=ROOT, env=env,

@@ -272,7 +272,9 @@ def snaps_among(db, s, rid, x, y, items, skip=None, radius=1600, limit=80):
             return e
         xyz, turn = rs.split('@')[1].split('/')
         return [int(v) for v in xyz.split(',')] + [int(turn)]
-    items = [it for it in items if es.is_outdoor_piece(it) and it['k'] != skip]
+    # (skip: one ref left out, or several, a group moved as one: none of its members is something to join to)
+    skips = set(skip) if isinstance(skip, (set, list, tuple)) else {skip}
+    items = [it for it in items if es.is_outdoor_piece(it) and it['k'] not in skips]
     near = sorted((it for it in items if math.hypot((it['box'][0] + it['box'][2]) / 2 - x, (it['box'][1] + it['box'][3]) / 2 - y) < radius),
                   key=lambda it: math.hypot(it['p'][0] - x, it['p'][1] - y))[:16]
     mine = J.get(me) or {}

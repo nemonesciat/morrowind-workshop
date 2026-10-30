@@ -2,7 +2,7 @@
 // A window over the World map's view: the cast the Workshop proposes for the place open (who would live
 // or work there, as the game's own places of its kind have them), to change, re-roll person by person,
 // lock, and place as one change. "Someone who'd live here" does the same for one person, at the spot clicked.
-const PO = {el: null, cell: null, data: null, params: {density: 'usual', wealth: 'auto', races: [], faction: '', occupations: [], only: false, own: true, lines: true},
+const PO = {el: null, cell: null, data: null, params: {density: 'usual', wealth: 'auto', races: [], faction: '', occupations: [], only: false, own: true, lines: true, creatures: true, band: '', routines: true},
   locked: new Set(), at: null, busy: false};
 const PO_TOPIC = {greeting: 'Greeting', 'my trade': 'My trade', 'someone in particular': 'Someone in particular', 'little secret': 'Little secret',
   'latest rumors': 'Latest rumors'};
@@ -36,6 +36,9 @@ const PO_WHEN = {first: 'when they first meet', again: 'later on', liked: 'only 
 .poperson .pedit .inp{padding:2px 5px;font-size:12px}
 .poperson .pitems{color:var(--muted);line-height:1.5;margin-top:4px}
 .ponote{font-size:12px;color:var(--amber);margin:4px 0}
+.pocrs{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 10px}
+.pocrs span{font-size:12px;border:1px solid var(--line2);border-radius:10px;padding:1px 8px;cursor:pointer}
+.pocrs span:hover{border-color:var(--red);color:var(--red)}
 .poline{margin-top:6px}
 .poline .ai-row{display:flex;gap:4px;align-items:flex-start}
 .poline textarea{flex:1;font-size:12.5px;line-height:1.4;min-height:38px;resize:vertical}`;
@@ -73,7 +76,9 @@ async function poCast(extra, keep){
   if (body && !PO.data) body.innerHTML = '<div class="msg" style="padding:16px"><span class="spin"></span>Finding who would live here…</div>';
   const P = PO.params;
   const params = {density: P.density, wealth: P.wealth, races: P.races, faction: P.faction, occupations: P.occupations, only: P.only, setting: P.setting || null,
-                  lines: P.lines};
+                  lines: P.lines, creatures: P.creatures, band: P.band};
+  // (keeping people: the band they are of stays, whatever the page's choice says)
+  if (keep && keep.length && PO.data) params.band = PO.data.band || 'none';
   Object.assign(params, extra || {});
   let r;
   try { r = await post('/api/populate/cast', {cell: PO.cell, params, keep: keep || [], seed: null}); }
@@ -97,22 +102,28 @@ async function poCast(extra, keep){
 function poReroll(only){
   const d = PO.data; if (!d) return;
   const keep = d.people.filter(p => only ? p.key !== only : PO.locked.has(p.key));
-  poCast({count: d.people.length}, keep);
+  poCast(only ? {count: d.people.length, keep_creatures: d.creatures || [], keep_loot: d.loot || []} : {count: d.people.length}, keep);
 }
 function poDraw(){
   const d = PO.data, el = PO.el; if (!d || !el) return;
   el.querySelector('.owtitle').textContent = '👥 Populate: ' + d.place;
   const P = PO.params, o = d.options || {};
-  const relName = {head: 'head of the household', family: 'family', servant: 'servant', lodger: 'lodger', patron: 'patron', guard: 'guard'};
+  const relName = {head: 'head of the household', family: 'family', servant: 'servant', lodger: 'lodger', patron: 'patron', guard: 'guard',
+    leader: 'leader', band: (d.band_label || 'band').toLowerCase()};
   const sel = (k, list, v) => `<select class="inp" data-pp="${k}">${list.map(([val, t]) => `<option value="${esc(val)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
   const kinds = {house: 'houses', manor: 'manors', shop: 'shops', tavern: 'taverns', temple: 'temples', guild: 'guildhalls and offices',
     guard: 'guard posts', plaza: 'plazas', cave: 'caves', mine: 'mines', tomb: 'tombs', dwemer: 'Dwemer ruins', daedric: 'Daedric shrines',
     ruin: 'ruins', stronghold: 'strongholds', camp: 'camps', sewer: 'sewers', hideout: 'hideouts'};
-  let h = `<div class="msg" style="line-height:1.55">${d.people.length} ${d.people.length === 1 ? 'person' : 'people'} for <b>${esc(d.place)}</b>, as the game's own ${d.culture && d.culture !== '?' ? esc(d.culture) + ' ' : ''}<b>${esc(kinds[d.setting] || d.setting)}</b> have them.
+  const crs = d.creatures || [];
+  const crN = {}, lts = d.loot || [], ltN = {};
+  crs.forEach(c => { crN[c.id] = (crN[c.id] || 0) + 1; });
+  lts.forEach(c => { ltN[c.id] = (ltN[c.id] || 0) + 1; });
+  let h = `<div class="msg" style="line-height:1.55">${d.people.length} ${d.people.length === 1 ? 'person' : 'people'}${crs.length ? ` and ${crs.length} creature${crs.length === 1 ? '' : 's'}` : ''} for <b>${esc(d.place)}</b>${d.band ? `: <b>${esc(d.band_label)}</b>` : ''}, as the game's own ${d.culture && d.culture !== '?' ? esc(d.culture) + ' ' : ''}<b>${esc(kinds[d.setting] || d.setting)}</b> have them.
       ${d.already ? `${d.already} already ${d.already === 1 ? 'lives' : 'live'} here.` : ''} Nothing is placed until you press <b>Place them</b>.</div>
     <div class="pogrid">
       <label>How busy${sel('density', [['quiet', 'Quiet'], ['usual', 'As the game has it'], ['busy', 'Busy'], ['1', '1 person'], ['2', '2'], ['3', '3'], ['5', '5'], ['8', '8'], ['12', '12']], P.density)}</label>
       <label>Wealth${sel('wealth', [['auto', 'As the game has it'], ['poor', 'Poor'], ['common', 'Common'], ['fine', 'Well off'], ['rich', 'Rich']], P.wealth)}</label>
+      ${(o.bands || []).length ? `<label>Band${sel('band', [['', 'As the game has it'], ...o.bands, ['none', 'No band']], P.band)}</label>` : ''}
       <label>Kind of place${sel('setting', [['', 'As it is (' + d.setting + ')'], ...(o.settings || []).filter(s => s !== 'outdoors').map(s => [s, s])], P.setting || '')}</label>
       <label>Faction<input class="inp" data-pp="faction" list="po-factions" placeholder="as the game has it" value="${esc(P.faction)}"></label>
       <label>Races <span class="msg" style="font-size:10.5px">(none: as the game has it)</span><input class="inp" data-pp="race" list="po-races" placeholder="add a race…">
@@ -127,9 +138,17 @@ function poDraw(){
     <div class="pobar"><button class="btn" data-pa="again" title="New people for everyone not locked (🔒)">🎲 New cast</button>
       <button class="btn" data-pa="more">+ One more</button>
       <label class="msg"><input type="checkbox" data-pp="own" ${P.own ? 'checked' : ''}> the household owns the beds and chests</label>
+      <label class="msg" title="Each sleeps by their own bed, eats at a table, works and spends the evening by the hours (OpenMW: a script in your mod keeps them to it; guards and patrons stay put)"><input type="checkbox" data-pp="routines" ${P.routines ? 'checked' : ''}> daily routines</label>
+      <label class="msg" title="The creatures and creature lists the game's places of this kind hold (a list picks by the player's level)"><input type="checkbox" data-pp="creatures" ${P.creatures ? 'checked' : ''}> creatures</label>
       <label class="msg" title="A greeting, my trade, someone in particular, a little secret and a rumour each, written from templates (no AI): change any of them below or later in Dialogue"><input type="checkbox" data-pp="lines" ${P.lines ? 'checked' : ''}> words of their own</label>
-      <span style="flex:1"></span><button class="btn primary" data-pa="place" ${d.people.length ? '' : 'disabled'}>Place them</button></div>
+      <span style="flex:1"></span><button class="btn primary" data-pa="place" ${d.people.length || crs.length ? '' : 'disabled'}>Place them</button></div>
     ${(d.notes || []).map(n => `<div class="ponote">${esc(n)}</div>`).join('')}
+    ${crs.length ? `<div class="msg" style="display:flex;align-items:center;gap:6px">Creatures <button class="btn sm" data-pa="crs" title="Other creatures, the people kept">🎲</button></div>
+      <div class="pocrs">${Object.entries(crN).map(([id, n]) => { const c = crs.find(x => x.id === id);
+        return `<span data-pcr="${esc(id)}" title="${c.list ? 'A creature list: the game picks by the player\'s level. ' : ''}Click to leave one out">${esc(c.name)}${c.list ? ' ⟳' : ''}${n > 1 ? ' ×' + n : ''}</span>`; }).join('')}</div>` : ''}
+    ${lts.length ? `<div class="msg" style="display:flex;align-items:center;gap:6px">Loot <button class="btn sm" data-pa="lts" title="Other loot, the rest kept">🎲</button></div>
+      <div class="pocrs">${Object.entries(ltN).map(([id, n]) => { const c = lts.find(x => x.id === id);
+        return `<span data-plt="${esc(id)}" title="${esc(id)}: against a wall. Click to leave one out">${esc(c.name)}${n > 1 ? ' ×' + n : ''}</span>`; }).join('')}</div>` : ''}
     <div class="pocast">${d.people.map((p, n) => {
       const lk = PO.locked.has(p.key);
       return `<div class="poperson ${lk ? 'locked' : ''}" data-pn="${n}"><div class="ptop">
@@ -162,13 +181,19 @@ function poDraw(){
     if (k === 'race'){ if (v && !P.races.includes(v)) P.races.push(v); inp.value = ''; }
     else if (k === 'occ'){ if (v && !P.occupations.includes(v)) P.occupations.push(v); inp.value = ''; }
     else if (k === 'own'){ P.own = v; return; }
+    else if (k === 'routines'){ P.routines = v; return; }
     else if (k === 'lines'){ P.lines = v; if (!v) d.people.forEach(p => { p.lines = []; }); }
+    else if (k === 'creatures'){ P.creatures = v; if (!v){ d.creatures = []; poDraw(); return; } poCast({count: d.people.length}, d.people); return; }
     else P[k] = v;
     redo();
   });
   body.querySelectorAll('[data-prm]').forEach(s => s.onclick = () => { const [k, v] = s.dataset.prm.split('|'); P[k] = P[k].filter(x => x !== v); redo(); });
   body.querySelector('[data-pa="again"]').onclick = redo;
-  body.querySelector('[data-pa="more"]').onclick = () => poCast({count: d.people.length + 1}, d.people);
+  body.querySelector('[data-pa="more"]').onclick = () => poCast({count: d.people.length + 1, keep_creatures: crs, keep_loot: lts}, d.people);
+  const rc = body.querySelector('[data-pa="crs"]'); if (rc) rc.onclick = () => poCast({count: d.people.length, keep_loot: lts}, d.people);
+  const rl = body.querySelector('[data-pa="lts"]'); if (rl) rl.onclick = () => poCast({count: d.people.length, keep_creatures: crs}, d.people);
+  body.querySelectorAll('[data-plt]').forEach(s => s.onclick = () => { const i = lts.findIndex(c => c.id === s.dataset.plt); if (i >= 0) lts.splice(i, 1); poDraw(); });
+  body.querySelectorAll('[data-pcr]').forEach(s => s.onclick = () => { const i = crs.findIndex(c => c.id === s.dataset.pcr); if (i >= 0) crs.splice(i, 1); poDraw(); });
   body.querySelector('[data-pa="place"]').onclick = poPlace;
   body.querySelectorAll('[data-pn]').forEach(card => {
     const p = d.people[+card.dataset.pn];
@@ -194,12 +219,13 @@ function poDraw(){
   if (!D.opts) dOpts().then(() => { if (PO.data === d) poDraw(); }).catch(() => {});
 }
 async function poPlace(){
-  const d = PO.data; if (!d || !d.people.length) return;
+  const d = PO.data; if (!d || !(d.people.length || (d.creatures || []).length)) return;
   if (!await needProject()) return;
   const btn = PO.el.querySelector('[data-pa="place"]'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Placing…';
   try {
-    const r = await post('/api/populate/place', {cell: PO.cell, people: d.people, own: PO.params.own});
-    toast(`Placed ${r.placed} ${r.placed === 1 ? 'person' : 'people'}${r.owned ? `; they own ${r.owned} beds and containers` : ''}. One Undo takes it all back. New people appear in the game after restarting it with Play here.`);
+    const r = await post('/api/populate/place', {cell: PO.cell, people: d.people, own: PO.params.own, creatures: d.creatures || [], loot: d.loot || [],
+      routines: PO.params.routines});
+    toast(`Placed ${r.placed} ${r.placed === 1 ? 'person' : 'people'}${r.creatures ? `, ${r.creatures} creature${r.creatures === 1 ? '' : 's'}` : ''}${r.loot ? `, ${r.loot} loot container${r.loot === 1 ? "" : "s"}` : ''}${r.owned ? `; they own ${r.owned} beds and containers` : ''}${r.routines ? `; ${r.routines} keep daily routines` : ''}. One Undo takes it all back. New people appear in the game after restarting it with Play here.`);
     const ck = PO.cell;
     poClose(); PO.data = null; PO.locked = new Set();
     await afterChange();

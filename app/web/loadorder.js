@@ -229,7 +229,8 @@ async function omsShow(){
   try { d = await api('/api/openmw/settings'); } catch (e){ return toast(e.message, true); }
   OMS.d = d; OMS.edits = {};
   const bg = document.createElement('div'); bg.className = 'modal-bg'; OMS.bg = bg;
-  bg.innerHTML = `<div class="modal" style="width:min(820px,96vw);max-height:90vh;display:flex;flex-direction:column"><h2>OpenMW settings</h2>
+  bg.innerHTML = `<style>.oms-sec>summary{cursor:pointer;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13px}.oms-sec>summary .msg{font-size:11.5px;margin-left:4px}.oms-sec[open]>summary{margin-bottom:2px}</style>
+    <div class="modal" style="width:min(820px,96vw);max-height:90vh;display:flex;flex-direction:column"><h2>OpenMW settings</h2>
     <div class="msg">In ${esc(d.path)}${d.exists ? '' : ' (not made yet: OpenMW makes it the first time you change a setting)'}. Only what you change from OpenMW's own defaults is written there.</div>
     ${d.running ? '<div class="msg err" style="margin-top:4px">The game is running: close it first, as OpenMW writes this file again when it quits.</div>' : ''}
     ${d.defaults_found ? '' : '<div class="msg err" style="margin-top:4px">OpenMW\'s list of settings (defaults.bin) wasn\'t found in its folder. Open settings.cfg to change it by hand.</div>'}
@@ -268,17 +269,35 @@ function omsDraw(){
     const num = r.kind === 'int' || r.kind === 'float';
     return `<input class="inp ${num ? 'num' : ''}" data-oms="${n}" value="${esc(v)}" style="width:${num ? '110px' : '220px'}">`;
   };
-  let sec = null, h = '';
-  OMS.rows = rows;
-  rows.forEach((r, n) => {
-    if (OMS.tab !== 'popular' && r.section !== sec){ sec = r.section; h += `<div class="an-h" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:10px 0 2px">${esc(sec)}</div>`; }
-    const mine = r.changed || OMS.edits[omsKey(r)] != null;
-    h += `<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
-      <div><b>${esc(cap(r.key))}</b>${OMS.tab === 'popular' ? ` <span class="msg">${esc(r.section)}</span>` : ''}${mine ? ' <span class="mine">changed</span>' : ''}
+  const mineOf = r => r.changed || OMS.edits[omsKey(r)] != null;
+  const rowHtml = (r, n) => `<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
+      <div><b>${esc(cap(r.key))}</b>${OMS.tab === 'popular' ? ` <span class="msg">${esc(r.section)}</span>` : ''}${mineOf(r) ? ' <span class="mine">changed</span>' : ''}
         ${r.help ? `<div class="msg" style="font-size:11.5px;white-space:pre-line">${esc(r.help)}</div>` : ''}</div>
       <div style="display:flex;gap:6px;align-items:center">${ctl(r, n)}${val(r) !== r.default ? `<button class="btn sm" data-omsd="${n}" title="Back to OpenMW's default (${esc(r.default)})">↺</button>` : ''}</div></div>`;
-  });
+  let h = '';
+  if (OMS.tab === 'popular'){
+    OMS.rows = rows;
+    h = rows.map(rowHtml).join('');
+  } else {
+    // (each of settings.cfg's sections under its own heading, by name, folded unless opened or searched;
+    // the user 2026-10-30: one long list was hard to find your way round)
+    const secs = {};
+    rows.forEach(r => (secs[r.section] = secs[r.section] || []).push(r));
+    const names = Object.keys(secs).sort((a, b) => a.localeCompare(b));
+    OMS.rows = []; OMS.open = OMS.open || new Set();
+    const openAll = !!ql || OMS.tab === 'changed' || names.length === 1;
+    h = names.map(s => {
+      const list = secs[s], nm = list.filter(mineOf).length;
+      const body = list.map(r => { OMS.rows.push(r); return rowHtml(r, OMS.rows.length - 1); }).join('');
+      return `<details class="oms-sec" data-omss="${esc(s)}" ${openAll || OMS.open.has(s) ? 'open' : ''}>
+        <summary><b>${esc(s)}</b> <span class="msg">${list.length}${nm ? ` · <span class="mine">${nm} changed</span>` : ''}</span></summary>${body}</details>`;
+    }).join('');
+  }
   box.innerHTML = h || '<div class="msg" style="padding:10px">No settings match.</div>';
+  box.querySelectorAll('details[data-omss]').forEach(dt => dt.ontoggle = () => {
+    if (OMS.q.trim() || OMS.tab === 'changed') return;
+    dt.open ? OMS.open.add(dt.dataset.omss) : OMS.open.delete(dt.dataset.omss);
+  });
   const set = (n, v) => { const r = OMS.rows[n]; if (v === r.value) delete OMS.edits[omsKey(r)]; else OMS.edits[omsKey(r)] = v; omsCount(); };
   box.querySelectorAll('[data-oms]').forEach(el => {
     const n = +el.dataset.oms;

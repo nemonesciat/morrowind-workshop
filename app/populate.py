@@ -14,6 +14,7 @@ and (for a household or a shop) the place's beds and containers owned by its hea
 is stealing, as in the game's own houses."""
 import math
 import random
+import re
 import struct
 from collections import Counter
 
@@ -333,6 +334,132 @@ def spot(db, info, p, rng, taken, used):
 
 
 # ---------------------------------------------------------------- the cast
+# ---------------------------------------------------------------- creatures (a dungeon's)
+# (what lives under the water only: placed only where a place's floor is under its water)
+SWIMS = re.compile(r'h2o|fish|longfin|dreugh|mudcrab_?water|_eel|lurker')
+NOT_WILD = re.compile(r'dead|corpse|_stat_|static|summon|_unique|quest')
+
+
+def creatures(db, S, info, C, rng, density='usual', taken=()):
+    """The creatures for a place, as the game's places of its kind have them: as many as theirs (its median a
+    place, by its size and how busy), each one of the creatures or creature lists they hold, in their shares (a list
+    picks its creature by the player's level in the game, as the game's own do). Those that only swim go where the
+    floor is under the water, and only there. [{'key', 'id', 'name', 'list', 'spot'}]."""
+    import places
+    crowd = C.get('crowd') or [0, 0, 0]
+    base = (crowd[1] or 0) * (DENSITY.get(density, 1.0) if isinstance(density, str) else 1.0)
+    size = (C.get('pieces') or [0, 0, 0])[1] or 0
+    scale = (info['pieces'] / size) ** 0.6 if size and info['pieces'] else 1.0
+    n = int(round(base * max(0.5, min(3.0, scale))))
+    if n <= 0:
+        return []
+    try:
+        P = places.read(db, info['key'])
+    except Exception:
+        P = {}
+    wet = [rm for rm in info['rooms'] if rm['floor'] < P.get('water_height', 0) - 40] if P.get('water') else []
+    dry = [rm for rm in info['rooms'] if rm not in wet] or info['rooms']
+    pool = []
+    for cid, k in C.get('creatures') or []:
+        ri = db.resolve_id(cid)
+        if k < 3 or ri is None or db.recs[ri][0] not in ('CREA', 'LEVC') or NOT_WILD.search(cid):
+            continue
+        swims = bool(SWIMS.search(cid))
+        if swims and not wet:
+            continue
+        pool.append([(cid, swims), k])
+    out = []
+    spots = list(taken)
+    for _i in range(min(n, MAX_PEOPLE)):
+        pick = _w(rng, pool)
+        if not pick:
+            break
+        cid, swims = pick
+        r = db.recs[db.resolve_id(cid)]
+        sp = _floor_spot(info, rng, spots, wet if swims else dry)
+        if not sp:
+            continue
+        spots.append((sp[0], sp[1]))
+        out.append({'key': 'c%d' % rng.getrandbits(32), 'id': r[1], 'name': r[2] or r[1], 'list': r[0] == 'LEVC', 'spot': sp})
+    return out
+
+
+# ---------------------------------------------------------------- a dungeon's band
+# (the kinds castsurvey.band_kind reads in the game's dungeons; vampires are left out: the game's are vampires by
+# their heads and abilities, which a made person doesn't have)
+BANDS = {'bandits': 'Bandits', 'smugglers': 'Smugglers', 'worshippers': 'Daedra worshippers', 'cultists': 'Sixth House cultists',
+         'necromancers': 'Necromancers', 'mages': 'Rogue mages'}
+LOOT_MAX = 6
+OWN_CREATURES = ('worshippers', 'cultists', 'necromancers', 'mages')
+
+
+def band_for(S, setting, rng, want=None):
+    """(kind, its survey) for a dungeon of this setting: the one asked for, else one of the kinds the game's
+    dungeons of this setting hold, in their shares; (None, None) when it has none."""
+    B = S.get('bands') or {}
+    if want:
+        return (want, B[want]) if want in B and want in BANDS else (None, None)
+    k = _w(rng, [[k, dict(D['settings']).get(setting, 0)] for k, D in B.items() if k in BANDS])
+    return (k, B[k]) if k else (None, None)
+
+
+def loot(db, info, D, rng, taken):
+    """The band's containers, as the game's dungeons of its kind hold them (a few: the rest of theirs are the
+    place's own crates and barrels), each against a wall of a room, facing into it. [{'key', 'id', 'name', 'spot'}]."""
+    import mapdata
+    n = max(1, min(LOOT_MAX, int(round(((D.get('nconts') or [0, 5, 0])[1] or 5) / 5.0))))
+    pool = []
+    for cid, k in D.get('conts') or []:
+        ri = db.resolve_id(cid)
+        if k >= 3 and ri is not None and db.recs[ri][0] == 'CONT' and 'empty' not in cid:
+            pool.append([cid, k])
+    out = []
+    spots = list(taken)
+    for _i in range(n):
+        cid = _w(rng, pool)
+        if not cid:
+            break
+        ri = db.resolve_id(cid)
+        b = mapdata.object_bounds(db, ri) or [-30, -20, 0, 30, 20, 40]
+        sp = _wall_spot(info, rng, spots, b)
+        if not sp:
+            continue
+        spots.append((sp[0], sp[1]))
+        out.append({'key': 'l%d' % rng.getrandbits(32), 'id': db.recs[ri][1], 'name': db.recs[ri][2] or db.recs[ri][1], 'spot': sp})
+    return out
+
+
+def _wall_spot(info, rng, taken, b):
+    """A spot against one of a room's walls for a thing of these bounds, its back (-y) to the wall."""
+    depth = max(8.0, -b[1]) + 6
+    rooms = [rm for rm in info['rooms'] if rm['x_max'] - rm['x_min'] > 120 and rm['y_max'] - rm['y_min'] > 120] or list(info['rooms'])
+    rng.shuffle(rooms)
+    for rm in rooms:
+        for _t in range(20):
+            side = rng.randrange(4)
+            if side in (0, 1):
+                x = rng.uniform(rm['x_min'] + 50, rm['x_max'] - 50)
+                y, rz = (rm['y_min'] + depth, 0.0) if side == 0 else (rm['y_max'] - depth, math.pi)
+            else:
+                y = rng.uniform(rm['y_min'] + 50, rm['y_max'] - 50)
+                x, rz = (rm['x_min'] + depth, 1.5 * math.pi) if side == 2 else (rm['x_max'] - depth, 0.5 * math.pi)
+            if _clear(info, taken, x, y):
+                return [round(x, 1), round(y, 1), round(rm['floor'] - b[2], 1), round(rz, 4)]
+    return None
+
+
+def _floor_spot(info, rng, taken, rooms):
+    rooms = list(rooms)
+    rng.shuffle(rooms)
+    for rm in rooms:
+        for _t in range(25):
+            x = rng.uniform(rm['x_min'] + 40, rm['x_max'] - 40) if rm['x_max'] - rm['x_min'] > 90 else (rm['x_min'] + rm['x_max']) / 2
+            y = rng.uniform(rm['y_min'] + 40, rm['y_max'] - 40) if rm['y_max'] - rm['y_min'] > 90 else (rm['y_min'] + rm['y_max']) / 2
+            if _clear(info, taken, x, y):
+                return [round(x, 1), round(y, 1), round(rm['floor'] + 4, 1), round(rng.uniform(0, 2 * math.pi), 4)]
+    return None
+
+
 def _two_rates(S, setting, culture):
     """How the game's homes of two of this kind (in this culture, when it has ten of them) are made up:
     {'couple': a man and a woman of one race, 'race': of one race otherwise}, as shares of all of them."""
@@ -361,7 +488,14 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
     info = place_info(db, cell_key)
     setting = params.get('setting') or info['setting']
     C = _cast_of(S, setting, info['culture']) or {}
+    # a dungeon's people are a band of one kind (bandits, smugglers, cultists…), as the game's are
+    band, band_D = None, None
+    if setting in castsurvey.DUNGEONS and params.get('band') != 'none' and not params.get('occupations'):
+        band, band_D = band_for(S, setting, rng, params.get('band') or None)
     count = params.get('count') or how_many(S, info, params.get('density') or 'usual')
+    if band_D and not params.get('count'):
+        d = params.get('density') or 'usual'
+        count = int(d) if str(d).isdigit() else max(2, min(MAX_PEOPLE, int(round(_spread(rng, band_D['size'], 2) * DENSITY.get(d, 1.0)))))
     keep = list(keep or [])
     count = max(count, len(keep))
     notes = []
@@ -383,6 +517,11 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
         cls = _w(rng, tc)
         if cls:
             want.append(cls)
+    elif not keep and band_D:
+        # a dungeon's band: its leader first, then its kind's classes in their shares
+        lead = _w(rng, [[c, n] for c, n in band_D['lead'] if c in S['classes']])
+        if lead:
+            want.append(lead)
     elif not keep:
         group = _w(rng, C.get('groups') or [])
         for role in (group or '').split(' + '):
@@ -390,6 +529,10 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
                 cls = _w(rng, [[c, n] for c, n in classes if castsurvey.role_of(c) == role])
                 if cls:
                     want.append(cls)
+    if band_D:
+        classes = [[c, n] for c, n in band_D['classes'] if c in S['classes']] or classes
+        # (the band's people come from places like it: its races and factions)
+        C = dict(C, races=band_D['races'], factions=[[f, n] for f, n in band_D['factions'] if f != '-'])
     pool = [[c, n] for c, n in classes if c in occ] if only else classes
     if setting == 'shop' and not only:
         # (the others in a shop are its customers, guards and helpers, not the keepers of other trades)
@@ -434,9 +577,17 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
             p = person(db, S, rng, cls, C, params, None, taken, race=head_['race'] if roll < two['couple'] + two['race'] else None)
         else:
             p = person(db, S, rng, cls, C, params, None, taken)
+        # a band: its first is its leader, a few levels over the rest; every one of them fights on sight
+        if band_D:
+            p['fight'] = max(p['fight'], 90)
+            if not any(x.get('relation') == 'leader' for x in people):
+                p['relation'] = 'leader'
+                p['level'] += 3
+            else:
+                p['relation'] = 'band'
         # a household: the first is its head, the family shares the head's family name; servants and
         # lodgers keep their own
-        if setting in HOUSEHOLDS:
+        elif setting in HOUSEHOLDS:
             head = next((x for x in people if x.get('relation') == 'head'), None)
             # (a commoner, farmer or miner is the head of their own house; a slave or a servant never is)
             servant = any(w in p['cls'].lower() for w in ('slave', 'servant'))
@@ -469,9 +620,29 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
         for p in people:
             if not p.get('lines_edited'):
                 p['lines'] = made.get(p['key'], [])
+    # (the leader stands over the band: a few levels over the strongest of them)
+    lead = next((x for x in people if x.get('relation') == 'leader'), None)
+    if lead and band_D and len(people) > 1:
+        lead['level'] = max(lead['level'], max(x['level'] for x in people if x is not lead) + 2)
+    # a dungeon's creatures, as its kind of place has them (kept as they were when only the people are made again)
+    if params.get('creatures', True) is False:
+        crs = []
+    elif params.get('keep_creatures') is not None:
+        crs = params['keep_creatures']
+    else:
+        # (a band's own creatures when its kind has a few the game uses: a necromancer's skeletons, a cult's ash)
+        # (bandits and smugglers keep the place's own, by its region: theirs are every region's rats and fish)
+        own = band in OWN_CREATURES and sum(1 for _c, n in band_D['creatures'] if n >= 3) >= 3
+        CC = dict(C, creatures=band_D['creatures']) if own else C
+        crs = creatures(db, S, info, CC, rng, params.get('density') or 'usual', spots_taken)
+    if params.get('keep_loot') is not None:
+        lts = params['keep_loot']
+    else:
+        lts = loot(db, info, band_D, rng, spots_taken + [tuple(c['spot'][:2]) for c in crs]) if band_D and params.get('loot', True) is not False else []
     return {'place': info['name'], 'key': cell_key, 'setting': setting, 'culture': info['culture'], 'count': count,
-            'people': people, 'notes': notes, 'already': len(info['people']),
+            'people': people, 'creatures': crs, 'loot': lts, 'band': band, 'band_label': BANDS.get(band, ''), 'notes': notes, 'already': len(info['people']),
             'options': {'settings': sorted(k for k in S['casts'] if '|' not in k),
+                        'bands': [[k, BANDS[k]] for k in BANDS if k in (S.get('bands') or {})] if setting in castsurvey.DUNGEONS else [],
                         'classes': [c for c, _n in classes[:30]], 'races': sorted({r for c in S['classes'].values() for r, _n in c['races'][:4]})}}
 
 
@@ -495,14 +666,19 @@ def _npc_record(db, nid, p):
     return join_subs(subs)
 
 
-def place(db, cell_key, people, own=True):
+def place(db, cell_key, people, own=True, crs=(), lts=(), routines=False):
     """Make a cast real: each person a new NPC record placed where the cast says, the household's head
-    owning the place's beds and containers (those nobody owns yet). One change, one Undo."""
+    owning the place's beds and containers (those nobody owns yet), and its creatures (the game's own creatures
+    and lists, placed). One change, one Undo."""
     _require_project(db)
     import create
     from editing import _cell, _store, set_ref_pos
     from project import ref_info
-    if not people:
+    crs = [c for c in crs or [] if c.get('spot') and db.resolve_id(c.get('id') or '') is not None
+           and db.recs[db.resolve_id(c['id'])][0] in ('CREA', 'LEVC')]
+    lts = [c for c in lts or [] if c.get('spot') and db.resolve_id(c.get('id') or '') is not None
+           and db.recs[db.resolve_id(c['id'])][0] == 'CONT']
+    if not people and not crs:
         raise EditError('There is nobody to place.')
     info = place_info(db, cell_key)
     made = []
@@ -528,6 +704,12 @@ def place(db, cell_key, people, own=True):
         origin, idx = rk.rsplit('|', 1)
         _store(c, rk, origin, int(idx), set_ref_pos([('NAME', zs(nid))], tuple(sp[:3]) + (0.0, 0.0, float(sp[3])), 1.0))
         placed += 1
+    for cr in list(crs) + list(lts):
+        sp = cr['spot']
+        rk = db.project.new_ref_key()
+        origin, idx = rk.rsplit('|', 1)
+        _store(c, rk, origin, int(idx), set_ref_pos([('NAME', zs(db.recs[db.resolve_id(cr['id'])][1]))],
+                                                    tuple(sp[:3]) + (0.0, 0.0, float(sp[3])), 1.0))
     owned = 0
     head = next((nid for nid, p in made if p.get('relation') == 'head'), None)
     if own and head and info['setting'] in HOUSEHOLDS:
@@ -548,10 +730,21 @@ def place(db, cell_key, people, own=True):
             _store(c, rk, ref['origin'], ref['idx'], subs)
             owned += 1
     said = write_lines(db, made)
-    what = '%d %s' % (len(made), 'person' if len(made) == 1 else 'people')
+    # (their days, kept by the mod's routines script in OpenMW: routines.py; committed with them, one Undo)
+    n_days = 0
+    if routines:
+        import routines as routines_
+        days = routines_.plan(db, info, made)
+        if days:
+            routines_.register(db, days)
+            n_days = len(days)
+    what = ' and '.join(x for x in ('%d %s' % (len(made), 'person' if len(made) == 1 else 'people') if made else '',
+                                   '%d creature%s' % (len(crs), '' if len(crs) == 1 else 's') if crs else '',
+                                   '%d loot container%s' % (len(lts), '' if len(lts) == 1 else 's') if lts else '') if x)
     commit(db, 'Populated %s with %s%s%s' % (info['name'], what, (', who own its %d beds and containers' % owned) if owned else '',
                                             (' and have %d lines of their own' % said) if said else ''))
-    return {'made': [nid for nid, _p in made], 'placed': placed, 'owned': owned, 'lines': said}
+    return {'made': [nid for nid, _p in made], 'placed': placed, 'creatures': len(crs), 'loot': len(lts), 'owned': owned, 'lines': said,
+            'routines': n_days}
 
 
 GREETING_TOPIC = 'greeting 5'      # (where the game's own people keep their own greetings, before the everyday ones)

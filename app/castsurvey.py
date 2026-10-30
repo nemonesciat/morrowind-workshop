@@ -26,7 +26,8 @@ from collections import Counter, defaultdict
 
 from esm import iter_subrecords, zstr
 
-V = 'v5'           # (v5: 'tower', a place with a Velothi tower's pit: its mages, not a house's people)
+V = 'v7'           # (v5: 'tower', a place with a Velothi tower's pit: its mages, not a house's people; v6: 'crowd', creatures a
+#                   place; v7: 'bands', the dungeons' bands by kind)
 TOP = 24                    # (most common entries kept per list)
 CLOT_SLOTS = ['pants', 'shoes', 'shirt', 'belt', 'robe', 'glove_r', 'glove_l', 'skirt', 'ring', 'amulet']
 ARMO_SLOTS = ['helmet', 'cuirass', 'pauldron_l', 'pauldron_r', 'greaves', 'boots', 'gauntlet_l', 'gauntlet_r', 'shield',
@@ -245,7 +246,7 @@ def read_places(db):
             refs, header = db.cell_refs(k, without_project=True)
         except Exception:
             continue
-        ids, npcs, creas = [], [], []
+        ids, npcs, creas, conts = [], [], [], []
         for ref in refs.values():
             rid, _pos, _s, deleted = ref_info(ref['subs'])[:4]
             if deleted or not rid:
@@ -259,6 +260,8 @@ def read_places(db):
                 npcs.append(db.recs[ri][1])
             elif t in ('CREA', 'LEVC'):
                 creas.append(db.recs[ri][1])
+            elif t == 'CONT' and not NOT_LOOT.search(rid.lower()):
+                conts.append(db.recs[ri][1])
         if not npcs and not creas:
             continue
         name = db.recs[lst[-1]][2] or db.recs[lst[-1]][1]
@@ -268,8 +271,67 @@ def read_places(db):
             name = re.sub(r'\s*\(-?\d+,\s*-?\d+\)$', '', db.recs[lst[-1]][1])
         setting, theme, culture = setting_of(db, name, ids, ext, region)
         out.append({'key': k, 'name': name, 'setting': setting, 'theme': theme, 'culture': culture,
-                    'npcs': npcs, 'creatures': creas, 'pieces': sum(1 for i in ids if i.lower().startswith(('in_', 'ex_', 't_')))})
+                    'npcs': npcs, 'creatures': creas, 'conts': conts, 'pieces': sum(1 for i in ids if i.lower().startswith(('in_', 'ex_', 't_')))})
     return out
+
+
+# ---------------------------------------------------------------- the dungeons' bands
+# (2026-10-30, Populate's dungeon groups: of 2,076 dungeons with people, 510 hold two or more who fight on sight, and
+# their classes, factions and spells name seven kinds, each with its own leaders, creatures and loot)
+DUNGEONS = ('cave', 'mine', 'tomb', 'dwemer', 'daedric', 'ruin', 'hideout', 'stronghold', 'sewer', 'camp', 'tower')
+BAND_KINDS = ('bandits', 'smugglers', 'worshippers', 'cultists', 'necromancers', 'mages', 'vampires')
+HOSTILE = 70                  # (fight at or over it: attacks on sight)
+VAMP = re.compile(r'vampir|aundae|berne|quarra|volkihar|bloodlust')
+MAGES = ('sorcer', 'mage', 'battlemage', 'healer', 'spellsword', 'nightblade')
+# (a container that is no band's loot: a plant's harvest, an egg, a corpse)
+NOT_LOOT = re.compile(r'flora|kollop|egg|corpse|dead|plant|ingred_|skeleton|^bm_|_dwe_|guild|_gg_|quest')
+
+
+def band_kind(ps, setting):
+    """The kind of a dungeon's band, from its people (castsurvey.person dicts)."""
+    cls = Counter(o['cls'].lower() for o in ps)
+    n = len(ps)
+    if any(VAMP.search(o['faction'].lower()) or VAMP.search(' '.join(o['spells']).lower()) or 'vampire' in o['race'].lower() for o in ps):
+        return 'vampires'
+    if any('dreamer' in c for c in cls):
+        return 'cultists'
+    if any('necromancer' in c for c in cls):
+        return 'necromancers'
+    if sum(v for c, v in cls.items() if 'smuggler' in c) * 2 >= n:
+        return 'smugglers'
+    if setting == 'daedric' or any(w in c for c in cls for w in ('warlock', 'witch')):
+        return 'worshippers'
+    if sum(v for c, v in cls.items() if any(w in c for w in MAGES)) * 2 > n:
+        return 'mages'
+    return 'bandits'
+
+
+def _bands(places, people):
+    B = defaultdict(lambda: {'places': 0, 'size': [], 'lead': Counter(), 'classes': Counter(), 'races': Counter(), 'factions': Counter(),
+                             'creatures': Counter(), 'conts': Counter(), 'nconts': [], 'settings': Counter(), 'examples': []})
+    for p in places:
+        if p['setting'] not in DUNGEONS or p['key'].startswith('#'):
+            continue
+        ps = [o for o in (people.get(n.lower()) for n in p['npcs']) if o and o['fight'] >= HOSTILE]
+        if len(ps) < 2:
+            continue
+        D = B[band_kind(ps, p['setting'])]
+        D['places'] += 1
+        D['size'].append(len(ps))
+        D['settings'][p['setting']] += 1
+        D['lead'][max(ps, key=lambda o: o['level'])['cls']] += 1
+        for o in ps:
+            D['classes'][o['cls']] += 1
+            D['races'][o['race']] += 1
+            D['factions'][o['faction'] or '-'] += 1
+        for c in p['creatures']:
+            D['creatures'][c.lower()] += 1
+        for c in p.get('conts') or []:
+            D['conts'][c.lower()] += 1
+        D['nconts'].append(len(p.get('conts') or []))
+        if len(D['examples']) < 6:
+            D['examples'].append(p['key'])
+    return B
 
 
 # ---------------------------------------------------------------- folding
@@ -344,7 +406,7 @@ def fold(db, places):
     band = lambda v: 'poor' if v <= cut[0] else 'common' if v <= cut[1] else 'fine' if v <= cut[2] else 'rich'
     # casts by setting
     casts = defaultdict(lambda: {'places': 0, 'people': [], 'creatures': Counter(), 'classes': Counter(), 'roles': Counter(),
-                                 'groups': Counter(), 'cultures': Counter(), 'families': 0, 'pieces': [], 'races': Counter(),
+                                 'groups': Counter(), 'cultures': Counter(), 'families': 0, 'pieces': [], 'races': Counter(), 'crowd': [],
                                  'factions': Counter(), 'bands': Counter(), 'female': 0, 'n': 0,
                                  'two': 0, 'two_kin': 0, 'two_couple': 0, 'two_race': 0, 'two_mf_race': 0})
     by_class = defaultdict(lambda: {'n': 0, 'races': Counter(), 'female': 0, 'factions': Counter(), 'ranks': Counter(),
@@ -367,6 +429,7 @@ def fold(db, places):
             C['people'].append(len(p['npcs']))
             for cid in p['creatures']:
                 C['creatures'][cid.lower()] += 1
+            C['crowd'].append(len(p['creatures']))
             roles, fams = [], Counter()
             for nid in p['npcs']:
                 o = people.get(nid.lower())
@@ -471,10 +534,15 @@ def fold(db, places):
         return [v[int(q * (len(v) - 1))] for q in (0.1, 0.5, 0.9)] if v else None
     out = {'version': V, 'places': len(places), 'people': len(people), 'wealth_cuts': cut, 'casts': {}, 'classes': {},
            'outfits': {}, 'names': {}, 'faces': {}}
+    for k, D in _bands(places, people).items():
+        out.setdefault('bands', {})[k] = {'places': D['places'], 'size': spread(D['size']), 'lead': _top(D['lead'], 8),
+                                          'classes': _top(D['classes'], 16), 'races': _top(D['races'], 10), 'factions': _top(D['factions'], 6),
+                                          'creatures': _top(D['creatures'], 30), 'conts': _top(D['conts'], 30), 'nconts': spread(D['nconts']),
+                                          'settings': _top(D['settings'], 11), 'examples': D['examples']}
     for k, C in casts.items():
         out['casts'][k] = {'places': C['places'], 'cultures': _top(C['cultures'], 10), 'people': spread(C['people']),
                            'empty': round(sum(1 for x in C['people'] if not x) / max(1, C['places']), 2),
-                           'pieces': spread(C['pieces']), 'classes': _top(C['classes'], 40), 'roles': _top(C['roles'], 12),
+                           'pieces': spread(C['pieces']), 'crowd': spread(C['crowd']), 'classes': _top(C['classes'], 40), 'roles': _top(C['roles'], 12),
                            'groups': _top(C['groups'], 20), 'creatures': _top(C['creatures'], 30), 'families': C['families'],
                            'races': _top(C['races'], 12), 'factions': _top(C['factions'], 10), 'bands': _top(C['bands'], 4),
                            'female': round(C['female'] / max(1, C['n']), 2),

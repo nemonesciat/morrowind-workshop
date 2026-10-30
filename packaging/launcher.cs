@@ -111,6 +111,7 @@ class Tray : ApplicationContext
         psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
         psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
         psi.EnvironmentVariables["WORKSHOP_NO_BROWSER"] = "1";       // (we open its own window instead)
+        psi.EnvironmentVariables["PYTHONHASHSEED"] = "0";            // (sets in one order every run: the same furnish)
         psi.EnvironmentVariables.Remove("PYTHONHOME");
         psi.EnvironmentVariables.Remove("PYTHONPATH");
         proc = new Process { StartInfo = psi, EnableRaisingEvents = true };

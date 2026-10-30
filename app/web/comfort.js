@@ -81,6 +81,7 @@ const CF_ACT = [
   {id: 'objwin', label: 'Open the window of what\'s selected (record and placement)', keys: [], world: true, run: () => W.sel && typeof owOpen === 'function' ? owOpen(W.sel.cell, W.sel.k) : false},
   {id: 'move', label: '3D: move handles', keys: ['G', '1'], v3: true, run: () => cfMode('translate')},
   {id: 'rotate', label: '3D: turn handles', keys: ['R', '2'], v3: true, run: () => cfMode('rotate')},
+  {id: 'scalehandles', label: '3D: scale handles', keys: ['3'], v3: true, run: () => { if (W.multi.size > 1) return qolScale(); V3.tilt = false; cfMode('scale'); }},
   {id: 'drop', label: '3D: set it down on what\'s below', keys: ['End'], v3: true, run: () => v3DropToFloor()},
   {id: 'view3d', label: 'Switch between the flat map and 3D', keys: [], world: true, run: () => { const b = document.querySelector(`[data-view3d="${V3.on ? 0 : 1}"]`); if (b) b.click(); }},
   {id: 'panels', label: 'Panels and layouts menu', keys: [], world: true, run: () => PNL.windowsMenu('world', $('#w-panels'))},

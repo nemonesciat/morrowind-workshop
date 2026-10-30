@@ -391,7 +391,13 @@ def play(body):
         args = ['--skip-menu', '--start', start, '--script-run', script] + _game_content_args()
     link.from_save = bool(save)          # (a save remembers visited rooms' doors: the link re-tells them their links)
     _spawn(args, install, body.get('launch'))
-    return {'ok': True, 'start': start, 'commands': cmds, 'setup': setup['name'] if setup else None,
+    # (where you go, for the message: start is only the cell OpenMW opens in before the commands move you, and an
+    # unnamed outdoor cell opened in Seyda Neen, which the message named, the user 2026-10-29)
+    if info['interior'] or info['name']:
+        label = info['name']
+    else:
+        label = '%s (%d, %d)' % (info.get('region') or 'the wilderness', info['gx'], info['gy'])
+    return {'ok': True, 'start': start, 'label': label, 'commands': cmds, 'setup': setup['name'] if setup else None,
             'as': who if save else None}
 
 
@@ -906,6 +912,10 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/style/region':
                 import regionpal
                 self._json(regionpal.palette(db, q.get('region') or ''))
+            elif u.path == '/api/land/progress':
+                # how far Shape them has got (asked while it works: not under the edit lock)
+                import landshapes
+                self._json(landshapes.progress())
             elif u.path == '/api/land/looks':
                 # the regions whose rocks can dress land (cliffrocks.py)
                 import cliffrocks
@@ -1005,6 +1015,13 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         out['here'] = None
                 self._json(out)
+            elif u.path == '/api/style/all':
+                # every style's palette searched at once (stylesurvey.everything)
+                import stylesurvey
+                t = stylesurvey.everything(db, q.get('q', ''))
+                if t is None:
+                    return self._json({'error': 'The styles are still being learnt.'}, 404)
+                self._json(t)
             elif u.path == '/api/style/theme':
                 # one theme's building pieces, furniture, decor and sets ('*': used everywhere)
                 import stylesurvey
@@ -1104,6 +1121,21 @@ class Handler(BaseHTTPRequestHandler):
                     bw = q.get('between')
                     return self._json(gearplaces.places(db, q.get('id') or '', q.get('mat') or None,
                                                         (lambda p: (p[0], p[1], float(p[2])))(bw.split(',')) if bw else None))
+                except ValueError as e:
+                    return self._json({'error': str(e)}, 400)
+            elif u.path == '/api/forge/wornfitview':
+                # your own model laid over the game's worn piece for a part (weaponfit.onto)
+                import weaponfit
+                try:
+                    return self._json(weaponfit.worn_view(db, q.get('lib') or '', q.get('model') or '', int(float(q.get('turn') or 0)),
+                                                          str(q.get('flip')).lower() in ('1', 'true'), float(q.get('size') or 1)))
+                except ValueError as e:
+                    return self._json({'error': str(e)}, 400)
+            elif u.path == '/api/forge/fitview':
+                # your own weapon model set in the hand the game's way, beside a game weapon of the type (weaponfit.py)
+                import weaponfit
+                try:
+                    return self._json(weaponfit.view(db, q.get('lib') or '', _weapon_type(q.get('type')), *_fit_args(q)))
                 except ValueError as e:
                     return self._json({'error': str(e)}, 400)
             elif u.path in ('/api/forge/looks', '/api/forge/worn'):
@@ -1215,12 +1247,15 @@ class Handler(BaseHTTPRequestHandler):
                 # interior that would be built in it (nothing is changed; frombuilding.py)
                 import frombuilding
                 self._json(frombuilding.preview(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None, q.get('tolerance') or 'usual',
-                                                q.get('cellar') or None, int(q['floors']) if q.get('floors') else None))
+                                                q.get('cellar') or None, int(q['floors']) if q.get('floors') else None,
+                                                int(q.get('seed') or 0)))
             elif u.path == '/api/build/snaps':
                 # where the game joins a model to the made pieces near a spot outdoors: the 3D view's snapping (housemodules.snaps)
                 import housemodules
+                # (skip: a ref key, or several on lines of their own: a group's members, as plugin names can hold commas)
+                sk = [s for s in (q.get('skip') or '').split('\n') if s]
                 self._json(housemodules.snaps(db, q.get('id', ''), float(q.get('x') or 0), float(q.get('y') or 0), float(q.get('z') or 0),
-                                              q.get('skip') or None))
+                                              sk if len(sk) > 1 else (sk[0] if sk else None)))
             elif u.path == '/api/build/check':
                 # a building outdoors checked by the game's rules for its style: standing on nothing, walls, roof
                 # (frombuilding.outdoor_check; nothing is changed)
@@ -2047,6 +2082,20 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(gearsets.make_one(db, body))
                     except ValueError as e:
                         return self._json({'error': str(e)}, 400)
+                if u.path == '/api/forge/wornfit':
+                    import weaponfit
+                    try:
+                        return self._json(weaponfit.worn_save(db, body.get('lib') or '', body.get('model') or '', int(body.get('turn') or 0),
+                                                              bool(body.get('flip')), float(body.get('size') or 1)))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
+                if u.path == '/api/forge/fit':
+                    # the fitted copy of your weapon model, into the Library (weaponfit.py)
+                    import weaponfit
+                    try:
+                        return self._json(weaponfit.save(db, body.get('lib') or '', _weapon_type(body.get('type')), *_fit_args(body)))
+                    except ValueError as e:
+                        return self._json({'error': str(e)}, 400)
                 if u.path == '/api/forge/textures':
                     # the pictures the pieces' models and worn parts use, for a skin (forgelooks.py)
                     import forgelooks
@@ -2214,7 +2263,8 @@ class Handler(BaseHTTPRequestHandler):
                                                          body.get('door') or None, body.get('style') or None,
                                                          int(body['floors']) if body.get('floors') else None,
                                                          body.get('tiles') or None, body.get('tolerance') or 'usual',
-                                                         body.get('cellar') or None))
+                                                         body.get('cellar') or None, int(body.get('seed') or 0),
+                                                         body.get('lighting') or 'normal', body.get('lights', True) is not False))
                 if u.path == '/api/build/groundfit':
                     # the ground fitted to a building outdoors, the way the game's meet theirs (groundfit.py)
                     import groundfit
@@ -2272,7 +2322,8 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/populate/place':
                     # Populate: the cast made real, as new people placed (populate.py), one change
                     import populate
-                    return self._json(populate.place(db, body['cell'], body.get('people') or [], body.get('own', True) is not False))
+                    return self._json(populate.place(db, body['cell'], body.get('people') or [], body.get('own', True) is not False,
+                                                     body.get('creatures') or [], body.get('loot') or [], bool(body.get('routines'))))
                 if u.path == '/api/convo/build/save':
                     # the conversation builder: a tree of lines and answers, written back as the topic's lines
                     import convbuild
@@ -2520,6 +2571,25 @@ class Handler(BaseHTTPRequestHandler):
 
 
 _model_cache = {}
+
+
+def _weapon_type(t):
+    """A Forge weapon type (gearsurvey's id, 'LongBlade1H') or the game's number, as the game's number."""
+    import gearsurvey
+    ids = [w[0] for w in gearsurvey.WEAPON_TYPES]
+    if t in ids:
+        return ids.index(t)
+    try:
+        return int(t)
+    except (TypeError, ValueError):
+        raise ValueError('Not a weapon type: %s' % t)
+
+
+def _fit_args(q):
+    """(flip, turn, grip, size) from a query or a body; a missing one is the Workshop's guess."""
+    f = q.get('flip')
+    num = lambda k: float(q[k]) if q.get(k) not in (None, '') else None
+    return (None if f in (None, '') else str(f).lower() in ('1', 'true', 'yes'), int(float(q.get('turn') or 0)), num('grip'), num('size'))
 
 
 def model_for(q):

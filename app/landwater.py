@@ -44,12 +44,33 @@ class Coarse:
         return self.F.world(self.fi[i])
 
 
+_NBRS = {}
+
+
+def _nbrs(w, h):
+    """Each point's neighbours on a w x h grid as (index, distance), in NB's order, with the rise over flats: worked
+    out once a grid (valleys fills and flows the same grid 24 times; the bounds checks were a third of the time)."""
+    key = (w, h)
+    if key not in _NBRS:
+        if len(_NBRS) > 8:
+            _NBRS.clear()
+        nb = []
+        for i in range(w * h):
+            x, y = i % w, i // w
+            nb.append(tuple((ny * w + nx, d) for nx, ny, d in ((x + dx, y + dy, d) for dx, dy, d in NB)
+                            if 0 <= nx < w and 0 <= ny < h))
+        jit = [0.3 + ((j * 2654435761) % 1000) / 700.0 for j in range(w * h)]
+        _NBRS[key] = (nb, jit)
+    return _NBRS[key]
+
+
 def fill(z, w, h, out, eps=0.05):
     """(filled heights, the order the points were reached in: lowest first, so each point's way down comes before
     it). Priority flood (Barnes et al. 2014) with a small rise over flats, a little different at each point: with
     one rise the water crossed every filled hollow in a dead straight line (lab 2026-10-28)."""
     n = w * h
-    jit = [eps * (0.3 + ((j * 2654435761) % 1000) / 700.0) for j in range(n)]
+    nbrs, jit0 = _nbrs(w, h)
+    jit = [eps * v for v in jit0]
     f = list(z)
     seen = bytearray(n)
     heap = []
@@ -63,16 +84,12 @@ def fill(z, w, h, out, eps=0.05):
     while heap:
         zi, i = pop(heap)
         order.append(i)
-        x, y = i % w, i // w
-        for dx, dy, _d in NB:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < w and 0 <= ny < h:
-                j = ny * w + nx
-                if not seen[j]:
-                    seen[j] = 1
-                    if f[j] <= zi + jit[j]:
-                        f[j] = zi + jit[j]
-                    push(heap, (f[j], j))
+        for j, _d in nbrs[i]:
+            if not seen[j]:
+                seen[j] = 1
+                if f[j] <= zi + jit[j]:
+                    f[j] = zi + jit[j]
+                push(heap, (f[j], j))
     return f, order
 
 
@@ -81,18 +98,16 @@ def flow(f, w, h, out):
     n = w * h
     rec = [-1] * n
     dist = [1.0] * n
+    nbrs = _nbrs(w, h)[0]
     for i in range(n):
         if out[i]:
             continue
-        x, y = i % w, i // w
+        fi = f[i]
         best, bj, bd = 0.0, -1, 1.0
-        for dx, dy, d in NB:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < w and 0 <= ny < h:
-                j = ny * w + nx
-                s = (f[i] - f[j]) / d
-                if s > best:
-                    best, bj, bd = s, j, d
+        for j, d in nbrs[i]:
+            s = (fi - f[j]) / d
+            if s > best:
+                best, bj, bd = s, j, d
         rec[i], dist[i] = bj, bd
     return rec, dist
 

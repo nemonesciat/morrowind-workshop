@@ -97,6 +97,7 @@ VARIETIES = (0.25, 0.5, 0.8, 1.0, 1.4, 2.0, 3.0)
 # all repeat, making the land look unnatural", the user)
 GRAINS = ((1, 0.0), (2, 0.0), (4, 0.0), (2, 0.2), (4, 0.25), (4, 0.45))
 PATTERN_SAMPLE = 40             # land cells read a region for its patterning
+SEARCH_CELLS = 9                # land cells the variety and grain are chosen on
 _pattern = {}
 
 
@@ -173,25 +174,38 @@ def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=No
         ids, files = _textures(db, F, keys, regions, v_, seed, also_grid, pre=pre)
     else:
         # (the variety and grain that give the region's own number of textures a cell and its own share of edges,
-        # on the cells that are mostly land)
+        # on the cells that are mostly land: worked out on up to SEARCH_CELLS of them, the variety first and then the
+        # grain, and only the choice laid over every cell. Tried on every cell at every pair, 42 passes over the whole
+        # plan, the preview took 30 seconds on PIN2's land, 2026-10-30)
         target = sum(want) / len(want)
         t_edges = sum(edges) / len(edges) if edges else None
+        pool = land or list(keys)
+        sample = pool[::max(1, len(pool) // SEARCH_CELLS)][:SEARCH_CELLS]
+
+        def score_of(v, g):
+            ids_, _f = _textures(db, F, sample, regions, v, seed, also_grid, cap=int(round(target)), pre=pre, grain=g)
+            look = [ids_[k] for k in sample if k in ids_]
+            counts = sorted(len(set(t)) for t in look)
+            med = counts[len(counts) // 2] if counts else 0
+            sc = abs(med - target) / max(1.0, target)
+            if t_edges is not None and look:
+                es = sorted(_edges(t) for t in look)
+                sc += abs(es[len(es) // 2] - t_edges) / max(0.05, t_edges)
+            return sc, med
         best = None
-        for g in (GRAINS if t_edges is not None else GRAINS[:1]):
-            for v in VARIETIES:
-                ids, files = _textures(db, F, keys, regions, v, seed, also_grid, cap=int(round(target)), pre=pre, grain=g)
-                look = [ids[k] for k in (land or keys) if k in ids]
-                counts = sorted(len(set(t)) for t in look)
-                med = counts[len(counts) // 2] if counts else 0
-                score = abs(med - target) / max(1.0, target)
-                if t_edges is not None and look:
-                    es = sorted(_edges(t) for t in look)
-                    score += abs(es[len(es) // 2] - t_edges) / max(0.05, t_edges)
-                if best is None or score < best[0]:
-                    best = (score, ids, files, v, g)
-                if med >= target and t_edges is None:
-                    break                   # (more variety only adds textures from here)
-        _s, ids, files, v_, g_ = best
+        for v in VARIETIES:
+            sc, med = score_of(v, GRAINS[0])
+            if best is None or sc < best[0]:
+                best = (sc, v, GRAINS[0])
+            if med >= target:
+                break                       # (more variety only adds textures from here)
+        if t_edges is not None:
+            for g in GRAINS[1:]:
+                sc, _m = score_of(best[1], g)
+                if sc < best[0]:
+                    best = (sc, best[1], g)
+        _s, v_, g_ = best
+        ids, files = _textures(db, F, keys, regions, v_, seed, also_grid, cap=int(round(target)), pre=pre, grain=g_)
         cap_ = int(round(target))
     if beds:
         # (the stream beds only: the cells textured as above, then the bed patches alone given the water's-edge choice

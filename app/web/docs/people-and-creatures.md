@@ -51,6 +51,17 @@ there as the game's own places of its kind have them (a house, a tavern, a guild
 - **The household owns the beds and chests**, and **words of their own**: a greeting, their trade, someone in
   particular, a little secret and a rumour each, written from templates (no AI). Change them here or later in
   Dialogue; **✦** asks the Assistant to write a line better.
+- **Band** (dungeons): the people are one band, as the game's dungeons have them: bandits, smugglers, Daedra
+  worshippers, Sixth House cultists, necromancers or rogue mages, led by the strongest of them, all fighting on sight,
+  with their kind's **Loot** (crates, chests, sacks) against the walls. **No band** gives the place's usual people.
+- **Creatures**: caves, mines, tombs, ruins and other dungeons also get the creatures and creature lists the game's
+  own places of that kind hold, as many as theirs. A list (⟳) picks its creature by the player's level. Fish and other
+  swimmers go only where the floor is under the water. Click one to leave it out; **🎲** beside them gives others.
+- **Daily routines** (OpenMW): each sleeps by their own bed, eats at a table, works where they stand here and
+  spends the evening at the table or the fire, by the hours, each a little earlier or later than the rest. When you
+  come in they're where the hour puts them; while you watch they walk to the next spot. Anyone hurt, dead or with a
+  weapon out is left to the game. Guards and tavern patrons stay put. A script in your mod (**wsroutines**, on the
+  Scripts page) keeps the days; plain Morrowind ignores it.
 - Nothing is placed until you press **Place them**. One Undo takes them all back.
 
 **🧍 Someone who'd live here** (right-click a spot) does the same for one person.

@@ -388,7 +388,7 @@ const LS_KINDS = {
   stamp:   {icon: '◉', label: 'Stamp', color: '#ff8fb8', how: 'Click where it goes: a volcano, a crater, a dome, or a piece of the game\'s own land.'},
   spring:  {icon: '⇣', label: 'Spring', color: '#5fd0ff', point: true, how: 'Click where a river rises. It finds its own way down to the water.'},
   // (an outline that shapes nothing: pick it, and 🪨 Dress… keeps to it; landshapes leaves it out)
-  area:    {icon: '▢', label: 'Dress area', color: '#9be37a', closed: true, how: 'Click round a part of the land, then the first point to close. It changes no ground: pick it and 🪨 Dress… dresses only inside it.'},
+  area:    {icon: '▢', label: 'Dress area', color: '#9be37a', closed: true, how: 'Click round a part of the land, then the first point to close. It changes no ground: 🪨 Dress… can dress only inside it.'},
 };
 // sliders per kind: [param, label, min, max, step, tip]
 const LS_PARAMS = {
@@ -495,8 +495,8 @@ function lsHtml(){
     params += `<div class="msg" style="font-size:11.5px" title="Drag a point to move it; click the line to add a point; Ctrl+click a point to remove it; Shift+drag the line to move the whole shape">On the map: drag points · click the line to add · Ctrl+click removes · Shift+drag moves it all.${LS_KINDS[sel.kind].closed ? ' The last point joins the first.' : ''}</div>`;
     // (whether the marked cells cover it: a shape only changes the marked cells)
     const sc = lsShapeCells(sel), M = LM.data ? LM.data.marked : new Set(), inM = sc.filter(k => M.has(k)).length;
-    if (inM < sc.length) params += `<div class="msg warn" style="font-size:11.5px;margin-top:4px">${inM ? 'Partly outside the marked cells: only the marked part changes.' : 'Outside the marked cells: it changes nothing until they\'re marked.'}
-      <button class="btn sm" id="ls-markit" title="Mark every cell this shape reaches (towns left out; Shift+click: them too)">⛰ Mark its cells</button></div>`;
+    if (inM < sc.length && sel.kind !== 'area') params += `<div class="msg warn" style="font-size:11.5px;margin-top:4px">${sc.length - inM} town cell${sc.length - inM === 1 ? '' : 's'} left as ${sc.length - inM === 1 ? 'it is' : 'they are'}.
+      <button class="btn sm" id="ls-markit" title="Shift+click: mark the towns it reaches too, to shape them">⛰ Mark its cells</button></div>`;
   }
   return `<h3 style="display:flex;align-items:center;gap:4px">Shapes${lsGuide('Step 2: draw shapes')}<span style="flex:1"></span>
       <button class="btn sm" id="ls-undo" ${LM.hist.length ? '' : 'disabled'} title="Undo the last change to the shapes and their settings">↶</button><button class="btn sm" id="ls-redo" ${LM.fut.length ? '' : 'disabled'} title="Redo">↷</button></h3>
@@ -524,8 +524,9 @@ function lsPassesHtml(P){
   const info = LM.prevInfo || {};
   const chk = (id, on, text, tip) => `<label class="msg" style="display:flex;gap:6px;align-items:center" title="${esc(tip)}"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> <span style="flex:1;min-width:0;text-align:left">${text}</span></label>`;
   const sl = (key, grp, lab, mn, mx, st, v, tip) => `<label title="${esc(tip)}">${lab} <input type="range" data-${grp}="${key}" min="${mn}" max="${mx}" step="${st}" value="${v}"><span>${v}</span></label>`;
-  const R = P.protect = Object.assign({hold: true, margin: 512}, P.protect || {});
+  const R = P.protect = Object.assign({hold: true, margin: 512, fresh: true}, P.protect || {});
   return `<h3>Protection${lsGuide('Protection')}</h3><div class="lm-raise">
+      ${chk('lsr-fresh', R.fresh, 'Start from the land under my mod', 'Each Shape starts from the marked cells’ land as it is without your mod (the game’s, or the sea bed), so a moved or removed shape leaves nothing behind. Off: it starts from your land as it is now, keeping what you sculpted by hand')}
       ${chk('lsr-hold', R.hold, `Hold the ground under buildings, ruins and doors <span id="ls-held-t">${info.held != null ? '(' + info.held + ' here, outlined on the map)' : ''}</span>`, 'Under each building piece, ruin wall and door the ground stays exactly as it is, fading back to the plan over the margin round it, so nothing is buried or left standing in the air')}
       ${R.hold ? sl('margin', 'pr', 'Margin', 128, 2048, 64, R.margin, 'How far round each held piece the ground fades back to the plan') : ''}
       <div class="msg" style="font-size:11.5px">Rocks, trees, plants, crates, people and creatures move up or down with the ground instead, and walking paths too.</div>
@@ -669,6 +670,7 @@ function lsPassesBind(P){
   const A = P.passes, D = P.dress, R = P.protect;
   const on = (id, f) => { const el = $('#' + id); if (el) el.onchange = () => f(el); };
   on('lsr-hold', el => { R.hold = el.checked; lsChanged(true); });
+  on('lsr-fresh', el => { R.fresh = el.checked; lsChanged(true); });
   document.querySelectorAll('[data-pr]').forEach(r => r.oninput = () => { R[r.dataset.pr] = +r.value; r.nextElementSibling.textContent = r.value; lsChanged(); });
   on('lsp-detail', el => { A.detail = el.checked; lsChanged(); });
   on('lsp-settle', el => { A.settle = el.checked; lsChanged(); });
@@ -770,10 +772,26 @@ function lsChanged(rerender){
   if (LM.prevOn === false){ LM.prevOn = true; const pv = $('#ls-prev'); if (pv) pv.checked = true; }
   if (rerender) renderWside();
   clearTimeout(LM.saveT);
-  LM.saveT = setTimeout(async () => { try { const r = await post('/api/land/plan', {plan: LM.plan}); LM.plan.layers.forEach((L, i) => { L.p = r.layers[i] ? r.layers[i].p : L.p; }); } catch (e){ toast(e.message, true); } }, 500);
+  LM.saveT = setTimeout(async () => { try { const r = await post('/api/land/plan', {plan: LM.plan}); LM.plan.layers.forEach((L, i) => { L.p = r.layers[i] ? r.layers[i].p : L.p; }); } catch (e){ toast(e.message, true); } lsAutoMark(); }, 500);
   lsPreviewSoon();
   lmFlowSoon();                                       // (the water follows the plan's land, and Stream beds' brightness)
   drawMap();
+}
+// Shapes mark the cells they reach (the user, 2026-10-30: "Shapes mark own cells"): after every change to the plan,
+// the cells any shape now reaches are marked, towns left out (as marking by hand; ⛰ Mark its cells with Shift takes
+// them). Marks are only ever added here: a moved shape's old cells stay marked, so Start from the land under my mod
+// clears its old land there. Dress areas change no ground and mark nothing.
+async function lsAutoMark(){
+  if (!LM.data || !LM.plan || !(S.summary && S.summary.project)) return;
+  const want = new Set();
+  for (const L of LM.plan.layers) if (L.on !== false && L.kind !== 'area' && L.pts && L.pts.length) lsShapeCells(L).forEach(k => want.add(k));
+  const add = [...want].filter(k => !LM.data.marked.has(k) && !(lmCell(k) && lmCell(k)[0] === 'settled'));
+  if (!add.length) return;
+  try {
+    lmMarksAre((await post('/api/land/marks', {add})).marks);
+    toast(`Marked ${add.length} more cell${add.length === 1 ? '' : 's'} the shapes reach.`);
+    renderWside(); drawMap();
+  } catch (e){ toast(e.message, true); }
 }
 function lsPreviewSoon(){
   clearTimeout(LM.prevT);
@@ -785,10 +803,14 @@ async function lsPreview(){
   // (nothing to preview: also stops one still on its way from painting the old plan back. With no shapes left after a
   // Shape them, the preview is what Shape would make now: the ground before it, not the shaped land drawn on)
   if (!LM.data.marks.length || (!LM.plan.layers.length && !LM.shapedOnce)){ ++LM.prevN; LM.prev = null; LM.prevStale = false; drawMap(); return; }
+  // (one preview at a time: changes made while it works are previewed once it's back, the latest only. Each edit
+  // sent its own, and on a big plan with rock layers they queued up on the server: 30 seconds behind, PIN2 2026-10-30)
+  if (LM.prevBusy){ LM.prevAgain = true; return; }
   const ask = ++LM.prevN;
+  LM.prevBusy = true;
   try {
     const r = await post('/api/land/plan/preview', {cells: LM.data.marks, plan: LM.plan});
-    if (ask !== LM.prevN) return;                     // (a newer one is on its way)
+    if (ask !== LM.prevN || LM.prevAgain) return;     // (a newer one is on its way, or wanted)
     LM.prevStale = false;
     LM.prevData = r; LM.prevTex = r.textures; LM.prevInfo = r.info || {};
     lsBuildPrev(); drawMap();
@@ -798,6 +820,10 @@ async function lsPreview(){
     const hk = lsHereRegions().join('|'); if (hk !== LM.hereKey){ LM.hereKey = hk; renderWside(); }
     const ht = $('#ls-held-t'); if (ht && LM.prevInfo.held != null) ht.textContent = `(${LM.prevInfo.held} here, outlined on the map)`;
   } catch (e){ if (ask === LM.prevN){ LM.prevStale = false; drawMap(); } const n = $('#ls-note'); if (n) n.textContent = e.message; }
+  finally {
+    LM.prevBusy = false;
+    if (LM.prevAgain){ LM.prevAgain = false; lsPreview(); }
+  }
 }
 LM.prevN = 0;
 
@@ -852,15 +878,6 @@ function lsFinish(){
   P.layers.push(L);
   LM.sel = P.layers.length - 1;
   lsChanged(true);
-  // (no cells marked yet: the shape marks the ones it reaches, towns left out, so it shows and can be shaped
-  // at once; the user drew a river with nothing marked and it did nothing)
-  if (LM.data && !LM.data.marks.length){
-    const add = lsShapeCells(L).filter(k => { const c = lmCell(k); return !(c && c[0] === 'settled'); });
-    if (add.length) post('/api/land/marks', {add}).then(r => {
-      lmMarksAre(r.marks); renderWside(); drawMap();
-      toast(`Marked the ${add.length} cell${add.length === 1 ? '' : 's'} it reaches${add.length < lsShapeCells(L).length ? ' (towns left out)' : ''}.`);
-    }).catch(err => toast(err.message, true));
-  }
 }
 function lsHook(){
   if (LM.hooked) return;
@@ -1130,8 +1147,20 @@ async function lsApply(btn){
   if (!await needProject()) return;
   btn.disabled = true; btn.textContent = `Shaping ${LM.data.marks.length} cell${LM.data.marks.length === 1 ? '' : 's'}…`;
   await lmKeepBefore('shaping');
+  // (a bar on the Shape buttons, filled as the server says how far it has got: PIN2 2026-10-30, "so I know it's
+  // actually still shaping it and the program didn't break". landshapes.PROGRESS)
+  const poll = setInterval(async () => {
+    let p; try { p = await api('/api/land/progress'); } catch (e){ return; }
+    if (!p || !p.on) return;
+    const pct = Math.round(p.frac * 100);
+    for (const b of document.querySelectorAll('#ls-apply, #ls-apply-top')){
+      b.disabled = true; b.textContent = `${p.what}… ${pct}%`; b.title = 'Shaping: ' + p.what;
+      b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`;
+    }
+  }, 600);
   try {
     const r = await post('/api/land/plan/apply', {cells: LM.data.marks, plan: LM.plan});
+    clearInterval(poll);
     toast(`Shaped ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.new ? ` (${r.new} new)` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed the ground` : ''}${r.shaded && r.shaded.length ? '; shaded' : ''}${r.rocks ? `; ${r.rocks} rocks set` : ''}${r.assigned ? `; ${r.assigned} put in the region` : ''}. Changes to the ground show in game after a restart.`);
     // (the land made, against the region's own figures from the land survey)
     const m = r.measured || {}, figs = Object.entries(r.region_figures || {});
@@ -1148,6 +1177,10 @@ async function lsApply(btn){
     LM.shapedOnce = true;
     lmFlowSoon(); drawMap(); renderWside();
   } catch (err){ const n = $('#ls-note'); if (n) n.textContent = err.message; btn.disabled = false; btn.textContent = 'Shape the marked cells'; }
+  finally {
+    clearInterval(poll);
+    for (const b of document.querySelectorAll('#ls-apply, #ls-apply-top')) b.style.background = '';
+  }
 }
 async function lmRaise(btn){
   if (!await needProject()) return;
@@ -1170,9 +1203,10 @@ async function lmDressAsk(){
   const cells = (LM.data && LM.data.marks || []).slice(); if (!cells.length) return;
   let looks = [];
   try { looks = (await api('/api/land/looks')).looks; } catch (e){}
-  // (a picked shape with an outline: dress only inside it)
-  const L = LM.plan && LM.sel != null ? LM.plan.layers[LM.sel] : null;
-  const ring = L && LS_KINDS[L.kind] && LS_KINDS[L.kind].closed && L.pts && L.pts.length >= 3 ? L.pts : null;
+  // (shapes with an outline: dress only inside one; the picked one, else the first Dress area)
+  const rings = (LM.plan && LM.plan.layers || []).map((L, i) => ({L, i}))
+    .filter(o => LS_KINDS[o.L.kind] && LS_KINDS[o.L.kind].closed && o.L.pts && o.L.pts.length >= 3);
+  const pick = rings.find(o => o.i === LM.sel) || rings.find(o => o.L.kind === 'area');
   const D = LM.dress = LM.dress || {rocks: true, growth: true, amt: 1, like: ''};
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(440px,92vw)"><h3 style="margin-top:0">🪨 Dress ${cells.length} cell${cells.length === 1 ? '' : 's'}</h3>
@@ -1183,7 +1217,8 @@ async function lmDressAsk(){
       <select id="lmd-like" style="flex:1"><option value="">The land nearest</option>${looks.map(o => `<option value="${esc(o.region)}">${esc(o.name)}</option>`).join('')}</select></label>
     <label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="1: as thickly as the game dresses such land">Amount
       <input type="range" id="lmd-amt" min="0.25" max="2" step="0.25" value="${D.amt}" style="flex:1"><span id="lmd-amtv">${D.amt}</span></label>
-    ${ring ? `<label class="msg" style="display:block;margin-top:8px" title="Only the land inside the picked shape's outline, in the marked cells"><input type="checkbox" id="lmd-ring" checked> Only inside ${esc(L.name || LS_KINDS[L.kind].label)}</label>` : ''}
+    ${rings.length ? `<label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="Only the land inside a shape's outline, in the marked cells">Where
+      <select id="lmd-ring" style="flex:1"><option value="">All marked cells</option>${rings.map(o => `<option value="${o.i}" ${pick === o ? 'selected' : ''}>Inside ${esc(o.L.name || LS_KINDS[o.L.kind].label)}</option>`).join('')}</select></label>` : ''}
     <div class="msg" style="font-size:11.5px;margin-top:6px">The first time with a region takes a few seconds.</div>
     <div class="foot"><button class="btn" id="lmd-no">Cancel</button><button class="btn primary" id="lmd-ok">Dress</button></div></div>`;
   document.body.appendChild(bg);
@@ -1198,10 +1233,10 @@ async function lmDressAsk(){
     D.rocks = bg.querySelector('#lmd-rocks').checked; D.growth = bg.querySelector('#lmd-grow').checked;
     D.like = bg.querySelector('#lmd-like').value; D.amt = +amt.value;
     if (!D.rocks && !D.growth) return toast('Pick rocks, trees and plants, or both.', true);
-    const inRing = ring && bg.querySelector('#lmd-ring') && bg.querySelector('#lmd-ring').checked;
+    const rs = bg.querySelector('#lmd-ring'), ring = rs && rs.value !== '' ? LM.plan.layers[+rs.value].pts : null;
     ok.disabled = true; ok.innerHTML = '<span class="spin"></span>Dressing…';
     try {
-      const r = await post('/api/land/dress', {cells, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: inRing ? ring : null});
+      const r = await post('/api/land/dress', {cells, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: ring});
       close();
       const what = [r.growth ? `${r.growth} trees and plants` : '', r.rocks ? `${r.rocks} rocks` : ''].filter(Boolean).join(' and ');
       toast(what ? `Set ${what} in ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.looks.length ? ', like ' + r.looks.join(', ') : ''}. Undo takes them back.`

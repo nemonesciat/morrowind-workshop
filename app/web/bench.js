@@ -76,11 +76,13 @@ async function benchOpen(){
         <button class="btn sm" id="bn-fill" title="Put the style's own doors in doorways and windows in window holes, where the game puts them">🚪 Fill openings</button>
         <button class="btn sm" id="bn-check" title="Gaps in the walls, an open roof, pieces touching nothing">🔍 Check</button>
         <button class="btn sm" id="bn-move" title="Move handles (T)">✥ Move</button><button class="btn sm" id="bn-turn" title="Turn handles (R): drag the ring">⟳ Turn</button><button class="btn sm" id="bn-tilt" title="Tilt handles: the red and green rings tip it, the blue one turns it">⤡ Tilt</button><button class="btn sm" id="bn-scale" title="Size handles: drag any handle (the game sizes evenly, ×0.5 to ×2)">⤢ Size</button><button class="btn sm" id="bn-space" title="Handles on the world's axes or on the piece's own, as it is turned">${benchSpace() === 'local' ? '⟀ Own axes' : '✛ World axes'}</button>
-        <select id="bn-rsnap" title="Snap the turn ring to steps" style="width:auto">${BN_RSNAP.map(d => `<option value="${d}" ${d === BN.rsnap ? 'selected' : ''}>${d ? 'Snap ' + d + '°' : 'Snap off'}</option>`).join('')}</select>
+        <select id="bn-msnap" title="Moving a piece: to where the game joins it, else flush against the piece beside it; to the game's joins only; or free (Alt while dragging: free for that drag). Arrows nudge 1 (Shift 16), Page Up / Down raise and lower" style="width:auto">${[['all', 'Joins & flush'], ['joins', 'Joins only'], ['free', 'Free']].map(([v, t]) => `<option value="${v}" ${v === benchMoveSnap() ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <select id="bn-rsnap" title="Steps for the turn ring" style="width:auto">${BN_RSNAP.map(d => `<option value="${d}" ${d === BN.rsnap ? 'selected' : ''}>${d ? 'Turn ' + d + '°' : 'Turn free'}</option>`).join('')}</select>
         <select id="bn-grid" title="Moving a piece that joins nothing: to a grid of this step (a join the game makes still wins)" style="width:auto">${[0, 16, 64, 128, 256].map(d => `<option value="${d}" ${d === benchGrid() ? 'selected' : ''}>${d ? 'Grid ' + d : 'Grid off'}</option>`).join('')}</select>
         <select id="bn-pivot" title="What several pieces turn about with [ ], the Turn box and the menu's turns" style="width:auto"><option value="piece" ${benchPivot() === 'piece' ? 'selected' : ''}>About the piece</option><option value="middle" ${benchPivot() === 'middle' ? 'selected' : ''}>About the middle</option></select>
         <label id="bn-turnbox" title="The selected piece's turn, in degrees ([ ] 15°, Shift+[ ] 1°)" style="display:none;font-size:12px">° <input id="bn-deg" type="number" step="1" style="width:58px">
           <span title="The selected pieces' size (×0.5 to ×2)">× <input id="bn-size" type="number" step="0.05" min="0.5" max="2" style="width:58px"></span>
+          <span title="Where the selected piece stands: type to move it (the others selected come too)">X <input id="bn-px" type="number" step="1" style="width:68px"> Y <input id="bn-py" type="number" step="1" style="width:68px"> Z <input id="bn-pz" type="number" step="1" style="width:58px"></span>
           <span id="bn-dims" class="msg" title="How big the selection is: across, deep and high, in the game's units (a cell is 8192, a floor tile mostly 256 or 512)"></span></label>
         <button class="btn sm" id="bn-undo" title="Undo on the bench (Ctrl+Z)">↶</button><button class="btn sm" id="bn-redo" title="Redo (Ctrl+Y)">↷</button>
         <button class="btn sm" id="bn-clear" title="Take everything off the bench">Clear</button>
@@ -110,6 +112,16 @@ async function benchOpen(){
   $('#bn-size').onchange = e => { const s = parseFloat(e.target.value); if (isFinite(s)) benchSizeAll(s); else benchTurnBox(); };
   $('#bn-size').onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); };
   $('#bn-rsnap').onchange = e => { BN.rsnap = +e.target.value; try { localStorage.setItem('ws-bench-rsnap', BN.rsnap); } catch (er) {} benchSync(); };
+  $('#bn-msnap').onchange = e => { BN.msnap = e.target.value; try { localStorage.setItem('ws-bench-msnap', BN.msnap); } catch (er) {} };
+  ['x', 'y', 'z'].forEach((a, i) => {
+    const inp = $('#bn-p' + a);
+    inp.onchange = () => {
+      const p = BN.sel && BN.pieces.find(q => q.k === BN.sel), v = parseFloat(inp.value);
+      if (!p || !isFinite(v)) return benchTurnBox();
+      const d = [0, 0, 0]; d[i] = v - p.p[i]; benchNudge(d);
+    };
+    inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); };
+  });
   $('#bn-grid').onchange = e => { BN.grid = +e.target.value; try { localStorage.setItem('ws-bench-grid', BN.grid); } catch (er) {} };
   $('#bn-pivot').onchange = e => { BN.pivot = e.target.value; try { localStorage.setItem('ws-bench-pivot', BN.pivot); } catch (er) {} };
   $('#bn-deg').onchange = e => {
@@ -299,6 +311,17 @@ function benchFly(dt){
 // (the handles on the world's axes or on the piece's own, as the 3D view's ✛/⟀; PIN2: "the local axis doesn't
 // exist in the prefab tool")
 // (a grid step for moving a piece that joins nothing, and what several pieces turn about: kept as the handles' space is)
+function benchMoveSnap(){
+  if (!BN.msnap){ try { BN.msnap = localStorage.getItem('ws-bench-msnap') || 'all'; } catch (e){ BN.msnap = 'all'; } }
+  return BN.msnap;
+}
+// the selection moved by d [dx, dy, dz] exactly: no joins, no flush (the arrows, Page Up / Down and the X Y Z boxes)
+function benchNudge(d){
+  const ps = benchSelected(); if (!ps.length) return;
+  benchPush();
+  for (const q of ps){ q.p = q.p.slice(); for (let i = 0; i < 3; i++) q.p[i] = +((q.p[i] || 0) + d[i]).toFixed(2); }
+  benchSync(); benchChanged(); benchTurnBox();
+}
 function benchGrid(){
   if (BN.grid == null){ try { BN.grid = +localStorage.getItem('ws-bench-grid') || 0; } catch (e){ BN.grid = 0; } }
   return BN.grid;
@@ -364,6 +387,7 @@ function benchTurnBox(pose){
   const p = BN.sel && BN.pieces.find(q => q.k === BN.sel);
   box.style.display = p ? '' : 'none';
   if (p && document.activeElement !== inp) inp.value = +(((pose || p.p)[5] || 0) * 180 / Math.PI).toFixed(1);
+  ['x', 'y', 'z'].forEach((a, i) => { const pi = $('#bn-p' + a); if (p && pi && document.activeElement !== pi) pi.value = Math.round((pose || p.p)[i] || 0); });
   const si = $('#bn-size'), so = p && BN.objs.get(p.k);
   if (p && si && document.activeElement !== si) si.value = +(BN.drag && so && BN.drag.o === so ? so.g.scale.x : (p.s || 1)).toFixed(2);
   // (the selection's size: its world box, across × deep × high)
@@ -481,6 +505,7 @@ function benchBind(el){
     const k = (e.key || '').toLowerCase(), ctrl = e.ctrlKey || e.metaKey, mv = v3MoveKey(e);
     if (mv && !ctrl && !e.altKey){ BN.keys[mv] = true; e.preventDefault(); return; }
     if (e.key === 'Shift'){ BN.keys.shift = true; return; }
+    if (e.key === 'Alt'){ BN.keys.alt = true; e.preventDefault(); return; }
     if (ctrl && k === 'z'){ e.preventDefault(); benchUndo(); return; }
     if (ctrl && k === 'y'){ e.preventDefault(); benchRedo(); return; }
     if (k === 'escape'){ BN.keys = {}; if (BN.paste){ benchPasteEnd(); return; } if (BN.ex){ benchExampleEnd(); return; } BN.sel = null; BN.multi = new Set(); benchSync(); return; }
@@ -491,6 +516,10 @@ function benchBind(el){
     if (k === 't' || k === 'g'){ BN.mode = 'translate'; benchSync(); return; }
     const ps = benchSelected();
     if (!ps.length) return;
+    // (fine moves: the arrows along the world's X and Y, by 1, Shift 16; Page Up / Down up and down)
+    const step = e.shiftKey ? 16 : 1, nudge = {arrowleft: [-step, 0, 0], arrowright: [step, 0, 0], arrowup: [0, step, 0], arrowdown: [0, -step, 0],
+                                                pageup: [0, 0, step], pagedown: [0, 0, -step]}[k];
+    if (nudge && !ctrl){ e.preventDefault(); benchNudge(nudge); return; }
     if (k === 'delete' || k === 'backspace'){ e.preventDefault(); benchPush(); BN.pieces = BN.pieces.filter(q => !ps.includes(q)); BN.sel = null; BN.multi = new Set(); benchSync(); benchChanged(); }
     // (turning and copying keep off the flying keys: a held D copied the piece over and over, 2.5.2)
     // ([ ] 15°, Shift 1°: by where the key sits, as Shift turns [ into { on most keyboards)
@@ -508,7 +537,10 @@ function benchBind(el){
   window.addEventListener('keyup', e => {
     const mv = v3MoveKey(e); if (mv) BN.keys[mv] = false;
     if (e.key === 'Shift') BN.keys.shift = false;
+    if (e.key === 'Alt') BN.keys.alt = false;
   }, true);
+  // (Alt held while dragging a handle: wherever the focus is, as the drag may have taken it)
+  window.addEventListener('keydown', e => { if (e.key === 'Alt' && BN.open) BN.keys.alt = true; }, true);
   el.addEventListener('blur', () => { BN.keys = {}; });
 }
 
@@ -933,8 +965,9 @@ function benchSnap(){
   }
   if (BN.mode !== 'translate'){ BN.selBox.setFromObject(g); benchTurnBox(benchPoseOf(g)); benchRide(D); return; }
   if (D.at && g.position.distanceTo(D.at) > 800) D.fetching = benchSnapsFetch(D);
+  const ms = BN.keys && BN.keys.alt ? 'free' : benchMoveSnap();
   let best = null;
-  for (const s of D.snaps || []){
+  for (const s of ms === 'free' ? [] : D.snaps || []){
     const dx = s.p[0] - g.position.x, dy = s.p[1] - g.position.y, dz = s.p[2] - g.position.z;
     if (Math.hypot(dx, dy) >= BN_SNAP || Math.abs(dz) >= BN_SNAP) continue;
     const d = Math.hypot(dx, dy) + Math.abs(dz) * 0.5 - 30 * ((s.k || 1) - 1) - 6 * Math.log2(1 + s.n);
@@ -953,10 +986,10 @@ function benchSnap(){
       // (on the grid instead of flush with a neighbour: the step chosen, height too)
       g.position.set(Math.round(g.position.x / st) * st, Math.round(g.position.y / st) * st, Math.round(g.position.z / st) * st);
       benchNote(`On the ${st} grid`);
-    } else {
+    } else if (ms === 'all'){
       const n = v3SnapFlush(D, g);
       benchNote(n ? `Flush with ${n.r.id}` : '');
-    }
+    } else benchNote(ms === 'free' ? 'Free' : '');
   }
   g.updateMatrixWorld(true);
   BN.selBox.setFromObject(g);

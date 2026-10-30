@@ -149,11 +149,85 @@ async function fgOwnDraw(){
   box.innerHTML = `<div class="msg fg-ownl">${models ? 'Model ' + fgModelSel('id="fg-ownm"', S_.own, "The look's", FG.kind, tl)
     : '<span title="Drop a .nif, .obj, .glb or .fbx on the Library page">Your own models come from the Library.</span>'}</div>
     ${parts.length && models ? `<details class="fgw-more" ${Object.keys(S_.worn).length ? 'open' : ''}><summary title="Each worn mesh must be made for its place on the body; the Workshop doesn't fit it on">Worn parts (${parts.length})${Object.keys(S_.worn).length ? `, ${Object.keys(S_.worn).length} your own` : ''}</summary>
-      ${parts.map(p => `<div class="msg fg-ownl">${esc(p.label)} ${fgModelSel(`data-fgw="${p.part}"`, S_.worn[p.part] || '', "The look's", FG.kind, tl)}</div>`).join('')}</details>` : ''}
-    <button class="btn sm" id="fg-skin" style="margin-top:4px" ${FG.look == null ? 'disabled' : ''}>🎨 Its pictures${ns ? ` (${ns} swapped)` : '…'}</button>`;
-  const om = box.querySelector('#fg-ownm'); if (om) om.onchange = () => { S_.own = om.value; };
-  box.querySelectorAll('[data-fgw]').forEach(s => s.onchange = () => { if (s.value) S_.worn[s.dataset.fgw] = s.value; else delete S_.worn[s.dataset.fgw]; });
+      ${parts.map(p => `<div class="msg fg-ownl">${esc(p.label)} ${fgModelSel(`data-fgw="${p.part}"`, S_.worn[p.part] || '', "The look's", FG.kind, tl)}${S_.worn[p.part] && p.model ? (p.skinned
+        ? '<span title="This part bends with the body: a model for it must be weighted to the skeleton (in Blender)">⚠</span>'
+        : `<button class="btn sm" data-fgwfit="${p.part}" title="Lay it over the game&#39;s ${esc(p.label.toLowerCase())}: turned, placed and sized to it">✋</button>`) : ''}</div>
+        <div data-fgwbox="${p.part}"></div>`).join('')}</details>` : ''}
+    <button class="btn sm" id="fg-skin" style="margin-top:4px" ${FG.look == null ? 'disabled' : ''}>🎨 Its pictures${ns ? ` (${ns} swapped)` : '…'}</button>
+    ${FG.kind === 'weapon' && S_.own ? '<button class="btn sm" id="fg-fit" style="margin-top:4px" title="Turn, place and size your model so the hand holds it as the game&#39;s own of this kind">✋ Fit to the hand…</button>' : ''}
+    <div id="fg-fitbox"></div>`;
+  const om = box.querySelector('#fg-ownm'); if (om) om.onchange = () => { S_.own = om.value; fgOwnDraw(); };
+  const fb = box.querySelector('#fg-fit'); if (fb) fb.onclick = () => fgFit(S_.own);
+  box.querySelectorAll('[data-fgw]').forEach(s => s.onchange = () => { if (s.value) S_.worn[s.dataset.fgw] = s.value; else delete S_.worn[s.dataset.fgw]; fgOwnDraw(); });
+  box.querySelectorAll('[data-fgwfit]').forEach(b => b.onclick = () => { const p = parts.find(x => String(x.part) === b.dataset.fgwfit); fgWornFit(p, S_.worn[p.part]); });
   box.querySelector('#fg-skin').onclick = () => fgSkinPicker([FG.look], S_.skin, m => { S_.skin = m; fgOwnDraw(); });
+}
+// (your own weapon model in the hand the game's way: its length along +Y from the grip, the grip where the game's
+// own of the type have it, the game's length; shown over a faint game weapon of the type; Use it writes a fitted
+// copy into the Library and takes it as the model: weaponfit.py)
+async function fgFit(lib){
+  const box = FG.bg && FG.bg.querySelector('#fg-fitbox'); if (!box) return;
+  const F = {lib, flip: null, turn: 0, grip: null, size: null, res: null};
+  const q = () => '/api/forge/fitview?' + new URLSearchParams(Object.fromEntries(Object.entries({lib, type: FG.type, flip: F.flip == null ? '' : F.flip ? 1 : 0,
+    turn: F.turn, grip: F.grip == null ? '' : F.grip, size: F.size == null ? '' : F.size}).map(([k, v]) => [k, String(v)])));
+  const draw = async () => {
+    let r;
+    try { r = await api(q()); } catch (e){ box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    if (r.error){ box.innerHTML = `<div class="msg err">${esc(r.error)}</div>`; return; }
+    F.res = r; const c = r.choices; F.flip = c.flip; F.grip = c.grip; F.size = c.size;
+    box.innerHTML = `<div class="mv" id="fg-fitview" style="height:200px;margin-top:6px" title="Yours, over a faint ${esc(r.ref || r.type)}; the hand holds it where they cross the origin"></div>
+      <div class="msg fg-ownl"><button class="btn sm" data-ff="flip" title="The other end in the hand">⇅ Flip</button><button class="btn sm" data-ff="turn" title="A quarter turn round its length">⟳ Turn</button>
+        <label title="Where the hand holds it, from the end">Grip <input type="range" id="fg-fgrip" min="0" max="1" step="0.01" value="${c.grip}"></label></div>
+      <div class="msg fg-ownl"><label title="Its length in game units; the game's ${esc(r.type)}s are about ${r.guess.game_length}">Length <input class="inp" id="fg-flen" type="number" min="1" step="1" value="${Math.round(r.length)}" style="width:70px"></label>
+        <span style="color:var(--muted)">game's ${r.guess.game_length}</span><span style="flex:1"></span><button class="btn sm primary" data-ff="use">Use it</button><button class="btn sm" data-ff="close">✕</button></div>`;
+    showModel(box.querySelector('#fg-fitview'), {_url: q()}, 'forgefit');
+    box.querySelectorAll('[data-ff]').forEach(b => b.onclick = async () => {
+      const a = b.dataset.ff;
+      if (a === 'flip'){ F.flip = !F.flip; draw(); }
+      else if (a === 'turn'){ F.turn = (F.turn + 1) % 4; draw(); }
+      else if (a === 'close') box.innerHTML = '';
+      else if (a === 'use'){
+        b.disabled = true;
+        try {
+          const o = await post('/api/forge/fit', {lib, type: FG.type, flip: F.flip, turn: F.turn, grip: F.grip, size: F.size});
+          FG.lib = null; await fgLib(); FG.style.own = o.id; toast('Fitted: ' + o.name); fgOwnDraw();
+        } catch (e){ b.disabled = false; toast(e.message, true); }
+      }
+    });
+    box.querySelector('#fg-fgrip').onchange = e => { F.grip = +e.target.value; draw(); };
+    box.querySelector('#fg-flen').onchange = e => { const L = +e.target.value; if (L > 0) { F.size = F.size * L / F.res.length; draw(); } };
+  };
+  box.innerHTML = '<div class="msg"><span class="spin"></span>Fitting…</div>';
+  draw();
+}
+// (your own model for a worn part that rides one bone, a helmet, a pauldron, a shield: laid over the game's own piece
+// for it, the 24 square ways tried and the closest kept; turned, flipped and sized by hand over it: weaponfit.onto)
+async function fgWornFit(p, lib){
+  const box = FG.bg && FG.bg.querySelector(`[data-fgwbox="${p.part}"]`); if (!box) return;
+  const F = {turn: 0, flip: false, size: 1};
+  const q = () => '/api/forge/wornfitview?' + new URLSearchParams({lib, model: p.model, turn: String(F.turn), flip: F.flip ? '1' : '0', size: String(F.size)});
+  const draw = async () => {
+    box.innerHTML = `<div class="mv" style="height:180px;margin-top:4px" title="Yours over the game's ${esc(p.label.toLowerCase())}, faint"></div>
+      <div class="msg fg-ownl"><button class="btn sm" data-wf="turn" title="A quarter turn round up">⟳ Turn</button><button class="btn sm" data-wf="flip" title="Upside down">⇅ Flip</button>
+        <label title="Its size against the game's piece">Size <input type="range" min="0.5" max="1.5" step="0.02" value="${F.size}" data-wf="size"></label>
+        <span style="flex:1"></span><button class="btn sm primary" data-wf="use">Use it</button><button class="btn sm" data-wf="close">✕</button></div>`;
+    showModel(box.querySelector('.mv'), {_url: q()}, 'forgewornfit');
+    box.querySelectorAll('button[data-wf]').forEach(b => b.onclick = async () => {
+      const a = b.dataset.wf;
+      if (a === 'turn'){ F.turn = (F.turn + 1) % 4; draw(); }
+      else if (a === 'flip'){ F.flip = !F.flip; draw(); }
+      else if (a === 'close') box.innerHTML = '';
+      else if (a === 'use'){
+        b.disabled = true;
+        try {
+          const o = await post('/api/forge/wornfit', {lib, model: p.model, turn: F.turn, flip: F.flip, size: F.size});
+          FG.lib = null; await fgLib(); FG.style.worn[p.part] = o.id; toast('Fitted: ' + o.name); fgOwnDraw();
+        } catch (e){ b.disabled = false; toast(e.message, true); }
+      }
+    });
+    box.querySelector('input[data-wf=size]').onchange = e => { F.size = +e.target.value; draw(); };
+  };
+  draw();
 }
 // (the pictures the pieces use, each swapped for one of the Library's: a skin, over one piece or a whole set)
 async function fgSkinPicker(recs, mapping, onDone){
@@ -162,15 +236,29 @@ async function fgSkinPicker(recs, mapping, onDone){
   try { t = (await post('/api/forge/textures', {recs})).textures; } catch (e){ return toast(e.message, true); }
   if (!t.length) return toast('Its models have no pictures to swap.', true);
   const pics = fgLibPics(), many = recs.length > 1;
+  // (the browser can't show .dds: those are drawn through the 3D view's swatches, world3d.js v3SwatchScan)
+  const pic = (img, file) => {
+    if (!file){ img.removeAttribute('src'); img.style.visibility = 'hidden'; return; }
+    img.style.visibility = '';
+    if (/\.dds$/i.test(file) && typeof v3SwatchScan === 'function'){ img.dataset.swatch = file; delete img.dataset.done; ensureThree().then(() => v3SwatchScan(img.parentNode)); }
+    else { delete img.dataset.swatch; img.src = '/api/file?path=' + encodeURIComponent(file); }
+  };
+  const libFile = tex => { const l = pics.find(p => p.texture === tex); return l && l.file; };
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.style.zIndex = 1300;
   bg.innerHTML = `<div class="modal" style="width:min(680px,96vw)"><h2 title="New copies of the models are made; the originals stay as they are">🎨 ${many ? 'The set\'s pictures' : 'Its pictures'}</h2>
-    ${many ? '<div class="msg">A swap changes every piece that uses it.</div>' : ''}
-    <div class="fg-skin">${t.map((x, n) => `<div class="fg-skinr">${x.path ? `<img src="/api/file?path=${encodeURIComponent(x.path)}" onerror="this.style.visibility='hidden'">` : '<span></span>'}
-      <div><div class="msg">${esc(x.name)}${many ? ` <span class="faint">· ${x.n} of ${recs.length}</span>` : ''}</div>
+    <div class="msg">The pictures painted on its model${many ? 's' : ''}. Swap any for one of your Library's pictures.${many ? ' A swap changes every piece that uses it.' : ''}</div>
+    <div class="fg-skin">${t.map((x, n) => `<div class="fg-skinr"><img data-ski="${n}" onerror="this.style.visibility='hidden'">
+      <div><div class="msg" title="${esc(x.name)}">${esc(x.name.replace(/^.*\\/, '').replace(/\.(dds|tga|bmp|png)$/i, ''))}${many ? ` <span class="faint">· ${x.n} of ${recs.length}</span>` : ''}</div>
       <select class="inp" data-sk="${n}"><option value="">Keep</option>${pics.map(l => `<option value="${esc(l.texture)}" ${mapping[x.name] === l.texture ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div></div>`).join('')}</div>
-    ${pics.length ? '' : '<div class="msg warn">No pictures in your Library yet.</div>'}
+    ${pics.length ? '' : '<div class="msg warn">No pictures in your Library yet: add some in Library → Pictures.</div>'}
     <div class="actions"><button class="btn primary" id="fsk-ok">Use these</button><button class="btn" id="fsk-no">Cancel</button></div></div>`;
   document.body.appendChild(bg);
+  // (each row shows the picture it will have: the game's, or the Library's one picked for it)
+  bg.querySelectorAll('[data-sk]').forEach(s => {
+    const n = +s.dataset.sk, img = bg.querySelector(`[data-ski="${n}"]`);
+    const show = () => pic(img, s.value ? libFile(s.value) : t[n].path);
+    s.onchange = show; show();
+  });
   bg.querySelector('#fsk-no').onclick = () => bg.remove();
   bg.querySelector('#fsk-ok').onclick = () => {
     const m = {};
@@ -425,6 +513,9 @@ async function fgWorld(){
   const box = FG.bg && FG.bg.querySelector('#fg-body'); if (!box) return;
   if (FG.world && FG.world.set && FG.world.whole) return fgWorldSet();
   box.innerHTML = '<div class="msg"><span class="spin"></span>Looking at where the game puts pieces like this…</div>';
+  // (the last piece's findings go first: after placing, its choices were cleared and read again before they
+  // were set up, "Cannot read properties of null (reading 'on')", the user 2026-10-30)
+  FG.world.data = null;
   fgWorldReady();
   let d;
   // (what it was forged as, when known: its name doesn't always say, "Sunsteel" isn't steel)
@@ -515,7 +606,7 @@ function fgExtrasBind(box, W_, redraw){
   f('fgx-oid', 'id'); f('fgx-olv', 'level', true); f('fgx-ocn', 'chance', true);
 }
 function fgExtrasPicks(W_){
-  const o = W_.own;
+  const o = W_.own || {};
   return {gives: W_.gives.map(x => x.id), xsell: W_.xsell.map(x => x.id),
           own_list: o.on && o.id && (o.into.length || o.gives.length) ? {id: o.id, level: o.level || 1, chance_none: o.chance || 0,
             into: o.into.map(x => ({list: x.id, level: x.level || o.level || 1})), gives: o.gives.map(x => x.id)} : null};
@@ -587,6 +678,7 @@ function fgWorldModesBind(box){
 async function fgWorldSet(){
   const box = FG.bg.querySelector('#fg-body'), W_ = FG.world;
   box.innerHTML = '<div class="msg"><span class="spin"></span>Looking at where the game puts pieces like these…</div>';
+  W_.sd = null;
   fgWorldReady();
   let d;
   try { d = await post('/api/forge/setplaces', {ids: W_.set.map(p => p.id), mat: W_.between ? null : W_.mat, between: W_.between}); }
@@ -763,8 +855,9 @@ function fgCss(){
   .flp-grid{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));max-height:56vh}
   .fg-look small{font-size:10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .fs-lk{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.fs-lk select{max-width:200px;padding:2px 4px;font-size:12px}
-  .fg-skin{display:flex;flex-direction:column;gap:8px;margin:10px 0;max-height:56vh;overflow:auto}
-  .fg-skinr{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center}
+  .fg-skin{display:flex;flex-direction:column;gap:8px;margin:10px 0;max-height:56vh;overflow-y:auto;overflow-x:hidden}
+  .fg-skinr{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:center}
+  .fg-skinr select{width:100%;max-width:100%;box-sizing:border-box}
   .fg-skinr img{width:64px;height:64px;object-fit:cover;border-radius:6px;background:#000}`;
   document.head.appendChild(c);
 }

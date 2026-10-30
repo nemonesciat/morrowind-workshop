@@ -16,6 +16,8 @@ each; the builder then puts the stairs and doorways in as it does for any plan. 
 with its way out at the door's tile on the south side, so the frame's +y is north inside and the
 northmarker says where north is outside."""
 import math
+import random
+import zlib
 import re
 import struct
 
@@ -31,6 +33,11 @@ from project import zs
 
 COVER = 0.5                   # share of a tile inside the outline for it to be laid
 ROOM_MAX = 9                  # tiles in one room at most before it is cut in two
+# (every family's storeys at once, when the layout survey isn't to hand: measured 2026-10-30, lab jrooms1)
+# (Hlaalu's: rooms of a storey by its tiles in fours, their sizes, the biggest room's share of the storey)
+ROOMS_FALLBACK = {'p': {2: 0.19, 3: 0.14, 4: 0.17, 5: 0.09, 6: 0.15, 7: 0.05, 8: 0.06, 9: 0.04, 10: 0.02, 11: 0.02, 12: 0.02,
+                        14: 0.01, 15: 0.01, 16: 0.01, 20: 0.01}, 'rooms_at': {0: [1], 1: [1], 2: [2], 3: [3], 4: [2, 3], 5: [3],
+                        6: [3, 4], 7: [3], 8: [4], 9: [4]}, 'biggest': 0.6, 'one_wide': 0.25, 'n': 0}
 UP_MIN = 0.3                  # an upper outline smaller than this share of the ground's is no storey
 ROOF_SAMPLE = 3               # every n-th outline cell is looked up from for the roof
 # (a building right-clicked may be bigger than the survey reads in the game's towns: a prefab of three houses)
@@ -482,7 +489,7 @@ def _tiles_in(cells, T, keep_door=True, cover=COVER):
     return seen
 
 
-def _split(tiles, parts=None, always=False, room_max=None):
+def _split(tiles, parts=None, always=False, room_max=None, rng=None, sizes=None):
     """A floor's tiles cut into rooms: first where the building's parts meet (parts: tile -> part; always
     for a prefab of the game's buildings, a room or more per building; for a building only when the floor
     must be cut anyway: the game's rooms change across a wall inside the outline 1.5 times as often as
@@ -495,14 +502,17 @@ def _split(tiles, parts=None, always=False, room_max=None):
             out = []
             for g in groups.values():
                 for comp in _components(g):
-                    out += _split_size(comp, room_max)
+                    out += _split_size(comp, room_max, rng, sizes)
             return _merge_scraps(out)
-    return _split_size(tiles, room_max)
+    return _split_size(tiles, room_max, rng, sizes)
 
 
-def _split_size(tiles, room_max=None):
+def _split_size(tiles, room_max=None, rng=None, sizes=None):
     """A floor's tiles cut into rooms of at most ROOM_MAX tiles: across the longer side, through the
-    middle, again and again. [set of tiles] (each joined)."""
+    middle, again and again. [set of tiles] (each joined). With a dealer (rng), the game's way instead
+    (_split_organic)."""
+    if rng is not None:
+        return _split_organic(tiles, rng, sizes or room_sizes(None), room_max)
     def parts(ts):
         ts = set(ts)
         if len(ts) <= (room_max or ROOM_MAX):
@@ -541,6 +551,148 @@ def _merge_scraps(rooms):
     return rooms
 
 
+# The game's own storeys, cut into rooms (layoutsurvey's rooms, by style family): how big its rooms are, how many
+# tiles a storey gives each room, how often a room is one tile wide. Halving a floor through the middle until every
+# room is small gave rows of equal 2x2 and 3x3 rooms (the user's "too cookie cutter, lots of little 2x2s instead of
+# an organic house", 2026-10-30); the game's storeys have a big room and smaller ones round it.
+ORGANIC_TRIES = 48
+_SIZES = {}
+
+
+def room_sizes(db, fam=None):
+    """{'p': {tiles: share}, 'per_room': tiles a room (median, by storey), 'one_wide': share, 'n'} for the family, else
+    every family's; from the game's own storeys when the layout survey is to hand, else a fallback measured once."""
+    rooms = None
+    if db is not None:
+        try:
+            import layoutsurvey
+            s = layoutsurvey.ready(db)
+            rooms = s and s.get('rooms')
+        except Exception:
+            rooms = None
+    if not rooms:
+        return dict(ROOMS_FALLBACK)
+    key = (id(rooms), fam)
+    if key in _SIZES:
+        return _SIZES[key]
+    pick = [r for r in rooms if r.get('family') == fam] if fam else []
+    if len(pick) < 40:
+        pick = rooms
+    from collections import Counter, defaultdict
+    # (a one-tile space is a nook or an alcove off a room, which the builder doesn't make: left out of the counts)
+    real = [r for r in pick if int(r.get('tiles') or 0) >= 2]
+    hist = Counter(min(int(r['tiles']), 40) for r in real)
+    tot = float(sum(hist.values())) or 1.0
+    lv = defaultdict(list)
+    for r in real:
+        lv[(r['cell'], r['level'])].append(int(r['tiles']))
+    rooms_at, big = defaultdict(list), []
+    for v in lv.values():
+        rooms_at[min(sum(v) // 4, 9)].append(len(v))
+        if len(v) >= 2:
+            big.append(max(v) / float(sum(v)))
+    by = {}
+    for band_ in range(10):
+        v = sorted(rooms_at.get(band_) or [])
+        if len(v) >= 5:
+            by[band_] = v
+    big.sort()
+    out = {'p': {k: v / tot for k, v in hist.items()}, 'rooms_at': by, 'biggest': big[len(big) // 2] if big else ROOMS_FALLBACK['biggest'],
+           'one_wide': sum(1 for r in real if r.get('short') == 1 and not r.get('corridor')) / max(1.0, len(real)), 'n': len(real)}
+    _SIZES[key] = out
+    return out
+
+
+def _split_organic(tiles, rng, sizes, room_max=None):
+    """A storey's tiles cut into rooms the game's way: as many rooms as the game gives a storey this size, made by
+    straight cuts at any line (not only the middle); of ORGANIC_TRIES such cuttings, the one whose room sizes the
+    game makes most often, few one-wide rooms, none longer than three times its width. [set of tiles]."""
+    tiles = set(tiles)
+    n_t = len(tiles)
+    if n_t <= 3:
+        return [tiles]
+    big = room_max or ROOM_MAX
+    # (as many rooms as one of the game's storeys this size, picked at random from them: a small floor most often
+    # stays one room)
+    ra = sizes.get('rooms_at') or ROOMS_FALLBACK['rooms_at']
+    band_ = min(n_t // 4, 9)
+    while band_ not in ra and band_ > 0:
+        band_ -= 1
+    want = rng.choice(ra.get(band_) or [1])
+    if n_t > 39:
+        want = int(round(want * n_t / 38.0))       # (past the survey's bands: as many again for each band's worth)
+    want = max(want, int(math.ceil(n_t / float(big * 3))))
+    if want <= 1:
+        return [tiles]
+    p = sizes['p']
+    floor_p = 0.2 / (len(p) + 40)
+
+    def cut(ts):
+        xs, ys = [t[0] for t in ts], [t[1] for t in ts]
+        w, h = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+        axis = 0 if (w > h if rng.random() < 0.8 else w <= h) else 1
+        lo, span = (min(xs), w) if axis == 0 else (min(ys), h)
+        if span < 2:
+            axis, (lo, span) = 1 - axis, ((min(xs), w) if axis == 1 else (min(ys), h))
+            if span < 2:
+                return None
+        # (any line, two in from each side where it can be)
+        edge = 2 if span >= 4 else 1
+        at = lo + rng.randint(edge, span - edge)
+        a = {t for t in ts if t[axis] < at}
+        b_ = ts - a
+        return (a, b_) if a and b_ else None
+
+    def one():
+        rooms = [tiles]
+        guard = 0
+        while len(rooms) < want and guard < want * 6:
+            guard += 1
+            # (the bigger rooms cut more often; a room under four tiles never)
+            cand = [r for r in rooms if len(r) >= 4]
+            if not cand:
+                break
+            r = rng.choices(cand, weights=[len(x) ** 1.5 for x in cand])[0]
+            c = cut(r)
+            if not c:
+                continue
+            rooms.remove(r)
+            for half in c:
+                rooms += _components(half)
+        return _merge_scraps(rooms)
+
+    def score(rooms):
+        sc = 0.0
+        for r in rooms:
+            xs, ys = [t[0] for t in r], [t[1] for t in r]
+            w, h = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+            sc += math.log(p.get(min(len(r), 40), 0.0) + floor_p)
+            if min(w, h) == 1 and len(r) > 1:
+                sc += math.log(max(sizes['one_wide'], 0.01))
+            if max(w, h) > 3 * min(w, h) and len(r) > 3:
+                sc -= 2.0
+            if len(r) > big * 2:
+                sc -= 3.0
+        sc /= len(rooms)
+        # (the biggest room's share of the storey, against the game's typical one; the way in most often the biggest
+        # room, 7 in 10 of the game's; the door's tile is (0, 0))
+        ls = [len(r) for r in rooms]
+        if len(ls) >= 2:
+            sc -= 3.0 * abs(max(ls) / float(sum(ls)) - sizes.get('biggest', 0.6))
+            door = next((r for r in rooms if (0, 0) in r), None)
+            if door is not None:
+                sc += math.log(0.7 if len(door) == max(ls) else 0.3)
+        return sc - abs(len(rooms) - want) * 0.5
+
+    best, best_sc = None, None
+    for _ in range(ORGANIC_TRIES):
+        rooms = one()
+        s_ = score(rooms)
+        if best_sc is None or s_ > best_sc:
+            best, best_sc = rooms, s_
+    return best
+
+
 def _components(ts):
     ts = set(ts)
     out = []
@@ -563,6 +715,19 @@ ROOM_NAMES = {0: ['Hall', 'Room', 'Back Room', 'Side Room', 'Store'], 1: ['Upsta
 
 
 FLOORS_MAX = 4                   # the most floors asked for by number (the builder's stairs climb that far)
+
+
+def _family(kit):
+    import layoutsurvey
+    try:
+        return layoutsurvey.family(kits.split_style(kit)[0])
+    except Exception:
+        return None
+
+
+def _dealer(b, floor):
+    """The rooms' dealer for a building's floor: the same rooms each time for the same building, others for 🎲 (b['seed'])."""
+    return random.Random(zlib.crc32(('%s|%s|%d' % (b['cell'], (b['door'] or {}).get('k'), floor)).encode('utf-8')) + 7919 * int(b.get('seed') or 0))
 
 
 def tall_floors(b):
@@ -662,10 +827,12 @@ def _plan(db, b, kit=None, cover=COVER, floors=None, ch=None, tiles=None, force=
                 tile_parts[(i, j)] = e
     # (a shop's sign at the door: the ground floor's front room is the shop, and big)
     trade = shop_trade(b)
+    sizes = room_sizes(db, _family(kit))
     rooms, where = [], {}
     for f, ts in sorted(per.items()):
-        for n, comp in enumerate(_split(ts, tile_parts, always, SHOP_ROOM_MAX if trade else None) if f == 0 else
-                                 [c for comp in _components(ts) for c in _split(comp, tile_parts, always)]):
+        rng = _dealer(b, f)
+        for n, comp in enumerate(_split(ts, tile_parts, always, SHOP_ROOM_MAX if trade else None, rng, sizes) if f == 0 else
+                                 [c for comp in _components(ts) for c in _split(comp, tile_parts, always, None, rng, sizes)]):
             names = ROOM_NAMES.get(f, ['Room'])
             nm = names[min(n, len(names) - 1)]
             if n >= len(names) - 1 and n > 0:
@@ -827,22 +994,27 @@ def _with_cellar(db, b, pl, size):
                     cel.add(n)
                     todo.append(n)
     else:
-        # (under the house, then a wing out to one side, two or three tiles wide, as long as the rest takes)
+        # (under the house, then out past its walls all round, leaning to one side and the back: a tile at a time,
+        # the one with most of the cellar beside it, so it grows as a block. It was a wing two or three tiles
+        # wide out to one side, as long as the rest took: the user's "a very long cellar 2 tiles wide")
         cel = set(ground)
-        side = 1 if (hash(b['cell']) + len(ground)) % 2 else -1
-        cy = (min(ys) + max(ys)) // 2
-        wide = min(3, max(ys) - min(ys) + 1)
-        rows = list(range(cy - (wide - 1) // 2, cy - (wide - 1) // 2 + wide))
-        x = max(xs) + 1 if side > 0 else min(xs) - 1
+        rng = random.Random(zlib.crc32(('%s|%s' % (b['cell'], (b['door'] or {}).get('k'))).encode('utf-8')) + 7919 * int(b.get('seed') or 0))
+        lean = (rng.choice((-1, 1)), 1)
+        mx, my = sum(xs) / float(len(xs)), sum(ys) / float(len(ys))
         while len(cel) < want:
-            for y in rows:
-                if len(cel) < want:
-                    cel.add((x, y))
-            x += side
+            front = {n for (x, y) in cel for n in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)) if n not in cel and n[1] >= 0}
+            if not front:
+                break
+            def key(t):
+                nb = sum(1 for n in ((t[0] + 1, t[1]), (t[0] - 1, t[1]), (t[0], t[1] + 1), (t[0], t[1] - 1)) if n in cel)
+                return (-nb, math.hypot(t[0] - mx - lean[0] * 1.5, t[1] - my - lean[1] * 1.5), rng.random())
+            cel.add(min(front, key=key))
     rooms = pl['rooms']
     where = {}
     first = len(rooms)
-    for n, comp in enumerate(c for comp in _components(cel) for c in _split(comp)):
+    sizes = room_sizes(db, _family(pl.get('style') or ''))
+    rng_c = _dealer(b, -1)
+    for n, comp in enumerate(c for comp in _components(cel) for c in _split(comp, rng=rng_c, sizes=sizes)):
         names = ROOM_NAMES[-1]
         nm = names[min(n, len(names) - 1)] if n < len(names) else '%s %d' % (names[-1], n - len(names) + 2)
         cx_, cy_ = [t[0] for t in comp], [t[1] for t in comp]
@@ -899,10 +1071,11 @@ def plan_with_cellar(db, b, pl, cellar):
     return pl
 
 
-def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None, floors=None):
+def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None, floors=None, seed=0):
     """For the map: the building's check, the plan, and the planned tiles' corners in the world (to
     draw over the exterior), without building anything."""
     b = building_at(db, cell_key, ref_key, door_key)
+    b['seed'] = int(seed or 0)                  # (🎲 Other rooms: another cut of the same space)
     out = {'pieces': [g['k'] for g in b['group']], 'doors': [{'k': d['k'], 'id': d['id'], 'p': d['p'][:3]} for d in b['doors']],
            'door': b['door']['k'] if b['door'] else None}
     import podtwins
@@ -1182,10 +1355,12 @@ def upper_ways(db, b, out, idoor):
 
 # ---------------------------------------------------------------- building it
 
-def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None):
+def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None,
+          seed=0, lighting='normal', lights=True):
     """Plan, build, link the doors both ways and put the northmarker in."""
     import release
     b = building_at(db, cell_key, ref_key, door_key)
+    b['seed'] = int(seed or 0)
     if not tiles and not kit:
         # (a shell the game makes a ready-made interior for, a Telvanni pod, a shack, a hut, a tent: a place per\n        # shell, that piece turned to the door and fitted out as one of the game's own; podtwins.py)
         import podtwins
@@ -1205,7 +1380,7 @@ def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, til
     for ex_ in (pl['exit'], {'room': pl['exit']['room'], 'side': 'S'}, {'room': pl['exit']['room'], 'side': 'E'},
                 {'room': pl['exit']['room'], 'side': 'W'}):
         try:
-            out = builder.build_house(db, name, pl['style'], pl['rooms'], pl['doors'], ex_, None)
+            out = builder.build_house(db, name, pl['style'], pl['rooms'], pl['doors'], ex_, None, lighting or 'normal', lights is not False)
         except EditError as e:
             if 'way out' not in str(e):
                 raise

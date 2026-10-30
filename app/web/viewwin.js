@@ -174,6 +174,7 @@ function vwDrag(el, v){
 // the window clicked comes to the front (the object window takes part too)
 function vwFront(el){
   const all = [...vwBox().querySelectorAll(':scope > .owin')].sort((a, b) => (+getComputedStyle(a).zIndex || 0) - (+getComputedStyle(b).zIndex || 0));
+  if (all.indexOf(el) < 0) return;                     // (a window docked in a panel: not one of these)
   all.splice(all.indexOf(el), 1); all.push(el);
   all.forEach((x, n) => x.style.zIndex = 41 + n);
 }
@@ -216,12 +217,26 @@ function vwRun(v, fn){
   const nav = document.querySelector('nav');
   if (nav) nav.addEventListener('click', e => { VW.nav = e.shiftKey || !vwPref(); setTimeout(() => VW.nav = false, 0); }, true);
 })();
+// Is a tool at work that Esc should end before any window closes? Placing (and every click-on-the-map mode:
+// paths, shapes being drawn, picking a spot), the Ground brush, Extend, physics, a pick between two windows. The user
+// (2026-10-30): "Escape should close active tools, placements, previews etc like that first before open windows";
+// placing from the Style palette, Esc closed the palette and the item had to be found again.
+function vwToolBusy(){
+  if (typeof W !== 'undefined' && W.mode) return true;
+  if (typeof V3 !== 'undefined' && V3.landOpen) return true;
+  if (typeof EXM !== 'undefined' && EXM.on) return true;
+  if (typeof PH !== 'undefined' && PH.on && !PH.loading) return true;
+  if (typeof TW !== 'undefined' && (TW.pending || TW.picked || TW.answer)) return true;
+  return false;
+}
 // Esc closes the window in front (an open list or menu first; the object window looks after itself)
 window.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const top = vwTop(); if (!top || !top.classList.contains('vwin')) return;
   if (document.querySelector('.modal-bg, .pmenu')) return;
   if (document.activeElement === $('#q')) return;          // (Esc in the search box at the top empties it)
+  // (a tool at work first: Esc ends it and the window stays; vwToolBusy)
+  if (vwToolBusy()) return;
   e.preventDefault(); e.stopPropagation();
   const open = top.querySelector('.ddlist[style*="block"]');
   if (open){ open.style.display = 'none'; return; }

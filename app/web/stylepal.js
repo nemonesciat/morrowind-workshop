@@ -19,6 +19,7 @@ const SP_SECS = [['Shell', '🧱 Shell', 'Walls, corners, floors, ceilings, door
 // a tab's name: a style, "Used everywhere", or a region's palette ('r:' and its id)
 function spName(c){
   if (c === '*') return 'Used everywhere';
+  if (c === '**') return 'All styles';
   if (c && c.startsWith('r:')){ const r = (SP.regions || []).find(x => x.region === c.slice(2)); return r ? r.name : c.slice(2); }
   return c;
 }
@@ -82,47 +83,89 @@ function spCss(){
   .sp-card .sp-goes{clear:both;display:grid;grid-template-columns:36px 1fr;gap:3px 6px;align-items:center;margin-top:6px}
   .sp-card .sp-goes .thumb{width:36px;height:36px;float:none;margin:0}
   .sp-card .sp-goes span small{display:block;color:var(--faint)}
-  .sp-wait{padding:20px}`;
+  .sp-wait{padding:20px}
+  .spwin.spdock{position:relative!important;inset:auto!important;width:100%!important;height:100%!important;border:0!important;border-radius:0!important;box-shadow:none!important;z-index:auto!important}
+  .spwin.spdock .owhead{display:none}`;
   document.head.appendChild(c);
 }
 
 // ---------------------------------------------------------------- the window
 VW_HOST.stylepal = {title: () => '🎨 Style palette' + (SP.cur ? ': ' + spName(SP.cur) : ''), render: () => spRender(), w: 900};
 function spWin(){ return VW.wins.stylepal && VW.wins.stylepal.el.isConnected ? VW.wins.stylepal : null; }
+// (docked: the same window's element sits in a World map panel instead, tabbed, docked or floating with the
+// others; the user 2026-10-30: "it would be helpful to be able to dock the Style palette window". Kept between runs)
+try { SP.docked = localStorage.getItem('ws-stylepal-dock') === '1'; } catch (e) { SP.docked = false; }
+function spMake(){
+  const box = vwBox(); if (!box) return null;
+  const el = document.createElement('div'); el.className = 'owin vwin spwin'; el.dataset.vw = 'stylepal';
+  el.setAttribute('data-ownkeys', '');
+  el.innerHTML = `<div class="owhead"><span class="owtitle"></span>
+      <button class="btn sm" data-spdock title="Dock it as a panel, beside Place or wherever you drag its tab">⇲</button>
+      <button class="btn sm" data-vwclose title="Close (Esc)">✕</button></div>
+    <div class="vwbody"><div class="sp-tabs"></div><div class="sp-main"></div></div>`;
+  box.appendChild(el);
+  const w = VW.wins.stylepal = {v: 'stylepal', el, home: null};
+  el.querySelector('[data-vwclose]').onclick = () => vwClose('stylepal');
+  el.querySelector('[data-spdock]').onclick = () => spDock(true);
+  el.addEventListener('pointerdown', () => { if (!SP.docked) vwFront(el); }, true);
+  el.addEventListener('keydown', e => { if (e.key !== 'Escape') e.stopPropagation(); });
+  vwDrag(el, 'stylepal');
+  const p = VW.pos.stylepal || {};
+  el.style.width = Math.min(p.w || 900, box.clientWidth - 24) + 'px';
+  el.style.height = Math.min(p.h || 620, box.clientHeight - 24) + 'px';
+  w.pos = p.x != null ? {x: p.x, y: p.y} : {x: 24, y: 56};
+  vwPlace(w);
+  if (typeof ResizeObserver !== 'undefined'){
+    let down = false;
+    el.addEventListener('pointerdown', () => { down = true; window.addEventListener('pointerup', () => { down = false; }, {once: true}); });
+    new ResizeObserver(() => { if (down && !SP.docked && el.isConnected && el.offsetWidth) vwKeep('stylepal', {w: el.offsetWidth, h: el.offsetHeight}); }).observe(el);
+  }
+  spBind(el);
+  return w;
+}
 async function spOpen(theme){
   if (!cfWorldOn()) showView('world');
   spCss();
-  let w = spWin();
-  if (!w){
-    const box = vwBox(); if (!box) return;
-    const el = document.createElement('div'); el.className = 'owin vwin spwin'; el.dataset.vw = 'stylepal';
-    el.setAttribute('data-ownkeys', '');
-    el.innerHTML = `<div class="owhead"><span class="owtitle"></span>
-        <button class="btn sm" data-vwclose title="Close (Esc)">✕</button></div>
-      <div class="vwbody"><div class="sp-tabs"></div><div class="sp-main"></div></div>`;
-    box.appendChild(el);
-    w = VW.wins.stylepal = {v: 'stylepal', el, home: null};
-    el.querySelector('[data-vwclose]').onclick = () => vwClose('stylepal');
-    el.addEventListener('pointerdown', () => vwFront(el), true);
-    el.addEventListener('keydown', e => { if (e.key !== 'Escape') e.stopPropagation(); });
-    vwDrag(el, 'stylepal');
-    const p = VW.pos.stylepal || {};
-    el.style.width = Math.min(p.w || 900, box.clientWidth - 24) + 'px';
-    el.style.height = Math.min(p.h || 620, box.clientHeight - 24) + 'px';
-    w.pos = p.x != null ? {x: p.x, y: p.y} : {x: 24, y: 56};
-    vwPlace(w);
-    if (typeof ResizeObserver !== 'undefined'){
-      let down = false;
-      el.addEventListener('pointerdown', () => { down = true; window.addEventListener('pointerup', () => { down = false; }, {once: true}); });
-      new ResizeObserver(() => { if (down && el.isConnected && el.offsetWidth) vwKeep('stylepal', {w: el.offsetWidth, h: el.offsetHeight}); }).observe(el);
-    }
-    spBind(el);
-  }
-  vwFront(w.el);
+  let w = spWin() || spMake(); if (!w) return;
   if (theme) SP.cur = theme;
+  if (SP.docked && typeof PNL !== 'undefined' && PNL.spaces.world){ PNL.show('world', 'stylepal'); return; }
+  vwFront(w.el);
   vwTitle('stylepal');
   await spLoadThemes();
   spRender();
+}
+// into a panel, or back out as a window over the view
+function spDock(on){
+  SP.docked = !!on;
+  try { localStorage.setItem('ws-stylepal-dock', on ? '1' : '0'); } catch (e) {}
+  if (on){ PNL.show('world', 'stylepal'); return; }
+  const w = spWin();
+  SP.undocking = true;
+  try { if (PNL.isOpen('world', 'stylepal')) PNL.close('world', 'stylepal'); } finally { SP.undocking = false; }
+  if (!w) return spOpen();
+  w.el.classList.remove('spdock'); w.el.classList.add('vwin');
+  vwBox().appendChild(w.el);
+  const p = VW.pos.stylepal || {};
+  w.el.style.width = Math.min(p.w || 900, vwBox().clientWidth - 24) + 'px';
+  w.el.style.height = Math.min(p.h || 620, vwBox().clientHeight - 24) + 'px';
+  vwPlace(w); vwFront(w.el); spRender();
+}
+// the panel's body takes the palette (made if it isn't there yet)
+async function spDockInto(it){
+  spCss();
+  const w = spWin() || spMake(); if (!w) return;
+  if (w.el.parentElement !== it.el){ it.el.innerHTML = ''; it.el.appendChild(w.el); }
+  w.el.classList.add('spdock'); w.el.classList.remove('vwin');
+  w.el.style.width = w.el.style.height = w.el.style.left = w.el.style.top = '';
+  if (!SP.themes) await spLoadThemes();
+  spRender();
+}
+function spPanels(){
+  PNL.define('world', 'stylepal', {title: 'Style palette', icon: '🎨', home: 'right', w: 520, h: 600,
+    render: it => { if (SP.docked) spDockInto(it); }, onShow: it => spDockInto(it),
+    // (closing the panel closes the palette; it opens docked again next time, until it's floated)
+    onClose: () => { if (!SP.undocking && VW.wins.stylepal) vwClose('stylepal'); },
+    menu: () => [{label: '⇱ Float it as a window', act: () => spDock(false)}]});
 }
 
 // the list of themes (and the open place's), waiting with a progress line while they're learnt
@@ -134,7 +177,7 @@ async function spLoadThemes(){
     if (r.ready){
       SP.themes = r.themes; SP.here = r.here || null; SP.hereKey = W.key;
       try { const g = await api('/api/style/regions' + (W.key ? '?key=' + encodeURIComponent(W.key) : '')); SP.regions = g.regions; SP.hereRegion = g.here; } catch (e){ SP.regions = []; }
-      if (!SP.cur || (SP.cur !== '*' && !SP.cur.startsWith('r:') && !r.themes.some(t => t.name === SP.cur))) SP.cur = SP.here || r.themes[0].name;
+      if (!SP.cur || (SP.cur !== '*' && SP.cur !== '**' && !SP.cur.startsWith('r:') && !r.themes.some(t => t.name === SP.cur))) SP.cur = SP.here || r.themes[0].name;
       return;
     }
     const box = w.el.querySelector('.sp-main');
@@ -144,6 +187,8 @@ async function spLoadThemes(){
   }
 }
 async function spTheme(name){
+  // (All: every style's palette searched at once on the server, stylesurvey.everything, afresh for each search)
+  if (name === '**') return (SP.data['**'] = await api('/api/style/all?q=' + encodeURIComponent(SP.q || '')));
   if (SP.data[name]) return SP.data[name];
   const d = name.startsWith('r:') ? await api('/api/style/region?region=' + encodeURIComponent(name.slice(2)))
     : await api('/api/style/theme?name=' + encodeURIComponent(name));
@@ -155,7 +200,8 @@ function spTabsHtml(){
   const t = SP.themes || [];
   const btn = (name, label, n, title) => `<button data-sptab="${esc(name)}" class="${SP.cur === name ? 'on' : ''}" title="${esc(title || '')}">${esc(label)}${n != null ? `<small>${fmtN(n)}</small>` : ''}</button>`;
   const list = SP.fits && SP.here ? t.filter(x => x.name === SP.here) : t;
-  return `<div class="sp-hd">Styles${SP.fits && SP.here ? ' that fit here' : ''}</div>` +
+  return btn('**', '🔍 All', null, 'Search every style at once: each thing under the style that has it most') +
+    `<div class="sp-hd">Styles${SP.fits && SP.here ? ' that fit here' : ''}</div>` +
     list.map(x => btn(x.name, (x.name === SP.here ? '◆ ' : '') + x.name, x.places, x.line + ` (${x.places} of the game's places)` + (x.name === SP.here ? '. The place open now is built in this style.' : ''))).join('') +
     `<div class="sp-hd">And</div>` + btn('*', 'Used everywhere', null, 'What the game stands in places of every style alike: crates, sacks, bread, the common clutter') +
     ((SP.regions || []).length ? `<div class="sp-hd" title="Each region's own rocks and cliffs, trees and plants, as the game sets them over its land">Regions</div>` +
@@ -175,22 +221,27 @@ async function spRender(){
   w.el.querySelector('.sp-tabs').innerHTML = spTabsHtml();
   vwTitle('stylepal');
   const main = w.el.querySelector('.sp-main');
-  const bar = `<div class="sp-bar"><input class="inp" id="sp-q" placeholder="Search in this style… (bed, lantern, wall)" value="${esc(SP.q)}" autocomplete="off">
-    ${SP.cur.startsWith('r:') ? '' : `<button class="btn sm" id="sp-add" title="Add something to this style's palette yourself: any building piece, furniture, light or clutter in your load order">＋ Add…</button>`}
+  const bar = `<div class="sp-bar"><input class="inp" id="sp-q" placeholder="${SP.cur === '**' ? 'Search every style… (bed, lantern, wall)' : 'Search in this style… (bed, lantern, wall)'}" value="${esc(SP.q)}" autocomplete="off">
+    ${SP.cur.startsWith('r:') || SP.cur === '**' ? '' : `<button class="btn sm" id="sp-add" title="Add something to this style's palette yourself: any building piece, furniture, light or clutter in your load order">＋ Add…</button>`}
     <label title="Pictures, or the same lists as a tree"><select id="sp-view" class="inp" style="width:auto;padding:2px 6px"><option value="grid" ${SP.view === 'grid' ? 'selected' : ''}>Pictures</option><option value="tree" ${SP.view === 'tree' ? 'selected' : ''}>Tree</option></select></label>
     <label title="${SP.here ? 'Only the style the open place is built in: ' + esc(SP.here) : 'The open place has no style the game uses (or no place is open)'}"><input type="checkbox" id="sp-fits" ${SP.fits ? 'checked' : ''} ${SP.here ? '' : 'disabled'}> Only what fits here${SP.here ? ' (' + esc(SP.here) + ')' : ''}</label></div>`;
+  // (the bar is drawn again only when what it shows changes: redrawn under the typing, a slow All search put back
+  // the text from before the last keys and moved the cursor, the user 2026-10-30)
+  const barKey = [SP.cur, SP.view, SP.fits, SP.here || ''].join('|');
+  if (!main.querySelector('.sp-body') || main.dataset.bar !== barKey){
+    main.innerHTML = bar + '<div class="sp-body"></div>'; main.dataset.bar = barKey; spBar(main);
+  }
+  const body = main.querySelector('.sp-body'), seq = SP.seq = (SP.seq || 0) + 1;
   let d;
-  if (!SP.data[SP.cur]) main.innerHTML = bar + '<div class="msg">Loading…</div>';
-  try { d = await spTheme(SP.cur); } catch (e){ main.innerHTML = bar + `<div class="msg">${esc(e.message)}</div>`; spBar(main); return; }
-  if (!spWin()) return;
-  const keepQ = document.activeElement && document.activeElement.id === 'sp-q' ? document.activeElement.selectionStart : null;
-  main.innerHTML = bar + `<div class="sp-line">${esc(d.line)}. ${SP.cur === '*' ? '' : SP.cur.startsWith('r:') ? `Learnt from ${fmtN(d.places)} of its cells.` : `Learnt from ${fmtN(d.places)} of the game's places.`}
-      The badge is how many of them have it: <span class="sp-badge staple" style="position:static">40%</span> a staple, <span class="sp-badge" style="position:static">4%</span> now and then.
+  if (!SP.data[SP.cur]) body.innerHTML = '<div class="msg">Loading…</div>';
+  try { d = await spTheme(SP.cur); } catch (e){ if (seq === SP.seq) body.innerHTML = `<div class="msg">${esc(e.message)}</div>`; return; }
+  // (an older search answering late is dropped)
+  if (!spWin() || seq !== SP.seq) return;
+  body.innerHTML = `<div class="sp-line">${esc(d.line)}. ${SP.cur === '*' || SP.cur === '**' ? '' : SP.cur.startsWith('r:') ? `Learnt from ${fmtN(d.places)} of its cells.` : `Learnt from ${fmtN(d.places)} of the game's places.`}
+      ${SP.cur === '**' ? 'The badge is the style that has it most (rest the mouse on it for how often).' : `The badge is how many of them have it: <span class="sp-badge staple" style="position:static">40%</span> a staple, <span class="sp-badge" style="position:static">4%</span> now and then.`}
       ${d.examples && d.examples.length ? `<span class="lnk" data-spshow="${esc(d.examples[0][0])}" title="Open ${esc(d.examples[0][1])}, one of the game's own places in this style">Show me a place in this style</span>` : ''}</div>` +
     (SP.view === 'tree' ? spTreeHtml(d) : spGridHtml(d));
-  spBar(main);
-  if (keepQ != null){ const q = $('#sp-q'); q.focus(); q.setSelectionRange(keepQ, keepQ); }
-  v3ThumbScan(main);
+  v3ThumbScan(body);
 }
 function spBar(main){
   const q = main.querySelector('#sp-q');
@@ -267,6 +318,7 @@ function spSecs(d){
 function spBadge(it){
   if (it.mine && !it.places) return `<b class="sp-badge mine" title="You added it to this style (right-click: take it out)">yours</b>`;
   const p = Math.round(100 * (it.share || 0));
+  if (SP.cur === '**') return `<b class="sp-badge${it.share >= 0.25 ? ' staple' : ''}" title="${esc(it.style || '')}: in ${it.places} of its places learnt from (${p}%)">${esc((it.style || '').slice(0, 10))}</b>`;
   return `<b class="sp-badge${it.share >= 0.25 ? ' staple' : ''}" title="${SP.cur === '*' ? 'In ' + p + '% of all the places learnt from' : 'In ' + it.places + ' of the ' + esc(spName(SP.cur)) + (SP.cur.startsWith('r:') ? ' cells' : ' places') + ' learnt from (' + p + '%)'}">${p < 1 ? '<1' : p}%</b>`;
 }
 function spTileHtml(it){

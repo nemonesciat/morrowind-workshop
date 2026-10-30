@@ -44,13 +44,14 @@ the place. **+ −** at the bottom right zoom.
 ## Moving, turning and changing
 
 **In 3D**, drag the arrows to move what's selected and the rings to turn it: **G** move, **R** turn, **⤡ Tilt** to
-lean it. **✛ World axes / ⟀ Own axes** switches the handles between the world's directions and the thing's
+lean it, **⤢ Scale** (**3**) to size it: drag any handle and it grows or shrinks evenly, ×0.5 to ×2 (several
+selected: the Scale dialog). **✛ World axes / ⟀ Own axes** switches the handles between the world's directions and the thing's
 own. **End** (or **⤓ Drop down**) sets it on what's below, **Del** removes it.
 
 **On the flat map**, drag it. Outdoors its height follows the ground.
 
 **⊞ Snap ▾** sets the steps for moving and turning, **Snap to pieces** lines up walls and floors with nearby
-pieces as you move them, and **Land on surfaces** rests things on what's below after a move.
+pieces as you move them (several selected snap as one), and **Land on surfaces** rests things on what's below after a move.
 
 **The Selected panel** has everything about the thing selected:
 
@@ -69,7 +70,10 @@ pieces as you move them, and **Land on surfaces** rests things on what's below a
 Double-click a thing in 3D for its window: its record and its placement together.
 
 **Doors** have **Leads to**: search a place to make the door lead there (tick **Make the door at the other end
-lead back here**). The arrival spot is chosen for you; **📍 Pick arrival spot…** sets it exactly.
+lead back here**). The arrival spot is chosen for you, just in front of the door there on the side with floor. In
+the door's window you can type it (**X**, **Y**, **Height**, **Facing**), or **📍 Pick on the map…** and click the
+spot. Click a **door** instead while picking, and the two doors lead to each other, each arriving in front of the
+other.
 
 With several selected: **⧉ Copy**, **Duplicate**, **⟳ 90°**, **Delete all**, and **Save as a prefab** to drop the
 group anywhere later.

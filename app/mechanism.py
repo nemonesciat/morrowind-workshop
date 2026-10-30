@@ -273,12 +273,12 @@ def _link_here(db, c, ref, refkey, cell_key, target):
         loose = [r for r in m2['refs'] if r['type'] == 'DOOR' and not r.get('to')]
         if loose:
             back = min(loose, key=lambda r: math.hypot(r['p'][0] - pos[0], r['p'][1] - pos[1]))
-            pos = doors._in_front(m2, back)
+            pos = doors._in_front(m2, back, db)
     made = None
     c2, refs2 = editing._cell(db, target)
     here = next((r for r in mapdata.cellmap(db, cell_key)['refs'] if r['k'] == refkey), None)
     src = mapdata.cell_info(db, cell_key)
-    back_pos = doors._in_front(mapdata.cellmap(db, cell_key), here) if here else None
+    back_pos = doors._in_front(mapdata.cellmap(db, cell_key), here, db) if here else None
     back_link = (src['name'] if src['interior'] else '', back_pos)
     if back is None:
         # nothing to come back through: a door of the place's own kind, a step behind where you arrive

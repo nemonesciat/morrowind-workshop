@@ -168,7 +168,7 @@ function v3Reset(){
     V3.scene.fog = null;
     V3.hemi.intensity = 0.75; V3.sun.intensity = 0.35; V3.amb.intensity = 0.45;
   }
-  V3.water.visible = W.ext && V3.view.water !== false;
+  V3.water.visible = v3WaterLevel() != null && V3.view.water !== false;
   v3Home();
   v3Tools(); v3LandPanel(); v3ApplyView();
 }
@@ -1290,7 +1290,8 @@ async function v3StrokeEnd(){
     if (what.c) cell.c = v3B64(v3LandCols(L));
     if (what.t){
       // the server wants texture names: ones painted now, or the ones the cell already had
-      cell.t = L.ids.map((p, i) => (L.texIds && L.texIds[p]) || L.origId[i] || '');
+      // (painted with the default ground: its name is '', kept as such, not taken for "unchanged")
+      cell.t = L.ids.map((p, i) => L.texIds && Object.prototype.hasOwnProperty.call(L.texIds, p) ? L.texIds[p] : (L.origId[i] || ''));
     }
     cells.push(cell);
   }
@@ -1331,6 +1332,12 @@ function v3LandToggle(on){
   if (V3.ring) V3.ring.visible = false;
 }
 function v3LandSave(){ try { localStorage.setItem('ws-land', JSON.stringify(V3.land)); } catch (e) {} }
+// The Ground brush's size bar: logarithmic, each tenth of the bar the same proportion bigger (it was even steps of 64
+// from 128 to 4096, the small sizes crowded into its first pixels: the user, 2026-10-30)
+const V3_BRUSH = [64, 4096];        // (64: just the land point under the brush, they are 128 apart)
+function v3BrushClamp(v){ return Math.max(V3_BRUSH[0], Math.min(V3_BRUSH[1], Math.round(v / 16) * 16)); }
+function v3PosSize(t){ return v3BrushClamp(V3_BRUSH[0] * Math.pow(V3_BRUSH[1] / V3_BRUSH[0], t / 1000)); }
+function v3SizePos(v){ return Math.round(1000 * Math.log(v3BrushClamp(v) / V3_BRUSH[0]) / Math.log(V3_BRUSH[1] / V3_BRUSH[0])); }
 async function v3LandPanel(){
   let p = $('#v3land');
   if (!V3.landOpen || !W.ext){ if (p) p.remove(); return; }
@@ -1338,13 +1345,13 @@ async function v3LandPanel(){
   const B = V3.land;
   p.innerHTML = `<div class="v3lhead"><b>Ground${typeof guideLink === 'function' ? guideLink('shaping-the-land.md', 'The Ground brush', 'How the Ground brush works') : ''}</b><button class="btn sm" data-lt="close" title="Close the ground tools">✕</button></div>
     <div class="v3lrow">${V3_LANDTOOLS.map(([k, l, t]) => `<button class="btn sm ${B.tool === k ? 'primary' : ''}" data-lt="${k}" title="${t}">${l}</button>`).join('')}</div>
-    <label class="v3lrow">Size <input type="range" id="v3lsize" min="128" max="4096" step="64" value="${B.size}"><span>${B.size}</span></label>
+    <label class="v3lrow" title="How far the brush reaches, in game units: the land has a point every 128, so 64 moves just the one under it. [ and ] change it">Size <input type="range" id="v3lsize" min="0" max="1000" value="${v3SizePos(B.size)}"><input class="inp v3lnum" id="v3lsizen" type="number" min="${V3_BRUSH[0]}" max="${V3_BRUSH[1]}" step="16" value="${B.size}"></label>
     <label class="v3lrow" style="display:${B.tool === 'scatter' ? 'none' : ''}">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
     <label class="v3lrow" title="Things standing on the ground move up and down with it"><input type="checkbox" id="v3lfollow" ${B.follow !== false ? 'checked' : ''}> Objects follow the ground</label>
     <div id="v3ltex" style="display:${B.tool === 'paint' ? 'block' : 'none'}">
       <div class="v3lrow"><button class="btn sm ${B.texAuto ? 'primary' : ''}" id="v3lauto" title="Paint each patch with the texture the region's land has at its slope, height and shore. Roads and paving stay">✨ Auto</button>
         ${B.texAuto ? '<span class="faint">The region\'s texture for each slope</span>' : `<button class="btn sm ${V3.landPick === 'paint' ? 'primary' : ''}" data-lpick="paint" title="Eyedropper: click the ground to paint with its texture (or Shift+click it any time)">💧 Pick</button>`}</div>
-      ${B.texAuto ? '' : `<div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id)}</span>` : '<span class="faint">Pick a texture below, or from the ground</span>'}</div>
+      ${B.texAuto ? '' : `<div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id || 'Default ground')}</span>` : '<span class="faint">Pick a texture below, or from the ground</span>'}</div>
       <input id="v3lq" placeholder="Search textures…" value="${esc(V3.landQ || '')}">
       <div id="v3lgrid"></div>`}
     </div>
@@ -1372,7 +1379,8 @@ async function v3LandPanel(){
     e.preventDefault();
     V3.landPick = V3.landPick === b.dataset.lpick ? null : b.dataset.lpick; v3LandPanel();
   });
-  $('#v3lsize').oninput = e => { B.size = +e.target.value; e.target.nextElementSibling.textContent = B.size; v3LandSave(); };
+  $('#v3lsize').oninput = e => { B.size = v3PosSize(+e.target.value); $('#v3lsizen').value = B.size; v3LandSave(); };
+  $('#v3lsizen').onchange = e => { B.size = v3BrushClamp(+e.target.value || B.size); e.target.value = B.size; $('#v3lsize').value = v3SizePos(B.size); v3LandSave(); };
   $('#v3lstr').oninput = e => { B.strength = +e.target.value; e.target.nextElementSibling.textContent = B.strength; v3LandSave(); };
   $('#v3lfollow').onchange = e => { B.follow = e.target.checked; v3LandSave(); };
   if (B.tool === 'paint'){
@@ -1685,7 +1693,10 @@ function v3LandEyedrop(at){
   if (!c || !c.L) return;
   const px = Math.min(15, Math.floor((at[0] - gx * CELL) / 512)), py = Math.min(15, Math.floor((at[1] - gy * CELL) / 512)), i = py * 16 + px;
   const path = c.L.ids[i], id = (c.L.texIds && c.L.texIds[path]) || c.L.origId[i];
-  if (!path || !id) return toast('That is the plain default ground; pick a texture from the list.', true);
+  // (the game's plain default ground, _land_default, is a texture of its own, the sandy dirt a sea floor mod's land
+  // has: it has no name, so it's painted as "none", which the game draws as it. "Pick" refused it, the user 2026-10-29)
+  if (path && !id && /_land_default/i.test(path)){ V3.land.tex = {id: '', path}; v3LandSave(); v3LandPanel(); return toast('Painting with the default ground'); }
+  if (!path || !id) return toast('Nothing to pick there; pick a texture from the list.', true);
   V3.land.tex = {id, path}; v3LandSave(); v3LandPanel(); toast('Painting with ' + id);
 }
 
@@ -1833,7 +1844,7 @@ function v3Bind(el){
     // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
     if (e.key === 'Escape' && V3.landOpen) v3LandToggle(false);
     if (V3.landOpen && W.ext && (e.key === '[' || e.key === ']')){
-      V3.land.size = Math.max(128, Math.min(4096, V3.land.size + (e.key === ']' ? 128 : -128))); v3LandSave(); v3LandPanel();
+      V3.land.size = v3BrushClamp(V3.land.size * (e.key === ']' ? 1.25 : 0.8)); v3LandSave(); v3LandPanel();
     }
   });
   // letting go of a key always stops it (heard first, before anything else can swallow it)
@@ -1891,6 +1902,7 @@ function v3Click(e){
   if (typeof extendPick3D === 'function' && extendPick3D(e, true)) return;
   if (W.mode === 'arrive'){
     const h = v3Pick(e, true);
+    if (h && h.obj && h.obj.r && h.obj.r.type === 'DOOR' && typeof arriveDoor === 'function') return arriveDoor(h.obj.ck, h.obj.r.k);
     if (!h || !h.world) return toast('Click on the floor or ground where the player should arrive.');
     // facing the way the camera looks, in whole 15° steps
     const yaw = Math.round(((V3.yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 12)) * (Math.PI / 12);
@@ -2006,14 +2018,28 @@ async function v3PlaceAt(id, name, world, yaw){
   if (m && m.placed) selectRef(ck, m.placed);
 }
 
+// the water plane where the place's water is (each frame, and at once when the Sky panel's water changes)
+function v3WaterSync(){
+  if (!V3.water) return;
+  const wl = v3WaterLevel();
+  V3.water.visible = wl != null && V3.view.water !== false;
+  if (wl != null) V3.water.position.set(V3.pos.x, V3.pos.y, wl - V3.origin[2]);
+}
+// the water's height in the place open now: outdoors 0; an interior's own (as being edited, else as saved), or null
+function v3WaterLevel(){
+  if (W.ext) return 0;
+  const L = (W.placeEdit && W.info && W.placeEdit.key === W.info.key) ? W.placeEdit : (W.info && W.info.lighting);
+  return L && L.water ? (+L.water_height || 0) : null;
+}
+
 // ----- moving and turning with the handles -----
 function v3ApplyMode(){
   const tc = V3.tc; if (!tc) return;
   tc.setMode(V3.mode);
   // (World axes: east, north and up, whichever way the thing faces; Own axes: its own front, side and up, so a
   // turned bench slides along its length; freeman141 on Nexus: the arrows didn't show the way it would go)
-  tc.setSpace(v3Space());
-  tc.showX = tc.showY = V3.mode === 'translate' || V3.tilt;
+  tc.setSpace(V3.mode === 'scale' ? 'local' : v3Space());
+  tc.showX = tc.showY = V3.mode === 'translate' || V3.mode === 'scale' || V3.tilt;
   tc.showZ = true;
   tc.setTranslationSnap(V3.grid || null);
   tc.setRotationSnap(V3.angle ? V3.angle * Math.PI / 180 : null);
@@ -2029,8 +2055,9 @@ function v3DragStart(){
   if (V3.tc.object === V3.pivot && W.multi.size > 1){
     // a whole group: remember where every member started, relative to the handles
     const members = [...W.multi.values()].map(m => V3.objs.get(m.cell + '|' + m.k)).filter(Boolean);
-    V3.drag = {group: true, members: members.map(o => ({o, pos: o.g.position.clone(), q: o.g.quaternion.clone()})),
-               start: V3.pivot.position.clone(), startRot: V3.pivot.rotation.z};
+    const D = V3.drag = {group: true, members: members.map(o => ({o, pos: o.g.position.clone(), q: o.g.quaternion.clone()})),
+                         start: V3.pivot.position.clone(), startRot: V3.pivot.rotation.z};
+    if (V3.pieces && V3.mode === 'translate') v3GroupSnapStart(D);
     return;
   }
   const sk = W.sel && W.sel.cell + '|' + W.sel.k, o = sk && V3.objs.get(sk);
@@ -2049,7 +2076,7 @@ function v3DragStart(){
     if (x.g.position.distanceTo(o.g.position) < 3000) nearObjs.push(x);
   }
   V3.drag = {key: sk, o, rel: own.clone().translate(o.g.position.clone().negate()), near, nearObjs,
-             start: o.g.position.clone(), startRot: o.g.rotation.clone(), startQ: o.g.quaternion.clone()};
+             start: o.g.position.clone(), startRot: o.g.rotation.clone(), startQ: o.g.quaternion.clone(), startS: o.g.scale.x};
   if (W.ext && V3.pieces && V3.mode === 'translate') v3SnapsFetch(V3.drag);
 }
 
@@ -2062,6 +2089,66 @@ async function v3SnapsFetch(D){
     const r = await api('/api/build/snaps?' + new URLSearchParams({id: D.o.r.id, skip: D.o.r.k, x: at.x + V3.origin[0], y: at.y + V3.origin[1], z: at.z + V3.origin[2]}));
     if (V3.drag === D) D.snaps = r.snaps || [];
   } catch (e) {}
+}
+
+// A group moved as one snaps as one (the user 2026-10-30: only one piece at a time snapped). Each member is tried
+// against the pieces round the group that aren't in it: outdoors the game's joins where the member already stands
+// turned the game's way, else flush faces; indoors the group's box on the world's axes. The nearest fix moves them all.
+function v3GroupSnapStart(D){
+  const T = THREE, keys = new Set(D.members.map(m => m.o.ck + '|' + m.o.r.k));
+  const mid = new T.Vector3(); D.members.forEach(m => mid.add(m.pos)); mid.divideScalar(D.members.length || 1);
+  D.near = []; D.nearObjs = [];
+  for (const [key, x] of V3.objs){
+    if (keys.has(key) || !x.r || x.g.position.distanceTo(mid) > 4000) continue;
+    const b = new T.Box3().setFromObject(x.g);
+    if (!b.isEmpty()) D.near.push(b);
+    if (!['NPC_', 'CREA', 'LEVC'].includes(x.r.type)) D.nearObjs.push(x);
+  }
+  if (!W.ext) return;
+  const skip = D.members.map(m => m.o.r.k).join('\n');
+  for (const m of D.members.slice(0, 12)){
+    const at = m.pos;
+    api('/api/build/snaps?' + new URLSearchParams({id: m.o.r.id, skip, x: at.x + V3.origin[0], y: at.y + V3.origin[1], z: at.z + V3.origin[2]}))
+      .then(r => { if (V3.drag === D) m.snaps = r.snaps || []; }).catch(() => {});
+  }
+}
+function v3GroupSnap(D){
+  const T = THREE;
+  if (!W.ext){
+    const box = new T.Box3(); D.members.forEach(m => box.union(new T.Box3().setFromObject(m.o.g)));
+    const thr = 18, best = {x: null, y: null, z: null};
+    for (const nb of D.near) for (const a of ['x', 'y', 'z']){
+      const others = ['x', 'y', 'z'].filter(v => v !== a);
+      if (!others.every(v => box.min[v] < nb.max[v] + thr && box.max[v] > nb.min[v] - thr)) continue;
+      for (const d of [nb.min[a] - box.max[a], nb.max[a] - box.min[a], nb.min[a] - box.min[a], nb.max[a] - box.max[a]])
+        if (Math.abs(d) < thr && (best[a] === null || Math.abs(d) < Math.abs(best[a]))) best[a] = d;
+    }
+    const v = new T.Vector3(best.x || 0, best.y || 0, best.z || 0);
+    return v.lengthSq() > 1e-4 ? {v, note: ''} : null;
+  }
+  // (the game's joins: as v3SnapGame, but only where the member is turned as the join has it, since the group isn't turned)
+  let best = null;
+  for (const m of D.members){
+    const g = m.o.g;
+    for (const s of m.snaps || []){
+      const dx = s.p[0] - V3.origin[0] - g.position.x, dy = s.p[1] - V3.origin[1] - g.position.y, dz = s.p[2] - V3.origin[2] - g.position.z;
+      if (Math.hypot(dx, dy) >= 80 || Math.abs(dz) >= 80) continue;
+      const q = new T.Quaternion().setFromEuler(new T.Euler(-s.p[3], -s.p[4], -s.p[5], 'XYZ'));
+      if (q.angleTo(g.quaternion) > 0.035) continue;
+      const d = Math.hypot(dx, dy) + Math.abs(dz) * 0.5 - 30 * ((s.k || 1) - 1) - 6 * Math.log2(1 + s.n);
+      if (!best || d < best.d) best = {d, v: new T.Vector3(dx, dy, dz), note: `${m.o.r.id} joined to ${s.to} the way the game does it (${s.n}×)`};
+    }
+  }
+  if (best) return best;
+  // (else flush faces: the member lined up on the most sides, then the smallest nudge)
+  for (const m of D.members){
+    const g = m.o.g, proxy = {position: g.position.clone(), quaternion: g.quaternion.clone()};
+    const n = v3SnapFlush({o: m.o, nearObjs: D.nearObjs}, proxy);
+    if (!n) continue;
+    const v = proxy.position.sub(g.position), sides = ['x', 'y', 'z'].filter(a => Math.abs(v[a]) > 0.01).length;
+    if (!best || sides > best.sides || (sides === best.sides && v.length() < best.v.length())) best = {v, sides, note: `${m.o.r.id} flush with ${n.r.id}`};
+  }
+  return best;
 }
 
 // a made thing's own box (in its own frame, scaled), for the snapping
@@ -2141,6 +2228,14 @@ function v3SnapNote(text){
 // "Snap pieces together": while moving, line the edges up with nearby pieces
 function v3Snap(){
   const D = V3.drag; if (!D) return;
+  if (V3.mode === 'scale' && !D.group && D.o){
+    // (the game sizes a thing evenly, ×0.5 to ×2: whichever handle is dragged sizes all three ways, as bench.js)
+    const g = D.o.g, s0 = D.startS || 1, v = [g.scale.x, g.scale.y, g.scale.z].reduce((a, b) => Math.abs(b - s0) > Math.abs(a - s0) ? b : a, s0);
+    g.scale.setScalar(Math.max(0.5, Math.min(2, +v.toFixed(2))));
+    g.updateMatrixWorld(true); if (V3.selBox) V3.selBox.setFromObject(g);
+    if (typeof v3SnapNote === 'function') v3SnapNote('×' + g.scale.x.toFixed(2));
+    return;
+  }
   if (D.group){
     // move/turn every member with the handles (turning around the group's middle)
     const d = V3.pivot.position.clone().sub(D.start), a = V3.pivot.rotation.z - D.startRot, c = Math.cos(a), s = Math.sin(a);
@@ -2150,6 +2245,11 @@ function v3Snap(){
       // (turned about the world's up axis on top of its own turn; a tilted thing keeps its tilt)
       m.o.g.quaternion.copy(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a).multiply(m.q));
       m.o.g.updateMatrixWorld(true);
+    }
+    if (D.nearObjs && V3.pieces && V3.mode === 'translate'){
+      const fix = v3GroupSnap(D);
+      if (fix) for (const m of D.members){ m.o.g.position.add(fix.v); m.o.g.updateMatrixWorld(true); }
+      v3SnapNote(fix ? fix.note : '');
     }
     for (const bh of V3.multiBoxes || []) bh.update();
     return;
@@ -2206,6 +2306,14 @@ async function v3DragEnd(){
     return;
   }
   const g = D.o.g;
+  if (V3.mode === 'scale'){
+    if (Math.abs(g.scale.x - (D.startS || 1)) < 0.005) return;
+    if (!await needProject()){ v3Refresh(); return; }
+    const r = D.o.r, s = +g.scale.x.toFixed(2);
+    r.s = s;
+    await refAction('/api/ref/move', {cell: D.o.ck, ref: r.k, p: r.p.slice(), s}, D.o.ck, r.k, `Scaled ${r.name || r.id} to ×${s}`);
+    return;
+  }
   if (g.position.distanceTo(D.start) < 0.05 && Math.abs(g.rotation.z - D.startRot.z) < 1e-4 &&
       Math.abs(g.rotation.x - D.startRot.x) < 1e-4 && Math.abs(g.rotation.y - D.startRot.y) < 1e-4) return;
   // "Land on surfaces": moved over a table, a shelf or the floor, it comes to rest on top of it
@@ -2255,6 +2363,7 @@ function v3Tools(){
   t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
     <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button>
+    <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">⤢ Scale</button>
     <button class="btn sm" data-v3="space" title="${v3Space() === 'local' ? 'Handles on its own axes: front, side and up as it is turned. Click for the world\'s axes.' : 'Handles on the world\'s axes: east, north and up. Click for its own axes, as it is turned.'}">${V3.space === 'local' ? '⟀ Own axes' : '✛ World axes'}</button></div>
     <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
@@ -2292,6 +2401,9 @@ function v3Tools(){
   t.querySelectorAll('[data-v3]').forEach(b => b.onclick = () => {
     const a = b.dataset.v3;
     if (a === 'translate' || a === 'rotate'){ V3.mode = a; v3ApplyMode(); v3Tools(); }
+    // (sizing with the handles, the user 2026-10-29: "Scale" beside Move, Turn and Tilt. A group sizes through
+    // the dialog, which scales the spacing too)
+    else if (a === 'scale'){ if (W.multi.size > 1 && typeof qolScale === 'function'){ qolScale(); return; } V3.mode = 'scale'; V3.tilt = false; v3ApplyMode(); v3Tools(); }
     else if (a === 'floor') v3DropToFloor();
     else if (a === 'physics' && typeof phToggle === 'function') phToggle(!PH.on);
     else if (a === 'land') v3LandToggle(!V3.landOpen);
@@ -2300,7 +2412,7 @@ function v3Tools(){
     else if (a === 'home') v3Home();
     else if (a === 'help') $('#v3help').style.display = $('#v3help').style.display === 'none' ? 'block' : 'none';
     // (tilting turns: on, the turning handles with their two tilt rings)
-    else if (a === 'tilt'){ V3.tilt = !V3.tilt; if (V3.tilt) V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
+    else if (a === 'tilt'){ V3.tilt = !V3.tilt; V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
     else if (a === 'space'){ V3.space = V3.space === 'local' ? 'world' : 'local'; try { localStorage.setItem('ws-space', V3.space); } catch (e) {} v3ApplyMode(); v3Tools(); }
     else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; v3Tools(); }
     else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; v3Tools(); }
@@ -2336,7 +2448,7 @@ function v3ApplyView(){
   for (const m of Object.values(V3.mats)) m.wireframe = wire;          // (things not built yet)
   V3.wireFor = wire + '|' + V3.objs.size;
   V3.ground.visible = !W.ext || V3.view.ground !== false;
-  if (V3.water) V3.water.visible = W.ext && V3.view.water !== false;
+  if (V3.water) V3.water.visible = v3WaterLevel() != null && V3.view.water !== false;
   if (V3.gridGroup) V3.gridGroup.visible = false;                    // (placed again by v3GridTick)
 }
 // lines that ignore depth so they can be seen through the ground and floors, faintly
@@ -2502,7 +2614,9 @@ function v3Loop(){
     V3.camera.position.copy(V3.pos);
     V3.camera.lookAt(V3.pos.clone().add(d));
     if (typeof phTick === 'function') phTick(dt);          // (physics on: a step of the world; physics.js)
-    V3.water.position.set(V3.pos.x, V3.pos.y, -V3.origin[2]);
+    // (outdoors the sea at 0; an interior with water at its own height, the one being edited in the Sky panel as
+    // you type: interiors drew no water at all, and a flooded cave's level was set blind, the user 2026-10-30)
+    v3WaterSync();
     if (V3.selBox.visible && V3.tc.object) V3.selBox.setFromObject(V3.tc.object);
     v3GridTick(t);
     // things built since wireframe was switched on follow it

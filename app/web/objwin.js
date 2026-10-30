@@ -250,8 +250,13 @@ function owRefHtml(){
     const at = D.at || (to ? [to.x, to.y, to.z, to.rz] : null);
     h += `<h4>🚪 Leads to</h4>
       <div class="dd"><input class="inp" id="ow-dest" value="${esc(label)}" placeholder="Nowhere: an ordinary door (search a place to make it lead there)" autocomplete="off"><div class="ddlist" id="ow-dest-l"></div></div>
-      ${target ? `<div class="msg" style="margin-top:6px">You arrive at ${at ? `${Math.round(at[0])}, ${Math.round(at[1])}${at[2] == null ? '' : ', ' + Math.round(at[2])}, facing ${Math.round(owDeg(at[3] || 0))}°` : 'a spot chosen for you'}${D.changed ? ' <span class="mine">(changed)</span>' : ''}</div>
-        <div class="actions" style="margin-top:6px"><button class="btn sm" data-ow="arrive" title="Open the place it leads to and click exactly where the player should arrive">📍 Pick on the map…</button><button class="btn sm" data-ow="unlink">Remove the link</button></div>
+      ${target ? `<div class="msg" style="margin-top:6px">You arrive at${D.changed ? ' <span class="mine">(changed)</span>' : ''}${at ? '' : ' a spot chosen for you (or type one)'}:</div>
+        <div style="display:flex;gap:4px;margin-top:2px" title="Where the player arrives through this door, in game units in the place it leads to, and the way they face (0 north, 90 east)">
+          <label class="cfield"><span>X</span><input class="inp num" type="number" id="ow-ax" value="${at && at[0] != null ? Math.round(at[0]) : ''}"></label>
+          <label class="cfield"><span>Y</span><input class="inp num" type="number" id="ow-ay" value="${at && at[1] != null ? Math.round(at[1]) : ''}"></label>
+          <label class="cfield"><span>Height</span><input class="inp num" type="number" id="ow-az" value="${at && at[2] != null ? Math.round(at[2]) : ''}"></label>
+          <label class="cfield"><span>Facing °</span><input class="inp num" type="number" id="ow-ar" value="${at ? Math.round(owDeg(at[3] || 0)) : ''}"></label></div>
+        <div class="actions" style="margin-top:6px"><button class="btn sm" data-ow="arrive" title="Open the place it leads to and click where the player should arrive; or click a door there, and the two doors lead to each other, each arriving in front of the other">📍 Pick on the map…</button><button class="btn sm" data-ow="unlink">Remove the link</button></div>
         <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="ow-both" ${W.relinkBoth !== false ? 'checked' : ''}> Make the door at the other end lead back here</label>` : '<div class="msg" style="margin-top:6px">Nowhere: an ordinary door that just opens and closes.</div>'}`;
   }
   return h;
@@ -301,6 +306,14 @@ function owDrawRef(keepTyped){
       catch (e){ toast(e.message, true); }
     });
     const both = $('#ow-both'); if (both) both.onchange = () => { W.relinkBoth = both.checked; };
+    // (the arrival spot typed: kept for Save, the window not redrawn so the typing carries on)
+    const ax = ['#ow-ax', '#ow-ay', '#ow-az', '#ow-ar'].map(s => $(s));
+    if (ax[0]) ax.forEach(el => el.onchange = () => {
+      const v = ax.map(x => x.value === '' ? null : +x.value);
+      if (v[0] == null || v[1] == null || v.some(x => x != null && !isFinite(x))) return;
+      OW.door = Object.assign(OW.door || {target: undefined, label: ''}, {at: [v[0], v[1], v[2], (v[3] || 0) * Math.PI / 180], changed: true});
+      owMsg();
+    });
   }
   owMsg();
   owPlace();
@@ -406,6 +419,25 @@ async function owOwnRecord(){
   toast(`This ${r.name || r.id} is now ${id}, a record of its own. One Undo takes it back.`);
   if (OW.el && OW.cell === cell && OW.k === k){ OW.ref = findRef(cell, k) || OW.ref; OW.cellObj = W.cells[cell]; await owLoad(); }
 }
+// a door clicked while picking where to arrive: the two doors lead to each other, each arriving in front of the
+// other on the side with floor (doors.link_pair), saved at once (the user, 2026-10-30: "a better way of linking two
+// doors without them sending you into the void")
+async function arriveDoor(ck, k){
+  const P = OW.picking, A = W.arriving; if (!P && !A) return false;
+  const cell = P ? P.cell : A.cell, ref = P ? P.k : A.ref;
+  if (ck === cell && k === ref) return toast('That is the door itself: click a spot to arrive at, or another door.', true);
+  OW.picking = false; W.arriving = null; setMode(null);
+  if (!await needProject()) return;
+  try {
+    await post('/api/doors/pair', {cell_a: cell, ref_a: ref, cell_b: ck, ref_b: k});
+    toast('The two doors now lead to each other, each arriving in front of the other. Undo takes it back.');
+    await afterChange();
+  } catch (e){ toast(e.message, true); }
+  await worldOpen(cell);
+  selectRef(cell, ref, true);
+  if (P && OW.el){ OW.door = null; OW.ref = findRef(cell, ref) || OW.ref; OW.el.style.display = ''; owDrawRef(); }
+  return true;
+}
 // the arrival spot picked on the map comes back to the window instead of being saved at once
 async function owArrived(x, y, z, rz){
   const P = OW.picking; OW.picking = false; W.arriving = null;
@@ -442,7 +474,10 @@ async function owSave(){
     if (c.cont){ await post('/api/contents', {i: ri, items: OW.cont.items.map(x => ({id: x.id, count: x.count, restock: !!x.restock}))}); done.push('the contents'); }
     if (c.spot){ await post('/api/ref/move', {cell, ref: k, p: c.spot.p, s: c.spot.s}); done.push('the spot'); }
     if (c.props){ await post('/api/ref/props', {cell, ref: k, data: owPropsData()}); done.push('ownership'); }
-    if (c.door){ await post('/api/ref/relink', {cell, ref: k, target: OW.door.target, at: OW.door.at, both: W.relinkBoth !== false}); done.push('where it leads'); }
+    // (the place it leads to: the one picked, else the one it led to already; sent as nothing, a spot picked or
+    // typed for a door already linked took its link away)
+    if (c.door){ const tg = OW.door.target !== undefined ? OW.door.target : (r.to ? r.to.key : null);
+      await post('/api/ref/relink', {cell, ref: k, target: tg, at: tg ? OW.door.at : null, both: W.relinkBoth !== false}); done.push('where it leads'); }
   } catch (e){ failed = e.message; }
   // (each route is one change; together they become one Undo step)
   const n = (await depth()) - d0;
@@ -478,6 +513,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || !OW.el) return;
   if (OW.picking){ if (W.mode === 'arrive'){ e.preventDefault(); e.stopPropagation(); owPickCancel(); } return; }
   if (OW.el.style.display === 'none' || document.querySelector('.modal-bg, .pmenu')) return;
+  if (typeof vwToolBusy === 'function' && vwToolBusy()) return;   // (a tool at work ends first: viewwin.js)
   const open = OW.el.querySelector('.ddlist[style*="block"]');
   if (open){ open.style.display = 'none'; e.preventDefault(); e.stopPropagation(); return; }
   e.preventDefault(); e.stopPropagation();

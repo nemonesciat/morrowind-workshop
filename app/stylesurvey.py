@@ -747,6 +747,62 @@ def theme(db, name):
     return _with_added(db, s, name, out)
 
 
+ALL_MAX = 300                   # things the All search shows at most, the most used first
+_where = {}
+
+
+def _where_of(s):
+    """{item: (section, group)} over every theme's lists and Used everywhere."""
+    key = id(s)
+    if key not in _where:
+        out = {}
+        for lists in list(s['lists'].values()) + [s['everywhere']]:
+            for sec, groups in lists.items():
+                for g, lows in groups.items():
+                    for low in lows:
+                        out.setdefault(low, (sec, g))
+        _where.clear()
+        _where[key] = out
+    return _where[key]
+
+
+def everything(db, q):
+    """Every style's palette searched at once (the user, 2026-10-30: an "all" to search in the palette), shaped as
+    theme(): each thing once, in its group, under the style that has it most (its 'style'); nothing without q."""
+    s = ready(db)
+    if not s:
+        return None
+    out = {'name': 'All styles', 'places': s['places'], 'sets': [], 'examples': [], 'sections': {},
+           'line': "Everything in every style's palette: type to search it"}
+    words = (q or '').lower().split()
+    if not words:
+        out['sections'] = {sec: [] for sec in SECTIONS}
+        return out
+    where = _where_of(s)
+    found = []
+    for low, (sec, g) in where.items():
+        it = s['items'].get(low)
+        if not it or not all(w in ('%s %s %s' % (it['name'], it['id'], it.get('grp') or '')).lower() for w in words):
+            continue
+        th = max(it['th'], key=lambda t: it['th'][t][1]) if it.get('th') else '*'
+        row = _row(db, s, low, th)
+        if row:
+            row['style'] = 'Used everywhere' if th == '*' else th
+            found.append((sec, g, row))
+    found.sort(key=lambda f: -f[2]['places'])
+    found = found[:ALL_MAX]
+    for sec in SECTIONS:
+        groups = []
+        for g in GROUPS[sec]:
+            rows = [r for s_, g_, r in found if s_ == sec and g_ == g]
+            if rows:
+                groups.append({'group': g, 'items': rows})
+        out['sections'][sec] = groups
+    out['line'] = "%d thing%s in every style's palette%s" % (len(found), '' if len(found) == 1 else 's',
+                                                              ' (the most used first; type more to narrow it)' if len(found) >= ALL_MAX else '')
+    return out
+
+
 # ------------------------------------------------------------------ your own additions
 # Things you add to a style's palette yourself (PIN2: a piece the survey left out of its style, the drystone walls),
 # kept in the Workshop's home apart from the survey, so learning it again keeps them; listed first in their group.

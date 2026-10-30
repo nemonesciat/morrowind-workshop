@@ -352,6 +352,7 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 #v3land .v3lrow{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 #v3land input[type=range]{flex:1}
 #v3land .v3lrow span{min-width:34px;text-align:right;color:var(--text)}
+#v3land .v3lnum{width:62px;padding:1px 4px;font-size:12px}
 #v3land #v3lq{width:100%;box-sizing:border-box;margin:6px 0}
 #v3land .v3lcur{display:flex;gap:8px;align-items:center;color:var(--text)}
 #v3land .v3scat{display:flex;flex-wrap:wrap;gap:4px;max-height:180px;overflow:auto}
@@ -2619,7 +2620,7 @@ function setMode(m, data){
   else if (m === 'play') setBanner(LINK.connected ? 'Click where you want to teleport to in game. Esc to cancel.' : 'Click where you want to start playing. Esc to cancel.', 'play');
   else if (m === 'group') groupHint();
   else if (m === 'paths') peBanner();
-  else if (m === 'arrive') setBanner(`Click where the player should arrive through <b>${esc((W.arriving || {}).name || 'the door')}</b>${V3.on ? ' (on the floor or ground)' : ''}. Esc to cancel.`, 'arrive');
+  else if (m === 'arrive') setBanner(`Click where the player should arrive through <b>${esc((W.arriving || {}).name || 'the door')}</b>${V3.on ? ' (on the floor or ground), or click a door to link the two doors to each other' : ''}. Esc to cancel.`, 'arrive');
   else setBanner('');
   if (m !== 'place'){ W.placeId = null; renderPlacing(); renderLinkBits(); }
 }
@@ -2902,7 +2903,7 @@ async function playHere(body){
     return;
   }
   body.god = W.god;
-  try { const r = await gameStart('/api/play', body); if (r) toast((r.as ? `Starting OpenMW with ${QOL.playAs || 'your character'}'s latest save, then moving them to ` : 'Starting OpenMW in ') + r.start + (r.setup ? ', with the test setup "' + r.setup + '"' : '') + '. The live link connects once you\'re in game.'); }
+  try { const r = await gameStart('/api/play', body); if (r) toast((r.as ? `Starting OpenMW with ${QOL.playAs || 'your character'}'s latest save, then moving them to ` : 'Starting OpenMW in ') + (r.label || r.start) + (r.setup ? ', with the test setup "' + r.setup + '"' : '') + '. The live link connects once you\'re in game.'); }
   catch (err){ toast(err.message, true); }
 }
 
@@ -3225,8 +3226,8 @@ async function renderPlaceSettings(i){
     <div class="dd" style="margin-top:6px"><input class="inp" id="pl-copy" placeholder="Copy from another place… (search)" autocomplete="off"><div class="ddlist" id="pl-copy-l"></div></div>
     <div class="actions" style="margin-top:6px"><button class="btn sm primary" id="pl-save" ${dirty ? '' : 'disabled'}>${dirty ? 'Save' : 'Saved'}</button>
       ${dirty ? '<button class="btn sm" id="pl-undo">↺ Undo edits</button>' : ''}</div>
-    <div class="msg" style="font-size:11.5px">${V3.on ? (v3LightMode() === 'game' ? 'The 3D view shows it as in game.' : 'Switch the 3D view to 💡 Game light to see it.') : 'Turn on the 3D view to see it.'} In game it applies the next time you enter.</div>`;
-  const changed = () => { V3.lightPreview = W.placeEdit; if (V3.on) v3ApplyLighting(); renderPlaceSettings(i); };
+    <div class="msg" style="font-size:11.5px">${V3.on ? (v3LightMode() === 'game' ? 'The 3D view shows it as in game.' : 'Switch the 3D view to 💡 Game light to see it.') : 'Turn on the 3D view to see it.'} The game reads a place's light and water when it starts: restart it to see changes.</div>`;
+  const changed = () => { V3.lightPreview = W.placeEdit; if (V3.on){ v3ApplyLighting(); if (typeof v3WaterSync === 'function') v3WaterSync(); } renderPlaceSettings(i); };
   box.querySelectorAll('[data-pl]').forEach(inp => inp.oninput = () => { L[inp.dataset.pl] = plRgb(inp.value); V3.lightPreview = L; if (V3.on) v3ApplyLighting(); });
   box.querySelectorAll('[data-pl]').forEach(inp => inp.onchange = changed);
   $('#pl-dens').oninput = e => { L.density = +e.target.value / 100; $('#pl-dv').textContent = e.target.value + '%'; V3.lightPreview = L; if (V3.on) v3ApplyLighting(); };
@@ -3789,7 +3790,8 @@ async function showModel(box, query, scope){
   disposeViews(scope);
   box.innerHTML = '<div class="msg" style="padding:10px"><span class="spin"></span>Loading 3D preview…</div>';
   let m;
-  try { [m] = await Promise.all([api('/api/model?' + new URLSearchParams(query)), ensureThree()]); }
+  // (query._url: another route giving the same shapes, the Forge's fitted weapon)
+  try { [m] = await Promise.all([api(query._url || '/api/model?' + new URLSearchParams(query)), ensureThree()]); }
   catch (e){ box.innerHTML = '<div class="msg" style="padding:10px">3D preview needs an internet connection the first time it loads.</div>'; return; }
   if (!box.isConnected) return;
   if (m.error){ box.innerHTML = `<div class="msg" style="padding:10px">${esc(m.error)}</div>`; return; }
@@ -3809,7 +3811,9 @@ async function showModel(box, query, scope){
     if (s.uv && s.uv.length) g.setAttribute('uv', new T.Float32BufferAttribute(s.uv, 2));
     g.setIndex(s.i); g.computeVertexNormals();
     const mat = new T.MeshLambertMaterial({color: 0xd8cfbf, side: T.DoubleSide, alphaTest: s.alpha ? 0.5 : 0, transparent: !!s.alpha});
-    if (s.tex){
+    // (a shape shown for comparison: faint, under the real one)
+    if (s.ghost){ mat.color.set(0x7fd1c7); mat.transparent = true; mat.opacity = 0.3; mat.depthWrite = false; }
+    if (s.tex && !s.ghost){
       const url = '/api/file?path=' + encodeURIComponent(s.tex);
       const apply = tex => { tex.wrapS = tex.wrapT = T.RepeatWrapping; mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true; };
       if (texCache[url]) apply(texCache[url]);

@@ -236,8 +236,11 @@ def _in_process(jobs):
     args = [exe, os.path.join(here, 'surveyworker.py'), project_path[0] or '-', json.dumps([list(j.task) for j in jobs])]
     import osplat
     flags = osplat.background_flags()
+    # (a fixed hash seed: Python orders sets differently in every process, and the surveys settled ties between
+    # equally common pieces by that order, so two first startings learnt different things and furnished 478 to 542)
+    env = dict(os.environ, PYTHONHASHSEED='0')
     try:
-        p = subprocess.Popen(args, cwd=here, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags)
+        p = subprocess.Popen(args, cwd=here, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags, env=env)
     except Exception as e:
         print('survey process: %s' % e)
         return set()

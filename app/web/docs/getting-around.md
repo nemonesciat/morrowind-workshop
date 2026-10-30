@@ -50,6 +50,8 @@ the left. Click a result to read it.
   **F1** on anything shows the same.
 - **✎ Edit** changes it in your mod. Only the fields you change are saved; the original files stay untouched.
   **⧉ Use as template** makes a copy under a new ID.
+- **📍 Place on the map** (on anything that can stand in the world) starts placing it on the World map; **🔨 Add
+  to the workbench** puts it on the prefab workbench.
 - Records with an editor of their own (people, items, spells, lists, scripts, factions, classes…) have a button
   that opens it.
 - **Undo my changes** (or **Delete from my mod**) takes a record back to how the game has it.

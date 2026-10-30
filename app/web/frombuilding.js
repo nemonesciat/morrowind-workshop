@@ -2,7 +2,8 @@
 // see whether it is closed and sound and the floors the interior would have drawn over it, then Build.
 // The planned tiles are drawn on the map, floor by floor; the new interior's door and the building's
 // door are linked both ways and the northmarker put in; the fit (the reviewers' test) is shown after.
-const FB = {on: false, cell: null, ref: null, door: null, res: null, panel: null, floor: null};
+const FB = {on: false, cell: null, ref: null, door: null, res: null, panel: null, floor: null,
+            as: '', light: 'normal', lamps: true, seed: 0};     // (the finish, kept across windows: furnish as, light, lanterns)
 const FB_COL = ['#f0cd87', '#7fd1c7', '#c79bf0'];
 
 // (the land's own big pieces count as architecture but are no building: a rock got "Build an interior inside
@@ -63,13 +64,13 @@ async function gfFit(cell, ref){
 
 async function fbOpen(cell, ref, door, keep){
   // (keep: the same window again with a choice changed, the door, the floors or the cellar; the copy search kept)
-  if (!keep){ FB.cellar = null; FB.floors = null; FB.copyOpen = false; FB.q = ''; FB.gamePick = null; FB.cname = null; }
+  if (!keep){ FB.cellar = null; FB.floors = null; FB.copyOpen = false; FB.q = ''; FB.gamePick = null; FB.cname = null; FB.seed = 0; }
   const games = keep && FB.cell === cell && FB.ref === ref && (FB.door || null) === (door || null) ? FB.games : null;
   FB.on = true; FB.cell = cell; FB.ref = ref; FB.door = door || null; FB.res = null; FB.floor = null; FB.games = games;
   if (!keep) fbPanel('<div class="msg">Reading the building…</div>');
   let r;
   try { r = await api('/api/build/from_building?cell=' + encodeURIComponent(cell) + '&ref=' + encodeURIComponent(ref) + (door ? '&door=' + encodeURIComponent(door) : '') +
-                      (FB.cellar ? '&cellar=' + FB.cellar : '') + (FB.floors ? '&floors=' + FB.floors : '')); }
+                      (FB.cellar ? '&cellar=' + FB.cellar : '') + (FB.floors ? '&floors=' + FB.floors : '') + (FB.seed ? '&seed=' + FB.seed : '')); }
   catch (e){ fbPanel(`<div class="msg" style="color:#e25a4a">${esc(e.message)}</div>`); return; }
   FB.res = r;
   fbRender();
@@ -159,7 +160,13 @@ function fbRender(){
       ${C ? `<label title="${esc(`${Math.round(C.share * 100)}% of the game's ${C.style || ''} houses have one: usually ${C.usual}× the ground floor, a big one ${C.big}×`)}">Cellar <select id="fb-cellar">
         <option value="" ${!FB.cellar ? 'selected' : ''}>None</option><option value="usual" ${FB.cellar === 'usual' ? 'selected' : ''}>Usual</option><option value="big" ${FB.cellar === 'big' ? 'selected' : ''}>Big</option></select></label>` : ''}</div>`;
     const tip = pl.rooms.map(x => `${x.name} ${x.w}×${x.h}${x.cut ? ' less ' + x.cut.length : ''}`).join(', ') + '\n' + (pl.notes || []).concat(pl.dry || []).join('\n');
-    h += `<div class="msg" style="margin:2px 0" title="${esc(tip)}">${esc(pl.style_name)} · ${pl.rooms.length} room${pl.rooms.length === 1 ? '' : 's'} ⓘ</div>`;
+    h += `<div class="msg" style="margin:2px 0;display:flex;align-items:center;gap:6px"><span title="${esc(tip)}">${esc(pl.style_name)} · ${pl.rooms.length} room${pl.rooms.length === 1 ? '' : 's'} ⓘ</span>${live ? '<button class="btn sm" id="fb-reroll" title="Other rooms in the same space">🎲</button>' : ''}</div>`;
+    if (live) h += `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0">
+      <label title="Furnished the game's way after it is made (Auto-furnish, by the rooms' names); Bare leaves the rooms empty">Furnish <select id="fb-as">${[['none', 'Bare']].concat(FURNISH_AS).map(([v, l]) => `<option value="${v}" ${v === FB.as ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      <input class="inp" id="fb-trade" list="fb-tradelist" placeholder="smith, mage, Temple…" style="display:${FB.as === 'trade' ? '' : 'none'};width:150px" value="${esc(FB.trade || '')}" autocomplete="off"><datalist id="fb-tradelist"></datalist>
+      <span id="fb-maxwrap" style="display:${FB.as === 'worthless' ? 'inline-flex' : 'none'};align-items:center;gap:4px">≤ <input class="inp" id="fb-max" type="number" min="0" max="100000" value="${FB.max != null ? FB.max : 15}" style="width:60px"> gold</span>
+      <label title="How bright the rooms are lit">Light <select id="fb-light">${[['dim', 'Dim'], ['normal', 'Normal'], ['bright', 'Bright'], ['dark', 'Dark']].map(([v, l]) => `<option value="${v}" ${v === FB.light ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label title="Hang lanterns as the style does"><input type="checkbox" id="fb-lamps" ${FB.lamps ? 'checked' : ''}> Lanterns</label></div>`;
     h += `<div class="msg" title="Shows that floor's planned rooms in the building, on the map and in 3D. Every floor is made.">Show ${pl.floors.map(f => `<label style="margin-right:6px;cursor:pointer"><input type="radio" name="fb-fl" value="${f}" ${FB.floor === f || (FB.floor == null && f === 0) ? 'checked' : ''}><span style="color:${FB_COL[f] || '#ddd'}">■</span>${f === 0 ? 'Ground' : f < 0 ? 'Cellar' : f + 1}</label>`).join('')}</div>`;
     if (pl.problem) h += `<div class="msg" style="color:#e25a4a">${esc(pl.problem)}</div>`;
   }
@@ -175,6 +182,15 @@ function fbRender(){
   const fs = P.querySelector('#fb-floors'); if (fs) fs.onchange = () => { FB.floors = +fs.value; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); };
   const cs = P.querySelector('#fb-cellar'); if (cs) cs.onchange = () => { FB.cellar = cs.value || null; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); };
   const nm = P.querySelector('#fb-name'); if (nm) nm.oninput = () => { FB.cname = nm.value; };
+  const rr = P.querySelector('#fb-reroll'); if (rr) rr.onclick = () => { FB.seed = (FB.seed || 0) + 1; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); };
+  const fa = P.querySelector('#fb-as');
+  if (fa){
+    bindFurnishAs('fb');
+    const keep = () => { FB.as = fa.value; FB.trade = P.querySelector('#fb-trade').value; FB.max = +P.querySelector('#fb-max').value; };
+    fa.addEventListener('change', keep); P.querySelector('#fb-trade').oninput = keep; P.querySelector('#fb-max').oninput = keep;
+    P.querySelector('#fb-light').onchange = e => { FB.light = e.target.value; };
+    P.querySelector('#fb-lamps').onchange = e => { FB.lamps = e.target.checked; };
+  }
   const bb = P.querySelector('#fb-build'); if (bb) bb.onclick = fbBuild;
   const co = P.querySelector('#fb-copyopen'); if (co) co.onclick = () => { FB.copyOpen = true; fbRender(); const q = FB.panel.querySelector('#fb-q'); if (q) q.focus(); };
   const cx = P.querySelector('#fb-copyclose'); if (cx) cx.onclick = () => { FB.copyOpen = false; fbRender(); };
@@ -189,8 +205,19 @@ async function fbBuild(){
   if (!name) return toast('Give the new place a name.', true);
   const b = FB.panel.querySelector('#fb-build'); b.disabled = true; b.textContent = 'Making…';
   let o;
-  try { o = await post('/api/build/from_building', {cell: FB.cell, ref: FB.ref, door: FB.res.door, name, cellar: FB.cellar, floors: FB.floors}); }
+  const level = FB.as === 'none' ? false : (furnishAsValue('fb') || null);
+  try { o = await post('/api/build/from_building', {cell: FB.cell, ref: FB.ref, door: FB.res.door, name, cellar: FB.cellar, floors: FB.floors,
+                                                     seed: FB.seed || 0, lighting: FB.light, lights: FB.lamps}); }
   catch (e){ b.disabled = false; b.textContent = '🛠 Make the interior'; return toast(e.message, true); }
+  if (level !== false){
+    // (every floor that is a place of its own; the surveys learnt first, the bar showing it, as Build from pieces does)
+    const floors = o.cells && o.cells.length ? o.cells : [{key: o.key, name: o.name}];
+    for (const [n, c] of floors.entries()){
+      b.innerHTML = '<span class="spin"></span>Furnishing' + (floors.length > 1 ? ` (${n + 1} of ${floors.length})` : '') + '…';
+      try { await furnishWhenLearnt({cell: c.key, level}, b); }
+      catch (e){ toast('Made it, but could not furnish ' + c.name + ': ' + e.message, true); }
+    }
+  }
   const f = o.fits;
   FB.res.built = `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #fff2">
     <div><b>Made ${esc(o.name)}</b>${(o.cells || []).length > 1 ? ` (${o.cells.length} places, one a floor)` : ''}; its door and the building's lead to each other.</div>

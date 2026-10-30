@@ -87,6 +87,9 @@ def worn(db, ri):
             cur['female'] = zstr(d)
     for p in out:
         p['model'] = _body_model(db, p['male']) or _body_model(db, p['female'])
+        # (bent with the body, a cuirass's or a gauntlet's: a model of yours can't simply be laid over it)
+        raw = _nif(db, p['model']) if p['model'] else None
+        p['skinned'] = bool(raw and b'NiSkinInstance' in raw)
     return out
 
 

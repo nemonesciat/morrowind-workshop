@@ -289,6 +289,11 @@ def _plateau(F, L, seed):
         old = F.z[i]
         if top > old:
             F.z[i] = old + (top - old) * s
+            # (its top stays level at its height: the rolling ground and the roughness pass leave it be. They put up to
+            # 1,000 units of bumps on it, so a plateau set to 2000 stood at 2570 on average and seemed to ignore a new
+            # height, PIN2 2026-10-30)
+            if getattr(F, 'flatw', None) is not None:
+                F.flatw[i] = max(F.flatw[i], s)
 
 
 def _ridge(F, L, seed):
@@ -572,12 +577,36 @@ def _base_from_log(db, k, idx=None):
     if cur is None:
         return None
     hits = (idx if idx is not None else _land_log(db)).get(rk) or []
-    if not hits or not str(hits[-1].get('text', '')).startswith('Shaped ') or hits[-1]['diff']['r'][rk][1] != cur:
+    if not hits or hits[-1]['diff']['r'][rk][1] != cur:
         return None
+
+    def same_ground(e):
+        # (a change that left the heights as they were: shading, texturing, tinting, painting)
+        b, a = e['diff']['r'][rk]
+        try:
+            return b is not None and a is not None and _vhgt(unb64(b['data'])) == _vhgt(unb64(a['data']))
+        except Exception:
+            return False
+    # (back through a row of Shapes and of changes that kept the heights, to the ground before the first Shape. The
+    # last change having to be a Shape, land shaped by an older Workshop (its shading a change of its own after each
+    # Shape) or textured since never found its ground again, and its shapes stayed baked in: a plateau taken out
+    # stood where it was, PIN2 2026-10-30)
     first = len(hits) - 1
-    while first > 0 and str(hits[first - 1].get('text', '')).startswith('Shaped ') \
-            and hits[first - 1]['diff']['r'][rk][1] == hits[first]['diff']['r'][rk][0]:
+    shaped = False
+    while True:
+        e = hits[first]
+        if str(e.get('text', '')).startswith('Shaped '):
+            shaped = True
+        elif not same_ground(e):
+            break
+        if first == 0 or hits[first - 1]['diff']['r'][rk][1] != e['diff']['r'][rk][0]:
+            break
         first -= 1
+    # (stopped on a change that moved the ground by hand: the Shapes start after it)
+    if not str(hits[first].get('text', '')).startswith('Shaped ') and not same_ground(hits[first]):
+        first += 1
+    if not shaped or first >= len(hits):
+        return None
     before = hits[first]['diff']['r'][rk][0]
     if before is not None:
         return _vhgt(unb64(before['data']))
@@ -591,10 +620,58 @@ def _base_from_log(db, k, idx=None):
     return _vhgt(data)
 
 
-def _from_base(db, G, keys):
+FRESH_FADE = 8                  # points (128 each) the land under the mod fades back to the land as it is at an open edge
+
+
+def _under(db, k):
+    """A cell's heights without the mod: another plugin's land, or the sea bed where the mod made the land."""
+    import landsurvey
+    gi = landsurvey._game_land(db, *k)
+    if gi is None:
+        return [-2048.0] * (N * N)
+    r = db.recs[gi]
+    _t, _f, data = db.files[r[3]].record_at(r[4])
+    return _vhgt(data)
+
+
+def _from_base(db, G, keys, fresh=False):
     """The marked cells' heights put back to their ground before the last Shape them, where that is still all they
-    hold. G.real: the cells' heights as they are now (what the objects on them stand on)."""
+    hold; fresh: to the land under the mod, every time (as Undo my land, then Shape). G.real: the cells' heights as
+    they are now (what the objects on them stand on)."""
     G.real = {}
+    if fresh:
+        marked = set(keys)
+        # (PIN2, 2026-10-30: shaped again, a moved or removed shape's old ground stayed on their land however the
+        # ground before the first Shape was looked for, until they undid the land first, "it works everytime". So by
+        # default every Shape starts from the land under the mod; hand sculpting in the marked cells is shaped over)
+        for k in keys:
+            if k not in G.land or not db.project or ('LAND|%d,%d' % k) not in db.project.records:
+                continue
+            try:
+                h = _under(db, k)
+            except Exception:
+                continue
+            if h and len(h) == N * N:
+                now = G.cell(*k)
+                G.real[k] = now
+                # (along an edge shared with a cell that isn't marked, back to the land as it is, over FRESH_FADE
+                # points: that cell keeps it, and the two must meet)
+                open_ = [(k[0] - 1, k[1]) not in marked, (k[0] + 1, k[1]) not in marked,
+                         (k[0], k[1] - 1) not in marked, (k[0], k[1] + 1) not in marked]
+                if any(open_):
+                    h = list(h)
+                    for y in range(N):
+                        for x in range(N):
+                            d = min([x] * open_[0] + [N - 1 - x] * open_[1] + [y] * open_[2] + [N - 1 - y] * open_[3] or [N])
+                            if d < FRESH_FADE:
+                                w = 1.0 - d / float(FRESH_FADE)
+                                w = w * w * (3 - 2 * w)
+                                h[y * N + x] = h[y * N + x] * (1 - w) + now[y * N + x] * w
+                ox, oy = (k[0] - G.x0) * 64, (k[1] - G.y0) * 64
+                for y in range(N):
+                    row = (oy + y) * G.w + ox
+                    G.z[row:row + N] = array('d', h[y * N:(y + 1) * N])
+        return
     bases = ((getattr(db.project, 'land', None) or {}).get('base') or {}) if db.project else {}
     # (every cell looked at first: neighbours share their edge points, so one cell put back changed the next one's edge
     # and it no longer matched)
@@ -618,6 +695,13 @@ def _from_base(db, G, keys):
                 h = None
         if h and len(h) == N * N:
             swap[k] = (now, h)
+        elif db.project and ('LAND|%d,%d' % k) in db.project.records:
+            # (shaped from the ground as it is: said in the log, for Report a problem, so a cell whose shapes stay
+            # baked in can be told apart from one sculpted on purpose; PIN2's "the terrain essentially freezes")
+            hits = idx.get('LAND|%d,%d' % k) or []
+            last = hits[-1].get('text', '') if hits else 'nothing in the history'
+            print('land: cell %d,%d shaped from its ground as it is (last change: %s; kept ground %s)' %
+                  (k[0], k[1], str(last)[:80], 'differs' if b else 'none'))
     for k, (now, h) in swap.items():
         G.real[k] = now
         ox, oy = (k[0] - G.x0) * 64, (k[1] - G.y0) * 64
@@ -673,7 +757,7 @@ def _work(db, cells, plan, s):
     layers = [L for L in layers if L['kind'] not in WATER] + [L for L in layers if L['kind'] in WATER]
     xs, ys = [k[0] for k in keys], [k[1] for k in keys]
     G = landrange.Grid(db, min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1)
-    _from_base(db, G, keys)
+    _from_base(db, G, keys, bool(_clean_opts(plan.get('protect'), PROTECT).get('fresh')))
     F = Field(G, s)
     before = list(F.z)
     seed = int(plan.get('seed') or 1)
@@ -695,7 +779,9 @@ def _work(db, cells, plan, s):
     springs = {}
     # (the coasts together, where the first of them stands in the order: see _coasts)
     coasts = [L for L in layers if L['kind'] == 'coast']
-    for L in layers:
+    F.flatw = [0.0] * len(F.z)                          # (how much a point is a plateau's level top: _plateau)
+    for n_, L in enumerate(layers):
+        _say('Shaping: %s' % L['kind'], 0.05 + 0.14 * n_ / max(1, len(layers)))
         if L['kind'] == 'coast':
             if L is coasts[0]:
                 _coasts(F, coasts, seed)
@@ -741,7 +827,7 @@ def _work(db, cells, plan, s):
                 x, y = F.world(i)
                 # (in proportion to how far the shapes moved the ground, up to 256: full on what they made, none on
                 # the game's land a shape's faded edge or an "only in" barely touched, lab 2026-10-28)
-                amp = sum(amps[r] * w[i] for r, w in like.items()) * shaped[i]
+                amp = sum(amps[r] * w[i] for r, w in like.items()) * shaped[i] * (1.0 - F.flatw[i])
                 # (fainter near the water, and never dipping dry land under it: half its height over 32 at most)
                 F.z[i] = max(z + landrange.noise(x, y, seed, amp) * min(1.0, z / 1500.0), 32 + 0.5 * (z - 32) if z > 32 else z)
     # (the regions whose character the marked cells' ground takes, with any weight there)
@@ -768,12 +854,14 @@ def _work(db, cells, plan, s):
     if layers and P['valleys'] > 0:
         import landwater
         wgt = [shaped[i] if inside[i] else 0.0 for i in range(len(F.z))]
+        _say('Carving the valleys', 0.20)
         _A, _w, deep = landwater.valleys(F, inside, wgt, P['valleys'], seed, hard)
         F.info['valleys'] = round(deep)
     if layers or P['gullies'] > 0 or P['terraces']:
         import landpasses
         if P['detail'] and layers:
-            changed = bytearray(1 if F.z[i] != before[i] else 0 for i in range(len(F.z)))
+            _say('Roughening the ground', 0.26)
+            changed = bytearray(1 if F.z[i] != before[i] and F.flatw[i] < 0.5 else 0 for i in range(len(F.z)))
             live = [r for r in used_regions if any(like[r][i] for i in range(len(F.z)) if changed[i] and inside[i])]
             if len(live) == 1:
                 r = live[0]
@@ -803,8 +891,10 @@ def _work(db, cells, plan, s):
         if P['terraces']:
             F.info['terraced'] = landpasses.terraces(F, inside, P['tstep'], P['tsharp'], P['tslope'])
         if P['gullies'] > 0:
+            _say('Rain gullies', 0.30)
             F.info['drops'] = landpasses.gullies(F, inside, P['gullies'], seed)
         if P['settle'] or hard is not None:
+            _say('Settling the steepest slopes', 0.52)
             if P['angle'] or len(used_regions) <= 1:
                 ang = P['angle'] or region_figure(db, used_regions, 'slope', '99', 62.0)
                 F.info['settle_angle'] = round(ang, 1)
@@ -839,7 +929,7 @@ def _work(db, cells, plan, s):
     return keys, G, F, inside, reg
 
 
-PROTECT = {'hold': True, 'margin': 512.0}
+PROTECT = {'hold': True, 'margin': 512.0, 'fresh': True}
 
 
 def held_kind(r):
@@ -958,7 +1048,30 @@ def preview(db, cells, plan):
             'held': [h[1] for h in (F.held or [])[:3000]]}
 
 
+# How far Shape them has got (the shares from a 36-cell plan with every pass: 40 s), for the page's progress bar (GET /api/land/progress, asked while it works; PIN2,
+# 2026-10-30: "some kind of loading bar ... so I know it's actually still shaping it and the program didn't break")
+PROGRESS = {'on': False, 'what': '', 'frac': 0.0}
+
+
+def _say(what, frac):
+    if PROGRESS['on']:
+        PROGRESS.update(what=what, frac=round(max(PROGRESS['frac'], min(1.0, frac)), 3))
+
+
+def progress():
+    return dict(PROGRESS)
+
+
 def apply(db, cells, plan):
+    """The plan written into the marked cells, with the progress said as it goes (PROGRESS)."""
+    PROGRESS.update(on=True, what='Starting', frac=0.0)
+    try:
+        return _apply(db, cells, plan)
+    finally:
+        PROGRESS.update(on=False, what='', frac=0.0)
+
+
+def _apply(db, cells, plan):
     """The plan written into the marked cells at every point. One Undo step."""
     _require_project(db)
     keys0 = sorted({landrange._key(k) for k in cells or []})
@@ -968,7 +1081,9 @@ def apply(db, cells, plan):
             made += 1
     if made:
         db.sync_project()                               # (once for all the new cells, not once each)
+    _say('Reading the land', 0.02)
     keys, G, F, inside, reg = _work(db, cells, plan, 1)
+    _say('Easing the cliffs', 0.64)
     _drop_rocks(db, G.real)
     before = {k: G.cell(*k) for k in keys}
     G.z = __import__('array').array('d', F.z)
@@ -983,6 +1098,7 @@ def apply(db, cells, plan):
     if paint:
         import landdress
         seed_ = int(plan.get('seed') or 1)
+        _say('Texturing', 0.66)
         ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed_, flow=_beds(F, inside, dress, seed_), flow_k=dress['flow'])
     # the region's shading (landshade), worked out here for each cell and written with its heights and textures in
     # one go: its tints, then its seams, then its darker hollows, each on what the one before made (as shade() would
@@ -994,7 +1110,8 @@ def apply(db, cells, plan):
     held_keys = {h[2] for h in (F.held or [])}
     q_h = {k: landscape._encode_heights([float(v) for v in new_h[k]])[1] for k in keys} if modes else {}
     shaded = set()
-    for gx, gy in keys:
+    for n_, (gx, gy) in enumerate(keys):
+        _say('Writing cell %d of %d' % (n_ + 1, len(keys)), 0.69 + 0.13 * n_ / max(1, len(keys)))
         k = (gx, gy)
         cols = None
         if modes:
@@ -1023,6 +1140,7 @@ def apply(db, cells, plan):
     refs_of = lambda k: set((db.project.cells.get('#%d,%d' % k) or {}).get('refs') or {})
     had = {k: refs_of(k) for k in keys}
     if dress['rocks'] > 0 and plan.get('layers'):
+        _say('Setting the rocks', 0.83)
         import cliffrocks
         F.z = list(G.z)
         region_of = lambda x, y: reg.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')

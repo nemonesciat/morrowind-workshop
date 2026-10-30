@@ -32,7 +32,7 @@ from editing import EditError
 from esm import ENC
 from project import b64, set_ref_pos, zs
 
-V = 'v8'                                # (v8: the game's joins of each pair of pieces, 'rels'; v7: a thing goes to the piece whose floor is under it, no sets from scaled pieces; v6: table tops; v3: no grass in caves; v2: platforms kept under what stands on them, no copies of pieces that had a door)
+V = 'v9'                                # (v9: TR's power box is dressing; v8: the game's joins of each pair of pieces, 'rels'; v7: a thing goes to the piece whose floor is under it, no sets from scaled pieces; v6: table tops; v3: no grass in caves; v2: platforms kept under what stands on them, no copies of pieces that had a door)
 VG = 'v9'                              # the other kinds' surveys (v9: the pairs' joins, 'rels'; v8: the room tiles' dressings, from the game's tombs and Daedric rooms)
 SIDES = {'E': (1, 0), 'W': (-1, 0), 'N': (0, 1), 'S': (0, -1)}
 OPP = {'E': 'W', 'W': 'E', 'N': 'S', 'S': 'N'}
@@ -119,8 +119,12 @@ KITS = {
         # (and corr4_03, the crossing that leaks in the game's own ruins too, 5% of its eye rays: its voids
         # showed in the user's Nchudjak, Lower Bowels, 2026-10-25)
         'skip': r'^in_dwrv_(corr3_02|corr4_02|corr4_03|corr4_04)$',
-        'dress': r'^(furn_|dwrv_|ex_dwrv_pipe|in_dwe_pipe|sound_|light_|t_dwe_dngruin_f_|t_dwe_furn|active_)',
+        # (TR's power box: the machine the barrel rings and bearings stand round, 29 of its 35 in the game; left out,
+        # its fittings floated round nothing, the user's "invisible dwemer machine", Nchudjack, Lower Bowels, 2026-10-30)
+        'dress': r'^(furn_|dwrv_|ex_dwrv_pipe|in_dwe_pipe|sound_|light_|t_dwe_dngruin_f_|t_dwe_furn|active_|tr_m2_dwrv_powerbox)',
         'not_dress': r'boulder|rock|marker|mist|in_dwrv_(corr|hall|shaft|wall|doorjam)|door',
+        # (fittings that only go with what they're fitted to: left out of a copied set when it isn't within reach)
+        'fitted': [[r'barrelring|nchaz_bearing|barrellid', r'powerbox|barrel(?!ring|lid)|in_dwrv_gear|well', 200]],
         'setting': 'dwemer', 'empty': 0.53, 'prize': [['dwrv_chest10_rare'], ['in_dwe_cent_lev+2']],
         'more': 'in_dwe_all_lev+0', 'outside': ('dwrv', 'dwe'), 'example': 'Nchulmuz, Lower Halls',
         'ambi': ((38, 32, 28), (70, 60, 50), (20, 16, 14))},
@@ -2184,6 +2188,7 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
         # make more valuable loot and better loot in chests": richer fills what's there, below)
         chosen = _set_items(rng.choice(pool_))
         x, y, z, rz = p['p'][0], p['p'][1], p['p'][2], p['p'][5]
+        got = []
         bx = p.get('box')
         for rid, t, lx, ly, lz, rx, ry, drz, s in chosen:
             low = rid.lower()
@@ -2214,7 +2219,13 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
             # (most of the game's rubble lies turned over, rx a half turn: lifted whatever its turn)
             if t == 'STAT' and FLAT_ON_FLOOR.search(low):
                 lz += FLAT_LIFT
-            out.append((rid, (x + wx, y + wy, z + lz, rx, ry, (rz + drz) % (2 * math.pi)), [], s))
+            got.append((rid, (x + wx, y + wy, z + lz, rx, ry, (rz + drz) % (2 * math.pi)), [], s))
+        # (fittings only beside what they are fitted to, after everything left out above)
+        for acc_, base_, reach_ in K.get('fitted') or ():
+            bases_ = [g for g in got if re.search(base_, g[0].lower())]
+            got = [g for g in got if not re.search(acc_, g[0].lower()) or
+                   any(math.hypot(g[1][0] - b_[1][0], g[1][1] - b_[1][1]) <= reach_ for b_ in bases_)]
+        out += got
     # more creatures than the game's: the kind's own levelled list, as many more as asked for over the ones
     # the copied sets brought (twice the game's: as many again), at junctions and in halls first
     if crea_x > 1.0 and more and db.resolve_id(more):

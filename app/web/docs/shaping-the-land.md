@@ -29,7 +29,8 @@ on the ground. A plain click does nothing, so you can still select things.
 | 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **💧 Pick** (or **Shift+click**) takes the colour there. |
 | 🌿 Scatter | Scatters the region's own grass, plants, rocks or trees. **Ctrl** clears them away. |
 
-- **Size** is the brush's reach in game units (a cell is 8,192 across). **Strength** is how much each pass
+- **Size** is the brush's reach in game units (a cell is 8,192 across; the land has a point every 128, so 64 moves
+  just the one under the brush). Type a size in the box, or press **[** and **]**. **Strength** is how much each pass
   changes (not used by Scatter).
 - **Objects follow the ground**: things standing on it (rocks, plants, people, crates) move up and down with
   it. Buildings move too, so turn it off when you are fitting the ground to a building.
@@ -61,8 +62,8 @@ river…), with settings for how natural it looks. It is on the World map's **La
 
 It always goes in four steps:
 
-1. **Mark the cells** that may change.
-2. **Draw shapes** on them.
+1. **Draw shapes**. Each marks the cells it reaches as you draw, move or widen it (towns left out).
+2. **Mark more cells** if you like: land with no shape on it is smoothed into the rest.
 3. **Watch the preview** on the map, and change the sliders until it looks right.
 4. **Press Shape them** (pinned at the top of the panel) to write it into your mod.
 
@@ -90,11 +91,17 @@ Press **⛰ Mark cells…**, then drag over cells to mark them. **Ctrl**+drag un
 unless you hold **Shift**, so a town isn't reshaped by accident. **Done** (or Esc) stops marking.
 **Clear marks** unmarks them all. Your shapes stay.
 
+**↶ Undo my land** puts the land in the marked cells back as it was before your mod: heights, ground textures and
+grass, in one step. Your objects stay, and Undo brings your land back. (In **My mod**, you can also pick ground
+rows and undo just those.)
+
 Cells with no land at all (the open sea) get a sea bed when you shape them. **Raise the marked cells into
 land** is a quick way to make plain land there without drawing shapes (Height, Coast width, Roughness).
 
-A selected shape tells you when it lies outside the marked cells. **⛰ Mark its cells** marks every cell it
-reaches (Shift+click: towns too).
+**Shapes mark their own cells:** drawing a shape, moving its points or widening it marks every cell it reaches,
+except towns. A shape that reaches a town says so; **Shift**+click **⛰ Mark its cells** to shape the town too. Marks
+are never taken away by themselves: a moved shape's old cells stay marked, so its old land goes when you shape
+again. Dress areas mark nothing.
 
 ## Step 2: draw shapes
 
@@ -148,6 +155,10 @@ the region's own figures.
 
 ### Protection
 
+**Start from the land under my mod** (on by default): each Shape starts from the marked cells' land as it is
+without your mod (the game's land, or the sea bed), so a moved or removed shape leaves nothing behind. Off, it
+starts from your land as it is now, keeping what you sculpted there by hand (shapes you took out then stay in it).
+
 **Hold the ground under buildings, ruins and doors** keeps the ground exactly as it is under them (outlined
 on the map), fading back to the plan over the **Margin**. Rocks, plants, people and paths move with the
 ground instead.
@@ -177,7 +188,10 @@ ground instead.
 ### Texture only
 
 **🎨 Texture only** textures the marked cells without reshaping them: each 512-unit patch gets the texture the
-region's own land has at that slope, height and distance from the water, with the region's tints and shading. It's
+region's own land has at that slope, height and distance from the water, with the region's tints and shading.
+Each cell gets about as many textures as the region's own land cells have, in patches as broken up as theirs,
+so no single texture covers the land in big repeating blocks. Shape them and Raise texture new land the same way;
+land textured before keeps its textures until you texture it again. It's
 under Dressing when you have shapes, and in **Texture the land** when you don't.
 
 - **Like** takes the textures of another region; **Textures** sets how many a cell.
@@ -194,7 +208,9 @@ in** (the whole plan in one region), **🎲 Re-roll** (the same shapes with othe
 one Undo step. Things standing on the ground follow it, and the note after it compares the new land's
 slopes and roughness with the region's own.
 
-The shapes stay after shaping, so you can change them and shape again. **◐ Before** (under Show where water
+The shapes stay after shaping, so you can change them and shape again: with **Start from the land under my
+mod** on, the land is made afresh from your shapes each time. While it works, the button shows the step it's on
+and fills like a bar. **◐ Before** (under Show where water
 runs) shows the land as it was before the last Shape them or Texture only for as long as you hold it.
 
 ## Height maps
@@ -213,7 +229,7 @@ runs) shows the land as it was before the last Shape them or Texture only for as
 
 ### A river valley through existing land
 
-1. Draw the **River** first, then press **⛰ Mark its cells**.
+1. Draw the **River** (it marks its own cells).
 2. Add a **Valley** along the same line for a broad trough round the river.
 3. **Shape them**. The banks fade back into the game's land at the edge of the marked cells.
 
@@ -235,8 +251,8 @@ more and some **Tilt**.
 - **Like:** *The land nearest* (each cell's own region; for open sea, the nearest region with land), or one region's
   look for all. Where a region has no ground like yours, the nearest regions with land fill in.
 - **Amount:** 1 is the game's own thickness.
-- **Only part of a cell:** draw a **▢ Dress area** with the shapes (it changes no ground), pick it, then Dress…:
-  only the land inside is dressed. A region for each part: mark or draw it, Dress with that region, then the next.
+- **Only part of a cell:** draw a **▢ Dress area** with the shapes (it changes no ground), then Dress… and pick it
+  under **Where**: only the land inside is dressed. A region for each part: mark or draw it, Dress with that region, then the next.
 - Not where something stands already, and not under water. One Undo takes it all back.
 
 To place rocks, cliffs, trees and plants by hand, open the **🎨 Style palette** and pick a region under **Regions**.
