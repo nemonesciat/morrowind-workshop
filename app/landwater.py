@@ -114,6 +114,42 @@ def _wobble(C, seed, amp=40.0):
     return [landrange.noise(*C.world(i), seed + 4099, amp) for i in range(C.w * C.h)]
 
 
+def flow_map(F, inside, seed=1):
+    """Where the rain runs on F as it is (no cutting): (the grid at every 512 units, how many of its points drain
+    through each, each point's receiver). The land map's flow overlay and the dressing's stream beds read it."""
+    C = Coarse(F, inside)
+    out = C.outlets()
+    f, order = fill([a + b for a, b in zip(C.z, _wobble(C, seed))], C.w, C.h, out)
+    rec, _dist = flow(f, C.w, C.h, out)
+    return C, area(rec, order), rec
+
+
+def streams(C, A, rec, least=8.0):
+    """The flow map as line pieces for drawing: [x0, y0, x1, y1, area] in world units, each point to its receiver,
+    where at least `least` points (about 2 million square units) drain through it."""
+    out = []
+    for i, r in enumerate(rec):
+        if r >= 0 and A[i] >= least:
+            x0, y0 = C.world(i)
+            x1, y1 = C.world(r)
+            out.append([round(x0), round(y0), round(x1), round(y1), int(A[i])])
+    return out
+
+
+def patch_flow(C, A, G):
+    """{(patch x, patch y) over the world: the most ground draining through one of its corners}, the 512-unit
+    texture patches of the cells, from the flow map on a grid that starts at G's first cell."""
+    out = {}
+    for i, a in enumerate(A):
+        cx, cy = i % C.w, i // C.w
+        px, py = G.x0 * 16 + cx, G.y0 * 16 + cy
+        # (a grid point is the corner of the four patches round it)
+        for qx, qy in ((px, py), (px - 1, py), (px, py - 1), (px - 1, py - 1)):
+            if out.get((qx, qy), 0) < a:
+                out[(qx, qy)] = a
+    return out
+
+
 def valleys(F, inside, weight, strength=1.0, seed=1, hard=None, rounds=24, K=0.02):
     """The stream-power valleys on the plan's ground, laid on the field in proportion to weight (0-1 a point of F:
     how far the plan made that ground). Dry land stays dry, its floor at least 15% of its height over the water (a

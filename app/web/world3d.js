@@ -242,8 +242,9 @@ function v3Sync(){
     if (!(V3.drag && V3.drag.group)){
       const box = new THREE.Box3();
       members.forEach(o => box.expandByObject(o.g));
-      const c = box.getCenter(new THREE.Vector3());
+      const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
       V3.pivot.position.set(c.x, c.y, box.min.z); V3.pivot.rotation.set(0, 0, 0); V3.pivot.updateMatrixWorld();
+      V3.pivotR = Math.max(sz.x, sz.y, sz.z) / 2 || 32;      // (the group's size, for v3HandleSize: the pivot holds nothing)
     }
     if (V3.tc.object !== V3.pivot) V3.tc.attach(V3.pivot);
     for (const o of members){ const bh = new THREE.BoxHelper(o.g, 0xf0cd87); V3.scene.add(bh); V3.multiBoxes.push(bh); }
@@ -1165,6 +1166,19 @@ function v3StrokeAt(at, e){
       if (any){ col.needsUpdate = true; v3StrokeMark(ck, 'c'); }
       continue;
     }
+    if (tool === 'paint' && B.texAuto){
+      // Auto: each patch the texture the region's land has at its slope, height and shore (roads kept), worked
+      // out for the cell by the server once (landshapes.texture_only); a cell still coming paints on the next dab
+      const A = v3AutoTex(c.gx, c.gy);
+      if (!A) continue;
+      let any = false;
+      for (let py = 0; py < 16; py++) for (let px = 0; px < 16; px++){
+        const i = py * 16 + px, d = Math.hypot(ox + (px + 0.5) * 512 - at[0], oy + (py + 0.5) * 512 - at[1]);
+        if (d <= Math.max(R, 260) && A.paths[i] && L.ids[i] !== A.paths[i]){ L.ids[i] = A.paths[i]; (L.texIds = L.texIds || {})[A.paths[i]] = A.ids[i]; any = true; }
+      }
+      if (any){ v3StrokeMark(ck, 't'); v3LandMaterial(c.mesh, L); v3LandNeighbours(c.gx, c.gy); }
+      continue;
+    }
     if (tool === 'paint'){
       if (!B.tex) continue;
       let any = false;
@@ -1253,6 +1267,16 @@ function v3TintEyedrop(at){
   v3LandSave(); v3LandPanel();
 }
 function v3StrokeMark(ck, what){ const m = V3.stroke.cells.get(ck) || {}; m[what] = true; V3.stroke.cells.set(ck, m); }
+// a cell's automatic textures for the Auto paint, asked for once (null while on its way)
+function v3AutoTex(gx, gy){
+  const k = gx + ',' + gy, M = V3.autoTex = V3.autoTex || {};
+  if (M[k] === undefined){
+    M[k] = null;
+    api('/api/land/autotex?' + new URLSearchParams({gx, gy})).then(r => { M[k] = r && r.paths && r.paths.length === 256 ? r : false; })
+      .catch(() => { delete M[k]; });
+  }
+  return M[k] || null;
+}
 async function v3StrokeEnd(){
   const S_ = V3.stroke; V3.stroke = null;
   if (S_ && S_.scatter) return v3ScatterEnd(S_);
@@ -1262,7 +1286,7 @@ async function v3StrokeEnd(){
   for (const [ck, what] of S_.cells){
     const c = V3.lands[ck]; if (!c || !c.L) continue;
     const L = c.L, cell = {gx: c.gx, gy: c.gy};
-    if (what.h) cell.h = L.h.map(v => Math.round(v));
+    if (what.h){ cell.h = L.h.map(v => Math.round(v)); if (V3.autoTex) delete V3.autoTex[ck]; }    // (new slopes: Auto asks again)
     if (what.c) cell.c = v3B64(v3LandCols(L));
     if (what.t){
       // the server wants texture names: ones painted now, or the ones the cell already had
@@ -1318,13 +1342,16 @@ async function v3LandPanel(){
     <label class="v3lrow" style="display:${B.tool === 'scatter' ? 'none' : ''}">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
     <label class="v3lrow" title="Things standing on the ground move up and down with it"><input type="checkbox" id="v3lfollow" ${B.follow !== false ? 'checked' : ''}> Objects follow the ground</label>
     <div id="v3ltex" style="display:${B.tool === 'paint' ? 'block' : 'none'}">
-      <div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id)}</span>` : '<span class="faint">Pick a texture below, or Shift+click the ground</span>'}</div>
+      <div class="v3lrow"><button class="btn sm ${B.texAuto ? 'primary' : ''}" id="v3lauto" title="Paint each patch with the texture the region's land has at its slope, height and shore. Roads and paving stay">✨ Auto</button>
+        ${B.texAuto ? '<span class="faint">The region\'s texture for each slope</span>' : `<button class="btn sm ${V3.landPick === 'paint' ? 'primary' : ''}" data-lpick="paint" title="Eyedropper: click the ground to paint with its texture (or Shift+click it any time)">💧 Pick</button>`}</div>
+      ${B.texAuto ? '' : `<div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id)}</span>` : '<span class="faint">Pick a texture below, or from the ground</span>'}</div>
       <input id="v3lq" placeholder="Search textures…" value="${esc(V3.landQ || '')}">
-      <div id="v3lgrid"></div>
+      <div id="v3lgrid"></div>`}
     </div>
     <div id="v3lscat" style="display:${B.tool === 'scatter' ? 'block' : 'none'}"></div>
     <div id="v3ltint" style="display:${B.tool === 'tint' ? 'block' : 'none'}">
-      <label class="v3lrow">Colour <input type="color" id="v3lcol" value="${esc(B.tint || '#b4a078')}"> <span class="faint">Shift+click the ground to pick one</span></label>
+      <label class="v3lrow">Colour <input type="color" id="v3lcol" value="${esc(B.tint || '#b4a078')}">
+        <button class="btn sm ${V3.landPick === 'tint' ? 'primary' : ''}" data-lpick="tint" title="Eyedropper: click the ground to take its colour (or Shift+click it any time)">💧 Pick</button></label>
       <div class="faint" style="margin:8px 0 4px"><b>Shade automatically</b>, the way the game shades the ground near here:</div>
       <div class="v3lrow"><button class="btn sm" data-shade="seams" title="Darken or tint where two textures meet, by as much as the game does at that pair, so the join doesn't show as a hard edge">Where textures meet</button>
         <button class="btn sm" data-shade="texture" title="Give each texture the tint the game gives it near here (grass, roads, rock...), blended as the textures blend">By texture</button>
@@ -1336,16 +1363,25 @@ async function v3LandPanel(){
     <div class="v3lnote">Drag on the ground to use the brush. Right-drag still looks around. Each stroke can be undone. ${B.tool === 'scatter' ? 'Scattered things show in game after a restart, like other new objects.' : 'Ground changes show in game after a restart.'}</div>`;
   p.querySelectorAll('[data-lt]').forEach(b => b.onclick = () => {
     const a = b.dataset.lt;
+    V3.landPick = null;
     if (a === 'close') return v3LandToggle(false);
     B.tool = a; v3LandSave(); v3LandPanel();
+  });
+  // the eyedropper: the next click on the ground picks (click it again to put it down)
+  p.querySelectorAll('[data-lpick]').forEach(b => b.onclick = e => {
+    e.preventDefault();
+    V3.landPick = V3.landPick === b.dataset.lpick ? null : b.dataset.lpick; v3LandPanel();
   });
   $('#v3lsize').oninput = e => { B.size = +e.target.value; e.target.nextElementSibling.textContent = B.size; v3LandSave(); };
   $('#v3lstr').oninput = e => { B.strength = +e.target.value; e.target.nextElementSibling.textContent = B.strength; v3LandSave(); };
   $('#v3lfollow').onchange = e => { B.follow = e.target.checked; v3LandSave(); };
   if (B.tool === 'paint'){
-    if (!V3.landTex) V3.landTex = await api('/api/land/textures');
-    const q = $('#v3lq'); q.oninput = () => { V3.landQ = q.value; v3LandGrid(); };
-    v3LandGrid();
+    $('#v3lauto').onclick = () => { B.texAuto = !B.texAuto; v3LandSave(); v3LandPanel(); };
+    if (!B.texAuto){
+      if (!V3.landTex) V3.landTex = await api('/api/land/textures');
+      const q = $('#v3lq'); q.oninput = () => { V3.landQ = q.value; v3LandGrid(); };
+      v3LandGrid();
+    }
   }
   if (B.tool === 'scatter') v3ScatterPanel();
   if (B.tool === 'tint') v3TintPanel();
@@ -1670,9 +1706,11 @@ function v3Bind(el){
     if (e.button === 0 && (V3.tc.dragging || V3.tc.axis)) return;      // using the handles
     if (e.button === 0 && !e.altKey && v3LandOn() && V3.landOpen){
       // the ground brush
-      if (e.shiftKey && V3.land.tool === 'paint'){ const at = v3Brush(e); if (at) v3LandEyedrop(at); return; }
-      if (e.shiftKey && V3.land.tool === 'tint'){ const at = v3Brush(e); if (at) v3TintEyedrop(at); return; }
-      if (V3.land.tool === 'paint' && !V3.land.tex){ toast('Pick a ground texture first.'); return; }
+      // (Shift+click, or a click with the panel's 💧 Pick on: once, then back to the brush)
+      const pick = e.shiftKey || V3.landPick === V3.land.tool;
+      if (pick && V3.land.tool === 'paint'){ V3.landPick = null; const at = v3Brush(e); if (at) v3LandEyedrop(at); else v3LandPanel(); return; }
+      if (pick && V3.land.tool === 'tint'){ V3.landPick = null; const at = v3Brush(e); if (at) v3TintEyedrop(at); else v3LandPanel(); return; }
+      if (V3.land.tool === 'paint' && !V3.land.tex && !V3.land.texAuto){ toast('Pick a ground texture first, or ✨ Auto.'); return; }
       if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.'); return; }
       if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; V3.strokeEv = e; V3.over = true; }
       return;
@@ -2413,7 +2451,12 @@ const V3_HANDLE = 0.9;
 function v3HandleSize(){
   const tc = V3.tc, o = tc && tc.object;
   if (!o) return;
-  if (V3.handleFor !== o){
+  if (o === V3.pivot){
+    // (several things selected: the handles sit on an empty pivot, which measured as nothing, so they shrank to
+    // 80 units among the group; PIN2's "the axis display shrinks". The group's own size instead)
+    V3.handleFor = null;
+    V3.handleR = V3.pivotR || 32;
+  } else if (V3.handleFor !== o){
     V3.handleFor = o;
     const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
     V3.handleR = Math.max(sz.x, sz.y, sz.z) / 2 || 32;

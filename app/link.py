@@ -291,7 +291,7 @@ class LiveLink:
         spare = getattr(self, 'spares', {}).get(cell_key)
         if spare:
             return 'int\t%s\t0\t0' % spare
-        info = mapdata.cell_info(self.db, cell_key)
+        info = mapdata.cell_info(self.db, cell_key) or mapdata._land_only(self.db, cell_key)
         if not info:
             return None
         if info['interior']:

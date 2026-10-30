@@ -63,7 +63,10 @@ const CF_ACT = [
   {id: 'search', label: 'Search box at the top', keys: ['/'], run: () => { $('#q').focus(); $('#q').select(); }},
   {id: 'undo', label: 'Undo', keys: ['Ctrl+Z'], run: () => doUndo()},
   {id: 'redo', label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doRedo()},
-  {id: 'delete', label: 'Delete what\'s selected', keys: ['Delete', 'Backspace'], world: true, run: () => W.multi.size > 1 ? groupDo('delete') : W.sel ? selAction('delete') : false},
+  // (not while a land shape is being drawn: there Backspace takes its last point back, landmap.js, and with a thing
+  // selected under it that thing was deleted instead)
+  {id: 'delete', label: 'Delete what\'s selected', keys: ['Delete', 'Backspace'], world: true,
+   run: () => W.mode === 'landshape' ? false : W.multi.size > 1 ? groupDo('delete') : W.sel ? selAction('delete') : false},
   {id: 'copy', label: 'Copy what\'s selected', keys: ['Ctrl+C'], world: true, run: () => W.sel && !String(window.getSelection() || '') ? groupDo('copy') : false},
   {id: 'paste', label: 'Paste (then click where it goes)', keys: ['Ctrl+V'], world: true, run: () => W.clip ? startGroupPlace(W.clip.items, W.clip.label) : false},
   {id: 'dup', label: 'Duplicate what\'s selected', keys: ['Ctrl+D'], world: true, run: () => W.sel ? groupDo('dup') : false},
@@ -114,6 +117,7 @@ function cfTyping(e){
 window.addEventListener('keydown', e => {
   if (CF.capture){ CF.capture(e); return; }
   if (typeof peKey === 'function' && peKey(e)) return;       // editing walking paths: Delete, Ctrl+Z, Esc are its own
+  if (typeof lsKey === 'function' && lsKey(e)) return;       // the land's shapes, when one was the last thing changed
   // (a tool with keys of its own, like the room planner: Ctrl+Z there undoes the plan, not your mod)
   if (e.target && e.target.closest && e.target.closest('[data-ownkeys]')) return;
   const name = cfKeyName(e); if (!name) return;
@@ -372,7 +376,7 @@ function cfMenuAt(e, hit, at, locked){
     else if (W.info && W.info.interior && at && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix this edge: what the game stands here…', act: () => fixhereMenu(W.info.key, null, pt, [at[0], at[1], V3.on && at[2] != null ? at[2] : null])});
     if (W.info && W.info.ruin && typeof ruinAgain === 'function') items.push({label: '🎲 Make this place again', act: () => ruinAgain(W.info.key)});
     if (W.info && W.info.interior) items.push({label: '🔧 Find gaps here', act: () => fixitOpen(W.info.key)}, {label: '🩺 Check this place', act: () => placecheckOpen(W.info.key)});
-    if (W.info && W.info.interior && typeof redrawPaths === 'function') items.push({label: '🧭 Redraw the walking paths (Project Tamriel\'s rules)', act: () => redrawPaths()});
+    if (W.info && W.info.interior && typeof redrawPaths === 'function') items.push({label: '🧭 Redraw the walking paths', act: () => redrawPaths()});
     // (another view on this place, or the game's version of it; with one open: follow it, its lighting; twowin.js)
     if (typeof twPlaceItems === 'function') items.push(...twPlaceItems());
     items.push({label: 'Select everything you can see', act: () => cfSelectAll()});

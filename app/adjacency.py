@@ -24,7 +24,7 @@ import kits
 import mapdata
 from mapdata import ref_info
 
-VERSION = 3
+VERSION = 4
 PLACES = 40
 TOL = 40                      # a face is "against" another within this many units (pieces overlap by their trim)
 MIN_OVERLAP = 64              # ... and the boxes overlap along the face by at least this much
@@ -35,6 +35,7 @@ SIDE_WORDS = {'E': 'east', 'W': 'west', 'N': 'north', 'S': 'south', 'U': 'top', 
 
 _cache = {}
 _bounds = {}
+_hall_roots = {}
 
 
 def _disk(db):
@@ -205,6 +206,7 @@ def survey_kit(db, prefix, limit=PLACES):
     adj = {}
     rings = Counter()
     runs = {}
+    alts = {}
     places = 0
     for ck in _cells_for(db, prefix, limit):
         try:
@@ -257,6 +259,7 @@ def survey_kit(db, prefix, limit=PLACES):
                     cur = nxt
                 r = runs.setdefault(A['id'], {}).setdefault(s_, {'step': list(rel[1:4]), 'lengths': Counter()})
                 r['lengths'][n] += 1
+        _alt_runs(pieces, nb_of, alts)
     out_adj = {}
     for aid, rec in adj.items():
         out_adj[aid] = {s_: {'n': r['n'], 'c': dict(r['c'].most_common(40))} for s_, r in rec.items()}
@@ -269,7 +272,133 @@ def survey_kit(db, prefix, limit=PLACES):
         if (n < 2 and n_of[aid] > 2) or len(out_rings) >= 150:
             continue
         out_rings.append({'id': aid, 'members': sorted(members), 'n': n})
-    return {'places': places, 'n': dict(n_of), 'adj': out_adj, 'runs': out_runs, 'rings': out_rings}
+    out_alts = {aid: {s_: {k: {'step': r['step'], 'lengths': {str(n): v for n, v in r['lengths'].items()}} for k, r in rr.items()}
+                      for s_, rr in rec.items()} for aid, rec in alts.items()}
+    return {'places': places, 'n': dict(n_of), 'adj': out_adj, 'runs': out_runs, 'rings': out_rings, 'alts': out_alts,
+            'halls': survey_halls(db, prefix)}
+
+
+AXES = {'E': (1, 0), 'W': (-1, 0), 'N': (0, 1), 'S': (0, -1)}
+
+
+def _along(A, B, d):
+    """B's offset in A's frame as (forward along d, sideways, up)."""
+    lx, ly = to_local(A, B['x'], B['y'])
+    return lx * d[0] + ly * d[1], abs(lx * d[1] - ly * d[0]), B['z'] - A['z']
+
+
+def alt_next(A, cur, d, nb_of):
+    """The next junction and copy of A beyond cur along d (in A's frame), or None."""
+    f0 = _along(A, cur, d)[0]
+    for s2, B in nb_of[cur['ref']]:
+        fb, lat, dz = _along(A, B, d)
+        if B['id'] == A['id'] or fb <= f0 + 64 or lat > 64 or abs(dz) > 64:
+            continue
+        for s3, C in nb_of[B['ref']]:
+            fc, lat2, dz2 = _along(A, C, d)
+            if C['id'] == A['id'] and relation(A, C)[4] in (0, 180) and fc > fb + 64 and lat2 <= 64 and abs(dz2) <= 64:
+                return B, C
+    return None
+
+
+def _alt_runs(pieces, nb_of, alts):
+    """Runs that alternate a segment with a junction (a Redoran hall segment, a 3way or 4way, the segment
+    again...): from A along each of its sides, B (another piece) then a copy of A beyond it, in line,
+    chained. alts[A id][side]['B rel'] = {'step': A's copy in A's frame [x, y, z, turn], 'lengths': {copies of A: n}}."""
+    next_pair = lambda A, cur, d: alt_next(A, cur, d, nb_of)
+    for A in pieces:
+        for s_, d in AXES.items():
+            back = (-d[0], -d[1])
+            if next_pair(A, A, back):
+                continue                                    # (not the start of its chain)
+            first = next_pair(A, A, d)
+            if not first:
+                continue
+            n, cur, seen = 1, A, {A['ref']}
+            pair = first
+            while pair and pair[1]['ref'] not in seen:
+                seen.add(pair[1]['ref'])
+                n += 1
+                cur = pair[1]
+                pair = next_pair(A, cur, d)
+            B, C = first
+            rc = relation(A, C)
+            r = alts.setdefault(A['id'], {}).setdefault(s_, {}).setdefault(rel_str(relation(A, B)), {'step': list(rc[1:5]), 'lengths': Counter()})
+            r['lengths'][n] += 1
+
+
+# ------------------------------------------------------------------ halls: a big centre with its whole ring
+HALL_MIN = (500, 1000)                # a hall centre's box: at least this on its short and long side (Redoran's domes)
+HALL_REACH = 560                      # its ring: the pieces within this of its box (the side pieces and the corners)
+
+
+def hall_root(db, rid, b=None):
+    """Whether a piece is the centre of a big hall (Redoran (large)'s domed lcenter_02, 1024 across): big
+    enough that its ring reaches round the corners, which no single face of it touches."""
+    if b is None:
+        ri, b = _box(db, rid)
+        if ri is None or not b:
+            return False
+    w, h = b[3] - b[0], b[4] - b[1]
+    return min(w, h) >= HALL_MIN[0] and max(w, h) >= HALL_MIN[1] and is_piece(db, rid)
+
+
+def survey_halls(db, prefix):
+    """Every place of the game that stands one of the kit's hall centres (they are rare: the game has two
+    domed Redoran halls, and the kit's own places sample may hold neither), and round each the whole ring:
+    the pieces against its faces and the corner pieces beyond them, as relations in the centre's frame.
+    {root id: {'n', 'fill': {side: n}, 'rings': [{'members', 'cell'}], 'faces': {side: {rel: n}},
+    'ends': {member id: {side: {rel: n}}}}}."""
+    if _hall_roots.get('recs') is not db.recs:
+        # (every kit's hall centres in one pass over the placed ids: the survey asks once per kit)
+        by = {}
+        for rid in db.used_in:
+            pre = kits.kit_prefix(rid)
+            if pre and hall_root(db, rid):
+                by.setdefault(pre, []).append(rid.lower())
+        _hall_roots.clear()
+        _hall_roots.update(recs=db.recs, by=by)
+    roots = _hall_roots['by'].get(prefix, [])
+    out = {}
+    for rid in sorted(roots):
+        cells = sorted({db.recs[ci][7] for ci in db.used_in.get(rid, ()) if db.recs[ci][0] == 'CELL'
+                        and kits.game_made(db, db.recs[ci][7]) and not db.recs[ci][7].startswith('#')})
+        rec = {'n': 0, 'fill': Counter(), 'rings': [], 'faces': {}, 'ends': {}}
+        for ck in cells[:12]:
+            try:
+                pieces = read_pieces(db, ck)
+            except Exception:
+                continue
+            for A in [p for p in pieces if p['id'] == rid]:
+                rec['n'] += 1
+                a = own_box(A)
+                members = []
+                for B in pieces:
+                    if B is A or overlaps(A, B) or abs(B['z'] - A['z']) > 160:
+                        continue
+                    L = local_box(A, B)
+                    if L[0] < a[0] - HALL_REACH or L[3] > a[3] + HALL_REACH or L[1] < a[1] - HALL_REACH or L[4] > a[4] + HALL_REACH:
+                        continue
+                    members.append(B)
+                nbs = neighbours(pieces, A)
+                for s_ in {s for s, _B in nbs}:
+                    rec['fill'][s_] += 1
+                for s_, B in nbs:
+                    f = rec['faces'].setdefault(s_, Counter())
+                    f[rel_str(relation(A, B))] += 1
+                # (what stands at the ends of each side piece: the corners, in the side piece's own frame)
+                mset = {m['ref'] for m in members}
+                for B in members:
+                    for s2, C in neighbours(pieces, B):
+                        if C['ref'] in mset and C is not A:
+                            e = rec['ends'].setdefault(B['id'], {}).setdefault(s2, Counter())
+                            e[rel_str(relation(B, C))] += 1
+                rec['rings'].append({'members': sorted(rel_str(relation(A, B)) for B in members), 'cell': ck})
+        if rec['n']:
+            out[rid] = {'n': rec['n'], 'fill': dict(rec['fill']), 'rings': rec['rings'][:6],
+                        'faces': {s_: dict(c) for s_, c in rec['faces'].items()},
+                        'ends': {m: {s_: dict(c) for s_, c in e.items()} for m, e in rec['ends'].items()}}
+    return out
 
 
 def rel_str(rel):
@@ -356,8 +485,136 @@ def record(db, prefix, aid):
         if not best:
             return None
         rec, n = sv[best[1]], best[0]
+    hall = rec.get('halls', {}).get(aid)
+    if hall is None:
+        hall = next((r2['halls'][aid] for r2 in sv.values() if aid in r2.get('halls', {})), None)
     return {'n': n, 'adj': rec['adj'].get(aid, {}), 'runs': rec.get('runs', {}).get(aid, {}),
+            'alts': rec.get('alts', {}).get(aid, {}), 'hall': hall,
             'rings': [g for g in rec.get('rings', []) if g['id'] == aid]}
+
+
+def _turned(A, k):
+    return dict(A, rz=(A['rz'] + k * math.pi / 2) % (2 * math.pi))
+
+
+def _quarter_turns(A):
+    """The quarter turns under which a piece's box is the same: all four for a square one, half for a long one."""
+    b = A['b']
+    return (0, 1, 2, 3) if abs((b[3] - b[0]) - (b[4] - b[1])) < 64 else (0, 2)
+
+
+def closed_hall(db, prefix, A, rec=None):
+    """A hall centre's ring closed the game's way: on each side the side piece the game stands there that
+    spans the side and is walled beyond (Redoran's lwall_02; its sides are alike, so the four are pooled),
+    and at each corner the piece the game stands at the side pieces' ends (lcorner_01). [{'id', 'p'}] in the
+    world, round A as it stands."""
+    rec = rec or record(db, prefix, A['id'])
+    hall = (rec or {}).get('hall')
+    if not hall:
+        return []
+    ks = _quarter_turns(A)
+    # the side pieces of every face, seen from the face turned to the north
+    pooled = Counter()
+    for s_, c in hall.get('faces', {}).items():
+        if s_ not in AXES:
+            continue
+        for rs, n in c.items():
+            B = _piece_at_rel(db, A, parse_rel(rs))
+            if not B:
+                continue
+            for k in ks:
+                Ak = _turned(A, k)
+                if side_of(Ak, B) == 'N':
+                    pooled[rel_str(relation(Ak, B))] += n
+                    break
+    a = own_box(A)
+    out = []
+    for k in ks:
+        Ak = _turned(A, k)
+        # (Ak's north face is this side of A; a long piece's two ends take the end pieces)
+        span = (a[3] - a[0]) if k % 2 == 0 else (a[4] - a[1])
+        for rs, n in pooled.most_common():
+            B = _piece_at_rel(db, Ak, parse_rel(rs))
+            if not B or any(overlaps(B, X) for X in out):
+                continue
+            L = local_box(Ak, B)
+            if (L[3] - L[0]) < span * 0.9:
+                continue                                # (a bridge or a stair: not the side itself)
+            brec = record(db, prefix, B['id'])
+            back = side_of(B, Ak)
+            outward = {'E': 'W', 'W': 'E', 'N': 'S', 'S': 'N'}.get(back)
+            if not outward or join_share(brec, outward) >= 0.5:
+                continue                                # (it leads on: an entrance, more hall)
+            out.append(B)
+            break
+    sides = list(out)
+    # the corners: at the ends of the side pieces, the piece beyond both of the centre's faces
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            votes = Counter()
+            for W in sides:
+                ends = (hall.get('ends', {}).get(W['id']) or {})
+                wrec = record(db, prefix, W['id'])
+                for s2 in ('E', 'W', 'N', 'S'):
+                    c = Counter(ends.get(s2, {}))
+                    for rs, n in ((wrec or {}).get('adj', {}).get(s2, {}).get('c', {}) or {}).items():
+                        c[rs] += n
+                    for rs, n in c.items():
+                        C = _piece_at_rel(db, W, parse_rel(rs))
+                        if not C:
+                            continue
+                        L = local_box(A, C)
+                        cx, cy = (L[0] + L[3]) / 2.0, (L[1] + L[4]) / 2.0
+                        if not (cx * sx > a[3 if sx > 0 else 0] * sx and cy * sy > a[4 if sy > 0 else 1] * sy):
+                            continue
+                        if overlaps(A, C) or any(overlaps(C, X) for X in out):
+                            continue
+                        votes[(C['id'], round(C['x']), round(C['y']), round(C['z']), round(math.degrees(C['rz'])) % 360)] += n
+            if votes:
+                (cid, x, y, z, dq), _n = votes.most_common(1)[0]
+                C = _piece_at_rel(db, A, None, world=(cid, x, y, z, math.radians(dq)))
+                if C:
+                    out.append(C)
+    return [{'id': B['id'], 'p': [round(B['x'], 2), round(B['y'], 2), round(B['z'], 2), 0, 0, round(B['rz'] % (2 * math.pi), 5)]} for B in out]
+
+
+def is_hall_centre(A, rec):
+    """Whether the game stands a whole ring round this piece: its four sides filled in most of its halls
+    and pieces beyond two of its faces at once (the corners)."""
+    hall = (rec or {}).get('hall')
+    if not hall or not hall.get('n'):
+        return False
+    if any(hall.get('fill', {}).get(s_, 0) < 0.75 * hall['n'] for s_ in AXES):
+        return False
+    a = own_box(A)
+    for g in hall.get('rings', []):
+        for ms in g['members']:
+            _bid, x, y, _z, _dq = parse_rel(ms)
+            if (x > a[3] or x < a[0]) and (y > a[4] or y < a[1]):
+                return True
+    return False
+
+
+def game_halls(db, prefix, A, rec=None):
+    """The rings the game itself stands round this hall centre: [{'members': [{'id', 'p'}], 'cell'}]."""
+    rec = rec or record(db, prefix, A['id'])
+    out = []
+    for g in ((rec or {}).get('hall') or {}).get('rings', []):
+        out.append({'cell': g.get('cell'), 'members': [placed(A, parse_rel(ms)) for ms in g['members']]})
+    return out
+
+
+def _piece_at_rel(db, A, rel, world=None):
+    """A piece standing in the relation to A (or at a world spot), as read_pieces gives them."""
+    if world:
+        bid, x, y, z, rz = world
+    else:
+        it = placed(A, rel)
+        bid, (x, y, z, _a, _b, rz) = it['id'], it['p']
+    ri, b = _box(db, bid)
+    if ri is None or not b:
+        return None
+    return {'ref': 'hall|%s|%d|%d|%d' % (bid, x, y, z), 'id': bid.lower(), 'x': x, 'y': y, 'z': z, 'rz': rz % (2 * math.pi), 's': 1.0, 'b': b, 'ri': ri}
 
 
 def join_share(rec, side):

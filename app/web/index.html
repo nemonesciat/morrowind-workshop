@@ -584,6 +584,12 @@ tr.bad td{color:#e08a7a}
 .seditor textarea::selection{background:color-mix(in srgb,var(--gold2) 25%,transparent);color:transparent}
 .shl .l-error{background:#5a1f1a55;box-shadow:inset 3px 0 #e0604f}.shl .l-warning{background:#5a4a1a40;box-shadow:inset 3px 0 #d6aa4a}
 .c-kw{color:var(--gold2);font-weight:600}.c-fn{color:#8ec5ff}.c-str{color:#a9d98b}.c-num{color:#f2a46a}.c-com{color:#857a69;font-style:italic}.c-var{color:#d6a8f0}
+/* (a light theme's paper: the same hues, deep enough to read; the pale ones vanished on Indoril, the user's find) */
+html[data-theme=light] .c-fn{color:#123f7a}html[data-theme=light] .c-str{color:#1f4f0f}html[data-theme=light] .c-num{color:#7f3005}
+html[data-theme=light] .c-com{color:#4d4539}html[data-theme=light] .c-var{color:#5f1f82}
+/* (and the checker's line under it: "No problems found" was a pale green at 1.7 to 1 on Imperial's ivory) */
+html[data-theme=light] .sprobhead .ok{color:#1f6b1f}html[data-theme=light] .sprobhead .e,html[data-theme=light] .sprobrow.error{color:#a3200e}
+html[data-theme=light] .sprobhead .w,html[data-theme=light] .sprobrow.warning{color:#7a5300}
 .sprob{margin-top:8px;border:1px solid var(--line);border-radius:9px;background:var(--panel);max-height:170px;overflow:auto;font-size:13px}
 .sprobhead{display:flex;gap:12px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .sprobhead .ok{color:#8fd08a}.sprobhead .e{color:#ff8a78;font-weight:600}.sprobhead .w{color:#e6c068}
@@ -674,6 +680,9 @@ svg.thumb{background:radial-gradient(circle at 50% 45%,var(--panel2-d),var(--bg2
 .arow:last-child{border-bottom:0}
 .arow:hover{background:var(--hover)}
 .arow.undone{opacity:.5}
+tr.landrow{cursor:pointer;user-select:none}
+tr.landrow:hover td{background:rgba(255,255,255,0.03)}
+tr.landrow.picked td{background:rgba(232,192,120,0.16)}
 .arow .at{width:118px;flex:none;font-size:12px}
 .arow .atext{flex:1;min-width:0}
 .arow .abtn{flex:none}
@@ -865,7 +874,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const api = async (p, opt) => {
   const read = !opt || !opt.method || opt.method === 'GET';
   for (let n = 0; ; n++){
-    const r = await fetch(p, opt); const j = await r.json();
+    // (no answer at all, the Workshop closing or starting again: a read asks again for a few seconds, then it's
+    // said plainly, not as "Something went wrong in the page: TypeError: Failed to fetch")
+    let r;
+    try { r = await fetch(p, opt); }
+    catch (x){
+      if (read && n < 4){ await new Promise(res => setTimeout(res, 1500)); continue; }
+      const e = new Error('The Workshop isn\'t answering'); e.offline = true; throw e;
+    }
+    const j = await r.json();
     if (r.status === 503 && read && n < 80){ await new Promise(res => setTimeout(res, 1500)); continue; }
     if (!r.ok){ const e = new Error(j.error || r.status); if (r.status === 503) e.loading = true; throw e; }
     return j;
@@ -893,7 +910,9 @@ function reportClientError(msg, where){
       t.appendChild(b);
     }
   } catch (e){}
-  try { fetch('/api/clienterror', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({msg: String(msg).slice(0, 2000), where: String(where || '').slice(0, 400), view: (document.querySelector('.view.on') || {}).id || ''})}); } catch (e){}
+  // (.catch: with the Workshop not answering, the log's own fetch failed and was said as a second fault,
+  // "Failed to fetch at reportClientError")
+  try { fetch('/api/clienterror', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({msg: String(msg).slice(0, 2000), where: String(where || '').slice(0, 400), view: (document.querySelector('.view.on') || {}).id || ''})}).catch(() => {}); } catch (e){}
 }
 window.addEventListener('error', e => reportClientError(e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
 // Esc closes the dialog in front by its own Close / Cancel / ✕ button (Auto-furnish, Play as and the rest only
@@ -909,6 +928,11 @@ window.addEventListener('keydown', e => {
 }, true);
 window.addEventListener('unhandledrejection', e => {
   if (e.reason && e.reason.loading){ e.preventDefault(); try { toast('The Workshop is still loading: try again in a moment.'); } catch (x){} return; }
+  if (e.reason && e.reason.offline){
+    e.preventDefault();
+    if (Date.now() - (window._offSaid || 0) > 10000){ window._offSaid = Date.now(); try { toast('The Workshop isn\'t answering. If it was closed, start it again and reload this page.', true); } catch (x){} }
+    return;
+  }
   reportClientError((e.reason && (e.reason.stack || e.reason.message)) || e.reason, 'promise');
 });
 // (every message is kept, the last 60, for Help > Recent messages: the user's "I see occasional error messages
@@ -1298,6 +1322,11 @@ function renderDetail(d){
       if (d.can_edit) acts.push(`<button class="btn sm primary" data-act="edit">✎ Edit</button>`);
       if (d.can_copy) acts.push(`<button class="btn sm" data-act="copy">⧉ Use as template</button>`);
       if (d.type === 'CELL') acts.push(`<button class="btn sm primary" data-act="map">🗺 Open on map</button>`);
+      // (anything that can stand in the world placed from here, as from the Place panel's search: PIN2 found a wall
+      // in Browse and had no way to put it down)
+      if (PLACEABLE.includes(d.type)) acts.push(`<button class="btn sm" data-act="place" title="Place it in the place open on the World map: point and click, as from the Place panel">📍 Place on the map</button>`,
+        `<button class="btn sm" data-act="bench" title="Put it on the prefab workbench, in the middle of its view, ready to move">🔨 Add to the workbench</button>`,
+        `<button class="btn sm" data-act="addstyle" title="Put it in a style's palette yourself (Style palette), for one the Workshop didn't learn it in">🎨 Add to a style…</button>`);
       if (d.type === 'NPC_' || d.type === 'CREA') acts.push(`<button class="btn sm primary" data-act="char">${d.type === 'CREA' ? '🐾 Creature editor' : '👤 Character editor'}</button>`);
       if (['FACT', 'CLAS', 'RACE', 'BSGN', 'GLOB', 'GMST'].includes(d.type)) acts.push(`<button class="btn sm primary" data-act="rule">✎ Open in its editor</button>`);
       if (IE_TYPES.split(',').includes(d.type)) acts.push(`<button class="btn sm primary" data-act="itemed">✎ ${d.type === 'SPEL' ? 'Spell' : d.type === 'ENCH' ? 'Enchantment' : 'Item'} editor</button>`);
@@ -1410,6 +1439,15 @@ async function detailAction(act){
   if (act === 'copy'){ if (!await needProject()) return; S.copyOpen = true; renderDetail(d); return; }
   if (act === 'nocopy'){ S.copyOpen = false; renderDetail(d); return; }
   if (act === 'map'){ showView('world'); worldOpen(d.key); return; }
+  if (act === 'place'){
+    if (!await needProject()) return;
+    showView('world');
+    if (!W.key){ toast('Open a place on the World map first, then press Place again.', true); return; }
+    setMode('place', {id: d.id, name: d.name || d.id, type: d.type}); return;
+  }
+  // (any prop onto the prefab workbench, PIN2: "a button to add a prop from browse into the prefab")
+  if (act === 'bench'){ if (typeof benchOpen === 'function'){ await benchOpen(); await benchAddAt(d.id, d.type, null); } return; }
+  if (act === 'addstyle'){ if (typeof spAddMenu === 'function') spAddMenu(d.id, document.querySelector('[data-act="addstyle"]')); return; }
   if (act === 'char'){ cOpen(d.id); return; }
   if (act === 'script'){ sOpen(d.id); return; }
   if (act === 'lev'){ lvOpen(d.id); return; }
@@ -1439,6 +1477,7 @@ async function detailAction(act){
   }
 }
 async function afterChange(){
+  if (typeof LM !== 'undefined') LM.modAt = Date.now();     // (a change to the mod: Ctrl+Z is the mod's again, landmap.js lsKey)
   try { S.summary = await api('/api/status'); } catch(e){}
   renderProjectPill(); runSearch();
   if (pageOn('mymod')) renderMyMod();
@@ -1929,9 +1968,15 @@ async function renderMyMod(){
       <button class="btn" id="mm-saveas" title="Save everything into a new .esp or .omwaddon, which becomes the active file (the Construction Set's Save As)">💾 Save as…</button>
     </div>`;
   if (!P.changes.length) h += `<div class="card">No changes yet. Open anything in <b>Browse</b> and press <b>✎ Edit</b> or <b>⧉ Use as template</b>, or move things around on the <b>World map</b>.</div>`;
+  // (the changed ground's rows can be picked as in a file list: click, Shift+click a run, Ctrl+click one more or one
+  // less; then one Undo for them all. PIN2 undid cell after cell, one button each)
+  S.landSel = S.landSel || new Set();
+  S.landIds = (byType.LAND || []).map(c => c.id);
+  for (const id of [...S.landSel]) if (!S.landIds.includes(id)) S.landSel.delete(id);
   for (const [t, list] of Object.entries(byType)){
-    h += `<h3 style="margin:20px 0 6px;color:var(--muted);font-weight:500">${esc(S.typeLabels[t] || t)} <span class="msg">${list.length}</span></h3><table class="t">` +
-      list.map(c => `<tr><td><span class="lnk" data-open="${c.i}">${esc(c.name || c.id)}</span> <span class="msg">${esc(c.name ? c.id : '')}</span></td><td class="msg" style="width:260px">${esc(c.desc)}</td><td style="width:${t === 'LAND' ? 220 : 150}px;text-align:right">${t === 'CELL' ? `<button class="btn sm" data-mapcell="${c.i}">Open on map</button>`
+    h += `<h3 style="margin:20px 0 6px;color:var(--muted);font-weight:500">${esc(S.typeLabels[t] || t)} <span class="msg">${list.length}</span>` +
+      (t === 'LAND' ? ` <span id="landselbar" style="font-weight:400;margin-left:10px"></span>` : '') + `</h3><table class="t">` +
+      list.map((c, ix) => `<tr${t === 'LAND' ? ` data-landrow="${ix}" class="landrow${S.landSel.has(c.id) ? ' picked' : ''}"` : ''}><td><span class="lnk" data-open="${c.i}">${esc(c.name || c.id)}</span> <span class="msg">${esc(c.name ? c.id : '')}</span></td><td class="msg" style="width:260px">${esc(c.desc)}</td><td style="width:${t === 'LAND' ? 220 : 150}px;text-align:right">${t === 'CELL' ? `<button class="btn sm" data-mapcell="${c.i}">Open on map</button>`
         : t === 'LAND' ? `<button class="btn sm" data-mapland="${esc(c.id)}">Open on map</button> <button class="btn sm" data-landundo="${c.i}" title="Back to the ground as the game and your other mods have it">Undo</button>` : ''}</td></tr>`).join('') + `</table>`;
   }
   if (P.log.length){
@@ -1966,6 +2011,7 @@ async function renderMyMod(){
       (!S.logAll && roots.length > 40 ? `<div class="actions"><button class="btn sm" id="mm-logall">Show older activity</button></div>` : '');
   }
   wrap.innerHTML = h;
+  landSelPaint();
   const en = $('#mm-enable');
   if (en) en.onclick = async () => {
     if (!confirm('Add ' + p.plugin + ' to the end of your openmw.cfg content list?\n\nA backup copy of openmw.cfg is made first.')) return;
@@ -1982,6 +2028,13 @@ async function renderMyMod(){
   $('#mm-release').onclick = () => showView('release');
   const la = $('#mm-logall'); if (la) la.onclick = () => { S.logAll = true; renderMyMod(); };
   const su = $('#mm-undone'); if (su) su.onchange = () => { S.showUndone = su.checked; renderMyMod(); };
+}
+// the picked ground rows and the bar over them, drawn in place (the list stays where it is scrolled)
+function landSelPaint(){
+  document.querySelectorAll('#mymodwrap tr[data-landrow]').forEach(tr => tr.classList.toggle('picked', S.landSel.has(S.landIds[+tr.dataset.landrow])));
+  const bar = $('#landselbar'), n = S.landSel.size; if (!bar) return;
+  bar.innerHTML = n ? `<span class="msg">${n} picked</span> <button class="btn sm" data-landundosel title="Put the ground in the picked cells back as the game and your other mods have it, in one step">↶ Undo ${n}</button> <button class="btn sm" data-landselnone>Clear</button>`
+    : '<span class="msg">Click rows to pick them (Shift: a run, Ctrl: one more)</span>';
 }
 $('#mymodwrap').addEventListener('click', async e => {
   const tg = e.target.closest('[data-atog]');
@@ -2002,6 +2055,35 @@ $('#mymodwrap').addEventListener('click', async e => {
   const m = e.target.closest('[data-mapcell]'); if (m) { showView('world'); worldOpenIndex(+m.dataset.mapcell); }
   // (a changed piece of ground: its cell on the map, or its change undone; PIN2 couldn't find either, 2026-10-28)
   const ml = e.target.closest('[data-mapland]'); if (ml) { showView('world'); worldOpen('#' + ml.dataset.mapland.replace(/\s+/g, '')); return; }
+  if (e.target.closest('[data-landselnone]')){ S.landSel.clear(); landSelPaint(); return; }
+  const us = e.target.closest('[data-landundosel]');
+  if (us){
+    const cells = [...S.landSel];
+    if (!cells.length) return;
+    us.disabled = true;
+    try {
+      const r = await post('/api/land/revert', {cells});
+      toast(`Ground put back in ${r.cells} cell${r.cells === 1 ? '' : 's'}. One Undo brings yours back.`);
+      S.landSel.clear(); await refreshAfterEdits(); renderMyMod();
+    } catch (err){ toast(err.message, true); us.disabled = false; }
+    return;
+  }
+  const lr = e.target.closest('[data-landrow]');
+  if (lr && !e.target.closest('button, .lnk')){
+    const ix = +lr.dataset.landrow, id = S.landIds[ix];
+    if (e.shiftKey && S.landLast != null){
+      const [a, b] = [Math.min(S.landLast, ix), Math.max(S.landLast, ix)];
+      if (!e.ctrlKey) S.landSel.clear();
+      for (let k = a; k <= b; k++) S.landSel.add(S.landIds[k]);
+    } else if (e.ctrlKey || e.metaKey){
+      S.landSel.has(id) ? S.landSel.delete(id) : S.landSel.add(id); S.landLast = ix;
+    } else {
+      const only = S.landSel.size === 1 && S.landSel.has(id);
+      S.landSel.clear(); if (!only) S.landSel.add(id); S.landLast = ix;
+    }
+    window.getSelection && window.getSelection().removeAllRanges();      // (Shift+click selects text otherwise)
+    landSelPaint(); return;
+  }
   const lu = e.target.closest('[data-landundo]');
   if (lu){
     if (!confirm('Put this cell\'s ground back as the game and your other mods have it?')) return;
@@ -2581,6 +2663,7 @@ cv.addEventListener('mousemove', e => {
   if (W.mode === 'landmap'){ $('#maptip').style.display = 'none'; lmMove(e); return; }
   if (W.mode === 'landshape'){ $('#maptip').style.display = 'none'; lsMoveMouse(e); return; }
   if (typeof LM !== 'undefined' && LM.hdrag){ $('#maptip').style.display = 'none'; lmHandleMove(e); return; }
+  if (typeof LM !== 'undefined' && !W.drag) lmHandleMove(e);       // (the pointer over a land shape's point or line)
   const D = W.drag;
   if (D){
     const dx = e.offsetX - D.sx, dy = e.offsetY - D.sy;
@@ -3002,7 +3085,7 @@ function pathsPanelHtml(i){
     <div class="actions" style="margin-top:8px">${editing
       ? '<button class="btn sm primary" id="w-editpaths">✓ Done (save)</button><button class="btn sm" id="w-discardpaths">Discard changes</button>'
       : `<button class="btn sm primary" id="w-editpaths" title="Add, move, join and take out points yourself, on the map or in 3D">✎ Edit by hand</button>
-        <button class="btn sm" id="w-makepaths" title="${i.interior ? 'Redraw them by Project Tamriel\'s rules: a point to a tile (fewer in open floor), joined only where you can walk straight between them, round the furniture, no redundant links, a point at every door. Replaces the paths here now, the game\'s own too' : 'Work out paths over the walkable ground, around buildings, rocks and trees'}">${n ? '↻ Redraw them' : '＋ Make them for me'}</button>`}</div>
+        <button class="btn sm" id="w-makepaths" title="${i.interior ? 'Redraw them by the usual path grid rules: a point to a tile (fewer in open floor), joined only where you can walk straight between them, round the furniture, no redundant links, a point at every door. Replaces the paths here now, the game\'s own too' : 'Work out paths over the walkable ground, around buildings, rocks and trees'}">${n ? '↻ Redraw them' : '＋ Make them for me'}</button>`}</div>
     <h3>Editing by hand</h3>
     <ul class="glist" style="font-size:12.5px;margin-top:4px">
       <li><b>Click</b> to add a point, joined to the selected one (<kbd class="cf">Ctrl</kbd>+click: not joined).</li>
@@ -3011,7 +3094,7 @@ function pathsPanelHtml(i){
       <li><kbd class="cf">Delete</kbd> takes the selected point out; <kbd class="cf">Ctrl+Z</kbd> undoes.</li>
       <li><kbd class="cf">Esc</kbd> or Done saves it all as one Undo.</li>
     </ul>
-    <div class="msg" style="font-size:11.5px">${i.interior ? 'Redraw works in any place (rooms, caves, ruins, the game\'s own) by Project Tamriel\'s path grid rules, measured on 100 of the game\'s own places. Redraw after moving furniture around, then touch up by hand.'
+    <div class="msg" style="font-size:11.5px">${i.interior ? 'Redraw works in any place (rooms, caves, ruins, the game\'s own) by the usual path grid rules, measured on 100 of the game\'s own places. Redraw after moving furniture around, then touch up by hand.'
       : 'Outdoors, each cell keeps its own paths: this is the cell in the middle of the view. Making them again replaces the paths it has now (the game\'s own ones too).'}</div>`;
 }
 function renderWside(){
@@ -3027,7 +3110,7 @@ function renderWside(){
   }
   const refs = (W.cells[W.key] || {refs: []}).refs;
   const sel = W.sel && findRef(W.sel.cell, W.sel.k);
-  h += `<div class="whead"><h2>${esc(i.name || i.region || 'Wilderness')}</h2><div class="msg">${i.interior ? 'Interior' : `Outdoors · ${i.gx}, ${i.gy}${i.region ? ' · ' + esc(i.region) : ''}`} · <span class="lnk" data-cellrec="${i.i}">details</span></div>
+  h += `<div class="whead"><h2>${esc(i.name || i.region || 'Wilderness')}</h2><div class="msg">${i.interior ? 'Interior' : `Outdoors · ${i.gx}, ${i.gy}${i.region ? ' · ' + esc(i.region) : ''}`}${i.i == null ? '' : ` · <span class="lnk" data-cellrec="${i.i}">details</span>`}${i.interior ? '' : ` · <span class="lnk" data-cellname title="The cell's name on the game's world map, its map window and saves">name</span>`}</div>
     <div class="playrow"><button class="btn sm primary" id="w-play" title="${LINK.connected ? 'Go here in game: the game is running, this teleports you there' :'Starts OpenMW here with a quick test character, your whole load order and your mod. Your normal saves are untouched.'}">▶ ${LINK.connected ? 'Go here' : 'Play here'}</button><button class="btn sm" id="w-playspot" title="Click a spot on the map to start or teleport there">Pick a spot</button></div>
     <div id="w-link"></div>
     ${i.land_after && i.land_after.length ? `<div class="msg warn" style="margin-top:6px" title="Started from OpenMW's own launcher, the later plugin's ground wins. Play here always loads your mod last.">⚠ ${esc(i.land_after.join(', '))} loads after your mod and has its own ground here. <span class="lnk" onclick="showView('plugins')">Load order</span></div>` : ''}</div>`;
@@ -3232,7 +3315,8 @@ function renderPlacing(){
   const box = $('#w-placing'); if (!box) return;
   box.innerHTML = W.mode === 'place' && W.placeId ? `<div class="placingbar">${thumbImg(W.placeId, W.placeType, 96)}<div>Placing <b>${esc(W.placeName)}</b><div class="msg">${V3.on ? 'Point in the view, wheel to turn, click to place.' : 'Click on the map to place it.'}</div></div><button class="btn sm" id="w-stopplace">Stop</button></div>` : '';
   const st = $('#w-stopplace'); if (st) st.onclick = () => setMode(null);
-  document.querySelectorAll('#world .pbody .tile').forEach(t => t.classList.toggle('placing', !!(W.mode === 'place' && W.placeId && t.dataset.pid.toLowerCase() === W.placeId.toLowerCase())));
+  // (only the tiles of things: a prefab's tile has no object id, and reading it threw a red page fault while placing)
+  document.querySelectorAll('#world .pbody .tile').forEach(t => t.classList.toggle('placing', !!(W.mode === 'place' && W.placeId && (t.dataset.pid || '').toLowerCase() === W.placeId.toLowerCase())));
   v3ThumbScan(box);
 }
 function bindWside(){
@@ -3515,6 +3599,16 @@ $('#world').addEventListener('click', e => {
   const ok = e.target.closest('[data-ok]'); if (ok){ const r = findRef(W.key, ok.dataset.ok); if (r){ selectRef(W.key, r.k); centerOn(r); } return; }
   const rec = e.target.closest('[data-rec]'); if (rec){ openRecord(+rec.dataset.rec, true); return; }
   const cr = e.target.closest('[data-cellrec]'); if (cr){ openRecord(+cr.dataset.cellrec, true); }
+  // (an outdoor cell's own name, editing.name_cell; empty leaves it unnamed)
+  if (e.target.closest('[data-cellname]') && W.info && !W.info.interior){
+    (async () => {
+      if (!await needProject()) return;
+      const key = W.key, name = await askText(`Name of cell ${W.info.gx}, ${W.info.gy} (empty: no name)`, W.info.name || '');
+      if (name === null || name === undefined) return;
+      try { const r = await post('/api/cell/name', {cell: key, name}); toast(r.name ? `Named it ${r.name}` : 'Took the name off'); afterChange(); worldOpen(key, true); }
+      catch (err){ toast(err.message, true); }
+    })();
+  }
 });
 // a bigger picture when you rest the mouse on something in the sidebar
 let hoverT = null;
@@ -4490,6 +4584,8 @@ async function refreshAfterEdits(remote){
   if (V3.on && W.ext && typeof v3GrassReload === 'function') v3GrassReload();
   if (pageOn('dialog') && !typing){ D.qstages = null; if (D.mode) await dOpen(D.mode, D.key); else renderDialog(); }
   if (W.key && W.ext){ W.lands = {}; v3LandsReload(); await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL)); }
+  // (and the Land panel's map of the ground: after an Undo of Shape them it still drew the shaped land, PIN2)
+  if (typeof LM !== 'undefined' && LM.data && typeof lmLoad === 'function'){ try { await lmLoad(true, true); } catch (e){} }
   // (a cell may be dropped while an earlier one reloads: the map lets go of cells scrolled far off)
   if (W.key){ for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k); W.sel = W.sel && findRef(W.sel.cell, W.sel.k) ? W.sel : null; renderWside(); drawMap(); }
   if (S.cur && pageOn('browse') && !typing){

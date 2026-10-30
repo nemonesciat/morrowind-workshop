@@ -10,6 +10,8 @@ const ICONS = {
   person: '<circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c.9-4 3.7-6 7.2-6s6.3 2 7.2 6"/>',
   people: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.7-3.4 3-5.2 6-5.2s5.3 1.8 6 5.2"/><path d="M15.5 5.6a3 3 0 0 1 0 5.8M17.6 14.6c1.8.6 3 2.2 3.4 4.9"/>',
   palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.3 0 1.9-.8 1.9-1.8 0-1.4-1.3-1.7-1.3-3 0-1 .8-1.7 1.9-1.7h2.3a3.7 3.7 0 0 0 3.7-3.7C20.5 6.5 16.7 3.5 12 3.5z"/><circle cx="7.6" cy="11" r="1"/><circle cx="10" cy="7.3" r="1"/><circle cx="14.4" cy="7.3" r="1"/>',
+  rock: '<path d="M3.5 18.5 6.5 10l4-4.5 5 1.5 3 4.5 2 7z"/><path d="M10.5 5.5 9.5 11l-3-1M9.5 11l5 2 1-6M14.5 13l4.5-1.5"/>',
+  dropper: '<path d="m12.5 7.5 4 4"/><path d="M15 5a2.1 2.1 0 0 1 3 3l-2 2-3-3z"/><path d="M13.5 8.5 6 16v2h2l7.5-7.5"/><path d="M4.5 19.5 6 18"/>',
   brush: '<path d="M14.5 4.5 19.5 9.5 11 18l-5-5z"/><path d="M6 13c-1.8.4-2.6 1.8-2.5 3.6 0 1.4-.7 2.4-1 2.9 2.7.4 5.6-.6 6.5-3.5"/>',
   pin: '<path d="M12 21s-6.5-6.2-6.5-11.3a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z"/><circle cx="12" cy="9.7" r="2.4"/>',
   scroll: '<path d="M7 4h11a2 2 0 0 1 2 2v1h-3"/><path d="M17 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1h11"/><path d="M7 4a2 2 0 0 0-2 2v11M8.5 9h5M8.5 12.5h5"/>',
@@ -92,7 +94,7 @@ const ICONS = {
 // which icon each emoji the pages write becomes (the same thing, the same icon)
 const EMO_ICON = {
   '🎲': 'dice', '💬': 'chat', '🗣': 'chat', '👋': 'wave', '👤': 'person', '🧍': 'person', '🚶': 'person', '🧝': 'mask', '🎭': 'mask',
-  '👥': 'people', '🎨': 'palette', '🖌': 'brush', '📍': 'pin', '📌': 'pin', '📜': 'scroll', '📝': 'page', '🗒': 'page', '📄': 'page', '📋': 'page', '📘': 'books',
+  '👥': 'people', '🎨': 'palette', '🖌': 'brush', '💧': 'dropper', '🪨': 'rock', '📍': 'pin', '📌': 'pin', '📜': 'scroll', '📝': 'page', '🗒': 'page', '📄': 'page', '📋': 'page', '📘': 'books',
   '⚠': 'warn', '🔊': 'sound', '📦': 'box', '🧊': 'box', '🎁': 'gift', '💾': 'save', '🪄': 'wand', '✨': 'sparkle', '🌀': 'swirl', '👁': 'eye',
   '🚪': 'door', '⚙': 'gear', '🐾': 'paw', '🔧': 'wrench', '🧰': 'chest', '⚒': 'hammer', '🩺': 'pulse', '🧩': 'puzzle', '🧱': 'brick', '🏗': 'brick', '🏘': 'house',
   '📂': 'folder', '📁': 'folder', '🗂': 'folder', '🫳': 'settle', '🪑': 'chair', '🏠': 'house', '🏝': 'map', '🏛': 'temple', '🔎': 'search', '🔍': 'search',

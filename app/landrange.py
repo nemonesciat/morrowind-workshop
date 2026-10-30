@@ -333,13 +333,24 @@ def raise_land(db, cells, height=512.0, coast=6144.0, rough=1.0, paint=True, reg
     moved = paths = 0
     painted = set()
     tables = {}
+    # (painted as Shape them paints, landdress: the region's textures at each slope, height and shore, in its own
+    # number a cell and its own broken patches; one texture a band, the land came out in blocks of one or two,
+    # lab jtex1, 2026-10-29)
+    dressed = {}
+    if paint:
+        try:
+            import landdress
+            import landshapes
+            dressed, _files = landdress.textures(db, landshapes.Field(G, 1), list(keys), {k: reg[k] for k in keys}, -1.0, int(seed or 1))
+        except Exception:
+            dressed = {}
     for gx, gy in keys:
         tex = None
         if paint:
             r = reg[(gx, gy)]
             if r not in tables:
                 tables[r] = _texture_table(db, r)
-            tex = _paint(G, gx, gy, tables[r])
+            tex = dressed.get((gx, gy)) or _paint(G, gx, gy, tables[r])
             if tex:
                 painted.add(r)
         after = landscape.write(db, gx, gy, new_h[(gx, gy)], tex, None, around=landscape.around_of(db, gx, gy, new_h))

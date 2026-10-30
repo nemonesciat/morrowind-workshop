@@ -31,10 +31,11 @@ import kits
 import outside
 import shellsurvey as ss
 
-VERSION = 11                  # (5: buildings behind one-piece interiors too, and 'outdoor': joins from every cell;
+VERSION = 12                  # (5: buildings behind one-piece interiors too, and 'outdoor': joins from every cell;
                                # 6: row houses, one-piece buildings and lighthouses, shellsurvey v5; 7: shellsurvey v6;
                                # 8: outdoor joins kept up to 60 a face; 9: and their exact poses; 10: modules keep
-                               # their own trim; 11: and their other doors)
+                               # their own trim; 11: and their other doors; 12: doors among the outdoor joins, and twins
+                               # for the pieces no place has)
 KEEP = 200                     # outdoor joins kept a face, the most used first
 # what is no building's trim: plants, rocks, loose things, lights, and a shop's or a guild's sign (not for a new house)
 NOT_TRIM = re.compile(r'flora|tree|grass|rock|terrain|kelp|bush|shrub|mushroom|misc_|light_|contain|crate|barrel|sack|basket|'
@@ -118,30 +119,37 @@ def _kit_tile(db, kit):
     return kp['tile'] if kp else 256
 
 
+DOORS = True                   # doors are outdoor pieces too (v12): a door in its frame is a join like any other
+
+
 def is_outdoor_piece(it):
     """A made thing standing outdoors that buildings are put together from or dressed with: walls, towers, wings,
-    porches, stairs, fences, awnings, foundations, bridges, docks. Not the land's rocks and plants, not clutter."""
+    porches, stairs, fences, awnings, foundations, bridges, docks, and their doors. Not the land's rocks and plants,
+    not clutter. (Doors since v12: the game stands 6,190 outdoors, and none was learnt, so a door never snapped into its
+    frame, the user's Reach double doors, 2026-10-29.)"""
     import landscape
-    if it['tag'] != 'STAT' or landscape.NATURAL.search(it['low']):
+    if it['tag'] not in (('STAT', 'DOOR') if DOORS else ('STAT',)) or landscape.NATURAL.search(it['low']):
         return False
     b, s = it['b'], it['s'] or 1.0
     w, d, h = (b[3] - b[0]) * s, (b[4] - b[1]) * s, (b[5] - b[2]) * s
     return max(w, d) >= 64 and h >= 24 and max(w, d) < 6000
 
 
-def outdoor_joins(db, stage=(0, 1)):
+def outdoor_joins(db, stage=(0, 1), cells=None):
     """How the game joins its made pieces anywhere outdoors, in a building with a door or not (a town wall, a
     tower, a bridge, a dock, a stair up to a door): {'joins': {model: {side: {rel: n}}}, 'placed': {model: n}}.
     Every two touching pieces in every exterior cell, each in the other's frame as adjacency.py records it.
     Measured 2026-10-27: the buildings with a door into a kit interior had only ~8% of the game's outdoor
-    building pieces in them; this is what gives the rest a place in the builder."""
+    building pieces in them; this is what gives the rest a place in the builder. cells: only these (a lab's half of
+    them, to test on the other half); else every exterior cell, and the twins of the pieces placed nowhere."""
     joins = defaultdict(lambda: defaultdict(Counter))
     # (each join's exact pose too, summed: the key is on the kits' grid (8 units, 15 degrees), and outdoors the game
     # turns its pieces any way, so a pose rebuilt from the key alone fell units off the real one, 2026-10-27)
     exact = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
     placed = Counter()
     memo, bmemo = {}, {}
-    cells = sorted(key for (tag, key) in db.by_key if tag == 'CELL' and key.startswith('#'))
+    every = cells is None
+    cells = sorted(key for (tag, key) in db.by_key if tag == 'CELL' and key.startswith('#')) if every else cells
     import background
     for n, ek in enumerate(cells):
         background.progress(n, len(cells), 'outdoor places', stage)
@@ -183,7 +191,53 @@ def outdoor_joins(db, stage=(0, 1)):
                 e = exact[(k, s_, rs)]
                 ex.setdefault(k, {}).setdefault(s_, {})[rs] = [round(e[0] / n, 2), round(e[1] / n, 2), round(e[2] / n, 2),
                                                                 round(int(rs.rsplit('/', 1)[1]) + e[3] / n, 3)]
-    return {'joins': kept, 'exact': ex, 'placed': dict(placed)}
+    return {'joins': kept, 'exact': ex, 'placed': dict(placed), 'twins': twins(db, kept) if every else {}}
+
+
+# a piece's name without its variant: "_01", "_01a", "_02b" at the end (the kits' siblings of one size)
+_STEM = re.compile(r'_?\d+[a-z]?$')
+TWIN_FIT = 4                   # a twin is the same size as the piece to this many units each way
+
+
+def twins(db, joins):
+    """{model: twin}: for the made pieces no place in the load order has, a placed sibling of the same name but for its
+    variant number and the same size, whose joins it takes (snaps_among): the kits make their variants to one grid,
+    a door frame 01a as its 01 (the user's Reach door frames, 2026-10-29). The most joined sibling when several fit."""
+    import mapdata
+    has = set(joins)
+    for sides in joins.values():
+        for rels in sides.values():
+            for rs in rels:
+                has.add(rs.split('@')[0])
+    by_stem = defaultdict(list)
+    for low in has:
+        by_stem[_STEM.sub('', low)].append(low)
+    use = Counter({k: sum(sum(r.values()) for r in v.values()) for k, v in joins.items()})
+    bounds = {}
+
+    def size(low):
+        if low not in bounds:
+            ri = db.resolve_id(low)
+            b = mapdata.object_bounds(db, ri) if ri is not None else None
+            bounds[low] = (b[3] - b[0], b[4] - b[1], b[5] - b[2]) if b else None
+        return bounds[low]
+    out = {}
+    for r in db.recs:
+        if r[0] not in ('STAT', 'DOOR'):
+            continue
+        low = r[1].lower()
+        if low in has or low in out:
+            continue
+        sib = by_stem.get(_STEM.sub('', low))
+        if not sib:
+            continue
+        me = size(low)
+        if not me:
+            continue
+        fits = [o for o in sib if size(o) and all(abs(a - b) <= TWIN_FIT for a, b in zip(me, size(o)))]
+        if fits:
+            out[low] = max(fits, key=lambda o: (use[o], o))
+    return out
 
 
 def survey(db):

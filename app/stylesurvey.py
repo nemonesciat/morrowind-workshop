@@ -744,6 +744,80 @@ def theme(db, name):
         st['places'] = [[ck, _place_name(db, ck)] for ck in st.get('cells') or []]
         st['place'] = _place_name(db, st['cell'])
     out['examples'] = [[ck, _place_name(db, ck)] for ck in out['examples']]
+    return _with_added(db, s, name, out)
+
+
+# ------------------------------------------------------------------ your own additions
+# Things you add to a style's palette yourself (PIN2: a piece the survey left out of its style, the drystone walls),
+# kept in the Workshop's home apart from the survey, so learning it again keeps them; listed first in their group.
+def _added_path():
+    from project import APP_DIR
+    return os.path.join(APP_DIR, 'style_added.json')
+
+
+def added():
+    try:
+        with open(_added_path(), encoding='utf-8') as f:
+            d = json.load(f)
+        return {k: [str(i).lower() for i in v] for k, v in d.items() if isinstance(v, list)}
+    except Exception:
+        return {}
+
+
+def _save_added(d):
+    p = _added_path()
+    with open(p + '.part', 'w', encoding='utf-8') as f:
+        json.dump(d, f, indent=1)
+    os.replace(p + '.part', p)
+
+
+def add_to(db, name, rid):
+    """Put a thing in a style's palette ('*': Used everywhere). {'theme', 'id', 'section', 'group'}"""
+    from editing import EditError
+    s = ready(db)
+    if not s:
+        raise EditError('The styles are still being learnt; try again in a moment.')
+    if name != '*' and name not in s['themes']:
+        raise EditError('There is no style "%s".' % name)
+    low = (rid or '').strip().lower()
+    cls = classify(db, low)
+    if not cls:
+        raise EditError('"%s" isn\'t something the Style palette lists (a building piece, furniture, a light or clutter).' % rid)
+    d = added()
+    lst = d.setdefault(name, [])
+    if low not in lst:
+        lst.append(low)
+    _save_added(d)
+    return {'theme': name, 'id': cls[2][1], 'section': cls[0], 'group': cls[1]}
+
+
+def take_out(db, name, rid):
+    d = added()
+    low = (rid or '').strip().lower()
+    if low in d.get(name, []):
+        d[name].remove(low)
+        _save_added(d)
+    return {'theme': name, 'id': rid}
+
+
+def _with_added(db, s, name, out):
+    """The theme's palette with your own additions put in, first in their group and marked 'mine'."""
+    for low in added().get(name, []):
+        cls = classify(db, low)
+        if not cls:
+            continue
+        sec, grp, r = cls
+        row = _row(db, s, low, name) if low in s['items'] else None
+        if row is None:
+            row = {'id': r[1], 'name': r[2], 'type': r[0], 'mesh': r[5] or '', 'grp': grp, 'share': None, 'places': 0, 'lift': None,
+                   'at': [], 'also': []}
+        row['mine'] = True
+        groups = out['sections'].setdefault(sec, [])
+        g = next((x for x in groups if x['group'] == grp), None)
+        if g is None:
+            g = {'group': grp, 'items': []}
+            groups.append(g)
+        g['items'] = [row] + [x for x in g['items'] if x['id'].lower() != low]
     return out
 
 

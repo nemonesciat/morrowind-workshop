@@ -260,7 +260,10 @@ def snaps_among(db, s, rid, x, y, items, skip=None, radius=1600, limit=80):
     poses the game joins the model at, merged and the best backed first. s: the exterior survey."""
     J = (s.get('outdoor') or {}).get('joins') or {}
     E = (s.get('outdoor') or {}).get('exact') or {}
+    # (a piece no place has takes its placed twin's joins, the same size and name but for its variant: exteriorsurvey.twins)
+    TW = (s.get('outdoor') or {}).get('twins') or {}
     low = rid.lower()
+    me = low if low in J else TW.get(low, low)        # (whose joins stand for this model)
 
     def rel_of(model, side, rs):
         # (the join's exact pose where it was learnt, else the grid key's)
@@ -272,27 +275,28 @@ def snaps_among(db, s, rid, x, y, items, skip=None, radius=1600, limit=80):
     items = [it for it in items if es.is_outdoor_piece(it) and it['k'] != skip]
     near = sorted((it for it in items if math.hypot((it['box'][0] + it['box'][2]) / 2 - x, (it['box'][1] + it['box'][3]) / 2 - y) < radius),
                   key=lambda it: math.hypot(it['p'][0] - x, it['p'][1] - y))[:16]
-    mine = J.get(low) or {}
+    mine = J.get(me) or {}
     out = []
     for it in near:
         A = es._piece(it)
+        nb = it['low'] if it['low'] in J else TW.get(it['low'], it['low'])   # (the neighbour's, likewise)
         # (the model against this neighbour, as the game puts it)
         # (and 'in': one set into the other, a window in a wall, a door in its jamb; a quarter of the game's spots)
-        for side, rels in (J.get(it['low']) or {}).items():
+        for side, rels in (J.get(nb) or {}).items():
             for rs, n in rels.items():
                 bid = rs.split('@')[0]
-                if bid != low:
+                if bid != low and bid != me:
                     continue
-                lx, ly, lz, turn = rel_of(it['low'], side, rs)
+                lx, ly, lz, turn = rel_of(nb, side, rs)
                 pl = adjacency.placed(A, (bid, lx, ly, lz, turn))
                 out.append({'p': pl['p'], 'n': n, 'to': it['id'], 'side': side})
         # (this neighbour against the model: the model's pose worked back from it)
         for side, rels in mine.items():
             for rs, n in rels.items():
                 bid = rs.split('@')[0]
-                if bid != it['low']:
+                if bid != it['low'] and bid != nb:
                     continue
-                lx, ly, lz, turn = rel_of(low, side, rs)
+                lx, ly, lz, turn = rel_of(me, side, rs)
                 rz = (A['rz'] - math.radians(turn)) % (2 * math.pi)
                 c, sn = math.cos(rz), math.sin(rz)
                 wx, wy = A['x'] - (lx * c + ly * sn), A['y'] - (-lx * sn + ly * c)

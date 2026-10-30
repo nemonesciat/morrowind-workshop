@@ -2243,13 +2243,33 @@ def scan(db, cell_key, everything=False, clashes=False, gate=('gap', 'doorway', 
             m_ = mapdata.cellmap(db, cell_key)
             found = clash_issues(db, m_)
             n_pieces = max(1, sum(1 for r in m_['refs'] if r.get('ri') is not None and r['type'] == 'STAT' and r.get('arch')))
+            res['arch_pieces'] = n_pieces
             by = {}
             for i in found:
                 by.setdefault((i['kind'], _pair_kind(i)), []).append(i)
+            # (and the game's own places of this style, when surveyed: a Chimer keep's T cuts into its side
+            # passage and its dividers into the room tiles by the kit's design, 35-78 clips per 100 pieces in
+            # the game's keeps against the houses' figures above; a made keep showed 34-40, all listed)
+            style_rate = {}
+            if not everything and res.get('prefix'):
+                try:
+                    import gapsurvey
+                    s_ = gapsurvey.ready(db, res['prefix'])
+                    if s_ and s_.get('places', 0) >= 3:
+                        style_rate = s_.get('clash') or {}
+                except Exception:
+                    pass
+            n_kind = {}
+            for (kind_, _pk), lst in by.items():
+                n_kind[kind_] = n_kind.get(kind_, 0) + len(lst)
+            res['clash_counts'] = n_kind              # (all of them, for the style's own rate: gapsurvey)
             like_game, excess = {}, []
             for key, lst in by.items():
                 base = CLASH_BASELINE.get(key, 0.0) * n_pieces / 100.0
-                if len(lst) > 2 * base + 1 or key[1] == 'sheet-tile':
+                own = style_rate.get(key[0])
+                if own is not None and key[1] != 'sheet-tile' and n_kind[key[0]] <= 2 * own * n_pieces / 100.0 + 1:
+                    like_game[' '.join(key)] = len(lst)
+                elif len(lst) > 2 * base + 1 or key[1] == 'sheet-tile':
                     excess += lst
                 else:
                     like_game[' '.join(key)] = len(lst)

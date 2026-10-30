@@ -81,7 +81,22 @@ def lived_share(occupants, K):
         return max(0.0, min(1.0, float(occupants)))
     except (TypeError, ValueError):
         return 1.0 - K.get('empty', EMPTY_SHARE)
-SIZES = {'small': (16, 1), 'medium': (38, 2), 'large': (75, 3)}      # tunnel pieces, halls (the game's 20/49/96 pieces with their halls)
+# tunnel pieces, halls (the game's 20/49/96 pieces with their halls; tiny: a lair). No huge: one cell of Dwemer or
+# Daedric pieces boxed itself in near 90 tunnel pieces (2 growths in 15 under half); the game's biggest are several
+# cells (Upper Level, Lower Level), left for later (the user, 2026-10-29)
+SIZES = {'tiny': (8, 1), 'small': (16, 1), 'medium': (38, 2), 'large': (75, 3)}
+
+
+def size_spec(size):
+    """(tunnel pieces, halls) for a size, which may carry the Halls choice after a '+': 'large+many' has half as many
+    halls again, 'large+few' one fewer (one at least). Carried in the size so a place made keeps it for Again."""
+    base, _s, halls = (size or 'medium').partition('+')
+    target, n = SIZES.get(base, SIZES['medium'])
+    if halls == 'many':
+        n = n + max(1, n // 2)
+    elif halls == 'few':
+        n = max(1, n - 1)
+    return target, n
 GROWS = 40          # growths tried for a layout that keeps the rules (dgrules), from seeds drawn from the one asked for
 AGREE = 0.85        # a piece whose learnt openings meet the game's joins less often than this is left out (corr2_03 0.5)
 # (a chamber's: the game packs its tombs tight, so a tomb's burial room has other pieces against its walls
@@ -152,6 +167,35 @@ KITS = {
         'setting': 'daedric', 'empty': 0.5, 'prize': [['com_chest_daed_ruin_01'], ['in_dae_dremora_lev+0', 'in_dae_all_lev+0']],
         'more': 'in_dae_all_lev+0', 'outside': ('dae',), 'example': 'Zaintashara, Shrine',
         'ambi': ((30, 40, 40), (10, 10, 10), (31, 44, 41))},
+    # the Chimer keeps' lower and upper levels (Andasreth, Hlormaren, Marandus: 38 places): corridors round the rooms,
+    # each room off a corridor's side passage (corr3_01's east side, a short passage, corr2_07, then a door frame and
+    # the room's doorway tile, hall02: 162 of 191 times), the rooms tiled from 256 tiles. Seeded by hand: the side
+    # passage's opening and the doorway's, which the game uses a third of the time (a plain alcove or wall the rest),
+    # and the corridor's end, a wall across it, which the game rarely needs (its corridors run round in rings)
+    'stronghold': {
+        'label': 'Chimer stronghold', 'tube': r'^in_stronghold_(corr2_0[0145-7]|corr3_01|stairs00|hall02|wall00)$',
+        'tiles': r'^in_stronghold_hall0[0134]$', 'tile': 256, 'jamb': 'in_strong_doorjam00',
+        'dead_end': 'in_stronghold_wall00', 'entry_room': 'in_stronghold_hall02', 'room_lead': 'in_stronghold_corr2_07',
+        'room_t': 'in_stronghold_corr3_01',
+        # (the short passage has a frame in its middle, a door in it when it leads into a room)
+        'framed': ('in_stronghold_corr2_07',), 'unbacked': True,
+        'base': 'in_stronghold_corr2_04', 'base_ports': [[[0, -256, 0, 'S'], [0, 256, 0, 'N']]],
+        'seed_ports': {'in_stronghold_corr2_07': [[-128, 0, 0, 'W'], [128, 0, 0, 'E']],
+                       'in_stronghold_corr3_01': [[0, 256, 0, 'N'], [0, -256, 0, 'S'], [128, 0, 0, 'E']],
+                       'in_stronghold_hall02': [[0, 128, 0, 'N']], 'in_stronghold_wall00': [[-24, 0, 0, 'W']],
+                       # (the stairs a storey up, from a short passage to one: 56 of the game's, its joins 0.59 of the time)
+                       'in_stronghold_stairs00': [[-256, 0, 0, 'W'], [256, 0, 320, 'E']]},
+        # (and those joins, which the frame between them hides from the survey: B in A's frame, each way)
+        'seed_rels': {'in_stronghold_corr3_01|in_stronghold_corr2_07': [[256, 0, 0, 0], [256, 0, 0, 180]],
+                      'in_stronghold_corr2_07|in_stronghold_hall02': [[-256, 0, 0, 90], [256, 0, 0, 270]]},
+        # (straights 0.4: by the game's counts alone a keep grew one corridor 6000 long; the game's turn round their rooms)
+        'mix': {'straight': 0.4, 'corner': 1.5},
+        'halls': 'tiled', 'room_sizes': ((3, 2), (3, 3), (4, 3), (3, 4), (4, 4), (5, 4)),
+        'dress': r'^(furn_|light_|sound_|active_|in_lava_blacksquare|in_strong_rubble|in_stronghold_lpill|t_de_furn|t_com_var|t_glb_var_(spider|web))',
+        'not_dress': r'marker|door|in_strong(hold|ruin)?_(corr|hall|wall|divider|stairs|roof|dome|arch)|_doorjam',
+        'setting': 'stronghold', 'empty': 0.35, 'prize': [['crate_bandit_01', 'barrel_bandit_01'], ['in_dae_all_lev+2']],
+        'more': 'in_dae_all_lev+0', 'outside': ('strong',), 'example': 'Andasreth, Lower Level',
+        'ambi': ((15, 15, 18), (14, 18, 18), (27, 34, 35))},
 }
 for _rock, _name, _ex in (('mold', 'grey stone', 'Sarnabi Cave'), ('mud', 'brown earth', 'Hlormar Egg Mine'),
                           ('py', 'pale rock', 'Ashurnibi Cave'), ('lava', 'lava rock', 'Mabrelet Cave')):
@@ -169,7 +213,30 @@ for _rock, _name, _ex in (('mold', 'grey stone', 'Sarnabi Cave'), ('mud', 'brown
         'not_dress': r'marker|door|cave(2_s_|4_s_|_\d\d|_exit|_nat_exit|_doorway)|grass|fern|bush|shrub|tree|flower|sapling|reed|heather|_bc_?bush',
         'setting': 'cave', 'empty': 0.45, 'prize': [['chest_small_02_lev_gold', 'com_chest_02_lev_gold', 'crate_smuggler_01'], []],
         'more': None, 'outside': ('cave',), 'example': _ex, 'ambi': ((40, 36, 32), (50, 46, 40), (18, 16, 14))}
-KINDS = ('dwemer', 'cave_mold', 'cave_mud', 'cave_py', 'cave_lava', 'tomb', 'daedric')
+# Velothi towers (the guide's and the game's: Shishara, Hanud, Nim, Odirniran, 70 places with a pit): the tomb's small
+# Velothi halls and rooms, ending in the tower itself, the pit (in_velothismall_pit_01/02), a two-storey room with its
+# steps up the side, columns and dome, laid as the game dresses each; learnt only from the places with a pit. They
+# climb from the door (Shishara: the way in at -256, the halls 0 to 128, the pit at 256), and people live in them
+KITS['tower'] = dict(KITS['tomb'],
+    label='Velothi tower', must=r'^in_velothismall_pit_0[12]$',
+    tube=KITS['tomb']['tube'][:-2] + r'|in_velothismall_pit_0[12])$',
+    rooms=r'_room_\d\d$|_pit_0[12]$', final_room=r'_pit_0[12]$', tall=None, joins_from='tomb', v='t2',
+    # (pit_02, the common pit, 59 of 78: its joins agree 0.42, the game reaches it from halls and corners alike)
+    room_agree=0.4,
+    # (the tower's own build, laid with its dressing but never cleared as in the way: the steps up the pit's sides (in
+    # all 38 of the game's pit dressings), its dome, columns, rails, galleries and upper floor. The clearing took the
+    # steps out of every made tower, the user's two storeys left with no way up)
+    fixed=r'^in_velothismall_(pitstep|dome|column|rail|curve|ceiling|wall_03|ramp_03)|^in_v_s_int_lcolumn|^in_vs_pit|^in_velothi_platform',
+    dress=KITS['tomb']['dress'][:-1] + r'|in_velothismall_(dome|ceiling|wall_03|rail|curve)|in_vs_pit|in_velothi_platform)',
+    # (beds stay: the resident mage sleeps upstairs)
+    not_dress=r'marker|door|_dj_|velothismall_(corner|hall|3way|4way|cap|stairs|ramp|room|pit_0)',
+    mix={'ramp': 2.0, 'dead end': 0.4, 'cross': 0.5},
+    # (the pit's lower room furnished: from its floor, 256 under its origin, to 200 over it, 20 things or more)
+    furnished={r'_pit_0[12]$': (-280, -56, 20)},
+    setting='tower', household=True, empty=0.15, prize=[['chest_small_01', 'com_chest_02'], []], more=None,
+    outside=('velothi',), example='Shishara', way='up',
+    ambi=((40, 36, 32), (70, 62, 52), (24, 22, 20)))
+KINDS = ('dwemer', 'cave_mold', 'cave_mud', 'cave_py', 'cave_lava', 'tomb', 'daedric', 'stronghold', 'tower')
 
 _cache = {}
 _thread = {}
@@ -217,7 +284,8 @@ def _disk(db, kind='dwemer'):
     import taste
     if kind == 'dwemer':
         return taste.cache_file('dwemer_%s_%s' % (taste.sig(db), V))
-    return taste.cache_file('dungeon_%s_%s_%s' % (kind, taste.sig(db), VG))
+    # (and the kind's own version, K['v']: a kind changed alone is learnt again alone)
+    return taste.cache_file('dungeon_%s_%s_%s%s' % (kind, taste.sig(db), VG, (KITS.get(kind) or {}).get('v', '')))
 
 
 # ------------------------------------------------------------------ frames
@@ -238,6 +306,8 @@ YAW = {'N': 0.0, 'E': math.pi / 2, 'S': math.pi, 'W': 3 * math.pi / 2}
 def _cells(db, K=None):
     import kits
     tube = re.compile((K or KITS['dwemer'])['tube'])
+    # (a kind learnt only from the places holding a piece of its own: a Velothi tower's pit, not every tomb)
+    must = re.compile(K['must']) if K and K.get('must') else None
     out = []
     for (tag, k), lst in db.by_key.items():
         if tag != 'CELL' or k.startswith('#') or not lst or lst[-1] in db.dead or not kits.game_made(db, k):
@@ -247,8 +317,10 @@ def _cells(db, K=None):
         except Exception:
             continue
         n = 0
-        for r in refs.values():
-            rid = (mapdata.ref_info(r['subs'])[0] or '').lower()
+        ids = [(mapdata.ref_info(r['subs'])[0] or '').lower() for r in refs.values()]
+        if must and not any(must.match(i) for i in ids):
+            continue
+        for rid in ids:
             if tube.match(rid):
                 n += 1
                 if n >= 10:
@@ -698,11 +770,13 @@ def survey(db, force=False, kind='dwemer'):
     best = None
     multi = frozenset(a for a in n_of if K.get('rooms') and re.search(K['rooms'], a))
     for bp in K['base_ports']:
-        ports, agree = _learn_ports(obs, side_n, n_of, {K['base']: bp}, multi)
+        ports, agree = _learn_ports(obs, side_n, n_of, dict(K.get('seed_ports') or {}, **{K['base']: bp}), multi)
         score = sum(agree.get(a, 0) * n_of[a] for a in ports) / max(1, sum(n_of[a] for a in ports))
         if best is None or score > best[0]:
             best = (score, ports, agree)
     _score, ports, agree = best
+    for a in K.get('seed_ports') or {}:
+        agree[a] = 1.0                          # (set by hand from the game's joins: trusted)
     if kind == 'dwemer':
         # (the door survey of 2026-10-24: the game's front doors stand in a frame at (0, 0, -32), its inner
         # doors as a pair of leaves either side of its middle, 164 of 182 front doors, 463 of 519 inner ones)
@@ -716,6 +790,12 @@ def survey(db, force=False, kind='dwemer'):
     rels = defaultdict(set)
     for aid, s_, bid, rel in obs:
         rels[aid + '|' + bid].add(tuple(rel[1:]))
+    for pair, lst in (K.get('seed_rels') or {}).items():
+        a_, b_ = pair.split('|')
+        for lx, ly, lz, dq in lst:
+            rels[pair].add((lx, ly, lz, dq))
+            bx, by = _rot(-lx, -ly, -math.radians(dq))
+            rels[b_ + '|' + a_].add((int(round(bx)), int(round(by)), -lz, (360 - dq) % 360))
     out = {'V': V if kind == 'dwemer' else VG, 'kind': kind, 'cells': len(cells), 'n': dict(n_of), 'ports': ports,
            'rels': {k: sorted(v) for k, v in rels.items()},
            'agree': agree, 'base_score': round(_score, 3),
@@ -729,6 +809,23 @@ def survey(db, force=False, kind='dwemer'):
                          for ref, d in random.Random(a).sample(s, min(len(s), 80))] for a, s in sets.items()}}
     if kind == 'dwemer':
         out['door'] = {'load': [0, 0, -32], 'inner': [[112, 0, 0, 180], [-112, 0, 0, 0]]}
+    if K.get('joins_from'):
+        # (the halls' openings and joins from a kind built of the same pieces in many more places: a Velothi tower's
+        # from the tombs' 380, its own 64 leaving the rarer joins to chance, every large tower leaking at a corner or
+        # a T. Its own pieces, the pit, and its own dressings stay its own)
+        J = survey(db, kind=K['joins_from'])
+        own = re.compile(K['final_room']) if K.get('final_room') else None
+        for pid, ps in J['ports'].items():
+            if own and own.search(pid):
+                continue
+            out['ports'][pid] = ps
+            out['agree'][pid] = J['agree'].get(pid, out['agree'].get(pid))
+            out['n'][pid] = J['n'].get(pid, out['n'].get(pid, 0))
+            if pid in J.get('side_share', {}):
+                out['side_share'][pid] = J['side_share'][pid]
+        for rk, v in J['rels'].items():
+            if not (own and any(own.search(x) for x in rk.split('|'))):
+                out['rels'][rk] = v
     # (a companion the game lays with a piece at the same spot a third of the times or more: in_moldcave_21_1,
     # the floor under in_moldcave_21, 6 of its 18; laid alone, its floor is open below)
     comps = defaultdict(list)
@@ -757,7 +854,8 @@ def survey(db, force=False, kind='dwemer'):
 
 def learning_name(kind):
     """What the learning bar calls a kind's survey."""
-    return {'dwemer': "the game's Dwemer ruins", 'tomb': "the game's Velothi tombs", 'daedric': "the game's Daedric ruins"}.get(
+    return {'dwemer': "the game's Dwemer ruins", 'tomb': "the game's Velothi tombs", 'daedric': "the game's Daedric ruins",
+            'stronghold': "the game's Chimer strongholds", 'tower': "the game's Velothi towers"}.get(
         kind, "the game's caves (%s)" % kit(kind)['label'].split('(')[-1].rstrip(')'))
 
 
@@ -1067,6 +1165,10 @@ def _lay_chamber(L, target, depth, hall_no, rng, final=False):
     target, as often as the game uses each; for the last one, the bigger the better. True when one fits."""
     rooms = [(pid, L.S['n'].get(pid, 1)) for pid in L.S['ports'] if role_of(pid, L.K, L.S) == 'room'
              and L.db.resolve_id(pid) is not None and L.S.get('agree', {}).get(pid, 0) >= L.K.get('room_agree', AGREE)]
+    # (a kind whose last room is its own: a Velothi tower ends in its tower, the pit, and has it nowhere else)
+    if L.K.get('final_room'):
+        fr = re.compile(L.K['final_room'])
+        rooms = [(pid, w) for pid, w in rooms if bool(fr.search(pid)) == bool(final)]
     if not rooms:
         return False
     if final:
@@ -1320,7 +1422,7 @@ def _generate(db, size='medium', levels='some', twist='branching', seed=None, ki
         raise EditError('The Workshop has not learnt the %s pieces yet: the game\'s own could not be read.' % K['label'])
     import dgrules
     seed = int(seed) if seed is not None else random.getrandbits(31)
-    target = SIZES.get(size, SIZES['medium'])[0]
+    target, want_halls = size_spec(size)
     best = None
     sub = random.Random(seed)
     # (only a layout that keeps the rules is made, dgrules: the way in highest, all joined, no leaks, no
@@ -1328,23 +1430,37 @@ def _generate(db, size='medium', levels='some', twist='branching', seed=None, ki
     # control". The rays, the slow part, are looked at only for the layout about to be kept)
     rayed = lambda lay: lay['rules'].update(zip(('leak', 'tight'), dgrules.seams_check(db, lay, kind=K['kind']))) or dgrules.ok(lay['rules'])
     keep = []                                   # (layouts that keep the rules but the rays, best first)
+    checked = []                                # (at least half the size, with a last hall, rays and all kept)
     for attempt in range(GROWS):
         lay = _grow(db, S, K, size, levels, twist, seed if attempt == 0 else sub.getrandbits(31), way)
         lay['K'] = K
         lay['rules'] = dgrules.check(db, lay, S, K, rays=False)
-        score = (dgrules.ok(lay['rules']), lay['final'] is not None, min(lay['tunnels'], target), -lay['open_left'], -attempt)
-        if score[0] and score[1] and lay['tunnels'] >= 0.8 * target and rayed(lay):
+        # (a last hall counts only on a growth at least half the size asked for: ranked first, a large ruin of two
+        # tunnel pieces and a hall beat every full-size one and stopped the search at attempt 15 too, the user's
+        # "degenerate dungeons", 4 large Dwemer ruins in 25)
+        # (the halls asked for count as much as ten tunnel pieces each: a huge ruin stopped at its first full-size
+        # growth with four halls of five, the Halls choice's "many" with three of four)
+        score = (dgrules.ok(lay['rules']), lay['final'] is not None and lay['tunnels'] >= 0.5 * target,
+                 min(lay['tunnels'], target) + 10 * min(lay['halls'], want_halls), lay['final'] is not None, -lay['open_left'], -attempt)
+        if score[0] and score[1] and lay['tunnels'] >= 0.8 * target and lay['halls'] >= want_halls and rayed(lay):
             best = (score, lay)
             break
-        if score[0]:
+        if score[0] and score[1]:
+            # (a good one, but short of the size: its rays looked at now, so the search stops after a while only for
+            # one that keeps every rule. Stopping for one that later leaked left the user's seed with no last hall)
+            if rayed(lay):
+                checked.append((score, lay))
+        elif score[0]:
             keep.append((score, lay))
         elif best is None or score > best[0]:
             best = (score, lay)                 # (the nearest miss, for saying what's wrong)
         # (no growth of the size asked for after a while: the best that keeps the rules will do)
-        if attempt >= 15 and any(k[0][1] for k in keep):
+        if attempt >= 15 and checked:
             break
+    if not (best and best[0][0]) and checked:
+        best = max(checked, key=lambda k: k[0])
     if not (best and best[0][0]):
-        for score, lay in sorted(keep, key=lambda k: k[0], reverse=True)[:6]:
+        for score, lay in sorted(keep, key=lambda k: k[0], reverse=True)[:10]:
             if rayed(lay):
                 best = (score, lay)
                 break
@@ -1369,9 +1485,32 @@ def _lay_any(L, port, depth, hall_no, rng, final=False):
         sizes = ((5, 4), (4, 4), (4, 3), (5, 3)) if final else [rng.choice([(4, 3), (4, 4), (5, 3), (5, 4)])]
         return any(_lay_hall(L, port, w, h, depth, hall_no, rng, second_exit=not final) for w, h in sizes)
     if how == 'tiled':
-        # (Project Tamriel's Daedric guide: rooms of 2x3 to 3x4 tiles)
-        sizes = ((3, 4), (3, 3), (3, 2)) if final else [rng.choice([(3, 2), (3, 3), (3, 4), (4, 3)]), (3, 2)]
+        # (Project Tamriel's Daedric guide: rooms of 2x3 to 3x4 tiles; a keep's own sizes from its kit)
+        own = L.K.get('room_sizes')
+        if own:
+            sizes = sorted(own, key=lambda s: -s[0] * s[1]) if final else [rng.choice(own), min(own, key=lambda s: s[0] * s[1])]
+        else:
+            sizes = ((3, 4), (3, 3), (3, 2)) if final else [rng.choice([(3, 2), (3, 3), (3, 4), (4, 3)]), (3, 2)]
+        lead = L.K.get('room_lead')
+        if lead and L.pieces[port['owner']].get('id') != lead:
+            # (a keep's room is off a short passage of its own, the game's every time: the passage laid first, the
+            # room at its far end, both taken back out when the room doesn't fit)
+            keep = (len(L.pieces), list(L.open), len(L.seams))
+            for k in range(len(L.S['ports'].get(lead, []))):
+                e = L.place_at(lead, k, port, depth)
+                if e is None:
+                    continue
+                far = [o for o in L.open if o['owner'] == e]
+                if far and any(_lay_room(L, far[0], w, h, depth + 1, hall_no, rng) for w, h in sizes):
+                    return True
+                del L.pieces[keep[0]:]
+                L.open = list(keep[1])
+                del L.seams[keep[2]:]
+            return False
         return any(_lay_room(L, port, w, h, depth, hall_no, rng) for w, h in sizes)
+    # (a Velothi tower's last room is the tower: its pit, laid whole)
+    if final and L.K.get('final_room'):
+        return _lay_chamber(L, port, depth, hall_no, rng, final=True)
     # (a tomb: a burial room of the game's own, or a hall tiled from its room tiles, now and then; the last
     # one of a large tomb a tall hall, two storeys high, as the game's great burial halls are)
     if L.K.get('tiles') and (final or rng.random() < 0.5):
@@ -1384,9 +1523,47 @@ def _lay_any(L, port, depth, hall_no, rng, final=False):
     return _lay_chamber(L, port, depth, hall_no, rng, final=final)
 
 
+def _keep_room(L, rng, hall_no, final=False, shallow=False):
+    """A keep's room (K['room_lead']): at a T's own side, the side off its corridor (its last opening), or failing
+    that at a corridor's open end with a T of its own laid there first (K['room_t']), the room off that T's side.
+    The newest first while growing, laid before corridors fill round it; the deepest for the last one, the
+    shallowest for those still owed. The tunnel pieces it added (0 or 1), or None when no room fits anywhere.
+    (Rooms only at the T's that happened to be free left a large keep with many halls 1 time in 8 with all of
+    them, a winding one 4 in 8, 2026-10-29)"""
+    K, S = L.K, L.S
+    grow = [o for o in L.open if not o.get('cap')]
+    order = (lambda o: -o['depth']) if final else (lambda o: o['depth']) if shallow else (lambda o: -o['owner'])
+
+    def t_side(o):
+        P = L.pieces[o['owner']]
+        ps = S['ports'].get(P.get('id')) or []
+        return P.get('role') == 'T' and ps and o['side'] == _dir_of(*_rot(*SIDES[ps[-1][3]], P['p'][5]))
+    # (and a side passage's open end, grown as a tunnel: the room straight on at it)
+    for o in sorted((o for o in grow if t_side(o) or L.pieces[o['owner']].get('id') == K['room_lead']), key=order):
+        if _lay_any(L, o, o['depth'], hall_no, rng, final=final):
+            return 0
+    tid = K.get('room_t')
+    tports = S['ports'].get(tid) or []
+    if not tid or len(tports) < 3:
+        return None
+    for o in sorted((o for o in grow if not t_side(o) and L.pieces[o['owner']].get('id') != K['room_lead']), key=order)[:16]:
+        keep = (len(L.pieces), list(L.open), len(L.seams))
+        for k in range(len(tports) - 1):
+            t = L.place_at(tid, k, o, o['depth'])
+            if t is None:
+                continue
+            side = next((x for x in L.open if x['owner'] == t and t_side(x)), None)
+            if side is not None and _lay_any(L, side, side['depth'], hall_no, rng, final=final):
+                return 1
+            del L.pieces[keep[0]:]
+            L.open = list(keep[1])
+            del L.seams[keep[2]:]
+    return None
+
+
 def _grow(db, S, K, size, levels, twist, seed, way='down'):
     rng = random.Random(seed)
-    target, n_halls = SIZES.get(size, SIZES['medium'])
+    target, n_halls = size_spec(size)
     # the tunnel pieces to grow with, as often as the game uses each (with the asked-for mix)
     mix = {'linear': {'T': 0.3, 'cross': 0.15, 'straight': 1.3, 'corner': 1.0, 'dead end': 0.3},
            'branching': {}, 'maze': {'T': 1.6, 'cross': 1.8, 'dead end': 1.2, 'straight': 0.8}}.get(twist, {})
@@ -1402,7 +1579,7 @@ def _grow(db, S, K, size, levels, twist, seed, way='down'):
     if not pool:
         raise EditError('No %s tunnel pieces with known openings.' % K['label'])
     L = _Layout(db, S, K)
-    L.big = size == 'large'
+    L.big = (size or '').partition('+')[0] == 'large'
     L.way = way
     load = (S.get('door') or {}).get('load') or {}
     holder = load.get('holder') if isinstance(load, dict) else None
@@ -1424,9 +1601,10 @@ def _grow(db, S, K, size, levels, twist, seed, way='down'):
                 L.ez = o['z']
             else:
                 L.open.append(dict(o, owner=first, depth=1))
-    halls_at = sorted({max(3, int(target * f)) for f in ([0.45, 0.8][:max(0, n_halls - 1)] if n_halls > 1 else [])})
-    if n_halls > 2:
-        halls_at = sorted({max(3, int(target * f)) for f in (0.3, 0.6)})
+    # (the halls on the way, spread evenly through the growth, the last one at the far end: two halls put the middle
+    # one at 45%, three at 30% and 60%, as before; any number now, for the Halls choice and the huge size)
+    # (a keep's rooms sooner, K['spread']: laid later, the corridors had filled the ground round every T beside one)
+    halls_at = sorted({max(3, int(target * K.get('spread', 0.9) * (i + 1) / n_halls)) for i in range(n_halls - 1)})
     hall_no = 0
     tunnels = 1
     tries = 0
@@ -1439,11 +1617,22 @@ def _grow(db, S, K, size, levels, twist, seed, way='down'):
         else:
             port = rng.choice(grow)
         if halls_at and tunnels >= halls_at[0]:
+            if K.get('room_lead'):
+                got = _keep_room(L, rng, hall_no)
+                if got is not None:
+                    hall_no += 1
+                    halls_at.pop(0)
+                    tunnels += got
+                else:
+                    halls_at[0] = tunnels + 1       # (tried again once another piece is laid)
+                continue
             if _lay_any(L, port, port['depth'], hall_no, rng):
                 hall_no += 1
                 halls_at.pop(0)
             elif tries % 8 == 0:
-                halls_at.pop(0)                 # (no room for it anywhere near: grow on without it)
+                # (no room for it anywhere near: tried again a few pieces on, where there may be. Dropped, a huge
+                # ruin kept four halls of five and a Daedric one three)
+                halls_at[0] = tunnels + 3
             continue
         cands = [c for c in pool if not (c[1] == 'dead end' and (len(L.open) <= 1 or tunnels < 4))]
         tot = sum(c[2] for c in cands)
@@ -1461,9 +1650,23 @@ def _grow(db, S, K, size, levels, twist, seed, way='down'):
             port['stuck'] = True
             if all(o.get('stuck') or o.get('cap') for o in L.open):
                 break
+    # (the halls still owed when the size was reached: at the open ends, the shallower first, the deepest kept for the
+    # last one)
+    for _h in list(halls_at):
+        if K.get('room_lead'):
+            if _keep_room(L, rng, hall_no, shallow=True) is not None:
+                hall_no += 1
+            continue
+        ends = sorted((o for o in L.open if not o.get('cap')), key=lambda o: o['depth'])[:-1]
+        if any(_lay_any(L, port, port['depth'], hall_no, rng) for port in ends):
+            hall_no += 1
     # the last hall at the far end: the deepest opening that takes one
     final = None
-    for port in sorted((o for o in L.open if not o.get('cap')), key=lambda o: -o['depth']):
+    if K.get('room_lead'):
+        if _keep_room(L, rng, hall_no, final=True) is not None:
+            final = hall_no
+            hall_no += 1
+    for port in ([] if K.get('room_lead') else sorted((o for o in L.open if not o.get('cap')), key=lambda o: -o['depth'])):
         if _lay_any(L, port, port['depth'], hall_no, rng, final=True):
             final = hall_no
             hall_no += 1
@@ -1507,15 +1710,19 @@ def _grow(db, S, K, size, levels, twist, seed, way='down'):
                 break
             port = L.open[0]
             fits = lambda: any(L.place_at(d_, k, port, port['depth']) is not None for d_ in deads for k in range(len(S['ports'].get(d_, []))))
-            if fits():
+            # (a keep's side passage is never walled off at its end: open overhead there, it showed the void, 18 of
+            # 24 leaks in large keeps; taken back out instead, as the game never ends one)
+            framed_end = L.pieces[port['owner']].get('id') in (K.get('framed') or ())
+            if not framed_end and fits():
                 continue
             # (a dead end the game never stands against this piece, rather than an end open onto the void: the
             # leak rays judge the join, dgrules; lava caves' crossings had no other way to be closed)
-            L.S = dict(S, rels=None)
-            got = fits()
-            L.S = S
-            if got:
-                continue
+            if not framed_end:
+                L.S = dict(S, rels=None)
+                got = fits()
+                L.S = S
+                if got:
+                    continue
             # (no room for a dead end: take away the piece the opening belongs to, with what was grown on from it,
             # and open the seam it hung from instead)
             sub = branch(port['owner'])
@@ -1962,6 +2169,16 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
         same = [st for st in sets if isinstance(st, dict) and set(st['u']) == used_]
         more_ = [st for st in sets if isinstance(st, dict) and set(st['u']) >= used_]
         pool_ = same or more_ or sets
+        # (a kind's piece furnished on a storey of its own, K['furnished']: {piece regex: (lowest, highest over the
+        # piece's origin, things at least)}: a Velothi tower's lower room from the dressings that furnish it. The game's
+        # pits hold a median 47 things down there, but some of its dressings leave it bare, and a made tower's lower
+        # room came out empty, the user's Shishkebab)
+        for pat, (z0_, z1_, least) in (K.get('furnished') or {}).items():
+            if re.search(pat, p['id']):
+                fixed_ = re.compile(K['fixed']) if K.get('fixed') else None
+                things = lambda st: sum(1 for row in _set_items(st) if z0_ <= row[4] <= z1_ and not (fixed_ and fixed_.search(row[0].lower())))
+                full = [st for st in pool_ if things(st) >= least]
+                pool_ = full or pool_
         # (one draw, whatever the loot: the most-loot of several draws brought the fullest sets, statues,
         # platforms and machines with them, and a doubled shrine platform in the user's Zajamima. "It should just
         # make more valuable loot and better loot in chests": richer fills what's there, below)
@@ -2234,7 +2451,7 @@ def _clear_ways(db, key, lay, S, K):
     c = db.project.cells.get(key)
     if not c:
         return 0
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     gone = 0
     for _pass in range(3):
         m = mapdata.cellmap(db, key)
@@ -2325,7 +2542,7 @@ def _unblock(db, key, lay, K, starts):
     c = db.project.cells.get(key)
     if not c or not starts:
         return 0
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     gone = 0
     # (what a pass took out comes back when the walk reached no further for it: in the lab a large mud cave
     # lost 96 of its rocks and boulders and the camp's plank decks to floor that was out of reach anyway)
@@ -2424,7 +2641,7 @@ def _clear_swim(db, key, lay, S, K, level, dry=False):
     c = db.project.cells.get(key)
     if not c or level is None:
         return [] if dry else 0
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     L = _Layout(db, S, K)
     out = set()
     for _pass in range(3):
@@ -2527,7 +2744,7 @@ def _water(db, key, lay, K, how, rng):
     if not c:
         return None
     m = mapdata.cellmap(db, key)
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     sc = seethrough.place_scene(db, dict(m, refs=[r for r in m['refs'] if tube.match(r['id'].lower())]))
     floors = _walk_floors(sc, lay)
     level = None
@@ -2776,7 +2993,7 @@ def _declip(db, key, K):
     if not c:
         return 0
     m = mapdata.cellmap(db, key)
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     cand = []
     for r in m['refs']:
         i = r['id'].lower()
@@ -2867,7 +3084,7 @@ def _in_rock(db, key, K, dry=False):
     out (or, dry, listed). Rocks, plants, pipes and lights are made to meet the rock and are left alone."""
     import seethrough
     m = mapdata.cellmap(db, key)
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['roofs']) if K.get('roofs') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else '') + (('|' + K['roofs']) if K.get('roofs') else ''))
     struct = [r for r in m['refs'] if tube.match(r['id'].lower()) or r['id'].lower() == K.get('jamb')]
     sc = seethrough.place_scene(db, dict(m, refs=struct))
     sk = {r['k'] for r in struct}
@@ -3017,7 +3234,7 @@ def _door_walk(db, m, K, doors):
     sill and across the middle of its width. Pipes count here (a pipe hung down the middle of a Dwemer door,
     "looks cool, but the character cannot run through", the user's Nchudzamn); the building, doors and lights
     don't. The keys met."""
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     jamb = (K.get('jamb') or '').lower()
     frames = [d for d in doors if d['type'] != 'DOOR']        # (a door's own point is at its hinge: the frame's middle)
     if not frames:
@@ -3108,7 +3325,7 @@ def pipes_hanging(db, m, K, margin=PIPE_ALONE, front_only=False):
     joined to one that does. Measured on the game's own Dwemer places: a contact rule (24, front faces) called
     20-34% of them hanging; nothing within 160, either face, 3.6%."""
     import seethrough
-    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else ''))
+    tube = re.compile(K['tube'] + (('|' + K['tiles']) if K.get('tiles') else '') + (('|' + K['fixed']) if K.get('fixed') else ''))
     if True:
         pipes = [r for r in m['refs'] if r.get('b') and r['type'] in ('STAT', 'ACTI') and LOOSE_PIPE.search(r['id'].lower())
                  and not tube.match(r['id'].lower())]
@@ -3645,6 +3862,9 @@ def occupy(db, key, lay, rng, occupants='auto', K=None):
     game's, every one of them at the top. The people placed, or 0."""
     K = K or kit('dwemer')
     v, g = lived_share(occupants, K), lived_share('auto', K)
+    if K.get('household'):
+        # (lived in or not, as the slider says; lived in, a household, not camps)
+        return _household(db, key, lay, rng, K) if rng.random() < v else 0
     halls = sorted({p['hall'] for p in lay['pieces'] if p.get('hall') is not None and not p.get('gone')} - {lay['final']})
     if v <= g:
         camps = 1 if rng.random() < v else 0
@@ -3663,6 +3883,119 @@ def occupy(db, key, lay, rng, occupants='auto', K=None):
         used.add(hall)
         placed += _one_camp(db, key, lay, rng, K, hall, free if k == 0 else [hall], tunnels=(k == 0))
     return placed
+
+
+FIREPIT = re.compile(r'firepit|fire_pit|pitfire')
+PILLAR = re.compile(r'pill|column|_post')
+
+
+def _firepits(db, key):
+    """Fire pits: one cutting into a pillar or column goes, and of two within FIRE_APART of each other the second goes
+    (two tiles' dressings each brought theirs: the user's stronghold had two side by side against its pillars). The
+    number taken out."""
+    c = db.project.cells.get(key)
+    if not c:
+        return 0
+    m = mapdata.cellmap(db, key)
+    fires = [r for r in m['refs'] if r.get('b') and FIREPIT.search(r['id'].lower())]
+    if not fires:
+        return 0
+    shrink = lambda a: (lambda sx, sy: (a[0] + sx, a[1] + sy, a[2], a[3] - sx, a[4] - sy, a[5]))((a[3] - a[0]) / 6, (a[4] - a[1]) / 6)
+    posts = [shrink(_aabb(r)) for r in m['refs'] if r.get('b') and PILLAR.search(r['id'].lower()) and not FIREPIT.search(r['id'].lower())]
+    hit = lambda a, b: min(a[3], b[3]) > max(a[0], b[0]) and min(a[4], b[4]) > max(a[1], b[1]) and min(a[5], b[5]) > max(a[2], b[2])
+    kept, gone = [], []
+    for r in fires:
+        a = shrink(_aabb(r))
+        if any(hit(a, p) for p in posts) or any(math.hypot(r['p'][0] - k['p'][0], r['p'][1] - k['p'][1]) < FIRE_APART and abs(r['p'][2] - k['p'][2]) < 200 for k in kept):
+            gone.append(r)
+        else:
+            kept.append(r)
+    for r in gone:
+        c['refs'].pop(r['k'], None)
+    if gone:
+        db.sync_project()
+    return len(gone)
+
+
+FIRE_APART = 600
+WALL_FURN = re.compile(r'bookshelf|bookcase|shelf|drawers|cupboard|wardrobe|closet|wallscreen')
+
+
+def _unbacked(db, key, K):
+    """Shelves, drawers and cupboards with no wall of the place within reach on any side, taken out with what is on
+    them: a dressing copied from a game place where something it doesn't bring stood behind them (a Velothi tower's pit
+    came with a library of six free-standing bookshelves, 12 books cut into them, the game's own towers 0). The
+    number taken out."""
+    import placecheck
+    c = db.project.cells.get(key)
+    if not c:
+        return 0
+    m = mapdata.cellmap(db, key)
+    # (as the place check finds them: a shelf with no wall at its back, a book cut into its shelf. Rays of their own
+    # met a step or a column beside the shelf and kept most of them)
+    res = placecheck.check(db, key, gaps=False)
+    by_k = {r['k']: r for r in m['refs']}
+    gone = [by_k[i['ref']] for i in res.get('issues') or [] if i.get('kind') == 'nowall' and i.get('ref') in by_k
+            and WALL_FURN.search(by_k[i['ref']]['id'].lower()) and by_k[i['ref']].get('b')]
+    for i in res.get('issues') or []:
+        if i.get('kind') == 'bookclip' and i.get('ref') in c['refs']:
+            c['refs'].pop(i['ref'], None)
+    for r in gone:
+        b, s = r['b'], r.get('s') or 1.0
+        top = r['p'][2] + b[5] * s
+        # (and what stands on it: its books and jars, inside its box and no higher than its top)
+        for o in m['refs']:
+            if o is r or o['type'] not in TOP_TYPES:
+                continue
+            lx, ly = _rot(o['p'][0] - r['p'][0], o['p'][1] - r['p'][1], -r['p'][5])
+            if b[0] * s - 8 <= lx <= b[3] * s + 8 and b[1] * s - 8 <= ly <= b[4] * s + 8 and r['p'][2] + b[2] * s - 8 <= o['p'][2] <= top + 24:
+                c['refs'].pop(o['k'], None)
+        c['refs'].pop(r['k'], None)
+    if gone:
+        db.sync_project()
+    return len(gone)
+
+
+def _household(db, key, lay, rng, K):
+    """A kind's people who live there rather than camp (K['household']: a Velothi tower's mage and company): a cast
+    from Populate for the kind's setting, as many as the game's own of the size hold (its towers: 1, 3, 9 at the
+    tenth, middle and ninetieth; 2 in a tiny one to 5 in a large one here), standing about the tower and its rooms
+    among their own furniture, no camp. The people placed, or 0."""
+    import populate
+    import seethrough
+    n = max(1, min(6, 2 + lay['tunnels'] // 25 + rng.choice([-1, 0, 0, 1])))
+    cast = populate.cast(db, key, {'setting': K['setting'], 'count': n}, seed=rng.getrandbits(31))
+    people = (cast.get('people') or [])[:n]
+    if not people:
+        return 0
+    m = mapdata.cellmap(db, key)
+    sc = seethrough.place_scene(db, m)
+    halls = [lay['final']] + sorted({p['hall'] for p in lay['pieces'] if p.get('hall') is not None and not p.get('gone')} - {lay['final']})
+    spots = []
+    for h in halls:
+        if h is None:
+            continue
+        sp = _hall_spots(db, sc, lay, h)
+        if not sp:
+            continue
+        # (on a floor, not a table top: the room's lowest floor, or a storey up, not the furniture between)
+        lo = min(s[2] for s in sp)
+        spots.append([s for s in sp if s[2] - lo < 24 or s[2] - lo > 240])
+    taken = []
+    for k, pp in enumerate(people):
+        # (half of them in the tower itself, the rest in its rooms in turn; a stride apart)
+        pool = spots[0] if (k % 2 == 0 or len(spots) < 2) else spots[1 + (k // 2) % (len(spots) - 1)]
+        pick = next((s for s in pool if all(math.hypot(s[0] - t[0], s[1] - t[1]) > 150 for t in taken)), None)
+        if pick is None:
+            continue
+        taken.append(pick)
+        pp['spot'] = [round(pick[0], 1), round(pick[1], 1), round(pick[2] + 4, 1), round(rng.random() * 6.28, 3)]
+    people = [pp for pp in people if pp.get('spot')]
+    if not people:
+        return 0
+    db.sync_project()
+    r = populate.place(db, key, people, own=False)
+    return r.get('placed', 0)
 
 
 def _one_camp(db, key, lay, rng, K, hall, halls, tunnels=True):
@@ -3886,10 +4219,24 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
                     seen_.add(x_)
                     todo_.append(x_)
             return True
+        framed = set(K.get('framed') or ())
+        for n_, pc in enumerate(lay['pieces']):
+            if pc.get('gone') or pc.get('id') not in framed:
+                continue
+            # (a keep's short passage: its frame in the middle of it, as the game's stand (44 of the 83 by a T; at
+            # its ends they cut into the T's alcove), with a door when it leads into a room)
+            x_, y_, z_, rz_ = pc['p'][0], pc['p'][1], pc['p'][2], pc['p'][5]
+            refs.append((K['jamb'], (x_, y_, z_, 0, 0, rz_), [], 1.0))
+            if any(n_ in (s_[4], s_[5]) and lay['pieces'][s_[5] if s_[4] == n_ else s_[4]].get('hall') is not None for s_ in lay['seams']):
+                for lx, ly, lz, dq in inner[1]:
+                    wx, wy = _rot(lx, ly, rz_)
+                    refs.append((inner[0], (x_ + wx, y_ + wy, z_ + lz, 0, 0, (rz_ + math.radians(dq)) % (2 * math.pi)), [], 1.0))
         for k_seam, (sx, sy, sz, side, a, b) in enumerate(lay['seams']):
+            A, B = lay['pieces'][a], lay['pieces'][b]
+            if framed and (A.get('id') in framed or B.get('id') in framed):
+                continue
             if not leads_on(b) or not only_way(k_seam):
                 continue
-            A, B = lay['pieces'][a], lay['pieces'][b]
             if A.get('gone') or B.get('gone') or A['hall'] is not None or B['hall'] is not None:
                 continue
             # (nor in front of a dead end: a door that opens on a blank wall, the user's Varensis Tomb; nor pressed
@@ -4072,6 +4419,9 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
         # user's Nchudjak. Not a contact rule: those called a fifth to a third of the game's own hanging. A
         # length that meets the corridor beside a room from outside still wants a show-through rule)
         cleared += _loose_pipes(db, key, K)
+        cleared += _firepits(db, key)
+        if K.get('household') or K.get('unbacked'):
+            cleared += _unbacked(db, key, K)        # (a tower's or a keep's shelves with nothing behind them)
         # (last, after everything taken out of the way: what stood on a plank that went comes down to the floor)
         _settle(db, key)
         _orphans(db, key, K)
@@ -4109,7 +4459,7 @@ def build(db, name, size='medium', levels='some', twist='branching', loot='usual
                  'entrance': entrance, 'outside_door': outside_door, 'occupants': occupants, 'way': lay.get('way', 'down')}
     db.sync_project()
     note = 'Made a %s "%s" (%d tunnel pieces, %d %s)%s' % (
-        K['label'][0].lower() + K['label'][1:] if not K['label'].startswith(('Dwemer', 'Velothi', 'Daedric')) else K['label'], name,
+        K['label'][0].lower() + K['label'][1:] if not K['label'].startswith(('Dwemer', 'Velothi', 'Daedric', 'Chimer')) else K['label'], name,
         lay['tunnels'], lay['halls'], {'dwemer': 'halls', 'tiled': 'rooms'}.get(K['halls'], 'chambers'),
         (' with its entrance in %s' % editing.cell_label(db, out_spot[0])) if out_spot else '')
     stack = getattr(p, 'undo_stack', [])

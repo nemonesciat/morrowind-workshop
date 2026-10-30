@@ -889,6 +889,16 @@ def game_share(db, prefix):
     rec = sv['kits'].get(prefix) if prefix else None
     if rec and rec['places'] >= 3 and rec['share'] is not None:
         return rec['share']
+    # (a kit the survey saw too seldom: its own places, from the style's gap survey when that's to hand. A Chimer
+    # keep's corner tiles leave their outer walls bare, 3-7% of the game's keeps' edges, every made keep listed)
+    if prefix:
+        try:
+            import gapsurvey
+            g = gapsurvey.ready(db, prefix)
+            if g and g.get('places', 0) >= 3 and g.get('naked_share') is not None:
+                return g['naked_share']
+        except Exception:
+            pass
     return sv['all'].get('share')
 
 

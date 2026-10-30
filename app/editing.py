@@ -7,7 +7,7 @@ import threading
 import time
 
 from esm import ENC, iter_subrecords, zstr
-from project import b64, join_subs, ref_info, set_ref_pos, state_diff, zs
+from project import b64, join_subs, ref_info, set_ref_pos, state_diff, unb64, zs
 
 PLACEABLE = {'STAT', 'ACTI', 'DOOR', 'CONT', 'LIGH', 'NPC_', 'CREA', 'LEVC', 'WEAP', 'ARMO', 'CLOT', 'MISC',
              'BOOK', 'ALCH', 'INGR', 'APPA', 'LOCK', 'PROB', 'REPA'}
@@ -727,6 +727,31 @@ def revert_record(db, i):
     return lst[-1] if lst else None
 
 
+def revert_cells(db, cells, land_only=True):
+    """The mod's changes to these outdoor cells ('x,y') taken back at once, as one step (one Undo): the land (its
+    heights and ground textures) and the grass on it; with land_only=False the objects and path grid too, a cell
+    the mod made gone. (PIN2 wanted to pick cells and undo his terrain work in them, not change by change)"""
+    _require_project(db)
+    p = db.project
+    n = 0
+    for c in cells or []:
+        gx, gy = (int(v) for v in str(c).lstrip('#').split(','))
+        key = '#%d,%d' % (gx, gy)
+        hit = p.records.pop('LAND|%d,%d' % (gx, gy), None) is not None
+        if (getattr(p, 'grass', None) or {}).pop(key, None):
+            hit = True
+        if not land_only:
+            if p.records.pop('PGRD|' + key, None) is not None:
+                hit = True
+            if p.cells.pop(key, None) is not None:
+                hit = True
+        n += hit
+    if not n:
+        raise EditError('None of your land is in %s.' % ('that cell' if len(cells or []) == 1 else 'those cells'))
+    commit(db, 'Undid my land in %d cell%s' % (n, '' if n == 1 else 's'))
+    return {'cells': n}
+
+
 # ---------------- cells ----------------
 def _cell(db, cell_key):
     _require_project(db)
@@ -734,9 +759,45 @@ def _cell(db, cell_key):
     if header is None:
         if cell_key in db.project.cells:          # a place that exists only in this mod
             return db.project.cells[cell_key], refs
+        # (outdoors, land with no cell: a mod such as a sea floor adds land only, and OpenMW makes up the cell. Shaped
+        # into an island there, nothing could be put on it, "That cell does not exist", the user, 2026-10-29. The
+        # cell is made as the game's unnamed outdoor cells are, in the land's region, as landscape.new_land does)
+        m = re.match(r'#(-?\d+),(-?\d+)$', cell_key)
+        if m:
+            import landrange
+            import landscape
+            gx, gy = int(m.group(1)), int(m.group(2))
+            if landscape._winner(db, gx, gy) is not None:
+                hdr = [('NAME', b'\0'), ('DATA', struct.pack('<iii', 2, gx, gy))]
+                region = landrange._region_of(db, gx, gy)
+                ri = db.resolve_id(region) if region else None
+                region = db.recs[ri][1] if ri is not None else region        # (the region's own spelling)
+                if region:
+                    hdr.append(('RGNN', zs(region)))
+                c = db.project.cell(cell_key, hdr, 0)
+                c['props'] = True
+                return c, refs
         raise EditError('That cell does not exist in your load order.')
     c = db.project.cell(cell_key, header[0], header[1] & ~0x20)
     return c, refs
+
+
+def name_cell(db, cell_key, name):
+    """Name an outdoor cell (the name on the game's world map, its map window and saves); '' leaves it unnamed, as most
+    of the game's outdoor cells are. Land with no cell gets its cell (_cell)."""
+    if not re.match(r'#-?\d+,-?\d+$', cell_key or ''):
+        raise EditError('Only outdoor cells are named here.')
+    name = ' '.join(str(name or '').split())[:63]
+    c, _refs = _cell(db, cell_key)
+    hdr = [(t, unb64(d)) for t, d in c['header']]
+    out = [(t, zs(name) if t == 'NAME' else d) for t, d in hdr]
+    if not any(t == 'NAME' for t, _d in out):
+        out.insert(0, ('NAME', zs(name)))
+    c['header'] = [[t, b64(d)] for t, d in out]
+    c['props'] = True
+    db.sync_project()
+    commit(db, ('Named cell %s "%s"' % (cell_key[1:], name)) if name else 'Took the name off cell %s' % cell_key[1:])
+    return {'name': name}
 
 
 def _store(c, refkey, origin, idx, subs, deleted=False):

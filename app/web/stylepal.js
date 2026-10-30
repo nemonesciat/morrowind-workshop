@@ -12,7 +12,16 @@ SP.data = {}; SP.themes = null;
 const SP_SECS = [['Shell', '🧱 Shell', 'Walls, corners, floors, ceilings, doorways, stairs, columns: what the place is built of'],
   ['Furniture', '🪑 Furniture', 'Beds, tables, seats, storage, counters and shelves'],
   ['Decor', '🕯 Decor', 'Lights, rugs, tapestries and banners, plants, tableware and clutter'],
-  ['Sets', '🧩 Sets', 'What the game puts together: a table with its chairs, a bed with its chest, a hearth with its things. Placed whole, one Undo']];
+  ['Sets', '🧩 Sets', 'What the game puts together: a table with its chairs, a bed with its chest, a hearth with its things. Placed whole, one Undo'],
+  // (a region's own palette, regionpal.py: what the game sets over its land)
+  ['Rocks', '🪨 Rocks & cliffs', "The region's rocks and cliffs, by set: the models of one family, which the game uses together"],
+  ['Growing', '🌿 Trees and plants', "The region's trees, flowers and plants, grass, logs and stumps"]];
+// a tab's name: a style, "Used everywhere", or a region's palette ('r:' and its id)
+function spName(c){
+  if (c === '*') return 'Used everywhere';
+  if (c && c.startsWith('r:')){ const r = (SP.regions || []).find(x => x.region === c.slice(2)); return r ? r.name : c.slice(2); }
+  return c;
+}
 const SP_HOW = {next: 'stands next to it', on: 'on it', under: 'it stands on', joins: 'joins it'};
 function spKeep(){ try { localStorage.setItem('ws-stylepal', JSON.stringify({cur: SP.cur, view: SP.view, fits: SP.fits, open: SP.open})); } catch (e){} }
 
@@ -44,6 +53,14 @@ function spCss(){
   .sp-grid .tile span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sp-badge{position:absolute;top:3px;left:3px;font-size:10.5px;padding:0 4px;border-radius:4px;background:color-mix(in srgb,var(--panel) 80%,transparent);color:var(--muted)}
   .sp-badge.staple{color:var(--bg);background:var(--gold)}
+  .sp-badge.mine{color:var(--bg);background:var(--green)}
+  .sp-addbox{border:1px solid var(--line);border-radius:8px;padding:6px;margin:0 0 8px;background:var(--panel2)}
+  .sp-addbox .inp{width:100%}
+  .sp-addres{max-height:260px;overflow:auto;margin-top:4px}
+  .sp-addres .sp-row{display:flex;gap:6px;align-items:center;padding:2px 4px;cursor:pointer;border-radius:4px}
+  .sp-addres .sp-row:hover{background:var(--panel)}
+  .sp-addres .sp-row .thumb{width:32px;height:32px}
+  .sp-addres .sp-row small{color:var(--faint)}
   .sp-sets{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
   .sp-set{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:6px;cursor:grab;user-select:none}
   .sp-set:hover,.sp-grid .tile:hover{border-color:var(--goldline)}
@@ -70,7 +87,7 @@ function spCss(){
 }
 
 // ---------------------------------------------------------------- the window
-VW_HOST.stylepal = {title: () => '🎨 Style palette' + (SP.cur ? ': ' + (SP.cur === '*' ? 'Used everywhere' : SP.cur) : ''), render: () => spRender(), w: 900};
+VW_HOST.stylepal = {title: () => '🎨 Style palette' + (SP.cur ? ': ' + spName(SP.cur) : ''), render: () => spRender(), w: 900};
 function spWin(){ return VW.wins.stylepal && VW.wins.stylepal.el.isConnected ? VW.wins.stylepal : null; }
 async function spOpen(theme){
   if (!cfWorldOn()) showView('world');
@@ -116,7 +133,8 @@ async function spLoadThemes(){
     try { r = await api('/api/style/themes' + (W.key ? '?key=' + encodeURIComponent(W.key) : '')); } catch (e){ w.el.querySelector('.sp-main').innerHTML = `<div class="sp-wait msg">${esc(e.message)}</div>`; return; }
     if (r.ready){
       SP.themes = r.themes; SP.here = r.here || null; SP.hereKey = W.key;
-      if (!SP.cur || (SP.cur !== '*' && !r.themes.some(t => t.name === SP.cur))) SP.cur = SP.here || r.themes[0].name;
+      try { const g = await api('/api/style/regions' + (W.key ? '?key=' + encodeURIComponent(W.key) : '')); SP.regions = g.regions; SP.hereRegion = g.here; } catch (e){ SP.regions = []; }
+      if (!SP.cur || (SP.cur !== '*' && !SP.cur.startsWith('r:') && !r.themes.some(t => t.name === SP.cur))) SP.cur = SP.here || r.themes[0].name;
       return;
     }
     const box = w.el.querySelector('.sp-main');
@@ -127,7 +145,8 @@ async function spLoadThemes(){
 }
 async function spTheme(name){
   if (SP.data[name]) return SP.data[name];
-  const d = await api('/api/style/theme?name=' + encodeURIComponent(name));
+  const d = name.startsWith('r:') ? await api('/api/style/region?region=' + encodeURIComponent(name.slice(2)))
+    : await api('/api/style/theme?name=' + encodeURIComponent(name));
   SP.data[name] = d;
   return d;
 }
@@ -138,7 +157,10 @@ function spTabsHtml(){
   const list = SP.fits && SP.here ? t.filter(x => x.name === SP.here) : t;
   return `<div class="sp-hd">Styles${SP.fits && SP.here ? ' that fit here' : ''}</div>` +
     list.map(x => btn(x.name, (x.name === SP.here ? '◆ ' : '') + x.name, x.places, x.line + ` (${x.places} of the game's places)` + (x.name === SP.here ? '. The place open now is built in this style.' : ''))).join('') +
-    `<div class="sp-hd">And</div>` + btn('*', 'Used everywhere', null, 'What the game stands in places of every style alike: crates, sacks, bread, the common clutter');
+    `<div class="sp-hd">And</div>` + btn('*', 'Used everywhere', null, 'What the game stands in places of every style alike: crates, sacks, bread, the common clutter') +
+    ((SP.regions || []).length ? `<div class="sp-hd" title="Each region's own rocks and cliffs, trees and plants, as the game sets them over its land">Regions</div>` +
+      SP.regions.map(r => btn('r:' + r.region, (r.region === SP.hereRegion ? '◆ ' : '') + r.name, null,
+        `Its rocks and cliffs, trees and plants (${r.cells} cells)` + (r.region === SP.hereRegion ? '. The place open now is in this region.' : ''))).join('') : '');
 }
 
 async function spRender(){
@@ -147,12 +169,14 @@ async function spRender(){
   if (SP.hereKey !== W.key){
     SP.hereKey = W.key;
     try { const r = await api('/api/style/themes' + (W.key ? '?key=' + encodeURIComponent(W.key) : '')); if (r.ready) SP.here = r.here || null; } catch (e){}
+    try { SP.hereRegion = (await api('/api/style/regions' + (W.key ? '?key=' + encodeURIComponent(W.key) : ''))).here; } catch (e){}
     if (SP.fits && SP.here) SP.cur = SP.here;
   }
   w.el.querySelector('.sp-tabs').innerHTML = spTabsHtml();
   vwTitle('stylepal');
   const main = w.el.querySelector('.sp-main');
   const bar = `<div class="sp-bar"><input class="inp" id="sp-q" placeholder="Search in this style… (bed, lantern, wall)" value="${esc(SP.q)}" autocomplete="off">
+    ${SP.cur.startsWith('r:') ? '' : `<button class="btn sm" id="sp-add" title="Add something to this style's palette yourself: any building piece, furniture, light or clutter in your load order">＋ Add…</button>`}
     <label title="Pictures, or the same lists as a tree"><select id="sp-view" class="inp" style="width:auto;padding:2px 6px"><option value="grid" ${SP.view === 'grid' ? 'selected' : ''}>Pictures</option><option value="tree" ${SP.view === 'tree' ? 'selected' : ''}>Tree</option></select></label>
     <label title="${SP.here ? 'Only the style the open place is built in: ' + esc(SP.here) : 'The open place has no style the game uses (or no place is open)'}"><input type="checkbox" id="sp-fits" ${SP.fits ? 'checked' : ''} ${SP.here ? '' : 'disabled'}> Only what fits here${SP.here ? ' (' + esc(SP.here) + ')' : ''}</label></div>`;
   let d;
@@ -160,7 +184,7 @@ async function spRender(){
   try { d = await spTheme(SP.cur); } catch (e){ main.innerHTML = bar + `<div class="msg">${esc(e.message)}</div>`; spBar(main); return; }
   if (!spWin()) return;
   const keepQ = document.activeElement && document.activeElement.id === 'sp-q' ? document.activeElement.selectionStart : null;
-  main.innerHTML = bar + `<div class="sp-line">${esc(d.line)}. ${SP.cur === '*' ? '' : `Learnt from ${fmtN(d.places)} of the game's places.`}
+  main.innerHTML = bar + `<div class="sp-line">${esc(d.line)}. ${SP.cur === '*' ? '' : SP.cur.startsWith('r:') ? `Learnt from ${fmtN(d.places)} of its cells.` : `Learnt from ${fmtN(d.places)} of the game's places.`}
       The badge is how many of them have it: <span class="sp-badge staple" style="position:static">40%</span> a staple, <span class="sp-badge" style="position:static">4%</span> now and then.
       ${d.examples && d.examples.length ? `<span class="lnk" data-spshow="${esc(d.examples[0][0])}" title="Open ${esc(d.examples[0][1])}, one of the game's own places in this style">Show me a place in this style</span>` : ''}</div>` +
     (SP.view === 'tree' ? spTreeHtml(d) : spGridHtml(d));
@@ -174,6 +198,52 @@ function spBar(main){
   main.querySelector('#sp-view').onchange = e => { SP.view = e.target.value; spKeep(); spRender(); };
   const f = main.querySelector('#sp-fits');
   f.onchange = () => { SP.fits = f.checked; if (SP.fits && SP.here) SP.cur = SP.here; spKeep(); spRender(); };
+  const ad = main.querySelector('#sp-add'); if (ad) ad.onclick = () => spAddBox(main);
+}
+
+// ---------------------------------------------------------------- your own additions (stylesurvey.added)
+// (PIN2: a piece the survey left out of its style, the drystone walls: added by hand, kept apart from the survey)
+const SP_ADD_TYPES = 'STAT,ACTI,CONT,LIGH,DOOR,MISC,BOOK,ALCH,INGR,APPA';
+function spAddBox(main){
+  let box = main.querySelector('.sp-addbox');
+  if (box){ box.remove(); return; }
+  box = document.createElement('div'); box.className = 'sp-addbox';
+  box.innerHTML = `<input class="inp" id="sp-addq" placeholder="Find something to add to ${esc(SP.cur === '*' ? 'Used everywhere' : SP.cur)}… (drystone, lantern)" autocomplete="off"><div class="sp-addres msg">Type a name or an ID.</div>`;
+  main.querySelector('.sp-bar').after(box);
+  const q = box.querySelector('#sp-addq'), res = box.querySelector('.sp-addres');
+  let t;
+  q.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
+    const s = q.value.trim(); if (s.length < 2){ res.textContent = 'Type a name or an ID.'; return; }
+    try {
+      const r = await api('/api/search?' + new URLSearchParams({q: s, types: SP_ADD_TYPES, limit: 24}));
+      res.innerHTML = r.rows.length ? r.rows.map(x => `<div class="sp-row" data-spadd="${esc(x.id)}" title="Add ${esc(x.id)} to this style">${thumbImg(x.id, x.type, 40)}<span>${esc(x.name || x.id)} <small>${esc(x.id)} · ${esc(x.type)}</small></span></div>`).join('') : 'Nothing found.';
+      v3ThumbScan(res);
+    } catch (e){ res.textContent = e.message; }
+  }, 200); };
+  res.onclick = e => { const r = e.target.closest('[data-spadd]'); if (r) spAdd(SP.cur, r.dataset.spadd); };
+  q.onkeydown = e => e.stopPropagation();
+  q.focus();
+}
+async function spAdd(theme, id){
+  try {
+    const r = await post('/api/style/add', {theme, id});
+    delete SP.data[theme];
+    toast(`Added ${r.id} to ${theme === '*' ? 'Used everywhere' : theme} (${r.section}, ${r.group}).`);
+    if (spWin()) spRender();
+  } catch (e){ toast(e.message, true); }
+}
+async function spTakeOut(id){
+  try { await post('/api/style/remove', {theme: SP.cur, id}); delete SP.data[SP.cur]; toast(`Took ${id} out of ${SP.cur === '*' ? 'Used everywhere' : SP.cur}.`); spRender(); }
+  catch (e){ toast(e.message, true); }
+}
+// (from Browse: a style picked from a menu at the button)
+async function spAddMenu(id, at){
+  let r;
+  try { r = await api('/api/style/themes'); } catch (e){ return toast(e.message, true); }
+  if (!r.ready) return toast('The styles are still being learnt; try again in a moment.');
+  const b = at.getBoundingClientRect();
+  pnlMenu({x: b.left, y: b.bottom}, [{label: 'Add ' + id + ' to the style…', disabled: true},
+    ...r.themes.map(t => ({label: t.name, act: () => spAdd(t.name, id)})), '-', {label: 'Used everywhere', act: () => spAdd('*', id)}]);
 }
 
 // what the search keeps: name or id words
@@ -195,8 +265,9 @@ function spSecs(d){
   });
 }
 function spBadge(it){
+  if (it.mine && !it.places) return `<b class="sp-badge mine" title="You added it to this style (right-click: take it out)">yours</b>`;
   const p = Math.round(100 * (it.share || 0));
-  return `<b class="sp-badge${it.share >= 0.25 ? ' staple' : ''}" title="${SP.cur === '*' ? 'In ' + p + '% of all the places learnt from' : 'In ' + it.places + ' of the ' + esc(SP.cur) + ' places learnt from (' + p + '%)'}">${p < 1 ? '<1' : p}%</b>`;
+  return `<b class="sp-badge${it.share >= 0.25 ? ' staple' : ''}" title="${SP.cur === '*' ? 'In ' + p + '% of all the places learnt from' : 'In ' + it.places + ' of the ' + esc(spName(SP.cur)) + (SP.cur.startsWith('r:') ? ' cells' : ' places') + ' learnt from (' + p + '%)'}">${p < 1 ? '<1' : p}%</b>`;
 }
 function spTileHtml(it){
   return `<div class="tile" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-spid="${esc(it.id)}">${thumbImg(it.id, it.type, 96)}<span>${esc(it.name || it.id)}</span>${spBadge(it)}</div>`;
@@ -223,7 +294,7 @@ function spSetHtml(s){
     <b>${esc(s.label)}</b><div class="msg">${s.items.length} things · seen in ${s.n} place${s.n === 1 ? '' : 's'} · <span class="lnk" data-spshow="${esc(s.cell)}" data-spshowid="${esc(s.items[0].id)}" title="Open ${esc(s.place || s.cell)}, where the game stands this one">show me</span></div></div>`;
 }
 function spTreeHtml(d){
-  const row = it => `<div class="sp-row" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-spid="${esc(it.id)}">${thumbImg(it.id, it.type, 48)}<span>${esc(it.name || it.id)} <small>${esc(it.id)} · ${Math.round(100 * (it.share || 0))}%</small></span></div>`;
+  const row = it => `<div class="sp-row" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-spid="${esc(it.id)}">${thumbImg(it.id, it.type, 48)}<span>${esc(it.name || it.id)} <small>${esc(it.id)} · ${it.mine && !it.places ? 'yours' : Math.round(100 * (it.share || 0)) + '%'}</small></span></div>`;
   const h = spSecs(d).map(([k, label, title, groups]) => {
     if (!groups.length) return '';
     if (k === 'Sets') return `<details ${SP.q ? 'open' : ''}><summary>${label} (${groups.length})</summary>${groups.map(s => `<div class="sp-row" draggable="true" data-spset="${s.n_}">${thumbImg(s.items[0].id, s.items[0].type, 48)}<span>${esc(s.label)} <small>${s.items.length} things · ${s.n} places</small></span></div>`).join('')}</details>`;
@@ -286,7 +357,8 @@ function spBind(el){
     const it = spItem(t.dataset.spid); if (!it) return;
     pnlMenu(pt, [{label: '✚ Place it (click where it goes)', act: () => setMode('place', {id: it.id, name: it.name || it.id, type: it.type})},
       ...(it.at || []).map(([ck, name]) => ({label: '👁 Show me in the game: ' + name, act: () => spShow(ck, it.id)})),
-      {label: '🔎 Find it on the Browse page', act: () => { showView('browse'); const q = $('#q'); if (q){ q.value = it.id; if (typeof runSearch === 'function') runSearch(); } }}]);
+      {label: '🔎 Find it on the Browse page', act: () => { showView('browse'); const q = $('#q'); if (q){ q.value = it.id; if (typeof runSearch === 'function') runSearch(); } }},
+      ...(it.mine ? [{label: '✕ Take it out of this style', act: () => spTakeOut(it.id)}] : [])]);
   });
   // the card: what the game stands next to it, puts on it, joins to it
   let t = null, cur = null;
@@ -318,7 +390,7 @@ function spCard(tile){
   const p = Math.round(100 * (it.share || 0));
   const goes = (it.goes || []).slice(0, 8);
   c.innerHTML = `${thumbImg(it.id, it.type, 120)}<h4>${esc(it.name || it.id)}</h4><div class="msg">${esc(it.id)} · ${esc(S.typeLabels[it.type] || it.type)} · ${esc(it.grp)}</div>
-    <div style="margin-top:4px">${SP.cur === '*' ? `In ${p}% of the game's places, of every style.` : `In <b>${it.places}</b> of the ${esc(SP.cur)} places learnt from (${p}%)${it.lift ? `, ${it.lift >= 10 ? 'ten' : Math.round(it.lift)} times as often as an average style's` : ''}.`}
+    <div style="margin-top:4px">${SP.cur === '*' ? `In ${p}% of the game's places, of every style.` : `In <b>${it.places}</b> of the ${esc(spName(SP.cur))} ${SP.cur.startsWith('r:') ? 'cells' : 'places'} learnt from (${p}%)${it.lift ? `, ${it.lift >= 10 ? 'ten' : Math.round(it.lift)} times as often as an average style's` : ''}.`}
     ${it.also && it.also.length ? `<br>Also goes with: ${it.also.map(esc).join(', ')}.` : ''}</div>
     ${goes.length ? `<div class="sp-goes"><span></span><b>Goes with</b>${goes.map(([o, name, type, n, how]) => `${thumbImg(o, type, 48)}<span>${esc(name || o)}<small>${SP_HOW[how] || how} · seen ${n}×</small></span>`).join('')}</div>` : '<div class="msg" style="clear:both;margin-top:6px">Nothing the game stands with it often enough to say.</div>'}
     <div class="msg" style="clear:both;margin-top:6px">Click to place, or drag into the view. Right-click: show me one in the game.</div>`;

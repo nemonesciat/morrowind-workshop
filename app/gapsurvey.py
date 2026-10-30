@@ -28,7 +28,8 @@ def _disk(db, prefix):
     import taste
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'gapsurvey_%s_%s_v1.json' % (taste.sig(db), prefix.replace('/', '_')))
+    # (v2: the clips and z-fights of the style's places, 'clash')
+    return os.path.join(folder, 'gapsurvey_%s_%s_v2.json' % (taste.sig(db), prefix.replace('/', '_')))
 
 
 def cells_for(db, prefix, limit=PLACES):
@@ -87,13 +88,28 @@ def survey(db, prefix, limit=PLACES):
             if not res.get('tiles'):
                 continue
             c = Counter(i['kind'] for i in res['issues'])
-            rows.append(dict({'key': ck, 'tiles': res['tiles']}, **{k: c.get(k, 0) for k in KINDS}))
+            cc = res.get('clash_counts') or {}
+            # (and its edges left naked, against those met: edges.game_share, for a style the edge survey saw
+            # too seldom. The game's keeps leave 3-7% naked against 0.34% for the game as a whole)
+            try:
+                import edges
+                er = edges.check(db, ck)
+                naked, met = er['counts'].get('naked', 0), sum(er['counts'].get(x, 0) for x in edges.MET)
+            except Exception:
+                naked = met = 0
+            rows.append(dict({'key': ck, 'tiles': res['tiles'], 'pieces': res.get('arch_pieces', 0),
+                              'clip': cc.get('clip', 0), 'zfight': cc.get('zfight', 0), 'naked': naked, 'met': met},
+                             **{k: c.get(k, 0) for k in KINDS}))
     finally:
         _running.discard(prefix)
     med = lambda v: sorted(v)[len(v) // 2] if v else 0.0
     out = {'places': len(rows), 'cells': rows,
            'per_tile': {k: round(med([r[k] / float(r['tiles']) for r in rows]), 3) for k in KINDS},
-           'mean': {k: round(sum(r[k] for r in rows) / float(sum(r['tiles'] for r in rows) or 1), 3) for k in KINDS}}
+           'mean': {k: round(sum(r[k] for r in rows) / float(sum(r['tiles'] for r in rows) or 1), 3) for k in KINDS},
+           # (clips and z-fights per 100 architecture pieces, all pairs together: fixit.scan judges a place's by them)
+           'clash': {k: round(100.0 * sum(r[k] for r in rows) / float(sum(r['pieces'] for r in rows) or 1), 1) for k in ('clip', 'zfight')},
+           'naked_share': round(sum(r['naked'] for r in rows) / float(sum(r['naked'] + r['met'] for r in rows)), 4)
+                          if sum(r['naked'] + r['met'] for r in rows) else None}
     _cache[key] = (db.recs, out)
     if path:
         try:

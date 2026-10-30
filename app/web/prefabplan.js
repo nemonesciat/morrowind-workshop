@@ -92,7 +92,7 @@ function pfRender(){
   P.innerHTML = tabs + `
     <div class="pfrow"><label>Style <select id="pf-style">${sts.map(s => `<option ${s === PF.style ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
       <span class="msg">${PF.styles[PF.style] || 0} of the game's buildings</span></div>
-    <div class="pfrow"><label title="How closely the game's buildings must match your volume, and how far the interior may stand out of them: Close as Tamriel Rebuilt's, Usual as the game's for that building, Loose as Bethesda's own">Match <select id="pf-tol">${[['close', 'Close'], ['usual', 'Usual'], ['loose', 'Loose']].map(([v, t]) => `<option value="${v}" ${PF.tol === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
+    <div class="pfrow"><label title="How closely the game's buildings must match your volume, and how far the interior may stand out of them: Close as the best-fitting interiors, Usual as the game's for that building, Loose as the original game's">Match <select id="pf-tol">${[['close', 'Close'], ['usual', 'Usual'], ['loose', 'Loose']].map(([v, t]) => `<option value="${v}" ${PF.tol === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
     <div class="pfrow pfst">Storey ${[0, 1, 2].map(k => `<button class="btn sm ${PF.storey === k ? 'on' : ''}" data-st="${k}"><span style="color:${PF_COL[k]}">■</span> ${k === 0 ? 'Ground' : k + 1}</button>`).join('')}
       <button class="btn sm" id="pf-clear" title="Start again">Clear</button></div>
     <div class="msg">Click or drag on the grid to stack tiles (a tile is the inside's tile). An upper storey stands on the one below. The door goes on the front, at the bottom.</div>

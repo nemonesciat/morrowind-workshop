@@ -10,7 +10,8 @@ The **My mod** page (or click the mod's name at the top) shows:
 - **How many changes** it holds, whether it's **on in your normal OpenMW load order** (Play buttons load it for
   testing either way), and the files it **needs** (its masters).
 - **Every change**, grouped by kind, with **Open on map** for places and ground (and **Undo** for a ground edit),
-  and below it the history of what you did.
+  and below it the history of what you did. Click ground rows to pick several (**Shift**+click a run, **Ctrl**+click
+  one more or one less), then **↶ Undo** puts the ground in all of them back at once.
 
 | Button | What it does |
 |---|---|

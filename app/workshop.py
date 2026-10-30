@@ -320,7 +320,8 @@ def play(body):
         editing.build(db)
         if getattr(db.project, 'pending_write', None):
             raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
-    info = mapdata.cell_info(db, body['cell'])
+    # (or outdoors on land with no cell yet, a sea floor mod's shaped into an island: mapdata._land_only)
+    info = mapdata.cell_info(db, body['cell']) or mapdata._land_only(db, body['cell'])
     if not info:
         raise editing.EditError('Unknown cell.')
     cmds = []
@@ -763,6 +764,14 @@ class Handler(BaseHTTPRequestHandler):
                 if (x1 - x0 + 1) * (y1 - y0 + 1) > limit:
                     return self._json({'error': 'Too many cells at once.'}, 400)
                 self._json(mapdata.lands_overview(db, x0, y0, x1, y1, step))
+            elif u.path == '/api/land/autotex':
+                # the Ground brush's Auto paint: one cell's texture for every patch, as the region's land has it at
+                # that slope, height and shore (landshapes.texture_only), as {ids, paths} the brush paints with
+                import landshapes
+                gx, gy = int(q['gx']), int(q['gy'])
+                r = landshapes.texture_only(db, ['%d,%d' % (gx, gy)], {'dress': {'region': (q.get('region') or '').lower()}}, preview=True)
+                c = r['cells'].get('%d,%d' % (gx, gy)) or {}
+                self._json({'ids': c.get('i') or [], 'paths': [db.meshes.texture_path(f) if f else '' for f in c.get('t') or []]})
             elif u.path == '/api/land':
                 L = mapdata.land(db, int(q['gx']), int(q['gy']), with_textures=q.get('tex') == '1')
                 if L.get('exists') and q.get('tex') == '1':
@@ -890,6 +899,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(npc.autocalc(db, q.get('race', ''), q.get('cls', ''), int(q.get('level') or 1), q.get('female') == '1'))
             elif u.path == '/api/land/textures':
                 self._json(landscape.textures(db))
+            elif u.path == '/api/style/regions':
+                # the regions' own palettes, for the Style palette's tabs (regionpal.py)
+                import regionpal
+                self._json(regionpal.regions_list(db, q.get('key') or None))
+            elif u.path == '/api/style/region':
+                import regionpal
+                self._json(regionpal.palette(db, q.get('region') or ''))
+            elif u.path == '/api/land/looks':
+                # the regions whose rocks can dress land (cliffrocks.py)
+                import cliffrocks
+                self._json({'looks': cliffrocks.looks(db)})
             elif u.path == '/api/landmap':
                 # every outdoor cell by how freely it may be shaped, and the cells marked (landsurvey.py)
                 import landsurvey
@@ -1834,6 +1854,8 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/region/save':
                     import regions
                     return self._json(regions.save(db, body.get('id'), body.get('data') or {}, bool(body.get('create'))))
+                if u.path == '/api/cell/name':
+                    return self._json(editing.name_cell(db, body.get('cell') or '', body.get('name') or ''))
                 if u.path == '/api/region/assign':
                     import regions
                     return self._json(regions.assign(db, body.get('id') or '', body.get('cells') or []))
@@ -1889,6 +1911,22 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/land/marks':
                     import landsurvey
                     return self._json(landsurvey.set_marks(db, body.get('add') or [], body.get('remove') or [], bool(body.get('clear'))))
+                if u.path in ('/api/style/add', '/api/style/remove'):
+                    # your own additions to a style's palette (stylesurvey.added): not the mod, the Workshop's own file
+                    import stylesurvey
+                    f = stylesurvey.add_to if u.path == '/api/style/add' else stylesurvey.take_out
+                    return self._json(f(db, body.get('theme') or '', body.get('id') or ''))
+                if u.path == '/api/land/dress':
+                    # the marked cells' land dressed as the game dresses the region's: rocks and cliffs, trees and plants,
+                    # as one step (landdecor.py, cliffrocks.py)
+                    import landdecor
+                    amt = float(body.get('amount') or 1.0)
+                    parts = body.get('parts') or {'rocks': amt, 'growth': amt}
+                    return self._json(landdecor.dress_all(db, body.get('cells') or [], body.get('like') or '', parts,
+                                                          body.get('seed'), body.get('outline')))
+                if u.path == '/api/land/revert':
+                    # everything the mod changed in the marked cells taken back, as one step
+                    return self._json(editing.revert_cells(db, body.get('cells') or []))
                 if u.path == '/api/land/raise':
                     # the marked cells raised into land as one piece (landrange.py)
                     import landrange
@@ -1905,6 +1943,15 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/land/plan/apply':
                     import landshapes
                     return self._json(landshapes.apply(db, body.get('cells') or [], body.get('plan') or {}))
+                if u.path == '/api/land/flow':
+                    # the land map's flow overlay: where the rain runs on the marked cells (landshapes.flow_lines)
+                    import landshapes
+                    return self._json(landshapes.flow_lines(db, body.get('cells') or [], body.get('plan') or {}, bool(body.get('shaped'))))
+                if u.path == '/api/land/texture':
+                    # the marked cells textured by their slopes, the heights kept (landshapes.texture_only); preview
+                    # draws them on the land map, else one Undo step
+                    import landshapes
+                    return self._json(landshapes.texture_only(db, body.get('cells') or [], body.get('plan') or {}, bool(body.get('preview'))))
                 if u.path == '/api/land/heightmap/export':
                     # cells as a 16-bit greyscale PNG (heightmap.py); the page saves it
                     import heightmap
@@ -1968,6 +2015,8 @@ class Handler(BaseHTTPRequestHandler):
                                                       float(body.get('z') or 0), body.get('skip')))
                     if u.path == '/api/bench/fill':
                         return self._json(bench.fill(db, pcs))
+                    if u.path == '/api/bench/twins':
+                        return self._json(bench.twins(db, body.get('ids') or []))
                     if u.path == '/api/bench/check':
                         return self._json(bench.check(db, pcs))
                 if u.path == '/api/build/plans/save':

@@ -151,10 +151,177 @@ def shelf(db, style):
 
 # ---------------------------------------------------------------- snapping
 
+# ---------------------------------------------------------------- mirror twins
+# The game can't flip a piece, so a mirrored copy is the piece turned, right for pieces alike at both ends and wrong for
+# a left-hand corner or stair. Many sets have the other hand as a piece of its own; it is that piece's box mirrored.
+TWIN_TOL = 6                    # (box sides this close count as the same)
+_TWIN_SWAPS = [(r'(?<=_)l(?=_|\d|$)', 'r'), (r'(?<=_)r(?=_|\d|$)', 'l'), (r'left', 'right'), (r'right', 'left'),
+               (r'(?<=_)lt(?=_|\d|$)', 'rt'), (r'(?<=_)rt(?=_|\d|$)', 'lt')]
+
+
+def _box(db, rid):
+    ri = db.resolve_id(rid)
+    return mapdata.object_bounds(db, ri) if ri is not None else None
+
+
+def _mirrored(a, b):
+    """'x' when box b is box a mirrored across its own X (left for right), 'y' across its own Y, else None."""
+    if not a or not b:
+        return None
+    same = lambda u, v: abs(u - v) <= TWIN_TOL
+    if not (same(a[2], b[2]) and same(a[5], b[5])):
+        return None
+    if same(b[0], -a[3]) and same(b[3], -a[0]) and same(b[1], a[1]) and same(b[4], a[4]):
+        return 'x'
+    if same(b[1], -a[4]) and same(b[4], -a[1]) and same(b[0], a[0]) and same(b[3], a[3]):
+        return 'y'
+    return None
+
+
+def twins(db, ids):
+    """{id: {'twin': other id, 'axis': 'x'|'y'}} for each piece with a mirror-image twin in the load order: by name
+    (_l/_r, left/right, lt/rt), or the next or previous number of the set; the twin's box the piece's mirrored either
+    way. A piece whose own box is alike both ways needs a name to tell its twin, the numbers alone being anything."""
+    out = {}
+    for rid in ids or []:
+        low = (rid or '').lower()
+        a = _box(db, low)
+        if not a or low in out:
+            continue
+        cands = []
+        for pat, rep in _TWIN_SWAPS:
+            if re.search(pat, low):
+                cands.append(re.sub(pat, rep, low, count=1))
+        self_alike = bool(_mirrored(a, a))
+        m = re.search(r'(\d+)(?!.*\d)', low)
+        if m and not self_alike:
+            n = int(m.group(1))
+            for d in (1, -1):
+                if n + d >= 0:
+                    cands.append(low[:m.start()] + str(n + d).zfill(len(m.group(1))) + low[m.end():])
+        for c in cands:
+            if c == low:
+                continue
+            ax = _mirrored(a, _box(db, c))
+            if ax:
+                ri = db.resolve_id(c)
+                out[low] = {'twin': db.recs[ri][1] if ri is not None else c, 'axis': ax}
+                break
+    return out
+
+
 def snaps(db, pieces, rid, x, y, z, skip=None):
     """Where the game joins this model to the bench's pieces near (x, y, z), the best backed first (as the 3D view's
-    snaps outdoors, housemodules.snaps)."""
-    return {'snaps': hm.snaps_among(db, _survey(db), rid, x, y, items_of(db, pieces), skip)}
+    snaps outdoors, housemodules.snaps); and for a door or window, the spots it goes into a piece beside it: where
+    the game sets it there (the fill table), else fitted into the piece's opening (a frame, a doorway, a window
+    hole), for the families the survey never learnt joins of (Reach doors only lined up flush, the user, 2026-10-29)."""
+    items = items_of(db, pieces)
+    out = hm.snaps_among(db, _survey(db), rid, x, y, items, skip)
+    ri = db.resolve_id(rid)
+    if ri is not None and _kind(db.recs[ri][1].lower(), db.recs[ri][0]) in ('door', 'window'):
+        out = out + _into_openings(db, ri, x, y, items, skip)
+    return {'snaps': out}
+
+
+# ---------------------------------------------------------------- a door or window into a piece's opening
+
+OPEN_STEP = 4                   # how finely an opening is looked for in a piece's mesh
+OPEN_NEAR = 900                 # pieces this near the dragged door are looked into
+_openings = {}
+
+
+def _openings_of(db, ri, b):
+    """The openings through a piece's mesh, in its own frame: [(long axis, middle along it, width, bottom, top)].
+    An opening is clear right through the piece's depth, with the piece's mesh on both sides of it (a frame's posts,
+    a wall either side of a doorway or a window hole)."""
+    model = db.recs[ri][5]
+    if model in _openings:
+        return _openings[model]
+    import seethrough
+    out = []
+    la = 0 if (b[3] - b[0]) >= (b[4] - b[1]) else 1
+    th = 1 - la
+    L0, L1, T0, T1, Z0, Z1 = b[la], b[la + 3], b[th], b[th + 3], b[2], b[5]
+    if L1 - L0 >= 48 and Z1 - Z0 >= 48:
+        sc = seethrough.Scene()
+        sc.add_model(seethrough.model_tris(db, model), [0, 0, 0, 0, 0, 0], 1.0)
+        d = [0.0, 0.0, 0.0]
+        d[th] = 1.0
+
+        def clear(l, z):
+            o = [0.0, 0.0, z]
+            o[la], o[th] = l, T0 - 40
+            return sc.nearest_any(tuple(o), tuple(d), (T1 - T0) + 80) is None
+        for f in (0.25, 0.45, 0.65):
+            zw = Z0 + (Z1 - Z0) * f
+            ls = [L0 + OPEN_STEP * i for i in range(int((L1 - L0) / OPEN_STEP) + 1)]
+            row = [clear(l, zw) for l in ls]
+            i = 0
+            while i < len(row):
+                if not row[i]:
+                    i += 1
+                    continue
+                j = i
+                while j + 1 < len(row) and row[j + 1]:
+                    j += 1
+                # (mesh on both sides: an opening, not the open end past the piece)
+                if i > 0 and j < len(row) - 1 and ls[j] - ls[i] >= 32:
+                    mid = (ls[i] + ls[j]) / 2.0
+                    if not any(abs(o[1] - mid) < 16 for o in out):
+                        zs = [Z0 + OPEN_STEP * k for k in range(int((Z1 - Z0) / OPEN_STEP) + 1)]
+                        col = [clear(mid, zz) for zz in zs]
+                        k0 = min(range(len(zs)), key=lambda k: abs(zs[k] - zw))
+                        a = c = k0
+                        while a > 0 and col[a - 1]:
+                            a -= 1
+                        while c < len(col) - 1 and col[c + 1]:
+                            c += 1
+                        out.append((la, mid, ls[j] - ls[i] + OPEN_STEP, zs[a], zs[c]))
+                i = j + 1
+    _openings[model] = out
+    return out
+
+
+def _into_openings(db, ri, x, y, items, skip):
+    """Snaps for a door or window (record ri): where the game sets it into a piece near (x, y) (the fill table), and
+    fitted into the openings of the pieces near it."""
+    low = db.recs[ri][1].lower()
+    db_ = mapdata.object_bounds(db, ri)
+    if not db_:
+        return []
+    tab = _fill_table(db)
+    out = []
+    for it in items:
+        if it['k'] == skip or it['low'] == low or math.hypot(it['p'][0] - x, it['p'][1] - y) > OPEN_NEAR:
+            continue
+        A = {'x': it['p'][0], 'y': it['p'][1], 'z': it['p'][2], 'rz': it['p'][5] % (2 * math.pi)}
+        s = it['s']
+        # (where the game sets this very door or window into this piece)
+        for fid, lx, ly, lz, turn, rate, n in tab.get(it['low'], ()):
+            if fid.lower() == low:
+                wx, wy = adjacency.to_world(A, lx * s, ly * s)
+                out.append({'p': [round(wx, 2), round(wy, 2), round(A['z'] + lz * s, 2), 0, 0, round((A['rz'] + math.radians(turn)) % (2 * math.pi), 5)],
+                            'n': n, 'k': 2, 'to': it['id'], 'side': 'in'})
+        # (fitted into the piece's opening: the door's long side along the opening, its middle in the opening's middle
+        # and in the piece's depth, a door on the opening's floor and a window in its middle height)
+        b = it['b']
+        dla = 0 if (db_[3] - db_[0]) >= (db_[4] - db_[1]) else 1
+        dw, dh = db_[dla + 3] - db_[dla], db_[5] - db_[2]
+        for la, mid, w, zlo, zhi in _openings_of(db, it['ri'], b):
+            oh = zhi - zlo
+            if not (0.5 * w <= dw <= 1.15 * w + 8 and 0.4 * oh <= dh <= 1.15 * oh + 8):
+                continue
+            th = 1 - la
+            c = [0.0, 0.0]
+            c[la], c[th] = mid, (b[th] + b[th + 3]) / 2.0
+            bottom = zlo if zlo <= b[2] + 8 else zlo + max(0.0, (oh - dh) / 2.0)
+            wx, wy = adjacency.to_world(A, c[0] * s, c[1] * s)
+            rz = (A['rz'] + (0 if dla == la else math.pi / 2)) % (2 * math.pi)
+            # (the door's own middle, off its origin, turned with it)
+            ox, oy = adjacency.to_world({'x': 0.0, 'y': 0.0, 'rz': rz}, (db_[0] + db_[3]) / 2.0, (db_[1] + db_[4]) / 2.0)
+            out.append({'p': [round(wx - ox, 2), round(wy - oy, 2), round(A['z'] + bottom * s - db_[2], 2), 0, 0, round(rz, 5)],
+                        'n': 1, 'k': 1, 'to': it['id'], 'side': 'opening'})
+    return out
 
 
 # ---------------------------------------------------------------- filling the openings

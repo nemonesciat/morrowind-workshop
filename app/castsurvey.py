@@ -26,7 +26,7 @@ from collections import Counter, defaultdict
 
 from esm import iter_subrecords, zstr
 
-V = 'v4'
+V = 'v5'           # (v5: 'tower', a place with a Velothi tower's pit: its mages, not a house's people)
 TOP = 24                    # (most common entries kept per list)
 CLOT_SLOTS = ['pants', 'shoes', 'shirt', 'belt', 'robe', 'glove_r', 'glove_l', 'skirt', 'ring', 'amulet']
 ARMO_SLOTS = ['helmet', 'cuirass', 'pauldron_l', 'pauldron_r', 'greaves', 'boots', 'gauntlet_l', 'gauntlet_r', 'shield',
@@ -198,6 +198,11 @@ def setting_of(db, name, ids, exterior=False, region=''):
     if exterior:
         return 'outdoors', 'outdoors', region or '?'
     low = (name or '').lower()
+    # (a Velothi tower: the pit, its two-storey room, is in no house; the game's 70 are the mages' and cultists')
+    # (not the monasteries' pits, nor a fort's: their monks, guards and Armigers aren't a tower's)
+    if any(i.lower().startswith(('in_velothismall_pit_01', 'in_velothismall_pit_02')) for i in ids) \
+            and not re.search(r'tomb|monastery|abbey|infirmary|ghostgate|guard', low):
+        return 'tower', 'tower', _culture(styles)
     for setting, words in NAME_SETTINGS:
         if any(re.search(r'(^|[^a-z])%s' % re.escape(w), low) for w in words):
             return setting, setting, _culture(styles)

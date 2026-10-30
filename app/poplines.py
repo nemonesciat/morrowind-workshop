@@ -173,7 +173,7 @@ RUMOR_PLACE = ["They say {place} was built over something older. You can hear it
 # ---------------------------------------------------------------- filling them in
 def tone_of(p, setting):
     low = (p.get('cls') or '').lower()
-    if setting in ('cave', 'hideout', 'stronghold', 'daedric', 'dwemer', 'tomb', 'ruin', 'sewer'):
+    if setting in ('cave', 'hideout', 'stronghold', 'daedric', 'dwemer', 'tomb', 'ruin', 'sewer', 'tower'):
         return 'outlaw'
     for tone, words in (('publican', ('publican',)), ('guard', ('guard', 'ordinator', 'legion', 'warden')),
                         ('priest', ('priest', 'monk', 'healer', 'acolyte', 'cleric')),

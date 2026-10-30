@@ -1571,13 +1571,13 @@ def fits(db, int_key):
         if close:
             text = 'Fits its building as closely as the game\'s own interiors for it' + what + ' (the game\'s: up to %d%%, %d units)' % (round(lim_share * 100), lim_jut)
         elif loose:
-            text = 'Fits its building about as loosely as Bethesda\'s own interiors fit theirs' + what + \
-                ' (Bethesda\'s: up to %d%%, %d units; the closer ones for this building: up to %d%%, %d units)' % (
+            text = 'Fits its building about as loosely as the original game\'s interiors fit theirs' + what + \
+                ' (the original game\'s: up to %d%%, %d units; the closer ones for this building: up to %d%%, %d units)' % (
                     round(beth['share'] * 100), beth['jut'], round(lim_share * 100), lim_jut)
         else:
-            text = 'Sticks out of its building more than the game\'s own interiors do, Bethesda\'s too' + what + \
+            text = 'Sticks out of its building more than the game\'s own interiors do, the original game\'s too' + what + \
                 ' (the game\'s for this building: up to %d%%, %d units%s)' % (
-                    round(lim_share * 100), lim_jut, '; Bethesda\'s: up to %d%%, %d units' % (round(beth['share'] * 100), beth['jut']) if beth else '')
+                    round(lim_share * 100), lim_jut, '; the original game\'s: up to %d%%, %d units' % (round(beth['share'] * 100), beth['jut']) if beth else '')
         return {'share': g['share'], 'jut': g['jut'], 'floors': rows, 'band': band, 'ok': ok, 'close': close, 'text': text,
                 'building': ed['cell'], 'door': ed['id']}
     return None

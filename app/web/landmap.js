@@ -12,7 +12,10 @@ async function lmLoad(force, keepPlan){
   if (LM.data && !force) return LM.data;
   if (!LM.loading) LM.loading = api('/api/landmap').then(d => {
     d.marked = new Set(d.marks); LM.data = d; LM.loading = null;
-    if (!LM.plan || (force && !keepPlan)) LM.plan = d.plan || {layers: [], rough: 1, fade: 1024, paint: true, seed: 1};
+    if (!LM.plan || (force && !keepPlan)){
+      LM.plan = d.plan || {layers: [], rough: 1, fade: 1024, paint: true, seed: 1};
+      LM.histCur = JSON.stringify(LM.plan); LM.hist = []; LM.fut = [];     // (a plan read afresh starts its own history)
+    }
     if (LM.plan.layers.length && LM.prevOn !== false) lsPreviewSoon();
     // (the land survey still learning: ask again until it's done. The plan here stays: the server's copy can be
     // older than a change not yet saved, and a removed shape came back)
@@ -80,6 +83,7 @@ function lmDraw(g){
       if (!D.marked.has(x + ',' + (y - 1))){ g.beginPath(); g.moveTo(sx, sy + sz); g.lineTo(sx + sz, sy + sz); g.stroke(); }
     }
   }
+  lmFlowDraw(g);
   lsDrawShapes(g);
   g.restore();
 }
@@ -158,6 +162,58 @@ async function lmUp(){
 function lmMarksAre(marks){
   LM.data.marks = marks; LM.data.marked = new Set(marks);
   if (LM.plan && LM.plan.layers.length) lsPreviewSoon();
+  lmFlowSoon();
+}
+// ----- before and after: the map's ground as it was just before Shape them or Texture only, shown while ◐ is held
+async function lmKeepBefore(what){
+  // (the cells in view loaded first, the open sea among them: kept as they were, so ◐ shows them, not now's land)
+  try { await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL)); } catch (e){}
+  LM.before = {lands: Object.assign({}, W.lands), what};
+}
+function lmShowBefore(on){
+  const B = LM.before; if (!B) return;
+  if (on && !LM.afterLands){
+    LM.afterLands = W.lands;
+    // (the cells kept from before, the rest as they are now: the map was moved since, say)
+    W.lands = Object.assign({}, W.lands, B.lands);
+  } else if (!on && LM.afterLands){
+    W.lands = Object.assign(LM.afterLands, {});
+    LM.afterLands = null;
+  }
+  const b = $('#lm-before'); if (b) b.classList.toggle('primary', !!on);
+  drawMap();
+}
+
+// ----- the flow overlay: where the rain runs over the marked cells (landshapes.flow_lines, landwater)
+function lmFlowSoon(){
+  clearTimeout(LM.flowT);
+  if (!LM.flowOn){ LM.flow = null; return; }
+  LM.flowT = setTimeout(lmFlowLoad, 400);
+}
+async function lmFlowLoad(){
+  if (!LM.flowOn || !LM.data) return;
+  if (!LM.data.marks.length){ LM.flow = null; drawMap(); return; }
+  const ask = LM.flowN = (LM.flowN || 0) + 1;
+  try {
+    const shaped = !!(LM.plan && LM.plan.layers.length && LM.prevOn !== false);
+    const r = await post('/api/land/flow', {cells: LM.data.marks, plan: LM.plan, shaped});
+    if (ask === LM.flowN){ LM.flow = r; drawMap(); }
+  } catch (e){ toast(e.message, true); }
+}
+function lmFlowDraw(g){
+  const F = LM.flow; if (!F || !LM.flowOn || !F.lines.length) return;
+  const z = W.cam.z;
+  g.save(); g.lineCap = 'round';
+  for (const [x0, y0, x1, y1, a] of F.lines){
+    const [sx0, sy0] = toScreen(x0, y0), [sx1, sy1] = toScreen(x1, y1);
+    if (Math.max(sx0, sx1) < 0 || Math.min(sx0, sx1) > W.w || Math.max(sy0, sy1) < 0 || Math.min(sy0, sy1) > W.h) continue;
+    const bed = F.bed != null && a >= F.bed;
+    // (thicker the more drains through, in proportion to the zoom but never a hair nor a band)
+    g.lineWidth = Math.max(1, Math.min(7, (0.5 + Math.log2(a) * 0.45) * Math.min(1.6, z * 140)));
+    g.strokeStyle = bed ? 'rgba(120,205,255,0.95)' : `rgba(70,150,235,${Math.min(0.85, 0.3 + Math.log2(a) * 0.08)})`;
+    g.beginPath(); g.moveTo(sx0, sy0); g.lineTo(sx1, sy1); g.stroke();
+  }
+  g.restore();
 }
 
 // ----- the Land panel outdoors: the land map and shaping
@@ -174,12 +230,14 @@ function lmViewHtml(i){
     <button class="btn sm primary" id="ls-apply-top" ${n ? '' : 'disabled'} title="Write the shapes into the marked cells: one Undo takes it back">Shape them</button></div>` : '';
   return `${bar}<h3>Land shaping${lsGuide('Land shaping: how it works')}</h3>
     <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lm-show" ${LM.show ? 'checked' : ''}> Show the land map</label>
+    <label class="msg" style="display:flex;gap:6px;align-items:center" title="The way the rain runs over the marked cells: thicker where more ground drains through, brighter where Stream beds would texture it. On the plan's preview when there are shapes, else on the land as it is"><input type="checkbox" id="lm-flow" ${LM.flowOn ? 'checked' : ''}> Show where water runs</label>
+    ${LM.before ? `<div class="actions"><button class="btn sm" id="lm-before" title="Hold to see the land as it was before the last ${esc(LM.before.what)}; let go for now">◐ Before</button></div>` : ''}
     ${D && D.learning ? '<div class="msg" style="font-size:11.5px">Still learning the game\'s land (about a minute)…</div>' : ''}
     <div class="lm-legend">${Object.entries(LM_LEVELS).map(([k, L]) => `<span title="${esc(L.note)}"><i style="background:${L.fill}"></i>${esc(L.label)}</span>`).join('')}
-      <span title="Land from another mod (Project Tamriel's, say): your mod would override it"><i class="lm-hatch"></i>Another mod's</span>
+      <span title="Land from another mod: your mod would override it"><i class="lm-hatch"></i>Another mod's</span>
       <span title="Land your mod made or changed"><i style="border:1px dashed rgba(190,130,255,0.9)"></i>Yours</span>
       <span title="No land in any plugin yet, next to land: room to grow"><i style="border:1px dashed rgba(140,200,255,0.8)"></i>Room to grow</span></div>
-    <div class="actions" style="margin-top:6px"><button class="btn sm" id="lm-mark">⛰ Mark cells…</button><button class="btn sm" id="lm-clear" ${n ? '' : 'disabled'}>Clear marks</button></div>
+    <div class="actions" style="margin-top:6px"><button class="btn sm" id="lm-mark">⛰ Mark cells…</button><button class="btn sm" id="lm-clear" ${n ? '' : 'disabled'}>Clear marks</button><button class="btn sm" id="lm-revert" ${n ? '' : 'disabled'} title="Put the land in the marked cells back as it was before your mod: heights, ground textures and grass. Your objects stay. Undo brings it back">↶ Undo my land</button><button class="btn sm" id="lm-dress" ${n ? '' : 'disabled'} title="The marked cells' land dressed as the game dresses its region: rocks and cliffs turned to their slopes, trees, plants and logs laid as the region's own land has them. One Undo">🪨 Dress…</button></div>
     <div class="msg" style="font-size:11.5px">${n ? `${n} cell${n === 1 ? '' : 's'} marked${what ? ': ' + esc(what) : ''}.` : 'Mark the cells to shape on the map.'}</div>
     ${n ? `<div class="lm-raise">
       <label>Height <input type="range" id="lm-h" min="0" max="6000" step="50" value="${LM.height}"><span>${LM.height}</span></label>
@@ -234,7 +292,7 @@ function lmImportBind(){
       toast(`Brought the height map in over ${r.cells} cell${r.cells === 1 ? '' : 's'} (${r.across} × ${r.down})${r.new ? `, ${r.new} new` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed it` : ''}. Changes to the ground show in game after a restart.`);
       LM.imp = null;
       W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload();
-      await afterChange(); await lmLoad(true);
+      await afterChange(); await lmLoad(true, true);
       await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL));
       drawMap(); renderWside();
     } catch (err){ $('#lmi-note').textContent = err.message; go.disabled = false; go.textContent = 'Bring it in'; }
@@ -283,11 +341,30 @@ async function lmViewBind(i){
   lmCss();
   if (!LM.data){ try { await lmLoad(); } catch (e){ return; } renderWside(); return; }
   const sh = $('#lm-show'); if (sh) sh.onchange = () => { LM.show = sh.checked; drawMap(); };
+  const fl = $('#lm-flow'); if (fl) fl.onchange = () => { LM.flowOn = fl.checked; if (fl.checked){ LM.show = true; lmFlowLoad(); } else { LM.flow = null; } drawMap(); };
+  const bf = $('#lm-before'); if (bf){
+    bf.onpointerdown = e => { e.preventDefault(); lmShowBefore(true); };
+    bf.onpointerup = bf.onpointerleave = bf.onpointercancel = () => lmShowBefore(false);
+  }
   const mk = $('#lm-mark'); if (mk) mk.onclick = async () => { if (V3.on) await v3Enable(false); lmMark(); };
   const cl = $('#lm-clear'); if (cl) cl.onclick = async () => {
     if (!await needProject()) return;
     lmMarksAre((await post('/api/land/marks', {clear: true})).marks); drawMap(); renderWside();
   };
+  const rv = $('#lm-revert'); if (rv) rv.onclick = async () => {
+    if (!await needProject()) return;
+    const cells = LM.data.marks.slice(); if (!cells.length) return;
+    rv.disabled = true;
+    try {
+      const r = await post('/api/land/revert', {cells});
+      toast(`Put the land back in ${r.cells} cell${r.cells === 1 ? '' : 's'}. Undo brings yours back.`);
+      W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload();
+      await afterChange(); await lmLoad(true, true);
+      await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL));
+      drawMap(); renderWside();
+    } catch (err){ toast(err.message, true); rv.disabled = false; }
+  };
+  const dr = $('#lm-dress'); if (dr) dr.onclick = () => lmDressAsk();
   for (const [id, f] of [['lm-h', 'height'], ['lm-c', 'coast'], ['lm-r', 'rough']]){
     const el = $('#' + id); if (el) el.oninput = () => { LM[f] = +el.value; el.nextElementSibling.textContent = el.value; };
   }
@@ -302,17 +379,20 @@ async function lmViewBind(i){
 
 // ---------- Shapes drawn on the map (landshapes.py): layers of a plan over the marked cells ----------
 const LS_KINDS = {
-  coast:   {icon: '🏝', label: 'Coast', color: '#7fd1ff', closed: true, how: 'Click along the shore all the way round the land; double-click to close it (the last point joins the first). The outline becomes the waterline: inside rises out of the sea.'},
+  coast:   {icon: '🏝', label: 'Coast', color: '#7fd1ff', closed: true, how: 'Click along the shore all the way round the land; click the first point (or double-click) to close it. The outline becomes the waterline: inside rises out of the sea.'},
   ridge:   {icon: '⛰', label: 'Ridge', color: '#e8d27a', how: 'Click along the crest, double-click to finish. A range rises along it.'},
   river:   {icon: '〰', label: 'River', color: '#4aa8ff', how: 'Click from the source down to the sea, double-click to finish. Its bed is dug under the water all along (the game has one water level).'},
   valley:  {icon: '⌄', label: 'Valley', color: '#b6e08a', how: 'Click along the valley floor, double-click to finish. A dry trough.'},
-  plateau: {icon: '▭', label: 'Plateau', color: '#f0a060', closed: true, how: 'Click round the top, double-click to close. A level top with a cliff round it.'},
-  lake:    {icon: '◍', label: 'Lake', color: '#58c8e8', closed: true, how: 'Click round the shore, double-click to close. A basin under the water line.'},
+  plateau: {icon: '▭', label: 'Plateau', color: '#f0a060', closed: true, how: 'Click round the top, then the first point to close. A level top with a cliff round it.'},
+  lake:    {icon: '◍', label: 'Lake', color: '#58c8e8', closed: true, how: 'Click round the shore, then the first point to close. A basin under the water line.'},
   stamp:   {icon: '◉', label: 'Stamp', color: '#ff8fb8', how: 'Click where it goes: a volcano, a crater, a dome, or a piece of the game\'s own land.'},
   spring:  {icon: '⇣', label: 'Spring', color: '#5fd0ff', point: true, how: 'Click where a river rises. It finds its own way down to the water.'},
+  // (an outline that shapes nothing: pick it, and 🪨 Dress… keeps to it; landshapes leaves it out)
+  area:    {icon: '▢', label: 'Dress area', color: '#9be37a', closed: true, how: 'Click round a part of the land, then the first point to close. It changes no ground: pick it and 🪨 Dress… dresses only inside it.'},
 };
 // sliders per kind: [param, label, min, max, step, tip]
 const LS_PARAMS = {
+  area: [],
   coast: [['height', 'Height', 0, 6000, 50, 'How high the land stands a coast width in from the water'], ['width', 'Coast width', 1024, 16384, 256, 'How far it takes to rise out of the sea'], ['wander', 'Wander', 0, 2, 0.1, 'Small bays and headlands along the waterline (a few hundred units either side of the line drawn)']],
   ridge: [['height', 'Crest', 500, 12000, 100, 'The crest\'s height (lower at the ends)'], ['width', 'Width', 1024, 24576, 256, 'From the crest out to its foot'], ['sharp', 'Sharp', 0, 1, 0.05, '0 rounded hills, 1 a knife-edge crest'], ['spurs', 'Spurs', 0, 2, 0.1, 'How much its width wanders, in spurs and gullies'],
     ['crags', 'Crags', 0, 2, 0.1, 'Sharp crags and arêtes near the crest (0: smooth)']],
@@ -325,15 +405,76 @@ const LS_PARAMS = {
   stamp: [['radius', 'Radius', 1024, 32768, 256, 'How far it reaches'], ['height', 'Height', -6000, 12000, 50, 'Its height (a crater: its depth); for the game\'s land, 0 keeps it as it is'], ['turn', 'Turn', 0, 359, 1, 'Its turn (the game\'s land only)']],
 };
 const LS_SHAPES = [['volcano', 'Volcano'], ['cone', 'Cone'], ['caldera', 'Caldera'], ['crater', 'Crater'], ['dome', 'Dome'], ['mesa', 'Mesa'], ['game', 'The game\'s own land']];
-const LS_DEFAULTS = {coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
+const LS_DEFAULTS = {area: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
   valley: {depth: 900, width: 4096, round: 0.6}, plateau: {height: 2000, width: 768, terraces: 0}, lake: {depth: 400, width: 1536},
   stamp: {shape: 'volcano', radius: 8192, height: 4000, turn: 0, src: null}, spring: {rise: 800, wander: 1, depth: 256, width: 256, banks: 2048, canyon: 0}};
+
+// ----- whole plans to start from, laid out over the marked cells (or the 4 x 4 cells round the view, then marked):
+// the shapes and passes of an island, a mountain range, a river valley, a volcanic isle or a lake in the hills, to
+// change from there. ↶ takes it back
+const LS_PRESETS = [
+  ['island', '🏝 Island', 'A coast round the marked cells, a ridge along it and a spring: a whole island'],
+  ['range', '⛰ Mountain range', 'Two craggy ridges along the marked cells, with valleys and rock layers'],
+  ['valley', '〰 River valley', 'A valley down the middle with a river in it and hills on both sides'],
+  ['volcano', '🌋 Volcanic isle', 'A round coast with a volcano in the middle'],
+  ['lake', '◍ Lake in the hills', 'A lake with low hills round it'],
+];
+async function lsPreset(kind){
+  if (!await needProject()) return;
+  const P = LM.plan, C = CELL;
+  let keys = LM.data.marks.slice();
+  if (!keys.length){
+    const gx = Math.floor(W.cam.x / C), gy = Math.floor(W.cam.y / C);
+    for (let x = gx - 2; x < gx + 2; x++) for (let y = gy - 2; y < gy + 2; y++){ const c = lmCell(x + ',' + y); if (!(c && c[0] === 'settled')) keys.push(x + ',' + y); }
+    try { lmMarksAre((await post('/api/land/marks', {add: keys})).marks); } catch (e){ toast(e.message, true); return; }
+  }
+  const xs = keys.map(k => +k.split(',')[0]), ys = keys.map(k => +k.split(',')[1]);
+  const x0 = Math.min(...xs) * C, x1 = (Math.max(...xs) + 1) * C, y0 = Math.min(...ys) * C, y1 = (Math.max(...ys) + 1) * C;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, wx = x1 - x0, wy = y1 - y0, long = wx >= wy;
+  const Lg = Math.max(wx, wy), S = Math.min(wx, wy);
+  // (a point t of the way along the long side from the middle, `off` across it)
+  const along = (t, off) => long ? [Math.round(cx + t * Lg), Math.round(cy + off * S)] : [Math.round(cx + off * S), Math.round(cy + t * Lg)];
+  const ring = (rx, ry, n, wob) => Array.from({length: n}, (_, i) => { const a = i / n * Math.PI * 2, k = 1 + (wob || 0) * Math.sin(a * 3 + 1); return [Math.round(cx + Math.cos(a) * rx * k), Math.round(cy + Math.sin(a) * ry * k)]; });
+  const lay = (k, pts, p) => ({id: String(Date.now()) + Math.random().toString(36).slice(2, 6), kind: k, name: '', on: true, pts, p: Object.assign({}, LS_DEFAULTS[k], p || {})});
+  const W_ = (f, lo, hi) => Math.round(Math.max(lo, Math.min(hi, S * f)) / 128) * 128;
+  let layers = [], passes = {};
+  if (kind === 'island'){
+    layers = [lay('coast', ring(wx * 0.4, wy * 0.4, 12, 0.08), {height: 600, width: W_(0.18, 2048, 6144)}),
+      lay('ridge', [along(-0.28, 0.02), along(0, -0.04), along(0.28, 0.03)], {height: 2800, width: W_(0.22, 2048, 8192)}),
+      lay('spring', [along(0.12, -0.03)], {rise: 900})];
+    passes = {valleys: 1, rock: 0.3};
+  } else if (kind === 'range'){
+    layers = [lay('ridge', [along(-0.42, -0.08), along(-0.15, -0.12), along(0.15, -0.06), along(0.42, -0.1)], {height: 6500, width: W_(0.3, 3072, 12288), crags: 1.2, sharp: 0.7}),
+      lay('ridge', [along(-0.3, 0.22), along(0.05, 0.18), along(0.35, 0.24)], {height: 3800, width: W_(0.2, 2048, 8192), crags: 0.8})];
+    passes = {valleys: 1.2, rock: 0.6};
+  } else if (kind === 'valley'){
+    const line = [along(-0.45, 0.02), along(-0.15, -0.04), along(0.15, 0.04), along(0.45, -0.02)];
+    layers = [lay('ridge', [along(-0.42, -0.34), along(0, -0.38), along(0.42, -0.33)], {height: 3200, width: W_(0.25, 2048, 8192)}),
+      lay('ridge', [along(-0.42, 0.34), along(0, 0.36), along(0.42, 0.32)], {height: 2800, width: W_(0.25, 2048, 8192)}),
+      lay('valley', line, {depth: 1200, width: W_(0.28, 2048, 8192)}), lay('river', line.map(p => p.slice()))];
+    passes = {valleys: 0.6};
+  } else if (kind === 'volcano'){
+    const r = Math.min(wx, wy) * 0.4;
+    layers = [lay('coast', ring(r, r, 12, 0.06), {height: 500, width: W_(0.15, 2048, 6144)}),
+      lay('stamp', [[Math.round(cx), Math.round(cy)]], {shape: 'volcano', radius: Math.round(r * 0.75 / 256) * 256, height: 6000})];
+    passes = {valleys: 0.8, rock: 0.4};
+  } else if (kind === 'lake'){
+    layers = [lay('ridge', ring(wx * 0.36, wy * 0.36, 9, 0.1).slice(0, 7), {height: 1800, width: W_(0.18, 2048, 6144)}),
+      lay('lake', ring(wx * 0.18, wy * 0.18, 10, 0.12), {depth: 500})];
+    passes = {valleys: 0.5};
+  }
+  P.layers = layers; P.passes = Object.assign({}, LS_PASSES, P.passes || {}, passes);
+  LM.sel = null; LM.prevOn = true; LM.show = true;
+  lsChanged(true);
+  const name = (LS_PRESETS.find(p => p[0] === kind) || [])[1] || kind;
+  toast(`${name}: ${layers.length} shapes over ${keys.length} cells. Change them as you like, then Shape them; ↶ takes it back.`);
+}
 
 function lsHtml(){
   const P = LM.plan || {layers: []}, sel = P.layers[LM.sel];
   const row = (L, i) => `<div class="ls-row${i === LM.sel ? ' on' : ''}" data-i="${i}"><input type="checkbox" data-on="${i}" ${L.on !== false ? 'checked' : ''} title="Use this shape">
       <span style="color:${LS_KINDS[L.kind].color}">${LS_KINDS[L.kind].icon}</span><span class="ls-n">${esc(L.name || LS_KINDS[L.kind].label)}</span>
-      <button class="xbtn" data-up="${i}" title="Earlier (later shapes act on what earlier ones made)">↑</button><button class="xbtn" data-dn="${i}" title="Later">↓</button><button class="xbtn" data-del="${i}" title="Remove">✕</button></div>`;
+      <button class="xbtn" data-up="${i}" title="Earlier (later shapes act on what earlier ones made)">↑</button><button class="xbtn" data-dn="${i}" title="Later">↓</button><button class="xbtn" data-dup="${i}" title="Duplicate (a copy beside it)">⧉</button><button class="xbtn" data-del="${i}" title="Remove">✕</button></div>`;
   let params = '';
   if (sel){
     const p = sel.p || {};
@@ -351,18 +492,20 @@ function lsHtml(){
       params += `<label title="Only in one region of the marked cells, fading out at its border" style="white-space:nowrap">Only in ${lsRegionSel('ls-only', (sel.only || [])[0] || '', 'everywhere', lsHereRegions())}</label>
         <label title="Its ground as rough and steep as another region's land; the textures stay the cell's own region's">Like ${lsRegionSel('ls-like', sel.like || '', 'its own region')}</label>`;
     }
-    params += `<div class="msg" style="font-size:11.5px">Drag its points on the map to move them.${LS_KINDS[sel.kind].closed ? ' A closed outline: the last point joins the first.' : ''}</div>`;
+    params += `<div class="msg" style="font-size:11.5px" title="Drag a point to move it; click the line to add a point; Ctrl+click a point to remove it; Shift+drag the line to move the whole shape">On the map: drag points · click the line to add · Ctrl+click removes · Shift+drag moves it all.${LS_KINDS[sel.kind].closed ? ' The last point joins the first.' : ''}</div>`;
     // (whether the marked cells cover it: a shape only changes the marked cells)
     const sc = lsShapeCells(sel), M = LM.data ? LM.data.marked : new Set(), inM = sc.filter(k => M.has(k)).length;
     if (inM < sc.length) params += `<div class="msg warn" style="font-size:11.5px;margin-top:4px">${inM ? 'Partly outside the marked cells: only the marked part changes.' : 'Outside the marked cells: it changes nothing until they\'re marked.'}
       <button class="btn sm" id="ls-markit" title="Mark every cell this shape reaches (towns left out; Shift+click: them too)">⛰ Mark its cells</button></div>`;
   }
-  return `<h3>Shapes${lsGuide('Step 2: draw shapes')}</h3>
+  return `<h3 style="display:flex;align-items:center;gap:4px">Shapes${lsGuide('Step 2: draw shapes')}<span style="flex:1"></span>
+      <button class="btn sm" id="ls-undo" ${LM.hist.length ? '' : 'disabled'} title="Undo the last change to the shapes and their settings">↶</button><button class="btn sm" id="ls-redo" ${LM.fut.length ? '' : 'disabled'} title="Redo">↷</button></h3>
     <div class="ls-add">${Object.entries(LS_KINDS).map(([k, K]) => `<button class="btn sm" data-add="${k}" title="${esc(K.how)}"><span style="color:${K.color}">${K.icon}</span> ${K.label}</button>`).join('')}</div>
+    <label title="A whole plan laid out over the marked cells (or the 4 x 4 cells round the view), in place of the shapes there; ↶ takes it back" style="margin-top:6px">Start from <select class="inp" id="ls-preset"><option value="">a ready plan…</option>${LS_PRESETS.map(([v, t, tip]) => `<option value="${v}" title="${esc(tip)}">${t}</option>`).join('')}</select></label>
     ${P.layers.length ? `<div class="ls-list">${P.layers.map(row).join('')}</div>
       <div class="actions"><button class="btn sm" id="ls-clearall" title="Take every shape off the map (the land already shaped stays as it is)">Clear shapes</button></div>` : '<div class="msg" style="font-size:11.5px">Draw coasts, ridges, rivers, valleys, plateaus, lakes and stamps on the marked cells. Each acts on what the ones above it made.</div>'}
     ${sel ? `<div class="lm-raise">${params}</div>` : ''}
-    ${P.layers.length ? lsPassesHtml(P) : ''}
+    ${P.layers.length ? lsPassesHtml(P) : lsTexHtml(P)}
     ${P.layers.length ? `<div class="lm-raise">
       <label title="Rolling ground on the new land, as rough as the region's (1)">Roughness <input type="range" data-g="rough" min="0" max="2" step="0.1" value="${P.rough}"><span>${P.rough}</span></label>
       <label title="How far in from the marked cells' edge the shapes fade in (the edges with other cells never move)">Edge fade <input type="range" data-g="fade" min="256" max="8192" step="256" value="${P.fade}"><span>${P.fade}</span></label>
@@ -375,10 +518,9 @@ function lsHtml(){
 // stage 3 and 4 (landpasses.py, landdress.py): the natural passes and the dressing, with the plan's own defaults
 const LS_PASSES = {detail: true, detail_k: 1, settle: true, angle: 0, gullies: 0, terraces: false, tstep: 256, tsharp: 0.6, tslope: 20, valleys: 0,
   rock: 0, rthick: 512, rdip: 0, rdir: 0, rshare: 0.45, ronly: ''};
-const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1};
+const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1, flow: 0};
 function lsPassesHtml(P){
   const A = P.passes = Object.assign({}, LS_PASSES, P.passes || {}), D = P.dress = Object.assign({}, LS_DRESS, P.dress || {});
-  const regs = (typeof REG !== 'undefined' && REG.data) ? REG.data.regions : [];
   const info = LM.prevInfo || {};
   const chk = (id, on, text, tip) => `<label class="msg" style="display:flex;gap:6px;align-items:center" title="${esc(tip)}"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> <span style="flex:1;min-width:0;text-align:left">${text}</span></label>`;
   const sl = (key, grp, lab, mn, mx, st, v, tip) => `<label title="${esc(tip)}">${lab} <input type="range" data-${grp}="${key}" min="${mn}" max="${mx}" step="${st}" value="${v}"><span>${v}</span></label>`;
@@ -401,17 +543,54 @@ function lsPassesHtml(P){
       ${A.terraces ? sl('tstep', 'pa', 'Step height', 64, 1024, 32, A.tstep, 'How high each step is') + sl('tsharp', 'pa', 'Sharpness', 0, 1, 0.05, A.tsharp, '0 soft benches, 1 hard steps') + sl('tslope', 'pa', 'From slopes of', 5, 45, 1, A.tslope, 'Only slopes steeper than this (degrees) get steps') : ''}
     </div>
     <h3>Dressing${lsGuide('Dressing')}</h3><div class="lm-raise">
-      <label title="The region whose land the plan takes after: its textures, its tints and shading, its roughness and slopes">Like <select class="inp" id="lsd-region"><option value="">the nearest region</option>${regs.map(r => `<option value="${esc(r.id.toLowerCase())}" ${r.id.toLowerCase() === D.region ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+      ${lsDressPick(D)}
       ${D.region ? chk('lsd-assign', D.assign, 'Put the cells in this region (its weather, sounds, creatures)', 'The marked cells join the region in the same Undo') : ''}
-      <label title="How many textures a cell: as the region's own cells have (the land survey's median), or fewer or more">Textures <select class="inp" id="lsd-var">${[[-1, 'as many a cell as the region'], [0.4, 'fewer'], [1, 'more'], [2, 'many']].map(([v, t]) => `<option value="${v}" ${+D.variety === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       ${chk('lsd-tints', D.tints, 'Tint each texture as the game does', 'landshade "By texture": the colour the region\'s land gives each texture')}
       ${chk('lsd-seams', D.seams, 'Darken where textures meet', 'landshade "Where textures meet": the join tinted as the game tints it at that pair')}
       ${chk('lsd-hollows', D.hollows, 'Darker hollows, lighter crests', 'As the region\'s land is: the land survey measured hollows 6 to 14% darker than level ground, crests 1 to 5% lighter')}
       ${sl('shade', 'dr', 'Shading', 0, 1, 0.05, D.shade, 'How strongly the tints, seams and hollows are laid on')}
       ${sl('rocks', 'dr', 'Rocks', 0, 2, 0.1, D.rocks, 'The region\'s rocks on the new slopes and cliffs, as thickly as the game sets them on such ground (1), fewer or more (0: none). Set when you shape')}
+      ${sl('flow', 'dr', 'Stream beds', 0, 2, 0.1, D.flow, 'Where much water runs, the region\'s water\'s-edge textures (mud, wet ground), so streams show. The Bitter Coast\'s own land does this; most regions\' don\'t, so 0 (off) is the game\'s way there. Higher: smaller streams too')}
       ${chk('lsd-tview', LM.texView, 'Show the textures in the preview', 'Each texture its own colour over the preview, as the plan would lay them')}
       <div class="ls-tex" id="ls-texlegend">${lsLegend()}</div>
+      ${lsTexButton()}
     </div>`;
+}
+// (the region the textures come from and how many a cell: shared by Dressing and "Texture the land")
+function lsDressPick(D){
+  const regs = (typeof REG !== 'undefined' && REG.data) ? REG.data.regions : [];
+  return `<label title="The region whose land the plan takes after: its textures, its tints and shading, its roughness and slopes">Like <select class="inp" id="lsd-region"><option value="">the nearest region</option>${regs.map(r => `<option value="${esc(r.id.toLowerCase())}" ${r.id.toLowerCase() === D.region ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+      <label title="How many textures a cell: as the region's own cells have (the land survey's median), or fewer or more">Textures <select class="inp" id="lsd-var">${[[-1, 'as many a cell as the region'], [0.4, 'fewer'], [1, 'more'], [2, 'many']].map(([v, t]) => `<option value="${v}" ${+D.variety === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
+}
+// Texture only: the marked cells' land textured by its slopes, heights and shores, as it is (landshapes.texture_only)
+function lsTexButton(){
+  const n = LM.data ? LM.data.marks.length : 0;
+  return `<div class="actions"><button class="btn sm" id="ls-texonly" ${n ? '' : 'disabled'} title="Texture the marked cells the way the region's land is textured at each slope, height and shore, with these settings. Heights stay; roads, paving and the ground under buildings stay. One Undo">🎨 Texture only</button></div>`;
+}
+// with no shapes drawn: the texturing on its own
+function lsTexHtml(P){
+  P.passes = Object.assign({}, LS_PASSES, P.passes || {});
+  const D = P.dress = Object.assign({}, LS_DRESS, P.dress || {});
+  P.protect = Object.assign({hold: true, margin: 512}, P.protect || {});
+  return `<h3>Texture the land${lsGuide('Texture only')}</h3><div class="lm-raise">
+      ${lsDressPick(D)}
+      <label title="Where much water runs, the region's water's-edge textures (mud, wet ground), so streams show. The Bitter Coast's own land does this; most regions' don't (0: off). Show where water runs to see them">Stream beds <input type="range" data-dr="flow" min="0" max="2" step="0.1" value="${D.flow}"><span>${D.flow}</span></label>
+      <label class="msg" style="display:flex;gap:6px;align-items:center" title="Under each building piece, ruin wall and door the ground keeps its texture"><input type="checkbox" id="lsr-hold" ${P.protect.hold ? 'checked' : ''}> Keep the ground under buildings</label>
+      ${lsTexButton()}
+      <div class="msg" style="font-size:11.5px">Heights stay as they are; roads and paving too.</div></div>`;
+}
+async function lsTexOnly(btn){
+  if (!await needProject()) return;
+  btn.disabled = true; btn.textContent = `Texturing ${LM.data.marks.length} cell${LM.data.marks.length === 1 ? '' : 's'}…`;
+  await lmKeepBefore('texturing');
+  try {
+    const r = await post('/api/land/texture', {cells: LM.data.marks, plan: LM.plan});
+    toast(`Textured ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.textures_a_cell ? `, about ${r.textures_a_cell} textures a cell` : ''}${r.kept ? `; ${r.kept} patches of road or under buildings kept` : ''}. One Undo takes it back.`);
+    W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload();
+    await afterChange();
+    await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL));
+    lmFlowSoon(); drawMap(); renderWside();
+  } catch (err){ toast(err.message, true); btn.disabled = false; btn.textContent = '🎨 Texture only'; }
 }
 // a "?" beside a section, opening the land guide there (help.js)
 function lsGuide(section){ return typeof guideLink === 'function' ? guideLink('shaping-the-land.md', section, 'How this works (the land guide)') : ''; }
@@ -420,7 +599,7 @@ function lsGuide(section){ return typeof guideLink === 'function' ? guideLink('s
 function lsShapeCells(L){
   const C = 8192, p = Object.assign({}, LS_DEFAULTS[L.kind], L.p || {}), fade = (LM.plan && LM.plan.fade) || 1024;
   const reach = {coast: Math.min(1536, p.width * 0.25) + 1024, plateau: 1024, ridge: p.width * 1.5, river: p.width + p.banks,
-    valley: p.width, lake: p.width + 512, stamp: p.radius, spring: 2 * C}[L.kind] + fade;
+    valley: p.width, lake: p.width + 512, stamp: p.radius, spring: 2 * C, area: 0}[L.kind] + fade;
   const pts = L.pts, closed = !!LS_KINDS[L.kind].closed, half = C * Math.SQRT2 / 2;
   const segDist = (x, y, a, b) => {
     const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
@@ -532,6 +711,15 @@ function lsBind(){
   document.querySelectorAll('[data-up]').forEach(b => b.onclick = () => lsMove(+b.dataset.up, -1));
   document.querySelectorAll('[data-dn]').forEach(b => b.onclick = () => lsMove(+b.dataset.dn, 1));
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { P.layers.splice(+b.dataset.del, 1); LM.sel = null; lsChanged(true); });
+  document.querySelectorAll('[data-dup]').forEach(b => b.onclick = () => {
+    // (a copy a quarter of a cell to the east, picked, to drag where it goes)
+    const L0 = P.layers[+b.dataset.dup], L = JSON.parse(JSON.stringify(L0));
+    L.id = String(Date.now()); L.pts = L.pts.map(p => [p[0] + 2048, p[1]]);
+    P.layers.splice(+b.dataset.dup + 1, 0, L); LM.sel = +b.dataset.dup + 1; lsChanged(true);
+  });
+  const ps = $('#ls-preset'); if (ps) ps.onchange = () => { const v = ps.value; ps.value = ''; if (v) lsPreset(v); };
+  const un = $('#ls-undo'); if (un) un.onclick = () => lsHistGo(true);
+  const re = $('#ls-redo'); if (re) re.onclick = () => lsHistGo(false);
   const sel = P.layers[LM.sel];
   document.querySelectorAll('[data-p]').forEach(r => r.oninput = () => { sel.p[r.dataset.p] = +r.value; r.nextElementSibling.textContent = r.value; lsChanged(); });
   document.querySelectorAll('[data-g]').forEach(r => r.oninput = () => { P[r.dataset.g] = +r.value; r.nextElementSibling.textContent = r.value; lsChanged(); });
@@ -560,11 +748,13 @@ function lsBind(){
   const sd = $('#ls-seed'); if (sd) sd.onclick = () => { P.seed = (P.seed || 1) + 1; lsChanged(); };
   const ap = $('#ls-apply'); if (ap) ap.onclick = () => lsApply(ap);
   const at = $('#ls-apply-top'); if (at) at.onclick = () => lsApply(at);
+  const to = $('#ls-texonly'); if (to) to.onclick = () => lsTexOnly(to);
   // (all the shapes off the map: a plan isn't in Undo, so it asks first)
+  // (all the shapes off the map; ↶ brings them back)
   const ca = $('#ls-clearall'); if (ca) ca.onclick = () => {
     const n = P.layers.length;
-    if (!confirm(`Take all ${n} shape${n === 1 ? '' : 's'} off the map?\n\nLand you already shaped stays as it is. This can't be undone.`)) return;
     P.layers = []; LM.sel = null; LM.prev = null; LM.prevData = null; LM.prevInfo = {}; lsChanged(true);
+    toast(`Took ${n} shape${n === 1 ? '' : 's'} off the map. ↶ (by Shapes) brings them back.`);
   };
   if (P.passes && P.dress) lsPassesBind(P);
 }
@@ -574,10 +764,15 @@ function lsMove(i, d){
 }
 // a change: saved into the project and previewed, a moment after the last one
 function lsChanged(rerender){
+  if (!LM.histSkip){ lsHistNote(); LM.editAt = Date.now(); }
+  // (a change to the plan shows its preview again: after Shape them the map showed the land as it was, and every edit
+  // after, a merged point or a removed shape, seemed to do nothing, PIN2 2026-10-29)
+  if (LM.prevOn === false){ LM.prevOn = true; const pv = $('#ls-prev'); if (pv) pv.checked = true; }
   if (rerender) renderWside();
   clearTimeout(LM.saveT);
   LM.saveT = setTimeout(async () => { try { const r = await post('/api/land/plan', {plan: LM.plan}); LM.plan.layers.forEach((L, i) => { L.p = r.layers[i] ? r.layers[i].p : L.p; }); } catch (e){ toast(e.message, true); } }, 500);
   lsPreviewSoon();
+  lmFlowSoon();                                       // (the water follows the plan's land, and Stream beds' brightness)
   drawMap();
 }
 function lsPreviewSoon(){
@@ -587,8 +782,9 @@ function lsPreviewSoon(){
 }
 async function lsPreview(){
   if (!LM.data || !LM.plan || LM.prevOn === false){ LM.prevStale = false; return; }
-  // (nothing to preview: also stops one still on its way from painting the old plan back)
-  if (!LM.plan.layers.length || !LM.data.marks.length){ ++LM.prevN; LM.prev = null; LM.prevStale = false; drawMap(); return; }
+  // (nothing to preview: also stops one still on its way from painting the old plan back. With no shapes left after a
+  // Shape them, the preview is what Shape would make now: the ground before it, not the shaped land drawn on)
+  if (!LM.data.marks.length || (!LM.plan.layers.length && !LM.shapedOnce)){ ++LM.prevN; LM.prev = null; LM.prevStale = false; drawMap(); return; }
   const ask = ++LM.prevN;
   try {
     const r = await post('/api/land/plan/preview', {cells: LM.data.marks, plan: LM.plan});
@@ -614,30 +810,57 @@ async function lsStart(kind){
   $('#maptip').style.display = 'none';
   lsHook();
   setMode('landshape'); cv.classList.add('place');
-  setBanner(`${LS_KINDS[kind].icon} ${esc(LS_KINDS[kind].how)} <kbd>Esc</kbd> cancels. <button class="btn sm" id="ls-done">Done</button>`);
+  setBanner(`${LS_KINDS[kind].icon} ${esc(LS_KINDS[kind].how)} <kbd>Backspace</kbd> takes the last point back, <kbd>Esc</kbd> cancels. <button class="btn sm" id="ls-done">Done</button>`);
   $('#ls-done').onclick = lsFinish;
   drawMap();
 }
+// (an outline closes when its first point is clicked again, as a pen tool's does: the user's coast left a second
+// point lying on the first, PIN2 2026-10-29)
+function lsOnFirst(D, x, y){
+  if (!D || !LS_KINDS[D.kind].closed || D.pts.length < 3) return false;
+  const [sx, sy] = toScreen(D.pts[0][0], D.pts[0][1]);
+  return Math.hypot(sx - x, sy - y) <= LS_GRAB;
+}
 function lsDown(e){
   const D = LM.drawing; if (!D) return;
+  if (lsOnFirst(D, e.offsetX, e.offsetY)) return lsFinish();
   const [wx, wy] = toWorld(e.offsetX, e.offsetY);
   D.pts.push([Math.round(wx), Math.round(wy)]);
   if (LS_KINDS[D.kind].point || D.kind === 'stamp') return lsFinish();
   drawMap();
 }
-function lsMoveMouse(e){ if (LM.drawing){ LM.mouse = toWorld(e.offsetX, e.offsetY); drawMap(); } }
+function lsMoveMouse(e){
+  if (!LM.drawing) return;
+  LM.mouse = toWorld(e.offsetX, e.offsetY);
+  LM.closeHot = lsOnFirst(LM.drawing, e.offsetX, e.offsetY);
+  cv.style.cursor = LM.closeHot ? 'pointer' : '';
+  drawMap();
+}
 function lsFinish(){
-  const D = LM.drawing; LM.drawing = null;
+  const D = LM.drawing; LM.drawing = null; LM.closeHot = false; cv.style.cursor = '';
   if (W.mode === 'landshape') setMode(null);
   if (!D) return;
   // (a double-click adds its point twice)
   const pts = D.pts.filter((p, i) => !i || Math.hypot(p[0] - D.pts[i - 1][0], p[1] - D.pts[i - 1][1]) > 64);
   const need = D.kind === 'stamp' || LS_KINDS[D.kind].point ? 1 : LS_KINDS[D.kind].closed ? 3 : 2;
+  // (an outline's last point put down on its first: the same point, the outline closes there anyway)
+  const near = (a, b) => { const [ax, ay] = toScreen(a[0], a[1]), [bx, by] = toScreen(b[0], b[1]); return Math.hypot(ax - bx, ay - by) <= LS_GRAB || Math.hypot(a[0] - b[0], a[1] - b[1]) <= 64; };
+  while (LS_KINDS[D.kind].closed && pts.length > need && near(pts[pts.length - 1], pts[0])) pts.pop();
   if (pts.length < need){ toast(`A ${LS_KINDS[D.kind].label.toLowerCase()} needs ${need} point${need === 1 ? '' : 's'} at least.`, true); drawMap(); return; }
   const P = LM.plan;
-  P.layers.push({id: String(Date.now()), kind: D.kind, name: '', on: true, pts, p: Object.assign({}, LS_DEFAULTS[D.kind])});
-  LM.sel = P.layers.length - 1; LM.prevOn = LM.prevOn === false ? false : true;
+  const L = {id: String(Date.now()), kind: D.kind, name: '', on: true, pts, p: Object.assign({}, LS_DEFAULTS[D.kind])};
+  P.layers.push(L);
+  LM.sel = P.layers.length - 1;
   lsChanged(true);
+  // (no cells marked yet: the shape marks the ones it reaches, towns left out, so it shows and can be shaped
+  // at once; the user drew a river with nothing marked and it did nothing)
+  if (LM.data && !LM.data.marks.length){
+    const add = lsShapeCells(L).filter(k => { const c = lmCell(k); return !(c && c[0] === 'settled'); });
+    if (add.length) post('/api/land/marks', {add}).then(r => {
+      lmMarksAre(r.marks); renderWside(); drawMap();
+      toast(`Marked the ${add.length} cell${add.length === 1 ? '' : 's'} it reaches${add.length < lsShapeCells(L).length ? ' (towns left out)' : ''}.`);
+    }).catch(err => toast(err.message, true));
+  }
 }
 function lsHook(){
   if (LM.hooked) return;
@@ -646,8 +869,13 @@ function lsHook(){
 }
 document.addEventListener('keydown', e => {
   if (W.mode === 'landshape' && LM.drawing && e.key === 'Enter'){ e.preventDefault(); lsFinish(); }
+  // (Backspace while drawing: the last point back off, and nothing else: it is also "Delete what's selected",
+  // so it stops here, first, as Extend's does)
+  if (W.mode === 'landshape' && LM.drawing && e.key === 'Backspace' && !(e.target && e.target.matches && e.target.matches('input,textarea'))){
+    e.preventDefault(); e.stopImmediatePropagation(); LM.drawing.pts.pop(); drawMap(); return;
+  }
   if (W.mode !== 'landshape' && LM.drawing){ LM.drawing = null; drawMap(); }
-});
+}, true);
 
 // ----- the shapes on the map, the one picked with its points to drag
 function lsDrawShapes(g){
@@ -670,7 +898,26 @@ function lsDrawShapes(g){
       const [sx, sy] = toScreen(L.pts[0][0], L.pts[0][1]);
       g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.fillStyle = K.color + a; g.fill();
     } else line(L.pts, K.closed, K.color + a, on ? 3 : 2);
-    if (on) for (const p of L.pts){ const [sx, sy] = toScreen(p[0], p[1]); g.fillStyle = '#fff'; g.strokeStyle = K.color; g.lineWidth = 2; g.beginPath(); g.arc(sx, sy, 5, 0, Math.PI * 2); g.fill(); g.stroke(); }
+    const F = on && !LM.drawing ? lsFrame(L) : null;
+    if (F){
+      // (the frame: dashed box, corner squares to size, a knob to turn, a cross to move)
+      g.setLineDash([4, 4]); g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.strokeRect(F.x0, F.y0, F.x1 - F.x0, F.y1 - F.y0); g.setLineDash([]);
+      g.beginPath(); g.moveTo((F.x0 + F.x1) / 2, F.y0); g.lineTo(F.knob[0], F.knob[1] + 7); g.stroke();
+      g.fillStyle = '#fff'; g.strokeStyle = K.color; g.lineWidth = 2;
+      for (const [cx, cy] of F.corners){ g.fillRect(cx - 5, cy - 5, 10, 10); g.strokeRect(cx - 5, cy - 5, 10, 10); }
+      g.beginPath(); g.arc(F.knob[0], F.knob[1], 7, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.beginPath(); g.moveTo(F.cs[0] - 8, F.cs[1]); g.lineTo(F.cs[0] + 8, F.cs[1]); g.moveTo(F.cs[0], F.cs[1] - 8); g.lineTo(F.cs[0], F.cs[1] + 8); g.stroke();
+    }
+    if (on){
+      const H = LM.hdrag, hot = H && !H.move && !H.xf ? H.i : (LM.hover ?? -1), onto = H && !H.move && !H.xf ? H.onto : -1;
+      L.pts.forEach((p, k) => {
+        const [sx, sy] = toScreen(p[0], p[1]), big = k === hot || k === onto;
+        g.fillStyle = k === onto ? K.color : '#fff'; g.strokeStyle = K.color; g.lineWidth = 2;
+        g.beginPath(); g.arc(sx, sy, big ? 7 : 5, 0, Math.PI * 2); g.fill(); g.stroke();
+        // (the point it will join if let go here: a ring round it)
+        if (k === onto){ g.beginPath(); g.arc(sx, sy, 11, 0, Math.PI * 2); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); }
+      });
+    }
   });
   // the pieces the ground is held under (landshapes._holds), from the last preview
   const held = LM.prevOn !== false && LM.prevData && LM.prevData.held;
@@ -683,31 +930,206 @@ function lsDrawShapes(g){
   }
   const D = LM.drawing;
   if (D){
-    const pts = D.pts.concat(LM.mouse ? [LM.mouse] : []);
+    const pts = D.pts.concat(LM.mouse ? [LM.closeHot ? D.pts[0] : LM.mouse] : []);
     line(pts, false, LS_KINDS[D.kind].color, 2, [6, 4]);
     for (const p of D.pts){ const [sx, sy] = toScreen(p[0], p[1]); g.fillStyle = LS_KINDS[D.kind].color; g.beginPath(); g.arc(sx, sy, 4, 0, Math.PI * 2); g.fill(); }
+    // (the first point, ringed while a click there would close the outline)
+    if (LM.closeHot && D.pts.length){ const [sx, sy] = toScreen(D.pts[0][0], D.pts[0][1]); g.beginPath(); g.arc(sx, sy, 10, 0, Math.PI * 2); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); }
   }
 }
-// dragging a point of the picked shape (the map's own drag otherwise)
+// editing shapes on the map (the map's own drag otherwise): click a shape's line to pick it; on the picked one,
+// drag a point, Ctrl+click a point to take it out, click its line to add a point there, Shift+drag its line to move
+// the whole shape. The user wanted the land tools easier: points could only be dragged, and a shape picked from the
+// list alone
+function lsSegHit(L, x, y){
+  // (the nearest piece of the line within 7 pixels: [index of the point it starts from, distance])
+  const K = LS_KINDS[L.kind], n = L.pts.length;
+  if (K.point || L.kind === 'stamp' || n < 2) return null;
+  let best = null;
+  for (let i = 0; i < (K.closed ? n : n - 1); i++){
+    const [ax, ay] = toScreen(L.pts[i][0], L.pts[i][1]), [bx, by] = toScreen(L.pts[(i + 1) % n][0], L.pts[(i + 1) % n][1]);
+    const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / Math.max(1e-6, dx * dx + dy * dy)));
+    const d = Math.hypot(ax + t * dx - x, ay + t * dy - y);
+    if (d <= 7 && (!best || d < best[1])) best = [i, d];
+  }
+  return best;
+}
+function lsShapeAt(x, y){
+  // (the shape under the mouse: its line, a stamp's ring, a spring's dot; the topmost first)
+  const P = LM.plan; if (!P) return -1;
+  for (let i = P.layers.length - 1; i >= 0; i--){
+    const L = P.layers[i], [sx, sy] = toScreen(L.pts[0][0], L.pts[0][1]);
+    if (L.kind === 'stamp'){ if (Math.abs(Math.hypot(sx - x, sy - y) - (L.p.radius || 8192) * W.cam.z) <= 7) return i; continue; }
+    if (LS_KINDS[L.kind].point){ if (Math.hypot(sx - x, sy - y) <= 8) return i; continue; }
+    if (lsSegHit(L, x, y) || lsPointAt(L, x, y) >= 0) return i;
+  }
+  return -1;
+}
+// (a point under the mouse: the nearest within LS_GRAB pixels, not the first in the list, so of two points lying
+// together the one nearer the mouse is taken; PIN2 found the points hard to get hold of)
+const LS_GRAB = 11;
+function lsPointAt(L, x, y, skip){
+  let best = -1, bd = LS_GRAB;
+  L.pts.forEach((p, i) => { if (i === skip) return; const [sx, sy] = toScreen(p[0], p[1]), d = Math.hypot(sx - x, sy - y); if (d <= bd){ bd = d; best = i; } });
+  return best;
+}
+// (the picked shape's frame: a box round it in screen pixels, with corners that size it, a knob over it that turns it and a
+// cross in its middle that moves it, all round its middle. PIN2 wanted to move, turn and resize a whole shape)
+function lsFrame(L){
+  if (!L || L.kind === 'stamp' || LS_KINDS[L.kind].point || L.pts.length < 2) return null;
+  const s = L.pts.map(p => toScreen(p[0], p[1]));
+  const x0 = Math.min(...s.map(p => p[0])) - 14, x1 = Math.max(...s.map(p => p[0])) + 14, y0 = Math.min(...s.map(p => p[1])) - 14, y1 = Math.max(...s.map(p => p[1])) + 14;
+  const c = [L.pts.reduce((a, p) => a + p[0], 0) / L.pts.length, L.pts.reduce((a, p) => a + p[1], 0) / L.pts.length];
+  return {x0, x1, y0, y1, c, cs: toScreen(c[0], c[1]), knob: [(x0 + x1) / 2, y0 - 26], corners: [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]};
+}
+function lsFrameAt(L, x, y){
+  const F = lsFrame(L); if (!F) return null;
+  if (Math.hypot(F.knob[0] - x, F.knob[1] - y) <= 9) return {how: 'turn', F};
+  if (F.corners.some(([cx, cy]) => Math.abs(cx - x) <= 7 && Math.abs(cy - y) <= 7)) return {how: 'size', F};
+  if (Math.hypot(F.cs[0] - x, F.cs[1] - y) <= 10) return {how: 'move', F};
+  return null;
+}
+const lsNeed = L => L.kind === 'stamp' || LS_KINDS[L.kind].point ? 1 : LS_KINDS[L.kind].closed ? 3 : 2;
+function lsTakePoint(L, i){
+  const need = lsNeed(L);
+  if (L.pts.length <= need){ toast(`A ${LS_KINDS[L.kind].label.toLowerCase()} needs ${need} point${need === 1 ? '' : 's'} at least.`, true); return false; }
+  L.pts.splice(i, 1); return true;
+}
 function lmHandleDown(e){
   const P = LM.plan, L = P && P.layers[LM.sel];
-  if (!LM.show || !L || W.mode) return false;
-  for (let i = 0; i < L.pts.length; i++){
-    const [sx, sy] = toScreen(L.pts[i][0], L.pts[i][1]);
-    if (Math.hypot(sx - e.offsetX, sy - e.offsetY) <= 8){ LM.hdrag = {L, i}; return true; }
+  if (!LM.show || !P || W.mode) return false;
+  if (L){
+    const fr = lsFrameAt(L, e.offsetX, e.offsetY);
+    if (fr){
+      const [wx, wy] = toWorld(e.offsetX, e.offsetY);
+      LM.hdrag = {L, xf: fr.how, c: fr.F.c, from: [wx, wy], orig: L.pts.map(p => p.slice())}; return true;
+    }
+    const i = lsPointAt(L, e.offsetX, e.offsetY);
+    if (i >= 0){
+      // (Ctrl+click or a double-click takes a point out)
+      if (e.ctrlKey || e.detail >= 2){ if (lsTakePoint(L, i)){ LM.hover = -1; lsChanged(true); } return true; }
+      LM.hdrag = {L, i}; return true;
+    }
+    const seg = lsSegHit(L, e.offsetX, e.offsetY);
+    if (seg){
+      const [wx, wy] = toWorld(e.offsetX, e.offsetY);
+      if (e.shiftKey){ LM.hdrag = {L, move: true, from: [wx, wy], orig: L.pts.map(p => p.slice())}; return true; }
+      L.pts.splice(seg[0] + 1, 0, [Math.round(wx), Math.round(wy)]);
+      LM.hdrag = {L, i: seg[0] + 1, moved: true}; drawMap(); return true;
+    }
   }
+  const hit = lsShapeAt(e.offsetX, e.offsetY);
+  if (hit >= 0 && hit !== LM.sel){ LM.sel = hit; renderWside(); drawMap(); return true; }
   return false;
 }
 function lmHandleMove(e){
-  const H = LM.hdrag; if (!H) return false;
-  const [wx, wy] = toWorld(e.offsetX, e.offsetY); H.L.pts[H.i] = [Math.round(wx), Math.round(wy)]; H.moved = true; drawMap();
+  const H = LM.hdrag;
+  if (!H){
+    // (what the mouse is over on the picked shape, shown by the pointer and a ring: a point to drag, its line to
+    // add one)
+    const P = LM.plan, L = LM.show && P && !W.mode && P.layers[LM.sel];
+    const fr = L ? lsFrameAt(L, e.offsetX, e.offsetY) : null;
+    const pt = L && !fr ? lsPointAt(L, e.offsetX, e.offsetY) : -1, seg = L && !fr && pt < 0 ? lsSegHit(L, e.offsetX, e.offsetY) : null;
+    const cur = fr ? {turn: 'alias', size: 'nwse-resize', move: 'move'}[fr.how] : pt >= 0 ? 'grab' : seg ? (e.shiftKey ? 'move' : 'copy') : '';
+    if (e.target && e.target.style && e.target.style.cursor !== cur && (cur || LM.hoverCur)) e.target.style.cursor = cur;
+    LM.hoverCur = cur;
+    if (pt !== (LM.hover ?? -1)){ LM.hover = pt; drawMap(); }
+    return false;
+  }
+  const [wx, wy] = toWorld(e.offsetX, e.offsetY);
+  if (H.xf){
+    const [cx, cy] = H.c, [fx, fy] = H.from;
+    if (H.xf === 'move') H.L.pts = H.orig.map(p => [Math.round(p[0] + wx - fx), Math.round(p[1] + wy - fy)]);
+    else if (H.xf === 'size'){
+      const k = Math.max(0.05, Math.hypot(wx - cx, wy - cy) / Math.max(1, Math.hypot(fx - cx, fy - cy)));
+      H.L.pts = H.orig.map(p => [Math.round(cx + (p[0] - cx) * k), Math.round(cy + (p[1] - cy) * k)]);
+    } else {
+      // (Shift: in 15° steps)
+      let a = Math.atan2(wy - cy, wx - cx) - Math.atan2(fy - cy, fx - cx);
+      if (e.shiftKey) a = Math.round(a / (Math.PI / 12)) * Math.PI / 12;
+      const c = Math.cos(a), s = Math.sin(a);
+      H.L.pts = H.orig.map(p => [Math.round(cx + (p[0] - cx) * c - (p[1] - cy) * s), Math.round(cy + (p[0] - cx) * s + (p[1] - cy) * c)]);
+    }
+    if (e.target && e.target.style) e.target.style.cursor = 'grabbing';
+    H.moved = true; drawMap(); return true;
+  }
+  if (H.move){
+    const dx = wx - H.from[0], dy = wy - H.from[1];
+    H.L.pts = H.orig.map(p => [Math.round(p[0] + dx), Math.round(p[1] + dy)]);
+  } else {
+    H.L.pts[H.i] = [Math.round(wx), Math.round(wy)];
+    // (dropped on another point of the shape it joins it: PIN2 wanted points merged back by dragging one onto
+    // its neighbour)
+    H.onto = lsPointAt(H.L, e.offsetX, e.offsetY, H.i);
+  }
+  if (e.target && e.target.style) e.target.style.cursor = 'grabbing';
+  H.moved = true; drawMap();
   return true;
 }
-function lmHandleUp(){ const H = LM.hdrag; LM.hdrag = null; if (H && H.moved) lsChanged(); }
+function lmHandleUp(){
+  const H = LM.hdrag; LM.hdrag = null;
+  if (H && H.onto >= 0 && !H.move){
+    if (lsTakePoint(H.L, H.i)) toast('Points joined.');
+    else H.L.pts[H.i] = H.L.pts[H.onto].slice();
+  }
+  if (H && H.moved) lsChanged(true);
+}
+
+// ----- undo and redo for the plan's shapes and settings (the plan is kept outside the mod's Undo): the plan as it
+// stood, saved a moment after each change settles, so a slider's drag is one step
+LM.hist = []; LM.fut = [];
+function lsHistNote(){
+  clearTimeout(LM.histT);
+  LM.histT = setTimeout(() => {
+    const s = JSON.stringify(LM.plan);
+    if (LM.histCur == null){ LM.histCur = s; return; }
+    if (s === LM.histCur) return;
+    LM.hist.push(LM.histCur); if (LM.hist.length > 60) LM.hist.shift();
+    LM.histCur = s; LM.fut = [];
+    lsHistButtons();
+  }, 600);
+}
+function lsHistGo(back){
+  clearTimeout(LM.histT);
+  const now = JSON.stringify(LM.plan);
+  if (back && LM.histCur != null && now !== LM.histCur){
+    // (a change not settled yet, made just now: that is the step ↶ takes back, not the one before it)
+    LM.fut = [now]; LM.plan = JSON.parse(LM.histCur);
+  } else {
+    const from = back ? LM.hist : LM.fut, to = back ? LM.fut : LM.hist;
+    if (!from.length) return;
+    to.push(now);
+    LM.plan = JSON.parse(from.pop());
+  }
+  LM.histCur = JSON.stringify(LM.plan);
+  if (LM.sel != null && LM.sel >= LM.plan.layers.length) LM.sel = null;
+  LM.histSkip = true; lsChanged(true); LM.histSkip = false;
+}
+// Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) on the shapes while the Land panel shows them and a shape edit was the last thing
+// done; after Shape them (or any change to the mod since) they are the mod's Undo as everywhere (PIN2: "Control Z
+// doesn't work with the terrain layer tool")
+function lsKey(e){
+  const ctrl = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase();
+  if (!ctrl || (k !== 'z' && k !== 'y') || cfTyping(e) || document.querySelector('.modal-bg')) return false;
+  if (!LM.plan || !(typeof PNL !== 'undefined' && PNL.isShown && PNL.isShown('world', 'land'))) return false;
+  if (!(LM.editAt && LM.editAt > (LM.modAt || 0))) return false;
+  const back = k === 'z' && !e.shiftKey;
+  if (back ? !(LM.hist.length || (LM.histCur != null && JSON.stringify(LM.plan) !== LM.histCur)) : !LM.fut.length) return false;
+  e.preventDefault(); e.stopPropagation();
+  lsHistGo(back); LM.editAt = Date.now();
+  toast(back ? 'Shapes: undone' : 'Shapes: redone');
+  return true;
+}
+function lsHistButtons(){
+  const u = $('#ls-undo'), r = $('#ls-redo');
+  if (u) u.disabled = !LM.hist.length;
+  if (r) r.disabled = !LM.fut.length;
+}
 
 async function lsApply(btn){
   if (!await needProject()) return;
   btn.disabled = true; btn.textContent = `Shaping ${LM.data.marks.length} cell${LM.data.marks.length === 1 ? '' : 's'}…`;
+  await lmKeepBefore('shaping');
   try {
     const r = await post('/api/land/plan/apply', {cells: LM.data.marks, plan: LM.plan});
     toast(`Shaped ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.new ? ` (${r.new} new)` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed the ground` : ''}${r.shaded && r.shaded.length ? '; shaded' : ''}${r.rocks ? `; ${r.rocks} rocks set` : ''}${r.assigned ? `; ${r.assigned} put in the region` : ''}. Changes to the ground show in game after a restart.`);
@@ -720,10 +1142,11 @@ async function lsApply(btn){
     }
     LM.prev = null; LM.prevData = null;
     W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload();
-    await afterChange(); await lmLoad(true);
+    await afterChange(); await lmLoad(true, true);
     await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL));
     LM.prevOn = false;                                 // (the land is shaped now: the map shows it as it is)
-    drawMap(); renderWside();
+    LM.shapedOnce = true;
+    lmFlowSoon(); drawMap(); renderWside();
   } catch (err){ const n = $('#ls-note'); if (n) n.textContent = err.message; btn.disabled = false; btn.textContent = 'Shape the marked cells'; }
 }
 async function lmRaise(btn){
@@ -734,8 +1157,58 @@ async function lmRaise(btn){
     const r = await post('/api/land/raise', {cells, height: LM.height, coast: LM.coast, rough: LM.rough, paint: LM.paint});
     toast(`Raised ${r.cells} cell${r.cells === 1 ? '' : 's'} into land${r.new ? ` (${r.new} new)` : ''}${r.painted_as.length ? ', textured like the ' + r.painted_as.map(s => s.replace(/ region$/, '')).join(' and ') : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed it` : ''}. Changes to the ground show in game after a restart.`);
     W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload();
-    await afterChange(); await lmLoad(true);
+    await afterChange(); await lmLoad(true, true);
     await loadAround(Math.floor(W.cam.x / CELL), Math.floor(W.cam.y / CELL));
     drawMap(); renderWside();
   } catch (err){ toast(err.message, true); btn.disabled = false; btn.textContent = 'Raise the marked cells into land'; }
+}
+
+// ----- Dress: the marked cells' land dressed as the game dresses the region's (landdecor.dress_all): rocks and
+// cliffs turned to their slopes, and the region's own squares of trees, plants, grass and logs
+async function lmDressAsk(){
+  if (!await needProject()) return;
+  const cells = (LM.data && LM.data.marks || []).slice(); if (!cells.length) return;
+  let looks = [];
+  try { looks = (await api('/api/land/looks')).looks; } catch (e){}
+  // (a picked shape with an outline: dress only inside it)
+  const L = LM.plan && LM.sel != null ? LM.plan.layers[LM.sel] : null;
+  const ring = L && LS_KINDS[L.kind] && LS_KINDS[L.kind].closed && L.pts && L.pts.length >= 3 ? L.pts : null;
+  const D = LM.dress = LM.dress || {rocks: true, growth: true, amt: 1, like: ''};
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(440px,92vw)"><h3 style="margin-top:0">🪨 Dress ${cells.length} cell${cells.length === 1 ? '' : 's'}</h3>
+    <div class="msg" style="display:flex;gap:14px">
+      <label title="The region's rocks and cliffs, as thick as the game sets them on such ground, turned to their slopes"><input type="checkbox" id="lmd-rocks" ${D.rocks ? 'checked' : ''}> Rocks & cliffs</label>
+      <label title="Trees, plants, grass and logs: the region's own squares of land, laid where the ground is like theirs"><input type="checkbox" id="lmd-grow" ${D.growth ? 'checked' : ''}> Trees & plants</label></div>
+    <label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="Whose look: the land nearest (each cell's own region, or for open sea the nearest region with land), or one region's for all">Like
+      <select id="lmd-like" style="flex:1"><option value="">The land nearest</option>${looks.map(o => `<option value="${esc(o.region)}">${esc(o.name)}</option>`).join('')}</select></label>
+    <label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="1: as thickly as the game dresses such land">Amount
+      <input type="range" id="lmd-amt" min="0.25" max="2" step="0.25" value="${D.amt}" style="flex:1"><span id="lmd-amtv">${D.amt}</span></label>
+    ${ring ? `<label class="msg" style="display:block;margin-top:8px" title="Only the land inside the picked shape's outline, in the marked cells"><input type="checkbox" id="lmd-ring" checked> Only inside ${esc(L.name || LS_KINDS[L.kind].label)}</label>` : ''}
+    <div class="msg" style="font-size:11.5px;margin-top:6px">The first time with a region takes a few seconds.</div>
+    <div class="foot"><button class="btn" id="lmd-no">Cancel</button><button class="btn primary" id="lmd-ok">Dress</button></div></div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  bg.querySelector('#lmd-no').onclick = close;
+  bg.onclick = e => { if (e.target === bg) close(); };
+  const amt = bg.querySelector('#lmd-amt');
+  amt.oninput = () => { bg.querySelector('#lmd-amtv').textContent = amt.value; };
+  bg.querySelector('#lmd-like').value = D.like || '';
+  bg.querySelector('#lmd-ok').onclick = async () => {
+    const ok = bg.querySelector('#lmd-ok');
+    D.rocks = bg.querySelector('#lmd-rocks').checked; D.growth = bg.querySelector('#lmd-grow').checked;
+    D.like = bg.querySelector('#lmd-like').value; D.amt = +amt.value;
+    if (!D.rocks && !D.growth) return toast('Pick rocks, trees and plants, or both.', true);
+    const inRing = ring && bg.querySelector('#lmd-ring') && bg.querySelector('#lmd-ring').checked;
+    ok.disabled = true; ok.innerHTML = '<span class="spin"></span>Dressing…';
+    try {
+      const r = await post('/api/land/dress', {cells, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: inRing ? ring : null});
+      close();
+      const what = [r.growth ? `${r.growth} trees and plants` : '', r.rocks ? `${r.rocks} rocks` : ''].filter(Boolean).join(' and ');
+      toast(what ? `Set ${what} in ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.looks.length ? ', like ' + r.looks.join(', ') : ''}. Undo takes them back.`
+                 : 'Nothing to set: the land is flat, bare in that region, or under water there.');
+      await afterChange();
+      for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
+      drawMap(); renderWside(); if (typeof v3Refresh === 'function' && V3.on) v3Refresh();
+    } catch (err){ toast(err.message, true); ok.disabled = false; ok.textContent = 'Dress'; }
+  };
 }

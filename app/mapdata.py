@@ -41,9 +41,28 @@ def cell_info(db, cell_key):
             'like_exterior': interior and bool(flags & 0x80)}
 
 
+def _land_only(db, cell_key):
+    """An outdoor cell with land but no cell record (a land-only mod's sea floor, maybe shaped into an island), as
+    cell_info has it: unnamed, in its land's region. Putting something there or naming it makes the cell
+    (editing._cell). None where there is no land either."""
+    m = re.match(r'#(-?\d+),(-?\d+)$', cell_key or '')
+    if not m:
+        return None
+    import landrange
+    import landscape
+    gx, gy = int(m.group(1)), int(m.group(2))
+    if landscape._winner(db, gx, gy) is None:
+        return None
+    region = landrange._region_of(db, gx, gy)
+    ri = db.resolve_id(region) if region else None
+    return {'i': None, 'key': cell_key, 'id': 'Wilderness (%d, %d)' % (gx, gy), 'name': '', 'interior': False, 'gx': gx, 'gy': gy,
+            'region': db.recs[ri][1] if ri is not None else region, 'has_water': True, 'own': False, 'like_exterior': False,
+            'no_cell': True}
+
+
 def cellmap(db, cell_key, original=False):
     """A place's objects for the map and the 3D view (original: without the mod being made)."""
-    info = cell_info(db, cell_key)
+    info = cell_info(db, cell_key) or _land_only(db, cell_key)
     if not info:
         return {'exists': False, 'key': cell_key, 'refs': []}
     refs, _hdr = db.cell_refs(cell_key, without_project=original)

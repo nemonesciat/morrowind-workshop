@@ -8,6 +8,7 @@
 |---|---|
 | Nudge a hill, dig a hollow, level a spot for a house, paint a path | **The Ground brush** (in 3D) |
 | Scatter grass, plants, rocks or trees | **The Ground brush**, Scatter |
+| Rocks and cliffs over land that's there (an island you raised, ground you sculpted) | **🪨 Dress…** (the Land panel, on the marked cells) |
 | Make an island, a mountain range, a river valley or cliffs over many cells | **Land shaping** (the Land panel) |
 | Work on the land in World Machine, Gaea, GIMP or Krita | **Height maps** (the Land panel) |
 
@@ -24,8 +25,8 @@ on the ground. A plain click does nothing, so you can still select things.
 | ▲ Raise / ▼ Lower | Raises or lowers the ground under the brush. Hold **Ctrl** for the opposite. |
 | ≈ Smooth | Evens out bumps. |
 | ▬ Flatten | Levels the ground to the height where the stroke started. |
-| 🖌 Paint | Paints a ground texture. Pick one from the list, or **Shift+click** the ground to take the one there. |
-| 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **Shift+click** takes the colour there. |
+| 🖌 Paint | Paints a ground texture. Pick one from the list, or take the one on the ground: **💧 Pick**, then click it (or **Shift+click** it any time). **✨ Auto** paints each patch with the texture the region's land has at its slope, height and shore instead (roads and paving stay). |
+| 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **💧 Pick** (or **Shift+click**) takes the colour there. |
 | 🌿 Scatter | Scatters the region's own grass, plants, rocks or trees. **Ctrl** clears them away. |
 
 - **Size** is the brush's reach in game units (a cell is 8,192 across). **Strength** is how much each pass
@@ -77,9 +78,13 @@ Tick **Show the land map** to see what each cell is:
 | Sea bed | Under the sea. |
 | Wild / Light | Land with little or some building on it. |
 | Settled | A town or a place with many buildings. |
-| Another mod's (hatched) | Land from another mod (Project Tamriel's, say). Your mod overrides it. |
+| Another mod's (hatched) | Land from another mod. Your mod overrides it. |
 | Yours (dashed) | Land your mod has already changed. |
 | Room to grow (dashed blue) | No land in any plugin yet, next to land. |
+
+**Show where water runs** draws the way the rain would run over the marked cells, in blue: thicker where more
+ground drains through. With shapes, it follows the plan's preview; without, the land as it is. Brighter lines are
+where **Stream beds** (Dressing) would texture the ground.
 
 Press **⛰ Mark cells…**, then drag over cells to mark them. **Ctrl**+drag unmarks. Settled cells are left out
 unless you hold **Shift**, so a town isn't reshaped by accident. **Done** (or Esc) stops marking.
@@ -93,21 +98,42 @@ reaches (Shift+click: towns too).
 
 ## Step 2: draw shapes
 
-Press a shape's button, then draw on the map. Esc cancels.
+Press a shape's button, then draw on the map. **Backspace** takes the last point back; Esc cancels. With no
+cells marked yet, your first shape marks the cells it reaches (towns left out).
+
+Or **Start from** a ready plan, laid out over the marked cells (or the 4 × 4 cells round the view, which it then
+marks), in place of the shapes there: **Island**, **Mountain range**, **River valley**, **Volcanic isle** or
+**Lake in the hills**. Change any of its shapes and sliders from there; ↶ takes it back.
 
 | Shape | How to draw | What it makes |
 |---|---|---|
-| 🏝 Coast | Click along the shore all the way round; double-click to close. | Your outline becomes the waterline: inside rises out of the sea, a strip just outside goes under water. **Sea outside** sinks all other land in the marked cells too. |
+| 🏝 Coast | Click along the shore all the way round; click the first point to close. | Your outline becomes the waterline: inside rises out of the sea, a strip just outside goes under water. **Sea outside** sinks all other land in the marked cells too. |
 | ⛰ Ridge | Click along the crest; double-click to finish. | A range: **Crest** height, **Width** to its foot, **Sharp** (rounded to knife-edge), **Spurs**, **Crags**. |
 | 〰 River | Click from the source down to the sea; double-click. | A bed under the water, banks rising to the ground. The game has one water level, so rivers are dug down to it. **A canyon** makes steep walls. |
 | ⇣ Spring | One click where a river rises. | The river finds its own way down to the water: a dry ravine up high, then a winding river below **Water from**. |
 | ⌄ Valley | Click along the floor; double-click. | A dry trough: **Depth**, **Width**, **U or V**. |
-| ▭ Plateau | Click round the top; double-click to close. | A level **Top** with a **Cliff** round it, in **Terraces** if you like. |
-| ◍ Lake | Click round the shore; double-click to close. | A basin under the water line. |
+| ▭ Plateau | Click round the top; click the first point to close. | A level **Top** with a **Cliff** round it, in **Terraces** if you like. |
+| ◍ Lake | Click round the shore; click the first point to close. | A basin under the water line. |
 | ◉ Stamp | One click. | A volcano, cone, caldera, crater, dome or mesa, or a piece of **the game's own land** (copy up to 6 × 6 cells). |
 
-- The shapes are listed in the panel. Click one to pick it and change its sliders; drag its points on the map
-  to move them. The tick turns a shape off without removing it. ✕ removes it, **Clear shapes** removes all.
+- The shapes are listed in the panel. Click one in the list, or its line on the map, to pick it and change its
+  sliders. The tick turns a shape off without removing it; ⧉ duplicates it; ✕ removes it, **Clear shapes**
+  removes all.
+- **Editing a picked shape on the map:**
+
+  | To | Do |
+  |---|---|
+  | Move a point | Drag it. |
+  | Add a point | Click the shape's line where it goes (and drag it). |
+  | Remove a point | **Ctrl**+click or double-click it. |
+  | Join two points | Drag one onto the other (a ring shows the one it will join). |
+  | Move the whole shape | Drag the cross in its middle, or **Shift**+drag its line. |
+  | Resize it | Drag a corner of the box round it. |
+  | Turn it | Drag the round knob over the box (**Shift**: 15° steps). |
+  | Undo a shape edit | **Ctrl+Z** (Ctrl+Y redoes) while the Land panel is open and a shape edit was your last change. |
+
+- **↶ ↷** (by Shapes) undo and redo changes to the shapes and their settings, Clear shapes included. They are
+  the plan's own; the Undo at the top undoes changes to your mod, such as Shape them.
 - **Order matters**: each shape acts on what the ones above it made (↑ ↓ to reorder). Rivers, lakes and
   springs always go last, so they cut through what the others raised.
 - **Only in** (on a shape) limits it to one region of the marked cells, fading out at the border. **Like**
@@ -145,7 +171,19 @@ ground instead.
 | Put the cells in this region | Its weather, sounds and creatures go with the land. |
 | Textures | How many textures a cell: as many as the region's cells have, or fewer or more. |
 | Tint, seams, hollows, Shading | The region's own colouring, laid on as the game does. |
-| Rocks | The region's rocks on the new slopes and cliffs, as thickly as the game sets them on such ground. |
+| Rocks | The region's rocks on the new slopes and cliffs, as thickly as the game sets them on such ground, at the foot, on the face and at the crest, turned to the slope as the game turns them. |
+| Stream beds | Where much water runs, the region's water's-edge textures (mud, wet ground), so streams show. Off by default: the Bitter Coast's own land does this, most regions' don't. Also in Texture only. |
+
+### Texture only
+
+**🎨 Texture only** textures the marked cells without reshaping them: each 512-unit patch gets the texture the
+region's own land has at that slope, height and distance from the water, with the region's tints and shading. It's
+under Dressing when you have shapes, and in **Texture the land** when you don't.
+
+- **Like** takes the textures of another region; **Textures** sets how many a cell.
+- Heights never change, and no land is made. Roads, paths and paving keep their textures, and with **Keep the
+  ground under buildings** (Protection) so does the ground under what's built.
+- One Undo takes it back.
 
 At the bottom: **Roughness**, **Edge fade** (how far in from the marked cells' edge the shapes fade in), **Only
 in** (the whole plan in one region), **🎲 Re-roll** (the same shapes with other rolling ground and shores).
@@ -156,7 +194,8 @@ in** (the whole plan in one region), **🎲 Re-roll** (the same shapes with othe
 one Undo step. Things standing on the ground follow it, and the note after it compares the new land's
 slopes and roughness with the region's own.
 
-The shapes stay after shaping, so you can change them and shape again.
+The shapes stay after shaping, so you can change them and shape again. **◐ Before** (under Show where water
+runs) shows the land as it was before the last Shape them or Texture only for as long as you hold it.
 
 ## Height maps
 
@@ -183,6 +222,25 @@ The shapes stay after shaping, so you can change them and shape again.
 Draw **Plateaus** with a short Cliff, or a Ridge, and turn on **Rock layers** with a Layer height of 512 or
 more and some **Tilt**.
 
+## Dressing land: rocks, trees and plants
+
+**🪨 Dress…** (Land panel) dresses the marked cells' land as it is now, the way the game dresses its region's:
+
+- **Rocks & cliffs:** as thickly as the game sets them on ground that steep, at the foot, on the face and at the
+  crest, each turned to its own slope as the game turned that rock, so faces look out over the drop and crests hang
+  over it.
+- **Trees & plants:** trees, plants, grass and logs from the region's own land. Its wild land is cut into squares
+  (1024 across), each kept whole with what grows on it, and yours is filled with squares of the same kind of ground
+  (as steep, as high, by the water or not). Groves, lone trees and undergrowth come out as the game lays them.
+- **Like:** *The land nearest* (each cell's own region; for open sea, the nearest region with land), or one region's
+  look for all. Where a region has no ground like yours, the nearest regions with land fill in.
+- **Amount:** 1 is the game's own thickness.
+- **Only part of a cell:** draw a **▢ Dress area** with the shapes (it changes no ground), pick it, then Dress…:
+  only the land inside is dressed. A region for each part: mark or draw it, Dress with that region, then the next.
+- Not where something stands already, and not under water. One Undo takes it all back.
+
+To place rocks, cliffs, trees and plants by hand, open the **🎨 Style palette** and pick a region under **Regions**.
+
 ## Good to know
 
 - **The game shows changes to the ground after a restart.**
@@ -190,3 +248,7 @@ more and some **Tilt**.
   panel warns you. **Play here** always loads your mod last.
 - The game has one water level (0). Rivers and lakes are dug down to it.
 - Large plans take a while at **Shape them**: about 10 seconds for 16 cells with every pass on.
+- Some mods add sea floor without cells. Land shaped there gets its cell, in the land's region, when you first put
+  something on it, paint its region or name it.
+- **Naming a cell:** **name** beside an outdoor cell's place in the Place panel. The game shows it on the world map,
+  as the map window's title while you're in the cell, and as your save's place. Leave it empty for no name, as most of the game's outdoor cells have.

@@ -956,7 +956,7 @@ def _rule_issues(db, info, refs, cell_key=None):
         if theme == 'house' and len(loose) > 6:
             x = loose[6]
             r = room_of(x) or {'name': ''}
-            out.append(_issue('books', x, '%d common books about the home outside its study (Project Tamriel gives a home one to three)' % len(loose), r, []))
+            out.append(_issue('books', x, '%d common books about the home outside its study (a home usually has one to three)' % len(loose), r, []))
     # (containers proper: crates, barrels, sacks, chests, urns and baskets; a plant is a container to the
     # game but travels with the garden, not the province's crates)
     conts = [x for x in refs if x['type'] == 'CONT' and x['_box'] and not shelfsurvey.GARDEN.search(x['id'].lower()) and 'flora' not in x['id'].lower()

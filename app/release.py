@@ -593,7 +593,7 @@ def checks(db):
     st_ = settings_faults(db)
     if st_['sun']:
         out.append({'id': 'sunlight', 'sev': 'warning', 'title': '%d place%s with bright sunlight' % (len(st_['sun']), '' if len(st_['sun']) == 1 else 's'),
-                    'detail': 'Interiors keep their sunlight low (the game\'s stay under 80 of 255, Project Tamriel\'s under 25) and light the room with lamps and candles: many dim ones rather than a few bright. Set it on the Place panel under Lighting.',
+                    'detail': 'Interiors keep their sunlight low (the game\'s stay under 80 of 255, careful modders keep it under 25) and light the room with lamps and candles: many dim ones rather than a few bright. Set it on the Place panel under Lighting.',
                     'items': [{'label': '%s (sunlight %d)' % (n, v), 'cell': ck} for ck, n, v in st_['sun'][:30]]})
     if st_['sleep']:
         out.append({'id': 'sleep', 'sev': 'warning', 'title': '%d home%s where the player may sleep' % (len(st_['sleep']), '' if len(st_['sleep']) == 1 else 's'),
@@ -624,8 +624,8 @@ def checks(db):
         if bad:
             out.append({'id': 'fits', 'sev': 'warning', 'title': '%d interior%s stick%s out of %s building' % (
                 len(bad), '' if len(bad) == 1 else 's', 's' if len(bad) == 1 else '', 'its' if len(bad) == 1 else 'their'),
-                'detail': 'Project Tamriel\'s reviewers lay an interior over the building outside its door and look for anything '
-                          'that sticks out; an interior should fit as well as the game\'s own interiors fit theirs.',
+                'detail': 'Laid over the building outside its door, an interior shouldn\'t stick out of it; it should fit as well '
+                          'as the game\'s own interiors fit theirs.',
                 'items': [{'label': '%s: %s' % (n, t), 'cell': ck} for ck, n, t in bad[:30]]})
     except Exception as e:
         print('fits check:', e)

@@ -23,7 +23,7 @@ RISE = 32               # a floor this much over the way in's is above it (cave 
 CAVE_RISE = 64
 # how deep a made place may go below its way in, by kind: the game's own deepest tenth (the drop from the
 # front door to the lowest floor, 51-123 places a kind, 2026-10-26)
-DEEP = {'dwemer': 1560, 'cave': 1792, 'tomb': 1024, 'daedric': 2560}
+DEEP = {'dwemer': 1560, 'cave': 1792, 'tomb': 1024, 'daedric': 2560, 'tower': 1024}
 HEADROOM = 100          # a join a player walks through: this much over its floor (the player is about 90 tall)
 WIDTH = 64              # and this wide at waist height
 SLACK = 40              # boxes may overlap this much at their trims (dwemer.SLACK)
@@ -42,9 +42,9 @@ def _dir_of(vx, vy):
 # few of each kind, 2026-10-26 (scratch climbs.py on j_game.py's rows): Dwemer 1 of 65 (Nchazdrumn, Halls of
 # Rest), caves 16 of 370, tombs 12 of 123, Daedric 1 of 71 (Ald Balaal). How high they go: the highest of them.
 # (the user: "some dungeons are going to be ascents rather than descents ... climbing up a Dwemer tower")
-CLIMB = {'dwemer': 1152, 'cave': 1152, 'tomb': 1024, 'daedric': 768}
+CLIMB = {'dwemer': 1152, 'cave': 1152, 'tomb': 1024, 'daedric': 768, 'tower': 1536}     # (towers: Ald Virak's, Nim's 1536)
 CLIMBERS = {'dwemer': (1, 65), 'cave_mold': (4, 121), 'cave_mud': (7, 101), 'cave_py': (1, 97), 'cave_lava': (4, 51),
-            'tomb': (12, 123), 'daedric': (1, 71)}
+            'tomb': (12, 123), 'daedric': (1, 71), 'tower': (51, 64)}       # (towers: the pit's floor over the front door's)
 
 
 def deep_cap(K):
@@ -225,7 +225,9 @@ for _k in range(16):
     _a = _k * math.pi / 8
     for _el in (-0.3, 0.0, 0.35):
         DIRS.append((math.cos(_a) * math.cos(_el), math.sin(_a) * math.cos(_el), math.sin(_el)))
-REACH = 4000            # a ray that meets nothing this far out has seen the void
+# a ray that meets nothing this far out has seen the void (4000 before: a keep's straight corridor runs further, and
+# every join along one of 6000 counted as open onto the void, 2026-10-29)
+REACH = 20000
 
 
 def scene(db, lay):
@@ -238,6 +240,13 @@ def scene(db, lay):
         mo = db.recs[ri][5] if ri is not None else None
         if mo:
             sc.add_model(seethrough.model_tris(db, mo), p['p'], 1.0)
+    # (and the frame a keep's short passage has in its middle, as the place is written: dwemer.build)
+    K = lay.get('K') or {}
+    if K.get('framed') and db.resolve_id(K['jamb']) is not None:
+        jt = seethrough.model_tris(db, db.recs[db.resolve_id(K['jamb'])][5])
+        for p in lay['pieces']:
+            if p.get('id') in K['framed'] and not p.get('gone'):
+                sc.add_model(jt, (p['p'][0], p['p'][1], p['p'][2], 0, 0, p['p'][5]), 1.0)
     # (the front door closes the way in: a wall across it, as the door and its frame stand there)
     e = lay.get('entrance') or {}
     if 'side' in e:
@@ -267,6 +276,7 @@ _BASE = {}
 def base(kind):
     """The game's own places of the kind (dgbase.json): {'pairs': {'a|b': [spots, spots seeing the void, joins,
     joins too tight]}, 'ids': {piece: [spots a step in from its joins, spots seeing the void]}}."""
+    kind = {'tower': 'tomb'}.get(kind, kind)          # (a Velothi tower is the tombs' small pieces: their figures)
     if not _BASE:
         import json, os
         try:
@@ -366,6 +376,11 @@ def seams_check(db, lay, sc=None, leaks=True, kind=None):
         if _leaky_piece(B, ida) or _leaky_piece(B, idb):
             continue
         for off in (-48, 48):
+            # (not behind a piece too thin to stand in: a keep closes a corridor's end with a wall 48 thick, and the
+            # eye a step past the join stood behind it in the void)
+            bx = P[b if off > 0 else a].get('box')
+            if bx and (bx[3] - bx[0] if dx else bx[4] - bx[1]) < 100:
+                continue
             g2 = _probe(sc, sx + dx * off, sy + dy * off, sz)
             if g2 is None:
                 continue

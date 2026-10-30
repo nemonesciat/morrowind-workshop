@@ -755,18 +755,27 @@ def candidates(db, cell_key, ref, side, limit=12):
         out['candidates'].append({'id': item['id'], 'p': item['p'], 'n': n, 'share': round(share, 2), 'blocked': blocked,
                                   'label': joints.nice(item['id'], prefix), 'turn': rel[4], 'leaves': leaves,
                                   'ghost': [{'id': item['id'], 'p': item['p'], 's': 1.0}]})
-    out['patterns'] = patterns(db, prefix, pieces, A, side, rec, out['candidates'])
+    out['patterns'] = _distinct(patterns(db, prefix, pieces, A, side, rec, out['candidates']))
     return out
 
 
-def _run_ghost(A, rel, n):
-    """n copies of the piece stepping away from A by the relation."""
-    items, cur = [], A
+def _run_ghost(A, rel, n, with_=None):
+    """n copies of the piece stepping away from A by the relation, each in A's frame (a copy turned about
+    turns the next one back, as the game lays its segments alternately turned); with a junction between
+    each two (with_: the junction's relation to the piece before it), the alternating runs of Redoran's
+    hallways."""
+    items = []
+    bid, x, y, z, dq = rel
     for k in range(n):
-        it = adjacency.placed(cur, rel)
+        bx, by = adjacency.to_world(A, x * k, y * k)
+        cur = dict(A, x=bx, y=by, z=A['z'] + z * k, rz=(A['rz'] + math.radians(dq * k)) % (2 * math.pi))
+        if with_:
+            # (the junction keeps A's turn: it stands between the segments the same way each time)
+            j = adjacency.placed(dict(cur, rz=A['rz']), tuple(with_))
+            items.append({'id': j['id'], 'p': j['p'], 's': 1.0})
+        it = adjacency.placed(dict(cur, rz=A['rz']), (bid, x, y, z, 0))
+        it['p'][5] = round((A['rz'] + math.radians(dq * (k + 1))) % (2 * math.pi), 5)
         items.append({'id': it['id'], 'p': it['p'], 's': 1.0})
-        nxt = dict(cur, x=it['p'][0], y=it['p'][1], z=it['p'][2], rz=it['p'][5])
-        cur = nxt
     return items
 
 
@@ -787,6 +796,12 @@ def patterns(db, prefix, pieces, A, side, rec, cands):
         out.append({'kind': 'run', 'id': A['id'], 'label': 'A run of %s' % joints.nice(A['id'], prefix), 'n': n, 'min': 1, 'max': 10,
                     'rel': list(rel), 'ghost': _run_ghost(A, rel, n), 'share': same['share'],
                     'words': ('the game lays runs of %s' % ', '.join(str(k) for k, v in sorted(lengths.items(), key=lambda kv: -kv[1])[:3])) if lengths else ''})
+    elif not same:
+        alt = _alt_pattern(db, prefix, pieces, A, side, rec, cands)
+        if alt:
+            out.append(alt)
+    # a hall centre (Redoran's dome): its whole ring, closed the game's way, and the rings the game stands
+    out.extend(_hall_patterns(db, prefix, pieces, A, rec))
     # a ring: a candidate the game surrounds with the same neighbours again and again
     for c in cands[:6]:
         if c['blocked']:
@@ -795,6 +810,10 @@ def patterns(db, prefix, pieces, A, side, rec, cands):
         if not crec:
             continue
         root = _piece_at(db, c)
+        for h in _hall_patterns(db, prefix, pieces, root, crec, lead=c):
+            out.append(h)
+            if len(out) >= 5:
+                return out
         for g in (crec.get('rings') or [])[:3]:
             members = []
             for ms in g['members']:
@@ -815,21 +834,125 @@ def patterns(db, prefix, pieces, A, side, rec, cands):
     return out
 
 
-def run_ghost(db, cell_key, ref, rel, n):
-    """The run pattern's ghost for a chosen length."""
-    m, pieces, prefix = _pieces(db, cell_key)
-    A = next((x for x in pieces if x['ref'] == ref), None)
-    if not A:
-        raise EditError('That piece is no longer here.')
-    items = _run_ghost(A, tuple(rel), max(1, min(10, int(n))))
-    # (a copy that runs into the house stops the run there)
+def _distinct(pats):
+    """The patterns with repeats left out: the same pieces on the same spots under the same name (a dome
+    offered turned 0 and 180 degrees closes with the same ring)."""
+    out, seen = [], set()
+    for pt in pats:
+        k = (pt['label'], tuple(sorted((g['id'], round(g['p'][0] / 8), round(g['p'][1] / 8), round(g['p'][2] / 8)) for g in pt['ghost'])))
+        if k not in seen:
+            seen.add(k)
+            out.append(pt)
+    return out
+
+
+def _open_both(rec, side):
+    """Whether the game fills both this face of a piece and the one opposite (a segment, a junction): a
+    wall or a cap has one end closed."""
+    opp = {'E': 'W', 'W': 'E', 'N': 'S', 'S': 'N'}.get(side)
+    return bool(opp) and adjacency.join_share(rec, side) >= 0.5 and adjacency.join_share(rec, opp) >= 0.5
+
+
+def _alt_pattern(db, prefix, pieces, A, side, rec, cands):
+    """A run that alternates the piece with a junction (Redoran's hall segment, a 3way or 4way, the
+    segment again), as the game's places chain them from this face: the run pattern with its handle."""
+    alts = (rec or {}).get('alts', {}).get(side) or {}
+    if not alts or not _open_both(rec, side):
+        return None
+    best = None
+    for bs, r in alts.items():
+        brel = adjacency.parse_rel(bs)
+        c = next((c for c in cands if c['id'].lower() == brel[0] and not c['blocked']
+                  and abs(c['p'][0] - adjacency.placed(A, brel)['p'][0]) < 9 and abs(c['p'][1] - adjacency.placed(A, brel)['p'][1]) < 9), None)
+        if not c:
+            continue
+        jrec = adjacency.record(db, prefix, brel[0])
+        # (the junction passes the run through: open on the face back to A and the face beyond)
+        Bp = _piece_at(db, c)
+        back = adjacency.side_of(Bp, A) if Bp else None
+        if not back or not _open_both(jrec, back):
+            continue
+        n = sum(r['lengths'].values())
+        if best is None or n > best[0]:
+            best = (n, brel, r, c)
+    if not best:
+        return None
+    _n, brel, r, c = best
+    lengths = {int(k): v for k, v in r['lengths'].items()}
+    step = r['step']
+    rel = (A['id'], step[0], step[1], step[2], step[3] if len(step) > 3 else 0)
+    # (lengths count the copies of A with A itself: the run lays one pair fewer)
+    n = max(1, min(8, (max(lengths, key=lambda k: (lengths[k], k)) if lengths else 2) - 1))
+    ghost = run_items(db, pieces, A, rel, n, list(brel))
+    if len(ghost) < 2:
+        return None
+    return {'kind': 'run', 'id': A['id'], 'label': '%s and %s in turn' % (joints.nice(A['id'], prefix), joints.nice(brel[0], prefix)),
+            'n': n, 'min': 1, 'max': 10, 'rel': list(rel) + list(brel), 'ghost': ghost, 'share': c['share'],
+            'words': 'the game alternates them: runs of %s' % ', '.join(str(k - 1) for k, v in sorted(lengths.items(), key=lambda kv: -kv[1])[:3])}
+
+
+def _hall_patterns(db, prefix, pieces, A, rec, lead=None):
+    """A hall centre with its whole ring: closed the game's way (walls on every side, corners), and each
+    ring the game itself stands round one; members that would run into the house left out. lead: the
+    centre is itself a candidate, laid with its ring."""
+    if not A or not adjacency.is_hall_centre(A, rec):
+        return []
+    have = list(pieces)
+    head = [{'id': lead['id'], 'p': lead['p'], 's': 1.0}] if lead else []
+
+    def free(items):
+        out = []
+        for it in items:
+            B = _piece_at(db, it)
+            if not B or any(adjacency.overlaps(B, X) for X in have) or any(adjacency.overlaps(B, _piece_at(db, o)) for o in out):
+                continue
+            out.append({'id': it['id'], 'p': it['p'], 's': 1.0})
+        return out
     out = []
-    for it in items:
+    name = joints.nice(A['id'], prefix)
+    closed = free(adjacency.closed_hall(db, prefix, A, rec))
+    if closed:
+        kinds = Counter(joints.nice(mm['id'], prefix) for mm in closed)
+        out.append({'kind': 'ring', 'id': A['id'], 'label': '%s, closed: %s' % (name, ', '.join('%d %s' % (v, k) if v > 1 else k for k, v in kinds.most_common(3))),
+                    'n': len(closed), 'ghost': head + closed, 'share': lead['share'] if lead else 1.0,
+                    'words': 'walls and corners as the game closes its halls'})
+    for g in adjacency.game_halls(db, prefix, A, rec)[:2]:
+        mem = free(g['members'])
+        if len(mem) < 2:
+            continue
+        out.append({'kind': 'ring', 'id': A['id'], 'label': '%s as in %s' % (name, _place_name(g.get('cell'))),
+                    'n': len(mem), 'ghost': head + mem, 'share': lead['share'] if lead else 1.0,
+                    'words': 'the game\'s own ring (%d pieces)' % len(mem)})
+    return out
+
+
+def _place_name(ck):
+    """A cell key as people read it: 'ald-ruhn, redoran council hall' -> 'Ald-ruhn, Redoran Council Hall'."""
+    return ' '.join(w[:1].upper() + w[1:] for w in (ck or 'a game place').split(' '))
+
+
+def run_items(db, pieces, A, rel, n, with_=None):
+    """A run's pieces, stopping where a copy (or its junction) would run into the house."""
+    out = []
+    for it in _run_ghost(A, tuple(rel), max(1, min(10, int(n))), with_):
         B = _piece_at(db, it)
         if B and any(adjacency.overlaps(B, X) for X in pieces):
             break
         out.append(it)
-    return {'ghost': out}
+    return out
+
+
+def run_ghost(db, cell_key, ref, rel, n, with_=None):
+    """The run pattern's ghost for a chosen length (an alternating run's junction rides in rel's last
+    five: [id, x, y, z, turn, junction id, x, y, z, turn])."""
+    rel = list(rel)
+    if len(rel) == 10:
+        rel, with_ = rel[:5], rel[5:]
+    m, pieces, prefix = _pieces(db, cell_key)
+    A = next((x for x in pieces if x['ref'] == ref), None)
+    if not A:
+        raise EditError('That piece is no longer here.')
+    return {'ghost': run_items(db, pieces, A, rel, n, with_)}
 
 
 def lay(db, cell_key, items, label=None):
@@ -859,10 +982,29 @@ def close(db, cell_key, refs, preview=True):
         return any(abs(x - A['x']) <= 420 and abs(y - A['y']) <= 420 and -60 <= z - A['z'] <= 200 for A in new)
     refset = {x['ref'] for x in new}
     ops = []
+    # a hall centre (Redoran's dome) closes with its whole ring: the side pieces and the corners
+    ring = []
+    for A in new:
+        rec = adjacency.record(db, prefix, A['id'])
+        if not adjacency.is_hall_centre(A, rec):
+            continue
+        for it in adjacency.closed_hall(db, prefix, A, rec):
+            B = _piece_at(db, it)
+            if not B or any(adjacency.overlaps(B, X) for X in pieces + ring):
+                continue
+            ring.append(B)
+            ops.append({'op': 'place', 'id': it['id'], 'p': it['p']})
+
+    def in_ring(x, y):
+        for B in ring:
+            lx, ly = adjacency.to_local(B, x, y)
+            if B['b'][0] - 8 <= lx <= B['b'][3] + 8 and B['b'][1] - 8 <= ly <= B['b'][4] + 8:
+                return True
+        return False
     # the game's own closers from the adjacency survey: on each open face of a new piece, the thin piece
     # (a loose wall, a cap, a railing) the game stands there most often
-    for A in new:
-        for side, share, void in _open_faces(db, prefix, pieces, A):
+    for A in new + ring:
+        for side, share, void in _open_faces(db, prefix, pieces + ring, A):
             rec = adjacency.record(db, prefix, A['id'])
             for rel, n, sh in adjacency.candidates(rec, side, 8):
                 if sh < 0.1:
@@ -873,19 +1015,19 @@ def close(db, cell_key, refs, preview=True):
                     continue
                 b, s = B['b'], B['s']
                 thin = min(b[3] - b[0], b[4] - b[1]) * s <= THIN or (side == 'U' and (b[5] - b[2]) * s <= THIN)
-                if not thin or any(adjacency.overlaps(B, X) for X in pieces):
+                if not thin or any(adjacency.overlaps(B, X) for X in pieces + ring):
                     continue
                 ops.append({'op': 'place', 'id': it['id'], 'p': it['p']})
                 break
     try:
         for op in fixit.joint_ops(db, cell_key):
-            if op['op'] == 'place' and near(*op['p'][:3]) or op.get('ref') in refset:
+            if op['op'] == 'place' and near(*op['p'][:3]) and not in_ring(*op['p'][:2]) or op.get('ref') in refset:
                 ops.append(op)
     except Exception as e:
         print('close: joint round:', e)
     try:
         for rid, pos, sc, kind in fixit.closing_pieces(db, cell_key):
-            if near(pos[0], pos[1], pos[2]):
+            if near(pos[0], pos[1], pos[2]) and not in_ring(pos[0], pos[1]):
                 ops.append({'op': 'place', 'id': rid, 'p': list(pos), 's': sc})
     except Exception as e:
         print('close: closing pieces:', e)

@@ -91,34 +91,120 @@ def _pick(choices, u, variety):
 
 
 VARIETIES = (0.25, 0.5, 0.8, 1.0, 1.4, 2.0, 3.0)
+# how fine the patches' draw is: (the scale the broad noise is read at, the share of patches drawn on their own)
+# The game's land changes texture between 40-43% of neighbouring patches in most regions, ours 9-22% with the
+# broad noise alone, in blobs of 100-190 patches against the game's 27-29 (lab jtex1, 2026-10-29: "the textures
+# all repeat, making the land look unnatural", the user)
+GRAINS = ((1, 0.0), (2, 0.0), (4, 0.0), (2, 0.2), (4, 0.25), (4, 0.45))
+PATTERN_SAMPLE = 40             # land cells read a region for its patterning
+_pattern = {}
 
 
-def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None):
+def _edges(t):
+    """Share of neighbouring patch pairs in a cell's 16 x 16 grid with different textures."""
+    diff = 0
+    for y in range(16):
+        for x in range(16):
+            a = t[y * 16 + x]
+            if x < 15 and a != t[y * 16 + x + 1]:
+                diff += 1
+            if y < 15 and a != t[(y + 1) * 16 + x]:
+                diff += 1
+    return diff / 480.0
+
+
+def pattern(db, region):
+    """{'n': textures a cell, 'edges': share of neighbouring patches that differ} on the region's own land cells
+    (more than half above the water), their medians; None with too few such cells."""
+    import hashlib
+    import landscape
+    import regions as regions_
+    key = (id(db.recs), region)
+    if key in _pattern:
+        return _pattern[key]
+    cells = sorted((k for k, r in regions_.region_map(db).items() if r == region), key=lambda k: hashlib.md5(k.encode()).hexdigest())
+    ns, es = [], []
+    for k in cells:
+        if len(ns) >= PATTERN_SAMPLE:
+            break
+        gx, gy = (int(v) for v in k.split(','))
+        L = landscape.read(db, gx, gy)
+        if not L.get('exists') or not L.get('t') or sum(1 for v in L['h'] if v > 0) < 2100:
+            continue
+        ns.append(len(set(L['t'])))
+        es.append(_edges(L['t']))
+    out = None
+    if len(ns) >= 3:
+        ns.sort()
+        es.sort()
+        out = {'n': ns[len(ns) // 2], 'edges': es[len(es) // 2], 'cells': len(ns)}
+    _pattern[key] = out
+    return out
+
+
+# how much ground drains through a patch (in 512-unit points) for it to be a stream bed at flow 1. Measured on the
+# game's own land (lab jf1, 2026-10-28): the Bitter Coast lays its water's-edge textures on 15% of patches little
+# drains through, 36% at 5-19 points and 47% at 20-79; the West Gash, Ascadian Isles and Azura's Coast don't follow
+# the water at all (2-15% throughout). So it is off unless asked for, and starts where the Bitter Coast's channels do.
+FLOW_BED = 12.0
+
+
+def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=None, flow_k=0.0):
     """{(gx, gy): [256 LTEX ids]} and {(gx, gy): [256 texture files]} for the cells, from the working grid. variety
-    below 0: the one that gives the region's own number of textures a cell (landsurvey 'tex_per_cell', median)."""
-    if variety >= 0:
-        return _textures(db, F, keys, regions, variety, seed, also_grid)
+    below 0: the one that gives the region's own number of textures a cell (landsurvey 'tex_per_cell', median).
+    flow: landwater.patch_flow's {(patch x, y): ground draining through}; with flow_k a patch that much ground drains
+    through (FLOW_BED / flow_k) takes the textures the region has at the water's edge, so stream beds show."""
+    beds = {p for p, a in flow.items() if a >= FLOW_BED / flow_k} if flow and flow_k > 0 else None
+    pre = _prepare(F, keys, also_grid)              # (the patches' slopes and shore distances, once for every try)
     s = landsurvey.ready(db)
-    want = []
+    want, edges = [], []
     for r in set(regions.values()):
+        pt = pattern(db, r)
+        if pt:
+            want.append(pt['n'])
+            edges.append(pt['edges'])
+            continue
         m = (((s or {}).get('regions') or {}).get(r) or {}).get('tex_per_cell', {}).get('50')
         if m:
             want.append(m)
-    if not want:
-        return _textures(db, F, keys, regions, 1.0, seed, also_grid)
-    target = sum(want) / len(want)
-    best = None
-    pre = _prepare(F, keys, also_grid)              # (the patches' slopes and shore distances, once for every try)
-    for v in VARIETIES:
-        ids, files = _textures(db, F, keys, regions, v, seed, also_grid, cap=int(round(target)), pre=pre)
-        counts = sorted(len(set(t)) for t in ids.values())
-        med = counts[len(counts) // 2] if counts else 0
-        score = abs(med - target)
-        if best is None or score < best[0]:
-            best = (score, ids, files)
-        if med >= target:
-            break                       # (more variety only adds textures from here)
-    return best[1], best[2]
+    land = [k for k in keys if sum(1 for _s, z, _w in pre[0][k] if z > 0) > 128]
+    if variety >= 0 or not want:
+        v_, cap_, g_ = (variety if variety >= 0 else 1.0), None, GRAINS[0]
+        ids, files = _textures(db, F, keys, regions, v_, seed, also_grid, pre=pre)
+    else:
+        # (the variety and grain that give the region's own number of textures a cell and its own share of edges,
+        # on the cells that are mostly land)
+        target = sum(want) / len(want)
+        t_edges = sum(edges) / len(edges) if edges else None
+        best = None
+        for g in (GRAINS if t_edges is not None else GRAINS[:1]):
+            for v in VARIETIES:
+                ids, files = _textures(db, F, keys, regions, v, seed, also_grid, cap=int(round(target)), pre=pre, grain=g)
+                look = [ids[k] for k in (land or keys) if k in ids]
+                counts = sorted(len(set(t)) for t in look)
+                med = counts[len(counts) // 2] if counts else 0
+                score = abs(med - target) / max(1.0, target)
+                if t_edges is not None and look:
+                    es = sorted(_edges(t) for t in look)
+                    score += abs(es[len(es) // 2] - t_edges) / max(0.05, t_edges)
+                if best is None or score < best[0]:
+                    best = (score, ids, files, v, g)
+                if med >= target and t_edges is None:
+                    break                   # (more variety only adds textures from here)
+        _s, ids, files, v_, g_ = best
+        cap_ = int(round(target))
+    if beds:
+        # (the stream beds only: the cells textured as above, then the bed patches alone given the water's-edge choice
+        # worked out at the same variety; a second whole pass with the beds in reshuffled a quarter of every cell)
+        bids, bfiles = _textures(db, F, keys, regions, v_, seed, also_grid, cap=cap_, pre=pre, beds=beds, grain=g_)
+        for k in ids:
+            if k not in bids:
+                continue
+            gx, gy = k
+            for p in range(256):
+                if (gx * 16 + p % 16, gy * 16 + p // 16) in beds:
+                    ids[k][p], files[k][p] = bids[k][p], bfiles[k][p]
+    return ids, files
 
 
 def _prepare(F, keys, also_grid=None):
@@ -131,9 +217,10 @@ def _prepare(F, keys, also_grid=None):
     return stats, _shore_dist(stats), {}
 
 
-def _textures(db, F, keys, regions, variety=1.0, seed=1, also_grid=None, cap=None, pre=None):
+def _textures(db, F, keys, regions, variety=1.0, seed=1, also_grid=None, cap=None, pre=None, beds=None, grain=GRAINS[0]):
     stats, dist, memo = pre or _prepare(F, keys, also_grid)
     reach = landsurvey.SHORE_BANDS[-1]
+    at_water = (landsurvey.shore_band(0), landsurvey.shore_band(1))
     tabs = {}
     ids, files = {}, {}
     for gx, gy in keys:
@@ -149,7 +236,11 @@ def _textures(db, F, keys, regions, variety=1.0, seed=1, also_grid=None, cap=Non
             sb = landsurvey._band(sl, landsurvey.SLOPES)
             hb = landsurvey._band(z, landsurvey.HEIGHTS)
             shb = landsurvey.shore_band(dist.get((gx * 16 + px, gy * 16 + py), reach))
-            ch = t3.get((sb, hb, shb)) or t2.get((sb, hb))
+            ch = None
+            if beds and (gx * 16 + px, gy * 16 + py) in beds:
+                # (a stream bed: the region's textures at the water's edge for this slope and height, if it has any)
+                ch = t3.get((sb, hb, at_water[0])) or t3.get((sb, hb, at_water[1]))
+            ch = ch or t3.get((sb, hb, shb)) or t2.get((sb, hb))
             if not ch:
                 near = sorted((abs(s - sb) + abs(b - hb) * 2, (s, b)) for (s, b) in t2)
                 ch = t2[near[0][1]] if near else None
@@ -158,11 +249,18 @@ def _textures(db, F, keys, regions, variety=1.0, seed=1, also_grid=None, cap=Non
                 options.append([])
                 continue
             # (the patch's own draw, the same for every variety tried: worked out once)
-            ukey = (gx, gy, k, seed, sb, hb)
+            # (read finer for more broken patches, and some patches drawn on their own: the grain)
+            fine, own = grain
+            ukey = (gx, gy, k, seed, sb, hb, fine)
             u = memo.get(ukey)
             if u is None:
-                wx, wy = (gx * 16 + px + 0.5) * 512, (gy * 16 + py + 0.5) * 512
+                wx, wy = (gx * 16 + px + 0.5) * 512 * fine, (gy * 16 + py + 0.5) * 512 * fine
                 u = memo[ukey] = min(0.999, max(0.0, 0.5 + 0.5 * landrange.noise(wx, wy, seed + 101 + sb * 7 + hb * 13, 1.0) / 1.6))
+            if own:
+                h = ((gx * 73856093) ^ (gy * 19349663) ^ (k * 83492791) ^ (seed * 2654435761)) & 0xFFFFFFFF
+                h = ((h ^ (h >> 15)) * 2246822519) & 0xFFFFFFFF
+                if (h & 0xFFFF) / 65536.0 < own:
+                    u = ((h >> 16) & 0xFFFF) / 65536.0
             grid.append(_pick(ch, u, variety))
             options.append(ch)
         # (no more textures in the cell than the region's own cells have: a rare one gives way to one the cell
@@ -179,9 +277,10 @@ def _textures(db, F, keys, regions, variety=1.0, seed=1, also_grid=None, cap=Non
                     if c and c[0] == rare:
                         alt = next((o for o in options[k] if o[0] in keep), None)
                         grid[k] = alt or next(g for g in grid if g and g[0] == common)
-        # (a lone patch takes the texture most of its neighbours have)
+        # (a lone patch takes the texture most of its neighbours have, with the broad noise alone: the finer grains
+        # are chosen for their broken patches, as the game's are)
         clean = list(grid)
-        for k, c in enumerate(grid):
+        for k, c in enumerate(grid if grain == GRAINS[0] else ()):
             if c is None:
                 continue
             px, py = k % 16, k // 16

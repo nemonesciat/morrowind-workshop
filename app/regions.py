@@ -8,6 +8,7 @@ in RGNN."""
 import struct
 
 import editing
+import landscape
 from editing import EditError, commit, _require_project
 from esm import ENC, iter_subrecords, zstr
 from project import b64, join_subs, unb64, zs
@@ -174,7 +175,8 @@ def assign(db, rid, cells, note=True):
     for c in cells:
         gx, gy = (int(v) for v in (c.split(',') if isinstance(c, str) else c))
         key = '#%d,%d' % (gx, gy)
-        if not db.by_key.get(('CELL', key)) and key not in db.project.cells:
+        # (land with no cell, a land-only mod's sea floor shaped into an island: editing._cell makes the cell)
+        if not db.by_key.get(('CELL', key)) and key not in db.project.cells and landscape._winner(db, gx, gy) is None:
             continue                      # no land there: nothing to put in a region
         cell, _r = editing._cell(db, key)
         hdr = [(t, unb64(d)) for t, d in cell['header']]

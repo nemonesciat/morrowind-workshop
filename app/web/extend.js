@@ -308,7 +308,7 @@ function extendPanel(){
     <div class="msg" id="exm-where">Click a gold strip: an open face of a piece.</div>
     <div id="exm-patterns"></div>
     <div id="exm-cands"></div>
-    <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><button class="btn sm" id="exm-close" disabled title="The game's closers on the new pieces only: loose walls, caps, posts, railings. Shows them first.">Close it</button>
+    <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><button class="btn sm" id="exm-close" disabled title="The game's closers on the new pieces (or the chosen piece): loose walls, caps, posts, railings; a dome's walls and corners. Shows them first.">Close it</button>
       <button class="btn sm" id="exm-back" disabled title="Take the last piece off (Backspace)">⌫ Last off</button><span class="msg" id="exm-closenote"></span></div>`;
   const host = (V3.on && $('#v3wrap')) || (typeof cv !== 'undefined' && cv.parentElement) || document.body;
   if (host !== document.body && getComputedStyle(host).position === 'static') host.style.position = 'relative';
@@ -323,13 +323,15 @@ function extendCounter(){
   const n = EXM.edges.length, v = EXM.edges.filter(e => e.void).length;
   c.textContent = `${n} open edge${n === 1 ? '' : 's'}${v ? ` (${v} showing the void)` : ''}`;
   const b = EXM.panel.querySelector('#exm-back'); if (b) b.disabled = !EXM.steps;
-  const cl = EXM.panel.querySelector('#exm-close'); if (cl) cl.disabled = !EXM.laid.length;
+  const cl = EXM.panel.querySelector('#exm-close'); if (cl) cl.disabled = !extendCloseRefs().length;
 }
 
 async function extendSelect(edge){
   if (!EXM.on || EXM.busy) return;
   if (EXM.sel) extendStripLight(EXM.sel, false);
   EXM.sel = edge; EXM.hover = -1; EXM.cands = null;
+  if (EXM.closing && !EXM.laid.length){ EXM.closing = null; const cb = EXM.panel.querySelector('#exm-close'); cb.textContent = 'Close it'; EXM.panel.querySelector('#exm-closenote').textContent = ''; }
+  extendCounter();
   extendStripLight(edge, true);
   if (!V3.on) drawMap();
   const P = EXM.panel, q = s => P.querySelector(s);
@@ -348,7 +350,7 @@ async function extendSelect(edge){
       <div class="exm-pat" data-pat="${n}" style="display:flex;gap:8px;align-items:center;padding:4px;border:1px solid var(--line,#444);border-radius:6px;margin-top:4px;cursor:pointer">
         <img data-tid="${esc(pt.id)}" data-ts="56" width="56" height="56" style="border-radius:4px;background:#0006">
         <div style="flex:1;min-width:0"><div style="font-size:12.5px"><b>${esc(pt.label)}</b></div><div class="msg">${esc(pt.words || '')}</div>
-          ${pt.kind === 'run' ? `<input type="range" min="${pt.min}" max="${pt.max}" value="${pt.n}" data-run="${n}" style="width:100%" title="How many"> <span class="msg" data-runn="${n}">${pt.n} pieces</span>` : `<div class="exm-bar"><i style="width:${Math.round(100 * Math.min(1, pt.share))}%"></i></div>`}
+          ${pt.kind === 'run' ? `<input type="range" min="${pt.min}" max="${pt.max}" value="${pt.n}" data-run="${n}" style="width:100%" title="How many"> <span class="msg" data-runn="${n}">${pt.n} ${pt.rel.length > 5 ? 'pairs' : 'pieces'}</span>` : `<div class="exm-bar"><i style="width:${Math.round(100 * Math.min(1, pt.share))}%"></i></div>`}
         </div></div>`).join('');
     P.querySelectorAll('.exm-pat').forEach(el => {
       const pt = r.patterns[+el.dataset.pat];
@@ -359,7 +361,7 @@ async function extendSelect(edge){
     P.querySelectorAll('[data-run]').forEach(inp => {
       const pt = r.patterns[+inp.dataset.run];
       inp.oninput = async () => {
-        const n = +inp.value; P.querySelector(`[data-runn="${inp.dataset.run}"]`).textContent = n + ' pieces';
+        const n = +inp.value; P.querySelector(`[data-runn="${inp.dataset.run}"]`).textContent = n + (pt.rel.length > 5 ? ' pairs' : ' pieces');
         try { const g = await post('/api/extend/run', {cell: EXM.cell, ref: edge.ref, rel: pt.rel, n}); if (EXM.cands === r){ pt.ghost = g.ghost; pt.n = n; extendGhost(pt.ghost, null); } } catch (e){}
       };
     });
@@ -450,13 +452,15 @@ async function extendBack(){
 }
 
 // "Close it": the closing pieces on the new pieces only, shown first (a ghost of each), laid on the second click
+// (with nothing laid yet, the piece of the chosen strip: a dome centre closes with its whole ring)
+function extendCloseRefs(){ return EXM.laid.length ? EXM.laid : (EXM.sel ? [EXM.sel.ref] : []); }
 async function extendCloseIt(){
-  if (!EXM.on || EXM.busy || !EXM.laid.length) return;
+  if (!EXM.on || EXM.busy || !extendCloseRefs().length) return;
   const P = EXM.panel, b = P.querySelector('#exm-close'), note = P.querySelector('#exm-closenote');
   if (EXM.closing){
     EXM.busy = true; b.disabled = true;
     try {
-      const m = await post('/api/extend/close', {cell: EXM.cell, refs: EXM.laid, preview: false});
+      const m = await post('/api/extend/close', {cell: EXM.cell, refs: EXM.closing.refs, preview: false});
       EXM.laid.push(...(m.changed || [])); EXM.steps++; EXM.closing = null;
       extendGhost(null);
       if (typeof worldReloadCell === 'function') await worldReloadCell(EXM.cell);
@@ -471,9 +475,10 @@ async function extendCloseIt(){
   }
   b.disabled = true; note.innerHTML = '<span class="spin"></span> Looking…';
   try {
-    const m = await post('/api/extend/close', {cell: EXM.cell, refs: EXM.laid, preview: true});
-    if (!m.count){ note.textContent = 'Nothing to close on the new pieces.'; b.disabled = false; return; }
-    EXM.closing = m;
+    const refs = extendCloseRefs().slice();
+    const m = await post('/api/extend/close', {cell: EXM.cell, refs, preview: true});
+    if (!m.count){ note.textContent = 'Nothing to close here.'; b.disabled = false; return; }
+    EXM.closing = m; m.refs = refs;
     extendGhost(m.ghost, null);
     note.textContent = `${m.count} piece${m.count === 1 ? '' : 's'} would close them (shown). Click again to lay them.`;
     b.textContent = `Lay ${m.count}`; b.disabled = false;

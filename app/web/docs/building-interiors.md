@@ -64,9 +64,10 @@ the game uses on that style. People and creatures are never copied.
 - **⬚ Extend** (3D toolbar, indoors): every open face of every building piece glows as a strip (gold; red where
   you'd see out into the void). Click a strip: a column of candidates slides in, what the game joins to that face
   most often first. Hover one to see it in place, click (or Enter) to lay it; **Tab** cycles, **Backspace** takes
-  the last piece off. Above the candidates are the patterns the game repeats from there (a run of walls, a piece
-  with its ring). **Close it** lays the pieces that close what you built. **Esc** leaves, and all the steps
-  become one change.
+  the last piece off. Above the candidates are the patterns the game repeats from there (a run of walls, a
+  hallway's segments and junctions in turn, a piece with its ring, a Redoran dome with its walls and corners).
+  **Close it** lays the pieces that close what you built; on a dome's centre, its whole ring. **Esc** leaves, and
+  all the steps become one change.
 - **Snap pieces** (3D toolbar, Snap ▾) lines up walls and floors with their neighbours as you move them;
   **↻ Other pieces** (Selected panel) offers the other pieces of the style that fit the same spot.
 
@@ -82,15 +83,31 @@ in the walls, the roof.
 
 ## The prefab workbench
 
-**Library → 🔨 Prefab workbench** opens an empty space with a floor grid and its own camera.
+**Library → 🔨 Prefab workbench** (or **Ctrl+B** anywhere, right-click **Library**, or Ctrl+K "workbench") opens an
+empty space with a floor grid and its own camera.
 
 - Pick a style; its pieces are on the shelf on the left. Drag them in. They **snap** the way the game joins
-  them, and doors and windows are filled in the game's way.
+  them, else flush with the piece beside them. A door or window dragged to a frame, doorway or window hole drops
+  into it. **🚪 Fill openings** fills them all the game's way.
 - It's **checked as it grows**, with marks on what's wrong.
 - Fly with **W A S D** (Q / E down and up, Shift faster); right-drag looks, middle-drag pans. Left-drag on empty
   space selects several. **[ ]** turn by 15° (Shift: 1°); the **Turn**, **Tilt** and **Size** boxes are exact;
   **⊥ Straighten** undoes a tilt. Right-click for a menu.
+- **Ctrl+D** puts a copy of the selection straight down beside it, end to end along the selected piece's own red
+  axis (**Shift**: the other way); press again to carry the row on. **Ctrl+M** puts a mirrored copy against the
+  selection's far side across X (**Shift**: across Y), for the other half of a symmetrical building.
+  **Ctrl+C / Ctrl+V** copy and paste where you click. Mirroring swaps a left-hand piece for its right-hand twin when
+  the game has one (a stair, a corner); one without is turned to match.
+- **⋯ Array…** (right-click) makes many copies at once: in a row along the piece's red or green axis or upwards, end to
+  end with a gap you choose, or round a ring a radius in from the piece (a round hall, a tower's wall).
+- **H** hides the selection, **Shift+H** shows it alone, **Alt+H** shows everything again: to work inside a building.
+  Hidden pieces are still part of it.
+- The toolbar: **Grid** puts a moved piece that joins nothing on a grid of that step; **About the piece / About the
+  middle** is what several pieces turn about; beside the Turn box, the selection's size (across × deep × high).
+- **💾 Save these as a prefab…** (right-click) keeps just the selected part, a porch or a tower's top, in the Library.
 - **👁** on a shelf piece shows the game's buildings that use it.
+- Anything that can stand in the world can go on the bench from **Browse**: **🔨 Add to the workbench** puts it in
+  the middle of the bench's view, selected.
 - When it's done, set it down in the world in one go: it follows the mouse as one ghost on the land, a click
   places it, and one Undo takes it back. What's on the bench stays there between sessions.
 
@@ -105,8 +122,15 @@ them:
 - **🧩 Sets**: what the game puts together, such as a table with its chairs or a bed with its chest. A set goes down
   whole, as one Undo.
 
+Under **Regions**, each region has its own palette (◆ the open place's): **🪨 Rocks & cliffs**, grouped by set
+(the models of one family the game uses together), and **🌿 Trees and plants**, learnt from the region's own land.
+
 Staples come first. Rest the mouse on a piece to see what the game stands next to it; click to place it, or drag
 it into the map or the 3D view.
+
+Something the Workshop didn't learn in a style can be added by hand: **＋ Add…** in the palette finds anything in
+your load order, or **🎨 Add to a style…** on its page in Browse. It's listed first in its group with a green
+**yours**; right-click it to take it back out. Your additions are kept apart from what the Workshop learns.
 
 ## Hidden doors and secret entrances
 

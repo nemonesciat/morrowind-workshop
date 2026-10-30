@@ -16,11 +16,16 @@ const RUIN_KINDS = [
   ['tomb', 'Velothi tomb', 'Varethi Ancestral Tomb', 'Tombs are named for the family: Andrethi Ancestral Tomb, Sarys Ancestral Tomb.',
     'A family tomb of the small Velothi pieces the way the game\'s 380 tombs are put together: narrow halls, corners and stairs with doors between, burial rooms on the way and at the far end, urns, altars, bones and the restless dead copied from the game\'s own.'],
   ['daedric', 'Daedric ruin', 'Zaintashara, Shrine', 'Daedric ruins have old Dunmer names: Ald Sotha, Zaintiraris, Ashalmimilkala.',
-    'A ruined Daedric shrine of the in_dae halls the way the game\'s own are joined, with rooms tiled of 2x3 to 3x4 floors, walls and corners as Project Tamriel\'s guide has them, braziers and censers, rubble and pillars, and its Daedra.'],
+    'A ruined Daedric shrine of the in_dae halls the way the game\'s own are joined, with rooms tiled of 2x3 to 3x4 floors, walls and corners as the game\'s Daedric ruins have them, braziers and censers, rubble and pillars, and its Daedra.'],
+  ['stronghold', 'Chimer stronghold', 'Andasreth, Lower Level', 'Strongholds have old Dunmer names: Hlormaren, Marandus, Berandas.',
+    'An old Chimer keep of the in_stronghold pieces, joined the way the game\'s own are: corridors that turn round its rooms, each room off a side passage behind a door, stairs a storey up, tiki lamps and candles, and the bandits who often hide out in them.'],
+  ['tower', 'Velothi tower', 'Shishara', 'Towers have old Velothi names: Shishara, Hanud, Odirniran, Mababi.',
+    'A mage\'s tower of the small Velothi pieces: halls and rooms climbing from the door to the tower itself, a two-storey room with steps up its sides under a dome, dressed and lived in as the game\'s 64 towers are: sorcerers, mages, necromancers.'],
 ];
 const RUIN_OPTS = {
   kind: RUIN_KINDS.map(k => [k[0], k[1]]),
-  size: [['small', 'Small (about 20 pieces, one hall)'], ['medium', 'Medium (about 45 pieces, two halls)'], ['large', 'Large (about 80 pieces, three halls)']],
+  size: [['tiny', 'Tiny (about 10 pieces, one hall)'], ['small', 'Small (about 20 pieces, one hall)'], ['medium', 'Medium (about 45 pieces, two halls)'],
+    ['large', 'Large (about 80 pieces, three halls)']],
   levels: [['flat', 'All on one level'], ['some', 'Some ramps (as the game\'s)'], ['steep', 'Many ramps, no further than the game\'s own go']],
   twist: [['linear', 'One long winding way through'], ['branching', 'Branching, with side passages (as the game\'s)'], ['maze', 'A maze of crossroads and dead ends']],
   creatures: [['none', 'None'], ['few', 'A few'], ['usual', 'As in the game\'s own'], ['many', 'Many']],
@@ -35,10 +40,13 @@ const DT = {kind: 'dwemer', seed: null, lay: null, view: null, seq: 0, hover: nu
   // (the plan flat, or a rough 3D sketch of blocks at their heights, turned by dragging; the user asked for both)
   mode: (() => { try { return localStorage.getItem('ws-dt-mode') === '3d' ? '3d' : '2d'; } catch (e){ return '2d'; } })(), yaw: 0.6, pitch: 0.75};
 const DT_ZX = 1.6;          // (heights drawn taller than they are in 3D, so the levels read)
-const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆', cave_lava: '◆', tomb: '⚱', daedric: '✴'};
+const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆', cave_lava: '◆', tomb: '⚱', daedric: '✴', stronghold: '♜', tower: '♖'};
 const DT_ROCK = {cave_mold: '#8c8f93', cave_mud: '#8a6d4f', cave_py: '#c9c1ad', cave_lava: '#3b3533'};
 const DT_SEG = {
-  size: [['small', 'Small', 'about 20 pieces, one hall'], ['medium', 'Medium', 'about 45 pieces, two halls'], ['large', 'Large', 'about 80 pieces, three halls']],
+  size: [['tiny', 'Tiny', 'about 10 pieces, one hall: a lair'], ['small', 'Small', 'about 20 pieces, one hall'], ['medium', 'Medium', 'about 45 pieces, two halls'],
+    ['large', 'Large', 'about 80 pieces, three halls']],
+  // (how many halls for the size: a long run of tunnels, the game's own share, or a string of chambers)
+  halls: [['few', 'Few', 'one hall fewer than the game\'s for this size'], ['usual', 'Usual', 'as many as the game\'s of this size'], ['many', 'Many', 'half as many again']],
   // (the way in is always the highest point and the way goes down as you go in: dgrules.py)
   levels: [['flat', 'Flat', 'all on one level'], ['some', 'Some', 'some ramps, as the game\'s'], ['steep', 'Steep', 'a lot of ramps, no further than the game\'s own go']],
   // (down from the way in as most of the game's own go, or up from it as a few do: a tower; the user)
@@ -56,7 +64,7 @@ const DT_SLIDE = {
 };
 DT.lived = null;              // (the lived-in slider moved by hand: kept when the kind changes)
 const dtLivedDef = () => Math.round(100 * ((DT.lay && DT.lay.game && DT.lay.kind === DT.kind) ? DT.lay.game.lived : (DT_LIVED[DT.kind] || 0.47)));
-const DT_LIVED = {dwemer: 0.47, tomb: 0.2, daedric: 0.5, cave_mold: 0.55, cave_mud: 0.55, cave_py: 0.55, cave_lava: 0.55};
+const DT_LIVED = {dwemer: 0.47, tomb: 0.2, daedric: 0.5, stronghold: 0.65, tower: 0.85, cave_mold: 0.55, cave_mud: 0.55, cave_py: 0.55, cave_lava: 0.55};
 function dtSlideSay(k){
   const el = $('#' + DT_SLIDE[k].id); if (!el) return '';
   const v = +el.value, G = (DT.lay && DT.lay.game) || null;
@@ -104,6 +112,7 @@ function ruinFormHtml(what){
       <div class="dt-kinds">${RUIN_KINDS.map(k => `<button type="button" class="dt-k ${k[0] === DT.kind ? 'on' : ''}" data-dk="${k[0]}" title="${esc(k[4])}">
         <span class="dt-ki" ${DT_ROCK[k[0]] ? `style="color:${DT_ROCK[k[0]]}"` : ''}>${DT_ICON[k[0]]}</span>${esc(k[1].replace('Cave: ', 'Cave, '))}</button>`).join('')}</div>
       <div class="dt-h">Size</div>${seg('size', 'medium')}
+      <div class="dt-h">Halls</div>${seg('halls', 'usual')}
       <div class="dt-h">Levels</div>${seg('levels', 'some')}
       <div class="dt-h">From the door</div>${seg('way', 'down')}
       <div class="dt-h">Layout</div>${seg('twist', 'branching')}
@@ -131,6 +140,12 @@ function ruinFormHtml(what){
   </div>`;
 // (what Make it does, under the plan: the plan gives way to it. Under the whole tool it made the form taller
 // than the window over the map on a 1080p screen, the user's Dungeon window)
+}
+
+// (the size as the server takes it: the Halls choice after a '+', dwemer.size_spec; kept with a place for Again)
+function dtSize(){
+  const s = ($('#ru-size') || {}).value || 'medium', h = ($('#ru-halls') || {}).value || 'usual';
+  return h === 'usual' ? s : s + '+' + h;
 }
 
 const DT_HIST = [];
@@ -221,7 +236,7 @@ async function dtPreview(keepPicks){
   const st1 = $('#dt-stat'); if (st1) st1.textContent = 'Laying out…';
   for (let n = 0; n < 120; n++){
     let r;
-    try { r = await post('/api/ruin/preview', {kind: v('ru-kind'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), way: v('ru-way'), seed: DT.seed, entry: DT.entry, final: DT.final}); }
+    try { r = await post('/api/ruin/preview', {kind: v('ru-kind'), size: dtSize(), levels: v('ru-levels'), twist: v('ru-twist'), way: v('ru-way'), seed: DT.seed, entry: DT.entry, final: DT.final}); }
     catch (e){ if (seq !== DT.seq) return; if (msg) msg.textContent = e.message; if (st1) st1.textContent = ''; return; }
     if (seq !== DT.seq) return;
     if (r.learning){ DT.lay = null; const st0 = $('#dt-stat'); if (st0) st0.textContent = ''; const cv0 = $('#dt-cv'); if (cv0) cv0.getContext('2d').clearRect(0, 0, cv0.width, cv0.height); if (msg) msg.innerHTML = `<span class="spin"></span>Learning ${esc(r.learning.join(', '))} first (once, under a minute)…`; await new Promise(res => setTimeout(res, 2500)); continue; }
@@ -446,6 +461,8 @@ document.addEventListener('click', e => {
     DT.kind = t.dataset.dk; $('#ru-kind').value = DT.kind;
     document.querySelectorAll('.dt-k').forEach(b => b.classList.toggle('on', b === t));
     const K = ruinKind(DT.kind), n = $('#cr-name'); if (n){ n.placeholder = 'e.g. ' + K[2]; n.title = K[3]; }
+    // (a tower climbs from its door, as 51 of the game's 64 do: Up chosen with it)
+    if (DT.kind === 'tower'){ $('#ru-way').value = 'up'; document.querySelectorAll('.dt-seg[data-seg=way] button').forEach(b => b.classList.toggle('on', b.dataset.v === 'up')); }
   } else {
     const box = t.parentNode, k = box.dataset.seg;
     box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === t));
@@ -486,7 +503,7 @@ async function ruinGo(msg){
   const v = id => (($('#' + id) || {}).value || '');
   // (the sliders as shares: 1 is the game's own; lived in as a chance, or 'auto' when left at the kind's own)
   const n = (id, d) => { const x = parseFloat(v(id)); return isFinite(x) ? x / 100 : d; };
-  const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: v('ru-size'), levels: v('ru-levels'), twist: v('ru-twist'), way: v('ru-way') || 'down', creatures: n('dt-crea', 1),
+  const body = {kind: v('ru-kind') || 'dwemer', name: v('cr-name'), size: dtSize(), levels: v('ru-levels'), twist: v('ru-twist'), way: v('ru-way') || 'down', creatures: n('dt-crea', 1),
     loot: n('dt-loot', 1), occupants: DT.lived == null ? 'auto' : n('dt-occ', 'auto'), water: n('dt-water', 0), seed: v('ru-seed').trim() || null, entrance: placeValue(),
     entry: DT.entry, final: DT.final};
   // (the first of each kind waits for the survey of the game's own, 15-20 s once; the survey process learns it)
@@ -500,7 +517,7 @@ async function ruinGo(msg){
 }
 
 // (what the toast calls a made place's halls)
-const ruinHalls = (kind, n) => `${n} ${kind === 'daedric' ? 'room' : kind && kind !== 'dwemer' ? 'chamber' : 'hall'}${n === 1 ? '' : 's'}`;
+const ruinHalls = (kind, n) => `${n} ${kind === 'daedric' || kind === 'stronghold' ? 'room' : kind && kind !== 'dwemer' ? 'chamber' : 'hall'}${n === 1 ? '' : 's'}`;
 
 async function ruinAgain(key){
   if (!await needProject()) return;

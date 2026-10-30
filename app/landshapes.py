@@ -25,6 +25,8 @@ Then rolling ground as rough as the region's on all of the plan's land, the fade
 (nothing changes on an edge shared with a cell not marked), and for apply: steps too steep for the record eased,
 textures by the region, things and paths following the ground."""
 import math
+import re
+from array import array
 from collections import Counter
 
 import landrange
@@ -32,8 +34,10 @@ import landscape
 import mapdata
 from editing import EditError, commit, _require_project
 
-KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring')
+# (area: an outline that shapes nothing, only where Dress… keeps to: landdecor.dress_all)
+KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area')
 DEFAULTS = {
+    'area': {},
     'coast': {'height': 600, 'width': 6144, 'wander': 1.0, 'sea': 0},
     'plateau': {'height': 2000, 'width': 768, 'terraces': 0},
     # (width 3072, was 8192: that wide, the flanks covered the whole island and a ridge read as a swelling)
@@ -81,7 +85,29 @@ PASSES = {'detail': True, 'detail_k': 1.0, 'settle': True, 'angle': 0.0, 'gullie
           'tsharp': 0.6, 'tslope': 20.0, 'valleys': 0.0,
           'rock': 0.0, 'rthick': 512.0, 'rdip': 0.0, 'rdir': 0.0, 'rshare': 0.45, 'ronly': ''}
 DRESS = {'variety': -1.0, 'tints': True, 'seams': True, 'hollows': True, 'shade': 1.0, 'region': '', 'assign': False,
-         'rocks': 1.0}
+         'rocks': 1.0, 'flow': 0.0}      # (flow: stream beds, off; only the Bitter Coast's land does it, landdress.FLOW_BED)
+
+
+def _beds(F, inside, dress, seed):
+    """The flow map's patches for the dressing (landwater.patch_flow), or None with Stream beds at 0."""
+    if float(dress.get('flow') or 0) <= 0:
+        return None
+    import landwater
+    C, A, _rec = landwater.flow_map(F, inside, seed)
+    return landwater.patch_flow(C, A, F.G)
+
+
+def _marked_points(F, keys):
+    """1 at each point of F that belongs to the marked cells (an edge shared with an unmarked cell is not theirs)."""
+    G, per, marked = F.G, 64 // F.s, set(keys)
+    inside = bytearray(F.w * F.h)
+    for y in range(F.h):
+        cys = {G.y0 + (y - 1) // per, G.y0 + y // per} if y % per == 0 else {G.y0 + y // per}
+        for x in range(F.w):
+            cxs = {G.x0 + (x - 1) // per, G.x0 + x // per} if x % per == 0 else {G.x0 + x // per}
+            if all((cx, cy) in marked for cx in cxs for cy in cys):
+                inside[y * F.w + x] = 1
+    return inside
 
 
 def _clean_opts(d, base):
@@ -106,7 +132,7 @@ def _clean(L):
     if kind not in KINDS:
         raise EditError('Unknown shape "%s".' % kind)
     pts = [[float(a), float(b)] for a, b in (L.get('pts') or [])][:400]
-    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake') else 2
+    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area') else 2
     if len(pts) < need:
         raise EditError('A %s needs at least %d point%s.' % (kind, need, '' if need == 1 else 's'))
     prm = dict(DEFAULTS[kind])
@@ -479,6 +505,155 @@ def _per_point(db, W, table, key, default, k=1.0):
     return out
 
 
+# Shaping again shapes the ground as it was before the last Shape them, while the cell still holds just what that
+# left: shaped on top of the shaped ground, a lower crest or less roughness only added to what was there, and the
+# settings seemed not to take (PIN2, 2026-10-29). A cell changed since (sculpted, undone) shapes as it is now.
+def _sig(h):
+    import zlib
+    return zlib.crc32(array('i', [int(round(v / 8.0)) for v in h]).tobytes())
+
+
+def _pack(h):
+    import base64, zlib
+    return base64.b64encode(zlib.compress(array('i', [int(round(v)) for v in h]).tobytes())).decode('ascii')
+
+
+def _unpack(t):
+    import base64, zlib
+    a = array('i')
+    a.frombytes(zlib.decompress(base64.b64decode(t)))
+    return [float(v) for v in a]
+
+
+N = landrange.N
+
+
+def _vhgt(data):
+    """A LAND record's 65 x 65 heights, from its bytes (as mapdata.land reads them), or None."""
+    import struct
+    from esm import iter_subrecords
+    for st, sd in iter_subrecords(data):
+        if st == 'VHGT' and len(sd) >= 4 + N * N:
+            base = struct.unpack_from('<f', sd)[0]
+            deltas = struct.unpack_from('<%db' % (N * N), sd, 4)
+            out, row = [], base
+            for y in range(N):
+                row += deltas[y * N]
+                col = row
+                out.append(float(int(col * 8)))
+                for x in range(1, N):
+                    col += deltas[y * N + x]
+                    out.append(float(int(col * 8)))
+            return out
+    return None
+
+
+def _land_log(db):
+    """{'LAND|x,y': [the log's entries changing it, oldest first]}, without undone changes and the Undid/Redid notes."""
+    idx = {}
+    for e in (getattr(db.project, 'log', None) or []):
+        d = e.get('diff')
+        if not d or e.get('undone') or str(e.get('text', '')).startswith(('Undid:', 'Redid:')):
+            continue
+        for rk in d.get('r') or {}:
+            if rk.startswith('LAND|'):
+                idx.setdefault(rk, []).append(e)
+    return idx
+
+
+def _base_from_log(db, k, idx=None):
+    """A cell's ground before its Shape them, for a cell shaped before the ground was kept (2.5.6-test3 and earlier):
+    from the mod's change history, the ground before the first of the Shapes in a row that made what the cell holds now.
+    None when the cell holds anything else since (sculpted, raised, undone)."""
+    from project import unb64
+    p = db.project
+    rk = 'LAND|%d,%d' % k
+    cur = p.records.get(rk)
+    if cur is None:
+        return None
+    hits = (idx if idx is not None else _land_log(db)).get(rk) or []
+    if not hits or not str(hits[-1].get('text', '')).startswith('Shaped ') or hits[-1]['diff']['r'][rk][1] != cur:
+        return None
+    first = len(hits) - 1
+    while first > 0 and str(hits[first - 1].get('text', '')).startswith('Shaped ') \
+            and hits[first - 1]['diff']['r'][rk][1] == hits[first]['diff']['r'][rk][0]:
+        first -= 1
+    before = hits[first]['diff']['r'][rk][0]
+    if before is not None:
+        return _vhgt(unb64(before['data']))
+    # (the land under the mod's: another plugin's, or the sea bed where the Shape made the cell)
+    import landsurvey
+    gi = landsurvey._game_land(db, *k)
+    if gi is None:
+        return [-2048.0] * (N * N)
+    r = db.recs[gi]
+    _t, _f, data = db.files[r[3]].record_at(r[4])
+    return _vhgt(data)
+
+
+def _from_base(db, G, keys):
+    """The marked cells' heights put back to their ground before the last Shape them, where that is still all they
+    hold. G.real: the cells' heights as they are now (what the objects on them stand on)."""
+    G.real = {}
+    bases = ((getattr(db.project, 'land', None) or {}).get('base') or {}) if db.project else {}
+    # (every cell looked at first: neighbours share their edge points, so one cell put back changed the next one's edge
+    # and it no longer matched)
+    swap = {}
+    idx = _land_log(db) if keys else {}
+    for k in keys:
+        if k not in G.land:
+            continue
+        now = G.cell(*k)
+        # (the mod's history first: the ground before the first of the Shapes in a row that made the cell. The ground
+        # kept by 2.5.6-test4 on a cell an older Workshop had shaped was that shaped ground, its shapes baked in)
+        try:
+            h = _base_from_log(db, k, idx)
+        except Exception:
+            h = None
+        b = bases.get('%d,%d' % k)
+        if not h and b and _sig(now) == b.get('shaped'):
+            try:
+                h = _unpack(b['h'])
+            except Exception:
+                h = None
+        if h and len(h) == N * N:
+            swap[k] = (now, h)
+    for k, (now, h) in swap.items():
+        G.real[k] = now
+        ox, oy = (k[0] - G.x0) * 64, (k[1] - G.y0) * 64
+        for y in range(N):
+            row = (oy + y) * G.w + ox
+            G.z[row:row + N] = array('d', h[y * N:(y + 1) * N])
+
+
+def _keep_base(db, base_h, keys, rocks=None):
+    """After a Shape them: each cell's ground before it, with the signature of what it wrote (see _from_base) and the
+    rocks it set there (taken out again when the cell is shaped from that ground once more, _drop_rocks)."""
+    p = db.project
+    bases = dict((getattr(p, 'land', None) or {}).get('base') or {})
+    for k in keys:
+        L = mapdata.land(db, *k)
+        if L.get('exists') and L.get('h') and k in base_h:
+            bases['%d,%d' % k] = {'h': _pack(base_h[k]), 'shaped': _sig(L['h']), 'rocks': (rocks or {}).get(k) or []}
+    p.land = dict(p.land or {}, base=bases)
+    p.save()
+
+
+def _drop_rocks(db, cells):
+    """The rocks the last Shape them set in these cells, taken out before they are shaped again from the ground
+    before it: each re-shape laid a new set on top of the last."""
+    bases = (getattr(db.project, 'land', None) or {}).get('base') or {}
+    n = 0
+    for k in cells:
+        c = db.project.cells.get('#%d,%d' % k)
+        for rk in (bases.get('%d,%d' % k) or {}).get('rocks') or []:
+            if c and c['refs'].pop(rk, None) is not None:
+                n += 1
+    if n:
+        db.sync_project()
+    return n
+
+
 def _work(db, cells, plan, s):
     keys = sorted({landrange._key(k) for k in cells or []})
     if not keys:
@@ -492,12 +667,13 @@ def _work(db, cells, plan, s):
             raise EditError('None of the marked cells is in %s.' % ('that region' if len(only) == 1 else 'those regions'))
     if len(keys) > landrange.MAX_CELLS:
         raise EditError('That is %d cells; shape at most %d at once.' % (len(keys), landrange.MAX_CELLS))
-    layers = [_clean(L) for L in (plan.get('layers') or []) if L.get('on', True) is not False]
+    layers = [_clean(L) for L in (plan.get('layers') or []) if L.get('on', True) is not False and L.get('kind') != 'area']
     # (rivers and lakes are carved last, through whatever the other shapes raised: a volcano stamped after a river
     # was drawn would otherwise dam it; among themselves, and the others among themselves, the order stands)
     layers = [L for L in layers if L['kind'] not in WATER] + [L for L in layers if L['kind'] in WATER]
     xs, ys = [k[0] for k in keys], [k[1] for k in keys]
     G = landrange.Grid(db, min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1)
+    _from_base(db, G, keys)
     F = Field(G, s)
     before = list(F.z)
     seed = int(plan.get('seed') or 1)
@@ -766,7 +942,8 @@ def preview(db, cells, plan):
     if plan.get('paint', True) is not False:
         import landdress
         dress = _clean_opts(plan.get('dress'), DRESS)
-        _ids, files = landdress.textures(db, F, keys, reg, dress['variety'], int(plan.get('seed') or 1))
+        seed = int(plan.get('seed') or 1)
+        _ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed, flow=_beds(F, _ins, dress, seed), flow_k=dress['flow'])
     used = {}
     for gx, gy in keys:
         ox, oy = (gx - G.x0) * per, (gy - G.y0) * per
@@ -792,6 +969,7 @@ def apply(db, cells, plan):
     if made:
         db.sync_project()                               # (once for all the new cells, not once each)
     keys, G, F, inside, reg = _work(db, cells, plan, 1)
+    _drop_rocks(db, G.real)
     before = {k: G.cell(*k) for k in keys}
     G.z = __import__('array').array('d', F.z)
     free = inside if F.hold is None else bytearray(0 if F.hold[i] >= 1 else inside[i] for i in range(len(inside)))
@@ -804,7 +982,8 @@ def apply(db, cells, plan):
     paint = plan.get('paint', True) is not False
     if paint:
         import landdress
-        ids, files = landdress.textures(db, F, keys, reg, dress['variety'], int(plan.get('seed') or 1))
+        seed_ = int(plan.get('seed') or 1)
+        ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed_, flow=_beds(F, inside, dress, seed_), flow_k=dress['flow'])
     # the region's shading (landshade), worked out here for each cell and written with its heights and textures in
     # one go: its tints, then its seams, then its darker hollows, each on what the one before made (as shade() would
     # read them back), on the heights as the record keeps them (to 8 units). One write a cell, not four.
@@ -833,12 +1012,16 @@ def apply(db, cells, plan):
         after = landscape.write(db, gx, gy, new_h[k], ids.get(k), cols, around=landscape.around_of(db, gx, gy, new_h))
         # (what the ground is held under stays where it stands: its origin can lie outside its box, where the
         # ground did move)
-        moved += landscape._follow_ground(db, gx, gy, before[k], after, skip=held_keys)
-        paths += landscape._follow_paths(db, gx, gy, before[k], after)
+        # (from the ground they stand on now: shaped again from the ground before the last Shape, before[k] is that)
+        now = G.real.get(k) or before[k]
+        moved += landscape._follow_ground(db, gx, gy, now, after, skip=held_keys)
+        paths += landscape._follow_paths(db, gx, gy, now, after)
     db.sync_project()
     # rocks on the plan's slopes and cliffs, as thickly as the game sets them on such ground in the region
     # (cliffrocks), on the ground as written (eased), not where it is held under a building
     rocks = 0
+    refs_of = lambda k: set((db.project.cells.get('#%d,%d' % k) or {}).get('refs') or {})
+    had = {k: refs_of(k) for k in keys}
     if dress['rocks'] > 0 and plan.get('layers'):
         import cliffrocks
         F.z = list(G.z)
@@ -846,6 +1029,7 @@ def apply(db, cells, plan):
         rocks = cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, region_of, float(dress['rocks']),
                                                           int(plan.get('seed') or 1), F.hold))
         db.sync_project()
+    set_rocks = {k: sorted(refs_of(k) - had[k]) for k in keys}
     shaded = [m for m in ('texture', 'seams', 'hollows') if m in shaded]
     cl = ['%d,%d' % k for k in keys]
     # the cells into the region, so its weather, sounds and creatures go with the land
@@ -857,6 +1041,7 @@ def apply(db, cells, plan):
         except EditError:
             pass
     db.sync_project()
+    _keep_base(db, before, keys, set_rocks)
     m = measure(F, keys)
     n = len([L for L in plan.get('layers') or [] if L.get('on', True) is not False])
     commit(db, 'Shaped %d cell%s with %d shape%s%s' % (len(keys), '' if len(keys) == 1 else 's', n, '' if n == 1 else 's',
@@ -866,6 +1051,123 @@ def apply(db, cells, plan):
             'shaded': shaded, 'assigned': assigned, 'measured': m,
             'textures_a_cell': texn[len(texn) // 2] if texn else 0,
             'region_figures': _figures(db, sorted(set(reg.values()) | set(F.info.get('regions') or [])))}
+
+
+# a patch the game laid on purpose, never repainted by Texture only: roads, paths, paving, cobbles
+KEEP_TEX = re.compile(r'road|path|street|cobble|flagston|pave|bridge|walkway|plank')
+
+
+def texture_only(db, cells, plan, preview=False):
+    """The marked cells textured as the game textures their region at each slope, height and distance from the
+    water (landdress), with the plan's Dressing settings (Like, Textures, tints, seams, hollows), the land's heights
+    as they are: no shape, no pass, no new land. Roads and paving stay, and with Protection on so does the ground
+    under buildings. The user: "an auto texture feature for land". preview: nothing written; the cells' textures at
+    every 4th point, as preview() gives them. Else one Undo step."""
+    keys = sorted(k for k in {landrange._key(k) for k in cells or []} if landscape._winner(db, *k) is not None)
+    if not keys:
+        raise EditError('Mark cells with land on the land map first (Texture only makes no new land).')
+    if len(keys) > landrange.MAX_CELLS:
+        raise EditError('That is %d cells; texture at most %d at once.' % (len(keys), landrange.MAX_CELLS))
+    if not preview:
+        _require_project(db)
+    s = 4 if preview else 1
+    xs, ys = [k[0] for k in keys], [k[1] for k in keys]
+    G = landrange.Grid(db, min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1)
+    F = Field(G, s)
+    dress = _clean_opts(plan.get('dress'), DRESS)
+    seed = int(plan.get('seed') or 1)
+    reg = {k: (dress['region'] or landrange._region_of(db, k[0], k[1])).lower() for k in keys}
+    import landdress
+    ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed, flow=_beds(F, _marked_points(F, keys), dress, seed),
+                                    flow_k=dress['flow'])
+    # what stays: roads and paving by name, and the ground under what is built (Protection), patch by patch
+    prot = _clean_opts(plan.get('protect'), PROTECT)
+    hold = _holds(db, F, keys, prot['margin'])[0] if prot['hold'] else None
+    per = 64 // s
+    kept = 0
+    out_ids, out_files = {}, {}
+    for k in keys:
+        if k not in ids:
+            continue
+        cur = landscape.read(db, *k)
+        new_i, new_f = list(ids[k]), list(files[k])
+        ox, oy = (k[0] - G.x0) * per, (k[1] - G.y0) * per
+        for p in range(256):
+            px, py = p % 16, p // 16
+            keep = bool(cur['t'][p]) and bool(KEEP_TEX.search((cur['tex'].get(cur['t'][p]) or cur['t'][p]).lower()))
+            if not keep and hold is not None:
+                x0, y0 = ox + (px * per) // 16, oy + (py * per) // 16
+                keep = any(hold[(y0 + j) * F.w + x0 + i] >= 0.5 for j in range(max(1, per // 16) + 1) for i in range(max(1, per // 16) + 1))
+            if keep:
+                new_i[p] = cur['t'][p]
+                new_f[p] = (cur['tex'].get(cur['t'][p]) or '').replace('\\', '/').split('/')[-1] or new_f[p]
+                kept += 1
+        out_ids[k], out_files[k] = new_i, new_f
+    if preview:
+        out = {}
+        used = {}
+        for gx, gy in keys:
+            ox, oy = (gx - G.x0) * per, (gy - G.y0) * per
+            c = {'n': per + 1, 'h': [int(round(F.z[(oy + y) * F.w + ox + x])) for y in range(per + 1) for x in range(per + 1)]}
+            t = out_files.get((gx, gy))
+            if t:
+                c['t'] = t
+                c['i'] = out_ids[(gx, gy)]              # (the LTEX ids too: the Ground brush's Auto paints them)
+                for f in set(t):
+                    used[f] = used.get(f, 0) + 1
+            out['%d,%d' % (gx, gy)] = c
+        return {'cells': out, 'textures': used, 'info': {'kept': kept}, 'regions': sorted(set(reg.values()))}
+    # the region's shading on the new textures, as apply() lays it, on the heights as they are
+    import landshade
+    modes = [m for m, kk in (('texture', 'tints'), ('seams', 'seams'), ('hollows', 'hollows')) if dress[kk]]
+    rmain = Counter(reg.values()).most_common(1)[0][0] if reg else ''
+    done = 0
+    for gx, gy in keys:
+        k = (gx, gy)
+        if k not in out_ids:
+            continue
+        cols = None
+        if modes:
+            grid, col = landshade._land_of(db, landscape._winner(db, gx, gy))
+            grid = [f.lower() for f in out_files[k]]
+            mix = landshade.mixes(grid) if ('texture' in modes or 'seams' in modes) else None
+            q_h = landscape._encode_heights([float(v) for v in landscape.read(db, gx, gy)['h']])[1]
+            for mode in modes:
+                new, _n = landshade.colours(db, gx, gy, mode, max(0.0, min(1.0, float(dress['shade']))), rmain, grid, col,
+                                            H=q_h, around=landscape.around_of(db, gx, gy), mix=mix)
+                if new is not None:
+                    col = new
+            cols = col
+        landscape.write(db, gx, gy, None, out_ids[k], cols, around=landscape.around_of(db, gx, gy))
+        done += 1
+    db.sync_project()
+    commit(db, 'Textured %d cell%s by their slopes%s' % (done, '' if done == 1 else 's', ' (%d patches kept)' % kept if kept else ''))
+    texn = sorted(len(set(v)) for v in out_ids.values())
+    return {'cells': done, 'kept': kept, 'textures_a_cell': texn[len(texn) // 2] if texn else 0}
+
+
+def flow_lines(db, cells, plan, shaped=False):
+    """Where the rain runs on the marked cells, for the land map's flow overlay: on the plan's land at preview
+    detail when shaped (and there are shapes), else on the land as it is. {'lines': [[x0, y0, x1, y1, area]], 'most':
+    the biggest area, 'bed': the area a stream bed starts at with the plan's Stream beds}."""
+    import landwater
+    import landdress
+    layers = [L for L in (plan.get('layers') or []) if L.get('on', True) is not False]
+    if shaped and layers:
+        _keys, _G, F, inside, _reg = _work(db, cells, plan, 4)
+    else:
+        keys = sorted({landrange._key(k) for k in cells or []})
+        if not keys:
+            raise EditError('Mark the cells to see where the water runs.')
+        if len(keys) > landrange.MAX_CELLS:
+            raise EditError('That is %d cells; at most %d at once.' % (len(keys), landrange.MAX_CELLS))
+        xs, ys = [k[0] for k in keys], [k[1] for k in keys]
+        F = Field(landrange.Grid(db, min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1), 4)
+        inside = _marked_points(F, keys)
+    C, A, rec = landwater.flow_map(F, inside, int(plan.get('seed') or 1))
+    k = float(_clean_opts(plan.get('dress'), DRESS)['flow'])
+    return {'lines': landwater.streams(C, A, rec), 'most': int(max(A)) if A else 0,
+            'bed': round(landdress.FLOW_BED / k, 1) if k > 0 else None}
 
 
 def _figures(db, regions):

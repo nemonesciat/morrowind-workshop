@@ -17,9 +17,9 @@ game, measured how they're put together, and works from those measurements.
 
 ## What "learning" means here
 
-The Workshop reads every interior in your load order. Those are the places Bethesda, Tamriel Rebuilt,
-Project Tamriel and your other mods made. For each kind of question it needs answered, it runs a **survey**
-over them, a small program that counts and measures. For example:
+The Workshop reads every interior in your load order: the places the original game and the mods you play with
+made. For each kind of question it needs answered, it runs a **survey** over them, a small program that counts
+and measures. For example:
 
 | Survey | What it measures | What uses it |
 |---|---|---|
@@ -60,7 +60,7 @@ mod's plugin.
   your load order changes. The Workshop shows a progress bar while it learns; the rest of the program keeps
   working meanwhile.
 - **In the background:** up to three helper processes at low priority, so your PC stays usable. On a
-  typical load order with Tamriel Rebuilt, it takes about seven minutes.
+  large load order with big landmass mods, it takes about seven minutes.
 - **Once.** The results are kept. The Workshop learns again only when your load order or your example places
   change, or when a new version of the Workshop improves a survey.
 
