@@ -62,6 +62,9 @@ there as the game's own places of its kind have them (a house, a tavern, a guild
   come in they're where the hour puts them; while you watch they walk to the next spot. Anyone hurt, dead or with a
   weapon out is left to the game. Guards and tavern patrons stay put. A script in your mod (**wsroutines**, on the
   Scripts page) keeps the days; plain Morrowind ignores it.
+- **Lived in:** what they leave round the place's beds, bedrolls, fires, tables and work spots, the way the game's
+  own people of their kind leave it (see *Furnishing and checking*). A band leaves its own: a smugglers' camp its
+  skooma and crates.
 - Nothing is placed until you press **Place them**. One Undo takes them all back.
 
 **🧍 Someone who'd live here** (right-click a spot) does the same for one person.

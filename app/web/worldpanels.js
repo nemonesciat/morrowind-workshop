@@ -60,6 +60,7 @@ function worldPanelsInit(){
   PNL.spaces.world.types.objs.render = it => { if (it.id !== 'objs') wpRenderObjList(it); };
   if (typeof qolPanels === 'function') qolPanels();
   if (typeof spPanels === 'function') spPanels();      // (the Style palette, docked: stylepal.js)
+  if (typeof mmPanels === 'function') mmPanels();      // (the Minimap: minimap.js)
   PNL.start('world');
   wpAddPathsTab(); wpAddSkyLandTabs();
   for (const it of Object.values(PNL.spaces.world.inst)){ const t = PNL.spaces.world.types[it.type]; if (t.render && it.id !== 'objs') t.render(it); }
@@ -106,8 +107,11 @@ function wpAfterRender(){
   }
   if (W.info){
     const i = W.info, name = i.name || i.region || (i.interior ? i.key : 'Wilderness ' + i.gx + ', ' + i.gy);
-    if (!WP.places.length || WP.places[0].i !== i.i){
-      WP.places = [{i: i.i, name, interior: !!i.interior}, ...WP.places.filter(p => p.i !== i.i)].slice(0, 24);
+    // (kept by the place's key: a record's number changes whenever records are added or taken away, so an
+    // old number opened another place or none, "IndexError" on the user's places list, 2026-10-31)
+    const key = W.key || i.key;
+    if (!WP.places.length || WP.places[0].key !== key){
+      WP.places = [{i: i.i, key, name, interior: !!i.interior}, ...WP.places.filter(p => (p.key || p.i) !== (key || i.i) && !(!p.key && p.name === name))].slice(0, 24);
       try { localStorage.setItem('ws-places', JSON.stringify(WP.places)); } catch (e){}
     }
   }
@@ -195,14 +199,20 @@ async function wpRenderPrefabs(it){
 }
 
 // ----- places you've been (newest first) and a search
+// (one of them by its place in WP.places: by its key; a place kept before keys were, an interior by its name)
+function wpPlaceOpen(n){
+  const p = WP.places[n]; if (!p) return;
+  const key = p.key || (p.interior ? p.name.toLowerCase() : null);
+  if (key) worldOpen(key); else worldOpenIndex(p.i);
+}
 function wpRenderPlaces(it){
   const b = it.el;
   if (!b.querySelector('.wp-goto')){
     b.innerHTML = `<div class="dd"><input class="inp wp-goto" id="wp-goto-${esc(it.id)}" placeholder="Go to a place…" autocomplete="off"><div class="ddlist" id="wp-goto-${esc(it.id)}-l"></div></div><h3>Been there lately</h3><div class="olist wp-pl"></div>`;
     ddSearch('wp-goto-' + it.id, 'CELL', r => worldOpenIndex(r.i));
-    b.querySelector('.wp-pl').onclick = e => { const d = e.target.closest('[data-wpi]'); if (d) worldOpenIndex(+d.dataset.wpi); };
+    b.querySelector('.wp-pl').onclick = e => { const d = e.target.closest('[data-wpi]'); if (d) wpPlaceOpen(+d.dataset.wpi); };
   }
-  b.querySelector('.wp-pl').innerHTML = WP.places.map(p => `<div data-wpi="${p.i}" class="${W.info && W.info.i === p.i ? 'sel' : ''}"><span>${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</span></div>`).join('') || '<div class="msg">None yet: the places you open show up here, to go back to.</div>';
+  b.querySelector('.wp-pl').innerHTML = WP.places.map((p, n) => `<div data-wpi="${n}" class="${W.key && p.key === W.key ? 'sel' : ''}"><span>${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</span></div>`).join('') || '<div class="msg">None yet: the places you open show up here, to go back to.</div>';
 }
 
 // ----- the last changes to your mod (undo any of them from here)

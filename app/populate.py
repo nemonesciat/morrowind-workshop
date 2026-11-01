@@ -666,7 +666,7 @@ def _npc_record(db, nid, p):
     return join_subs(subs)
 
 
-def place(db, cell_key, people, own=True, crs=(), lts=(), routines=False):
+def place(db, cell_key, people, own=True, crs=(), lts=(), routines=False, lived=False, band='', lines=True):
     """Make a cast real: each person a new NPC record placed where the cast says, the household's head
     owning the place's beds and containers (those nobody owns yet), and its creatures (the game's own creatures
     and lists, placed). One change, one Undo."""
@@ -729,7 +729,9 @@ def place(db, cell_key, people, own=True, crs=(), lts=(), routines=False):
             subs[at:at] = [('ANAM', zs(head))]
             _store(c, rk, ref['origin'], ref['idx'], subs)
             owned += 1
-    said = write_lines(db, made)
+    # (lines=False: the caller writes everyone's lines at once, write_lines(db, out['people']): a built town's houses one by
+    # one relinked their topics a hundred times, 106 s of a town's 181, lab jtint3)
+    said = write_lines(db, made) if lines else 0
     # (their days, kept by the mod's routines script in OpenMW: routines.py; committed with them, one Undo)
     n_days = 0
     if routines:
@@ -738,13 +740,21 @@ def place(db, cell_key, people, own=True, crs=(), lts=(), routines=False):
         if days:
             routines_.register(db, days)
             n_days = len(days)
+    # (what they leave round their beds, fires, tables and work spots, as the game's own people of their kind:
+    # livedin.py; in the same change)
+    n_lived = 0
+    if lived:
+        import livedin
+        lv = livedin.apply(db, cell_key, band=band or '', setting=info['setting'], commit=False)
+        n_lived = lv['things'] + lv['camp_pieces'] + lv['story_pieces']
     what = ' and '.join(x for x in ('%d %s' % (len(made), 'person' if len(made) == 1 else 'people') if made else '',
                                    '%d creature%s' % (len(crs), '' if len(crs) == 1 else 's') if crs else '',
                                    '%d loot container%s' % (len(lts), '' if len(lts) == 1 else 's') if lts else '') if x)
     commit(db, 'Populated %s with %s%s%s' % (info['name'], what, (', who own its %d beds and containers' % owned) if owned else '',
-                                            (' and have %d lines of their own' % said) if said else ''))
-    return {'made': [nid for nid, _p in made], 'placed': placed, 'creatures': len(crs), 'loot': len(lts), 'owned': owned, 'lines': said,
-            'routines': n_days}
+                                            (' and have %d lines of their own' % said) if said else '')
+           + ((', %d of their things left about' % n_lived) if n_lived else ''))
+    return {'made': [nid for nid, _p in made], **({} if lines else {'people': made}), 'placed': placed, 'creatures': len(crs), 'loot': len(lts), 'owned': owned, 'lines': said,
+            'routines': n_days, 'lived': n_lived}
 
 
 GREETING_TOPIC = 'greeting 5'      # (where the game's own people keep their own greetings, before the everyday ones)

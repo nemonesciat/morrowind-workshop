@@ -2507,9 +2507,13 @@ def variants(db, cell_key, refkey):
             return {'variants': [], 'note': 'This isn\'t one of a building style\'s pieces.'}
         b = r.get('b')
         out = []
+        # (a stair is offered stairs: a post the same size is no choice for a flight)
+        stairish = re.compile(r'stair|ramp', re.I)
         for ri in kp['ris']:
             rid = db.recs[ri][1]
             if rid.lower() == r['id'].lower():
+                continue
+            if bool(stairish.search(r['id'])) != bool(stairish.search(rid)):
                 continue
             ob = mapdata.object_bounds(db, ri)
             if not ob or not b:

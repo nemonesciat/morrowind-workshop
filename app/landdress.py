@@ -97,6 +97,7 @@ VARIETIES = (0.25, 0.5, 0.8, 1.0, 1.4, 2.0, 3.0)
 # all repeat, making the land look unnatural", the user)
 GRAINS = ((1, 0.0), (2, 0.0), (4, 0.0), (2, 0.2), (4, 0.25), (4, 0.45))
 PATTERN_SAMPLE = 40             # land cells read a region for its patterning
+BY_EXAMPLE = True               # the region's own layout copied where it has land enough (texexample)
 SEARCH_CELLS = 9                # land cells the variety and grain are chosen on
 _pattern = {}
 
@@ -207,6 +208,22 @@ def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=No
         _s, v_, g_ = best
         ids, files = _textures(db, F, keys, regions, v_, seed, also_grid, cap=int(round(target)), pre=pre, grain=g_)
         cap_ = int(round(target))
+    if BY_EXAMPLE and variety < 0:
+        # (the region's own layout copied patch by patch where it has the land to copy from: texexample; the odds
+        # above stay for the regions too small, and for a chosen variety)
+        import texexample
+        import landscape
+        ex = texexample.paint(db, F, keys, regions, seed, pre)
+        if ex:
+            file_of = {rid: tex.lower() for (rid, tex) in landscape._ltex_all(db).values()}
+            for k, row in ex.items():
+                if k not in ids:
+                    if not all(row):
+                        continue
+                    ids[k], files[k] = [None] * 256, [None] * 256
+                for p, t in enumerate(row):
+                    if t:
+                        ids[k][p], files[k][p] = t, file_of.get(t, '')
     if beds:
         # (the stream beds only: the cells textured as above, then the bed patches alone given the water's-edge choice
         # worked out at the same variety; a second whole pass with the beds in reshuffled a quarter of every cell)

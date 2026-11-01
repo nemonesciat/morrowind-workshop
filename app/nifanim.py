@@ -620,7 +620,14 @@ def for_record(db, rec_i, modl=None):
     raw = db.meshes.read(base)
     if not raw:
         raise ValueError("The model's file is missing.")
-    T = tree(raw)
+    T = None
+    if r[0] == 'CREA' and not f['skeleton'] and not f['kf'] and _bipedal(db, rec_i):
+        # (a two-legged creature with no animation of its own moves as people do: the Golden Saint lay flat in its
+        # file's pose, the user 2026-10-30. OpenMW gives a Bipedal creature base_anim.nif's skeleton and keys)
+        T = _biped_tree(db, raw)
+        if T:
+            f = dict(f, skeleton='meshes/base_anim.nif', kf='meshes/xbase_anim.kf' if db.meshes.read('meshes/xbase_anim.kf') else None)
+    T = T or tree(raw)
     if not T:
         raise ValueError('This model could not be read.')
     for s in T['shapes']:
@@ -639,6 +646,81 @@ def for_record(db, rec_i, modl=None):
     length = max([k[0] for tr in tracks.values() for part in ('rot', 'pos', 'scale') for k in tr[part]] + [k[0] for k in keys] + [0.0])
     return {'id': r[1], 'type': r[0], 'name': r[2] or '', 'files': f, 'tree': T, 'tracks': tracks, 'keys': keys,
             'groups': groups(keys), 'keyfile': keyfile, 'length': round(length, 3)}
+
+
+def _bipedal(db, rec_i):
+    """A creature flagged Bipedal (its FLAG's lowest bit)."""
+    import struct
+    from esm import iter_subrecords
+    r = db.recs[rec_i]
+    for t, d in iter_subrecords(db.files[r[3]].record_at(r[4])[2]):
+        if t == 'FLAG' and len(d) >= 4:
+            return bool(struct.unpack_from('<I', d)[0] & 1)
+    return False
+
+
+def _inv4(M):
+    """The inverse of a turn, an even size and a move."""
+    s2 = sum(M[k][0] ** 2 for k in range(3)) or 1.0
+    Rt = [[M[j][i] / s2 for j in range(3)] for i in range(3)]
+    t = [-sum(Rt[i][k] * M[k][3] for k in range(3)) for i in range(3)]
+    return [Rt[i] + [t[i]] for i in range(3)] + [[0, 0, 0, 1]]
+
+
+def _split4(M):
+    """(R, t, s) of a turn, an even size and a move."""
+    s = sum(M[k][0] ** 2 for k in range(3)) ** 0.5 or 1.0
+    return [[M[i][j] / s for j in range(3)] for i in range(3)], [M[i][3] for i in range(3)], s
+
+
+def _biped_tree(db, raw):
+    """A creature model hung on the people's skeleton (base_anim.nif), as tree() gives a tree: its skinned shapes
+    bound to the skeleton's bones by name, its other shapes on the nearest node above them the skeleton has by
+    name (where they sit relative to it kept). None when the skeleton is missing or the model unreadable."""
+    sraw = db.meshes.read('meshes/base_anim.nif')
+    S = tree(sraw) if sraw else None
+    P = tree(raw, keep_root=True)
+    if not S or not P:
+        return None
+    for n in S['nodes']:
+        n.pop('tracks', None)
+    by_name = {n['name'].lower(): i for i, n in enumerate(S['nodes'])}
+    world = []
+    for nd in P['nodes']:
+        L = _mat(nd['R'], nd['t'], nd['s'])
+        world.append(_mul4(world[nd['parent']], L) if nd['parent'] >= 0 else L)
+    S['shapes'] = []
+
+    def ensure(pi):
+        # (a bone the people's skeleton hasn't, the Golden Saint's toes: added under its parent, as the model has it)
+        nm = P['nodes'][pi]['name'].lower()
+        if nm not in by_name:
+            par = P['nodes'][pi]['parent']
+            pn = P['nodes'][pi]
+            S['nodes'].append({'name': pn['name'], 'parent': ensure(par) if par >= 0 else 0, 'R': pn['R'], 't': pn['t'], 's': pn['s']})
+            by_name[nm] = len(S['nodes']) - 1
+        return by_name[nm]
+    for s in P['shapes']:
+        s = dict(s)
+        sk = s.get('skin')
+        if sk:
+            if any(b < 0 for b in sk['bones']):
+                continue
+            s['skin'] = dict(sk, bones=[ensure(b) for b in sk['bones']])
+            s['node'] = -1
+        else:
+            a = s['node']
+            while a >= 0 and P['nodes'][a]['name'].lower() not in by_name:
+                a = P['nodes'][a]['parent']
+            W = _mul4(world[s['node']] if s['node'] >= 0 else _mat(I3, [0, 0, 0], 1.0), _mat(s['R'], s['t'], s['s']))
+            if a >= 0:
+                W = _mul4(_inv4(world[a]), W)
+                s['node'] = by_name[P['nodes'][a]['name'].lower()]
+            else:
+                s['node'] = -1
+            s['R'], s['t'], s['s'] = _split4(W)
+        S['shapes'].append(s)
+    return S if S['shapes'] else None
 
 
 def _at_time(keys, t):

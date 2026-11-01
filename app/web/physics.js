@@ -104,7 +104,7 @@ function phPart(key, o){
   return phLoose(o.r, mine);
 }
 
-async function phToggle(on){
+async function phToggle(on, still){
   if (on === PH.on || PH.loading) return;
   // (off, by the button, Esc or the panel's ✕: everything stays where it lies, saved as one Undo; the user:
   // "closing physics should just close", Put back is the way to undo)
@@ -118,13 +118,13 @@ async function phToggle(on){
       await (m.init || (m.default && m.default.init))();
     }
     PH.centre = null;                  // (round where you look now)
-    PH.paused = false;
+    PH.paused = !!still;
     await phTakeSelection(PH.forceSel);
-    await phPreSettle();
+    if (!still) await phPreSettle();
     phBuild();
     PH.on = true;
     phPanel();
-    toast(`Physics on: ${PH.bodies.size} loose things can fall and be pushed (${PH.held} hung ones stay put). Drag one to push the others.`);
+    if (!still) toast(`Physics on: ${PH.bodies.size} loose things can fall and be pushed (${PH.held} hung ones stay put). Drag one to push the others.`);
   } catch (e){ toast('Physics could not start: ' + e.message, true); phClear(); }
   PH.loading = false;
   v3Tools();
@@ -426,7 +426,9 @@ function phPauseToggle(){
   if (!PH.paused){ PH.t0 = performance.now(); PH.acc = 0; phLoosen(); for (const b of PH.bodies.values()) b.body.wakeUp(); }
   phPanel();
 }
-// the panel's Keep: where they lie saved (one Undo), and physics carries on from there with the same things
+// the panel's Keep: where they lie saved (one Undo), and held there, paused, with the same things: Run lets them
+// fall again from there, Put back comes back to here. (It started physics afresh, settled them once more and ran on:
+// the user, "When I hit Keep where they lie, I want it to keep it where they lie")
 async function phKeepGoing(){
   const moves = phMoves();
   if (!moves.length) return toast('Nothing has moved yet.');
@@ -435,8 +437,9 @@ async function phKeepGoing(){
   PH.on = false; phClear();
   await groupAction('/api/group/move', {moves}, `Physics: kept where ${moves.length} thing${moves.length === 1 ? ' lies' : 's lie'}`);
   PH.forceSel = force;
-  await phToggle(true);
+  await phToggle(true, true);
   PH.forceSel = false;
+  toast(`Kept where ${moves.length} thing${moves.length === 1 ? ' lies' : 's lie'}. Held still: Run lets them fall again.`);
 }
 
 // the reach changed: the bodies again round the same spot, those still in reach where they lie now, those
@@ -477,7 +480,7 @@ function phPanel(){
     <div style="display:flex;gap:6px;align-items:center;margin:0 0 6px"><button class="btn sm" data-ph="sel" title="Select things (Shift+click or drag a box), then press this: only they move">◎ Just the selected</button>${PH.onlySel ? '' : '<span class="msg">or all in reach</span>'}</div>
     ${PH.chosen && (PH.chosen.size > 1 || PH.onlySel) ? `<label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="On: only the things you picked move, wherever they are; everything else stays solid. Off: every loose thing in reach takes part, these too"><input type="checkbox" data-ph="only" ${PH.onlySel ? 'checked' : ''}> Only the ${PH.chosen.size} selected</label>` : ''}
     <label class="msg" style="display:flex;align-items:center;gap:6px;margin:0 0 6px" title="Off: only small loose things (cups, books, bones). On: barrels, kegs, crates, urns, sacks and chests fall and settle too"><input type="checkbox" data-ph="big" ${PH.big ? 'checked' : ''}> Larger things too (barrels, crates)</label>
-    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-ph="keep" title="Save where they lie now, and carry on">✔ Keep where they lie</button><button class="btn sm" data-ph="back" title="Back where they were saved, held still until Run">↶ Put back</button>
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm primary" data-ph="keep" title="Save where they lie now, and hold them there (Run lets them fall again)">✔ Keep where they lie</button><button class="btn sm" data-ph="back" title="Back where they were saved, held still until Run">↶ Put back</button>
     <button class="btn sm" data-ph="jiggle" title="A little shake: everything loose wakes and settles again">〰 Jiggle</button></div>`;
   ($('#v3wrap') || document.body).appendChild(p);
   PH.panel = p;

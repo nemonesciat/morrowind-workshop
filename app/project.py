@@ -163,6 +163,14 @@ class Project:
         self.cells = d.get('cells', {})       # cell key -> {flags, header, refs: {refkey: {...}}}
         self.next_ref = d.get('next_ref', 1)
         self.log = d.get('log', [])
+        # (big changes' undo data kept beside the project, see _log_to_keep: read back in, so Undo still reaches them)
+        for e in self.log:
+            if e.get('diff_file') and 'diff' not in e:
+                try:
+                    with open(os.path.join(self._history_dir(), e['diff_file']), encoding='utf-8') as f:
+                        e['diff'] = json.load(f)
+                except (OSError, ValueError):
+                    pass
         self.release = d.get('release', {})     # version, changelog, readme bits (Release page)
         self.lua = d.get('lua', [])             # Lua scripts: [{name, kind, attach: [ids], text}]
         self.lua_files = d.get('lua_files', [])  # the Lua files last written, so old ones can be cleared
@@ -200,17 +208,59 @@ class Project:
                        'description': description[:255], 'records': {}, 'cells': {}, 'next_ref': 1}, f)
         return cls(path)
 
+    BIG_DIFF = 20_000              # (an entry's undo data this big goes to the history folder, not the project file)
+    HISTORY_MAX = 400_000_000      # (and the folder keeps the newest of them within this much)
+
+    def _history_dir(self):
+        return os.path.splitext(self.path)[0] + ' history'
+
     def _log_to_keep(self, limit=2_000_000, count=500):
-        """The newest log entries, no more than `count` and about `limit` bytes of them: the diffs kept
-        with each change made a 1 MB project a 7 MB file, written again after every move."""
-        out, total = [], 0
+        """The newest log entries, no more than `count` and about `limit` bytes of them in the project file: the diffs
+        kept with each change made a 1 MB project a 7 MB file, written again after every move. A big change's diff (a
+        town, a reshaped valley) is written once to the history folder beside the project and the entry keeps its file
+        name: inline, the first save after any later edit dropped it, and its Undo with it (the user's town, 2026-10-31,
+        on a project whose file kept 36 entries)."""
+        out, total, hist, kept_files = [], 0, 0, set()
+        hd = self._history_dir()
         for e in reversed(self.log):
-            size = len(json.dumps(e))
-            if out and (total + size > limit or len(out) >= count):
+            if len(out) >= count:
+                break
+            d = e.get('diff')
+            raw = json.dumps(d) if d else ''
+            if d and len(raw) > self.BIG_DIFF:
+                name = e.get('diff_file') or '%d-%d.json' % (e.get('id', 0), int(time.time()))
+                path = os.path.join(hd, name)
+                if not os.path.exists(path):
+                    try:
+                        os.makedirs(hd, exist_ok=True)
+                        with open(path + '.tmp', 'w', encoding='utf-8') as f:
+                            f.write(raw)
+                        os.replace(path + '.tmp', path)
+                    except OSError:
+                        name = None
+                if name:
+                    hist += len(raw)
+                    if hist > self.HISTORY_MAX:
+                        break
+                    e['diff_file'] = name
+                    kept_files.add(name)
+                    lite = {k: v for k, v in e.items() if k != 'diff'}
+                    out.append(lite)
+                    total += len(json.dumps(lite))
+                    continue
+            size = len(raw) + 200
+            if out and total + size > limit:
                 break
             out.append(e)
             total += size
         out.reverse()
+        # (history files no kept entry names any more: gone)
+        try:
+            for fn in os.listdir(hd):
+                if fn.endswith('.json') and fn not in kept_files:
+                    os.remove(os.path.join(hd, fn))
+        except OSError:
+            pass
         return out
 
     def save(self):
@@ -268,7 +318,8 @@ class Project:
         out, lines, attach = {}, [], {}
         for s in self.lua:
             path = self.lua_path(s)
-            out[path] = s.get('text') or ''
+            import myeffects
+            out[path] = myeffects.own_events(s.get('text') or '', self.lua_slug())
             ids = [i.strip().lower() for i in s.get('attach') or [] if i.strip()]
             if ids:
                 lines.append('CUSTOM: ' + path)

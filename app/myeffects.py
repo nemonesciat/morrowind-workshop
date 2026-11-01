@@ -424,6 +424,17 @@ def _lua(v):
     return json.dumps(str(v))
 
 
+EVENTS = re.compile(r'\bWS_MyEffect(World|Message|Raised|Stat|Stagger|Quake)\b')
+
+
+def own_events(text, slug):
+    """The scripts' event names made this mod's own (Project.lua_outputs, on every script as it is written): every mod
+    with effects of its own carries these scripts, and with one name for all, each mod's global script answered every
+    mod's summon (Altvaddert's seven mods called seven creatures a cast) and every player script showed every message.
+    Your own Lua's WS_MyEffectStat changes with it. A name already the mod's own is left as it is."""
+    return EVENTS.sub(lambda m: 'WS_MyEffect%s_%s' % (m.group(1), slug), text)
+
+
 def _put(db, name, kind, text, first=False):
     p = db.project
     s = _script(db, name)
@@ -1039,11 +1050,20 @@ return {
       for key, s in pairs(summoned) do
         if not (s.caster and s.caster:isValid()) or types.Actor.isDead(s.caster) then
           dismiss(key)          -- (the caster died: their summons go with them)
-        elseif not s.told then
-          -- (a frame after they were made, once their own scripts run: on the caster's side, following)
-          s.told = true
-          for _, o in ipairs(s.objects) do
-            if o:isValid() then o:sendEvent('WS_MyEffectRaised', { health = 100, side = 'ally', caster = s.caster }) end
+        else
+          for _, o in ipairs(s.objects or {}) do
+            -- (killed: gone at once in the game's flash, as the game's own summons are, not left lying till the time ran out)
+            if o:isValid() and o.count > 0 and types.Actor.isDead(o) then
+              flash('VFX_Summon_End', o.position)
+              o:remove()
+            end
+          end
+          if not s.told then
+            -- (a frame after they were made, once their own scripts run: on the caster's side, following)
+            s.told = true
+            for _, o in ipairs(s.objects) do
+              if o:isValid() then o:sendEvent('WS_MyEffectRaised', { health = 100, side = 'ally', caster = s.caster }) end
+            end
           end
         end
       end

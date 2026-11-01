@@ -192,7 +192,7 @@ function renderGuide(){
     ${card('browse', '🔎', 'Browse', 'Find anything', 'Search every record in your load order by name, ID, dialogue or model, and open it to see and change it.')}
   </div>
 
-  ${places.length ? `<h2>Where you were lately</h2><div class="home-places">${places.map(pl => `<button class="btn sm" data-homeplace="${pl.i}">${pl.interior ? '🏠' : '🌄'} ${esc(pl.name)}</button>`).join('')}</div>` : ''}
+  ${places.length ? `<h2>Where you were lately</h2><div class="home-places">${places.map((pl, n) => `<button class="btn sm" data-homeplace="${n}">${pl.interior ? '🏠' : '🌄'} ${esc(pl.name)}</button>`).join('')}</div>` : ''}
 
   <label class="msg home-onstart"><input type="checkbox" id="g-onstart" ${homeStart() ? 'checked' : ''}> Open on this page when the Workshop starts</label>
 
@@ -283,7 +283,7 @@ function renderGuide(){
     else if (k === 'create') showView('createv');
     else { showView('browse'); $('#q').focus(); }
   });
-  w.querySelectorAll('[data-homeplace]').forEach(b => b.onclick = () => { showView('world'); worldOpenIndex(+b.dataset.homeplace); });
+  w.querySelectorAll('[data-homeplace]').forEach(b => b.onclick = () => { showView('world'); wpPlaceOpen(+b.dataset.homeplace); });
 }
 document.addEventListener('click', e => { const g = e.target.closest('[data-gview]'); if (g) showView(g.dataset.gview); });
 // (the logo, top left, goes Home)

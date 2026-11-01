@@ -24,6 +24,27 @@ order: beds and shelves against the walls, tables with chairs, things on the tab
 The first time, Auto-furnish waits for the Workshop to finish learning from your game's places, and shows a bar
 while it does.
 
+## Make it lived in
+
+**🏕 Lived in** (Place panel) leaves what people leave round the place's beds, bedrolls, fires, tables and work
+spots: bowls, cups and bread by a bedroll, a ladle and plates at the fire, prongs and a hammer at the anvil, papers and
+a quill at a desk. Each is one of the game's own arrangements round such a spot, from a place of the same kind
+(a cave, a camp, a house), turned with your spot and set down on what's under it. Spots with things round them already
+are left as they are. One Undo. The first time it learns from your game's places (about a minute).
+
+**Camps:** a cave, tomb, tower or other dungeon with too few beds for who lives there (the band, or two at least)
+first gets the game's own camps of that kind: a bedroll with its fire, log, stool, screen or table, as the game's
+bandits, smugglers or Daedra worshippers set theirs, laid whole on clear floor away from the walls, the doors and
+each other. Then it's made lived in round them.
+
+**Stories:** a dungeon also gets the game's own scenes of what happened there, as many as its places of that kind
+hold: a fallen adventurer (remains with their weapon, armour, a note or some gold), an offering at an altar, or a
+pile of bones. Each is laid whole on clear floor, from a place of the same kind (a tomb's dead among ash urns and
+prayer stools, a cave's skeleton with its sword), and the band's own first. A place telling three stories already is
+left as it is.
+
+Populate does the same for the people it places (**lived in**, on by default), picking by who they are.
+
 ## One room, one piece
 
 Right-click in a room (its floor, a wall, or a thing in it):

@@ -64,13 +64,14 @@ async function gfFit(cell, ref){
 
 async function fbOpen(cell, ref, door, keep){
   // (keep: the same window again with a choice changed, the door, the floors or the cellar; the copy search kept)
-  if (!keep){ FB.cellar = null; FB.floors = null; FB.copyOpen = false; FB.q = ''; FB.gamePick = null; FB.cname = null; FB.seed = 0; }
+  if (!keep){ FB.cellar = null; FB.floors = null; FB.copyOpen = false; FB.q = ''; FB.gamePick = null; FB.cname = null; FB.seed = 0; FB.route = null; }
   const games = keep && FB.cell === cell && FB.ref === ref && (FB.door || null) === (door || null) ? FB.games : null;
   FB.on = true; FB.cell = cell; FB.ref = ref; FB.door = door || null; FB.res = null; FB.floor = null; FB.games = games;
   if (!keep) fbPanel('<div class="msg">Reading the building…</div>');
   let r;
   try { r = await api('/api/build/from_building?cell=' + encodeURIComponent(cell) + '&ref=' + encodeURIComponent(ref) + (door ? '&door=' + encodeURIComponent(door) : '') +
-                      (FB.cellar ? '&cellar=' + FB.cellar : '') + (FB.floors ? '&floors=' + FB.floors : '') + (FB.seed ? '&seed=' + FB.seed : '')); }
+                      (FB.cellar ? '&cellar=' + FB.cellar : '') + (FB.floors ? '&floors=' + FB.floors : '') + (FB.seed ? '&seed=' + FB.seed : '') +
+                      (FB.route ? '&route=' + FB.route : '')); }
   catch (e){ fbPanel(`<div class="msg" style="color:#e25a4a">${esc(e.message)}</div>`); return; }
   FB.res = r;
   fbRender();
@@ -152,7 +153,21 @@ function fbRender(){
   const pl = r.plan, live = r.ok && pl && !pl.problem && !r.built;
   h += `<div style="margin:6px 0 2px">Name <input id="fb-name" style="width:calc(100% - 50px)" value="${esc(FB.cname != null ? FB.cname : (r.name || ''))}" maxlength="63" title="The new place's name"></div>`;
   if (r.error && !pl) h += `<div class="msg" style="color:#e25a4a">${esc(r.error)}</div>`;
-  if (pl && pl.style === 'pods') h += `<div style="margin:6px 0" title="${esc((pl.notes || []).join('\n'))}"><b>Ready-made interiors</b>: a place for each shell with a door, as the game's own</div>`;
+  // (a building with shells the game makes ready-made interiors for: which way, and what each way makes; the user,
+  // 2026-10-31: "There's no indication of what plan it'll make")
+  if (r.pods) h += `<div style="display:flex;gap:10px;margin:6px 0 2px;flex-wrap:wrap">
+      <label title="A place for each shell with a door outside, copied from the game's own interior of that shell"><input type="radio" name="fb-route" value="" ${FB.route !== 'plan' ? 'checked' : ''}> Ready-made per shell</label>
+      <label title="One interior planned to fit the whole building, floor by floor, in its style"><input type="radio" name="fb-route" value="plan" ${FB.route === 'plan' ? 'checked' : ''}> Planned to fit</label></div>`;
+  if (pl && pl.style === 'pods'){
+    const P_ = r.places || [], made = P_.filter(x => x.door), base = FB.cname != null ? FB.cname : (r.name || '');
+    h += `<div class="msg" style="margin:4px 0 2px">${made.length} place${made.length === 1 ? '' : 's'}:</div>` + P_.map(x => {
+      const n = made.indexOf(x), nm = n < 0 ? '' : n === 0 ? base : base + ': Pod ' + (n + 1);
+      const tip = x.id + (x.from ? '\nCopied from ' + x.from + ', the most typical of the game\'s ' + (x.examples || '?') : '');
+      return `<div class="msg" style="margin:1px 0;display:flex;gap:4px;align-items:center;${x.door ? '' : 'opacity:.6'}">
+        <button class="btn sm" data-at="${esc(JSON.stringify(x.p))}" title="Show this piece on the map" style="padding:0 5px">⌖</button>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(tip)}">${x.door ? esc(nm) : esc(x.id) + ': no door, nothing made'}${x.door && x.from ? ' <span style="color:var(--faint)">· like ' + esc(x.from) + '</span>' : ''}</span></div>`;
+    }).join('');
+  }
   else if (pl){
     const up = r.floors_up || pl.floors.filter(f => f >= 0).length, mx = Math.max(r.floors_max || up, up), C = r.cellar;
     h += `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0">
@@ -160,7 +175,7 @@ function fbRender(){
       ${C ? `<label title="${esc(`${Math.round(C.share * 100)}% of the game's ${C.style || ''} houses have one: usually ${C.usual}× the ground floor, a big one ${C.big}×`)}">Cellar <select id="fb-cellar">
         <option value="" ${!FB.cellar ? 'selected' : ''}>None</option><option value="usual" ${FB.cellar === 'usual' ? 'selected' : ''}>Usual</option><option value="big" ${FB.cellar === 'big' ? 'selected' : ''}>Big</option></select></label>` : ''}</div>`;
     const tip = pl.rooms.map(x => `${x.name} ${x.w}×${x.h}${x.cut ? ' less ' + x.cut.length : ''}`).join(', ') + '\n' + (pl.notes || []).concat(pl.dry || []).join('\n');
-    h += `<div class="msg" style="margin:2px 0;display:flex;align-items:center;gap:6px"><span title="${esc(tip)}">${esc(pl.style_name)} · ${pl.rooms.length} room${pl.rooms.length === 1 ? '' : 's'} ⓘ</span>${live ? '<button class="btn sm" id="fb-reroll" title="Other rooms in the same space">🎲</button>' : ''}</div>`;
+    h += `<div class="msg" style="margin:2px 0;display:flex;align-items:center;gap:6px"><span title="${esc(tip)}">${esc(pl.style_name)} · ${pl.rooms.length} room${pl.rooms.length === 1 ? '' : 's'} ⓘ</span>${live ? '<button class="btn sm" id="fb-reroll" title="Other rooms in the same space">🎲</button><button class="btn sm" id="fb-planner" title="Change the rooms, doorways and stairs in Build from pieces; Build there makes it inside this building, its door linked">✎ Open in the planner</button>' : ''}</div>`;
     if (live) h += `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0">
       <label title="Furnished the game's way after it is made (Auto-furnish, by the rooms' names); Bare leaves the rooms empty">Furnish <select id="fb-as">${[['none', 'Bare']].concat(FURNISH_AS).map(([v, l]) => `<option value="${v}" ${v === FB.as ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
       <input class="inp" id="fb-trade" list="fb-tradelist" placeholder="smith, mage, Temple…" style="display:${FB.as === 'trade' ? '' : 'none'};width:150px" value="${esc(FB.trade || '')}" autocomplete="off"><datalist id="fb-tradelist"></datalist>
@@ -177,11 +192,13 @@ function fbRender(){
   const P = FB.panel;
   P.querySelectorAll('[data-at]').forEach(b => b.onclick = () => { const a = JSON.parse(b.dataset.at); W.cam.x = a[0]; W.cam.y = a[1]; if (W.cam.z < 1.5) W.cam.z = 1.5; drawMap(); });
   P.querySelectorAll('input[name=fb-fl]').forEach(b => b.onchange = () => { FB.floor = +b.value; drawMap(); fb3d(); });
+  P.querySelectorAll('input[name=fb-route]').forEach(b => b.onchange = () => { FB.route = b.value || null; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); });
   fb3d();
   const ds = P.querySelector('#fb-door'); if (ds) ds.onchange = () => fbOpen(FB.cell, FB.ref, ds.value, true);
   const fs = P.querySelector('#fb-floors'); if (fs) fs.onchange = () => { FB.floors = +fs.value; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); };
   const cs = P.querySelector('#fb-cellar'); if (cs) cs.onchange = () => { FB.cellar = cs.value || null; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); };
   const nm = P.querySelector('#fb-name'); if (nm) nm.oninput = () => { FB.cname = nm.value; };
+  const opl = P.querySelector('#fb-planner'); if (opl) opl.onclick = fbToPlanner;
   const rr = P.querySelector('#fb-reroll'); if (rr) rr.onclick = () => { FB.seed = (FB.seed || 0) + 1; fbOpen(FB.cell, FB.ref, FB.res && FB.res.door, true); };
   const fa = P.querySelector('#fb-as');
   if (fa){
@@ -207,7 +224,7 @@ async function fbBuild(){
   let o;
   const level = FB.as === 'none' ? false : (furnishAsValue('fb') || null);
   try { o = await post('/api/build/from_building', {cell: FB.cell, ref: FB.ref, door: FB.res.door, name, cellar: FB.cellar, floors: FB.floors,
-                                                     seed: FB.seed || 0, lighting: FB.light, lights: FB.lamps}); }
+                                                     seed: FB.seed || 0, lighting: FB.light, lights: FB.lamps, route: FB.route || null}); }
   catch (e){ b.disabled = false; b.textContent = '🛠 Make the interior'; return toast(e.message, true); }
   if (level !== false){
     // (every floor that is a place of its own; the surveys learnt first, the bar showing it, as Build from pieces does)
@@ -330,3 +347,51 @@ function frombuildingDraw(g){
     g.save(); g.strokeStyle = d.k === FB.res.door ? '#fff0b0' : '#f0cd8788'; g.lineWidth = 2.5; g.beginPath(); g.arc(sx, sy, 9, 0, Math.PI * 2); g.stroke(); g.restore();
   }
 }
+
+// the planned interior into Build from pieces, to change there: its Build then makes it inside this building, the doors
+// linked both ways (the user's "Open in the planner" for the interior preview)
+function fbToPlanner(){
+  const pl = FB.res && FB.res.plan; if (!pl || !pl.rooms) return;
+  const ids = {}, key = (x, y, f) => x + ',' + y + ',' + f, tiles = {};
+  const rooms = pl.rooms.map((r, n) => {
+    const id = 'fb' + n; ids[n] = id; ids[String(r.name).toLowerCase()] = id;
+    const o = {id, name: r.name, x: r.x, y: r.y, w: r.w, h: r.h, floor: r.floor || 0};
+    if (r.add && r.add.length) o.add = r.add.map(t => [t[0] - r.x, t[1] - r.y]);
+    if (r.cut && r.cut.length) o.cut = r.cut.map(t => [t[0] - r.x, t[1] - r.y]);
+    if (r.tall) o.tall = true;
+    const cut = new Set((r.cut || []).map(t => t[0] + ',' + t[1]));
+    for (let x = r.x; x < r.x + r.w; x++) for (let y = r.y; y < r.y + r.h; y++) if (!cut.has(x + ',' + y)) tiles[key(x, y, o.floor)] = id;
+    for (const t of r.add || []) tiles[key(t[0], t[1], o.floor)] = id;
+    return o;
+  });
+  const rid = v => typeof v === 'number' ? ids[v] : ids[String(v).toLowerCase()];
+  const STEP = {N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0]};
+  const doors = [];
+  for (const d of pl.doors || []){
+    const a = rid(d.rooms[0]), b = rid(d.rooms[1]); if (!a || !b) continue;
+    if (d.kind === 'open'){ doors.push({a, b, kind: 'open'}); continue; }
+    if (d.at){ doors.push({a, b, kind: 'door', x: d.at.x, y: d.at.y, side: d.at.side}); continue; }
+    // (only which rooms: the middle of the wall they share)
+    const f = rooms.find(r => r.id === a).floor, e = [];
+    for (const [k, id] of Object.entries(tiles)){
+      if (id !== a) continue;
+      const [x, y, fl] = k.split(',').map(Number); if (fl !== f) continue;
+      for (const [s, v] of Object.entries(STEP)) if (tiles[key(x + v[0], y + v[1], f)] === b) e.push({x, y, side: s});
+    }
+    if (e.length) doors.push({a, b, kind: 'door', ...e[Math.floor(e.length / 2)]});
+  }
+  const ex = pl.exit || {}, er = rid(ex.room != null ? ex.room : 0);
+  const floors = new Set(rooms.map(r => r.floor));
+  CR.plan = {rooms, doors, exit: er ? {room: er, side: ex.side || 'S', ...(ex.x != null ? {x: ex.x, y: ex.y} : {})} : null,
+             stairs: [], walls: [], stairPins: {}, stairOut: {}, stairWas: {}, stairwell: floors.size > 2};
+  try { localStorage.setItem('ws-plan', JSON.stringify(CR.plan)); } catch (e){}
+  CR.fromBuilding = {cell: FB.cell, ref: FB.ref, door: FB.res.door, cellar: FB.cellar, floors: FB.floors, seed: FB.seed || 0,
+                     style: pl.style, where: (W.info && (W.info.name || W.info.region)) || FB.cell};
+  const name = (FB.panel && FB.panel.querySelector('#fb-name') || {}).value || FB.res.name || '';
+  showView('create'); CR.kind = 'build'; CR.bmode = 'plan'; CR.items = []; renderCreate();
+  const st = $('#cr-bstyle'); if (st && pl.style){ st.value = pl.style; st.dispatchEvent(new Event('change', {bubbles: true})); }
+  const nm = $('#cr-name'); if (nm && name) nm.value = name;
+  toast('In the planner: Build makes it inside the building, its door linked.');
+}
+// (✕ on the planner's note: build it as a place of its own after all)
+document.addEventListener('click', e => { if (e.target && e.target.id === 'cr-fbx'){ CR.fromBuilding = null; renderCreate(); } });

@@ -18,7 +18,7 @@ import landsurvey
 import mapdata
 from project import ref_info
 
-VERSION = 2
+VERSION = 3                     # (3: each square's texture, 'tex', beside it)
 SQUARE = 1024                   # units a square side: 8 a cell
 SAMPLE = 90                     # wild cells a region read, spread over it
 LOOK = 260                      # cells looked at for them
@@ -27,6 +27,9 @@ ENOUGH = 40                     # squares with something on them a region needs 
 BROAD = 600                     # squares of land a region needs to stand in for another's missing ground
 FALLBACKS = 3                   # regions with land tried after a cell's own, the nearest first
 SETTLED = 300                   # a non-growing thing this wide (or a door, a person) makes a square settled
+SAME_TEX = 4                    # squares of a ground grown on the land's own texture needed to keep to them
+BY_TEXTURE = True               # squares grown on the texture the land has there first (the user, 2026-10-30)
+HOLDOUT = set()                 # cells never learnt from (the lab's held-out blocks; nothing then kept on disk)
 _mem = {}
 
 
@@ -103,16 +106,18 @@ def _tag(db, rid, memo):
 
 
 def learn(db, region):
-    """{'squares': {ground key: [[item, ...], ...]}, 'grown': squares with something, 'cells'}: the region's own
-    squares by their ground (item: [id, dx, dy, over the ground, rx, ry, rz, scale]). Cached by the load order."""
+    """{'squares': {ground key: [[item, ...], ...]}, 'tex': {ground key: [texture under each square]}, 'grown':
+    squares with something, 'cells'}: the region's own squares by their ground (item: [id, dx, dy, over the ground,
+    rx, ry, rz, scale]; texture: the LTEX id most of the square's four patches have). Cached by the load order."""
+    import landscape
     region = (region or '').lower()
-    key = (id(db.recs), region)
+    key = (id(db.recs), region, tuple(sorted(HOLDOUT)))
     if key in _mem:
         return _mem[key]
     path = _disk(db)
     disk = {}
     try:
-        if os.path.isfile(path):
+        if os.path.isfile(path) and not HOLDOUT:
             with open(path, encoding='utf-8') as f:
                 disk = json.load(f)
     except (OSError, ValueError):
@@ -122,8 +127,8 @@ def learn(db, region):
         return disk[region]
     import regions
     rmap = regions.region_map(db)
-    cells = sorted((k for k, r in rmap.items() if r == region), key=lambda k: hashlib.md5(k.encode()).hexdigest())[:LOOK]
-    squares, memo, used, grown = {}, {}, 0, 0
+    cells = sorted((k for k, r in rmap.items() if r == region and k not in HOLDOUT), key=lambda k: hashlib.md5(k.encode()).hexdigest())[:LOOK]
+    squares, texs, memo, used, grown = {}, {}, {}, 0, 0
     for ck in cells:
         if used >= SAMPLE:
             break
@@ -172,18 +177,23 @@ def learn(db, region):
             big = b and max(b[3] - b[0], b[4] - b[1]) * (sc or 1.0) >= SETTLED
             if tag in ('DOOR', 'NPC_', 'CREA', 'LEVC') or big:
                 settled.add((i, j))
+        T = landscape.read(db, gx, gy).get('t') or [''] * 256
         for (i, j), items in sq.items():
             if (i, j) in settled:
                 continue
             gr = _square_ground(hat, gx * 8192.0 + i * SQUARE, gy * 8192.0 + j * SQUARE)
             if not gr or gr[1] <= 0:
                 continue
-            lst = squares.setdefault(ground_key(*gr), [])
+            k = ground_key(*gr)
+            lst = squares.setdefault(k, [])
             if len(lst) < KEEP:
                 lst.append(items)
+                texs.setdefault(k, []).append(_square_tex(T, i, j))
                 grown += bool(items)
-    out = {'squares': squares, 'grown': grown, 'cells': used}
+    out = {'squares': squares, 'tex': texs, 'grown': grown, 'cells': used}
     _mem[key] = out
+    if HOLDOUT:
+        return out
     disk[region] = out
     try:
         with open(path, 'w', encoding='utf-8') as f:
@@ -191,6 +201,29 @@ def learn(db, region):
     except OSError:
         pass
     return out
+
+
+def _square_tex(T, i, j):
+    """The texture most of a square's four 512-unit patches have (T: the cell's 256, rows of 16 from the south)."""
+    per = int(SQUARE // 512)
+    ts = [T[(j * per + b) * 16 + i * per + a] for b in range(per) for a in range(per)]
+    return max(set(ts), key=ts.count) if ts else ''
+
+
+def _tex_at(db, memo):
+    """tex(x, y): the LTEX id of the land's patch at a world point, as the land is now."""
+    import landscape
+
+    def tex(x, y):
+        gx, gy = math.floor(x / 8192.0), math.floor(y / 8192.0)
+        if (gx, gy) not in memo:
+            memo[(gx, gy)] = landscape.read(db, gx, gy).get('t')
+        T = memo[(gx, gy)]
+        if not T:
+            return ''
+        px, py = int((x - gx * 8192.0) // 512), int((y - gy * 8192.0) // 512)
+        return T[min(15, py) * 16 + min(15, px)]
+    return tex
 
 
 def _nearby_keys(key):
@@ -203,11 +236,15 @@ def _nearby_keys(key):
     return out
 
 
-def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None):
+def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None, tex_at=None):
     """What grows over the field's land: [{id, x, y, z, rx, ry, rz, s}], square by square one of the game's own
-    squares of the same ground in the region region_of(x, y) gives."""
+    squares of the same ground in the region region_of(x, y) gives; of those, one grown on the texture the land has
+    there when the region has SAME_TEX of them (grass where the grass is, bare scree on the rock). tex_at(x, y): the
+    land's LTEX id at a point (default: as the land is now)."""
     import cliffrocks
     rng = random.Random(seed * 104729 + 7)
+    if tex_at is None and BY_TEXTURE:
+        tex_at = _tex_at(db, {})
     libs = {}
     out = []
     hat = lambda x, y: cliffrocks._height(F, x, y)
@@ -232,11 +269,17 @@ def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None):
                 if gr and gr[1] > 0:
                     # (the cell's look first; where it has no ground like this square's, the next region's: the Sea of
                     # Ghosts' land is low islets, and a raised island's high slopes found nothing, lab 2026-10-29)
+                    want_t = tex_at(x + SQUARE / 2, y + SQUARE / 2) if (tex_at and BY_TEXTURE) else None
                     for reg in ([regs] if isinstance(regs, str) else regs):
                         if reg not in libs:
-                            libs[reg] = learn(db, reg)['squares']
-                        lib = libs[reg]
-                        pool = next((lib[k] for k in _nearby_keys(ground_key(*gr)) if lib.get(k)), None)
+                            libs[reg] = learn(db, reg)
+                        lib, tl = libs[reg]['squares'], libs[reg].get('tex') or {}
+                        gk = next((k for k in _nearby_keys(ground_key(*gr)) if lib.get(k)), None)
+                        pool = lib[gk] if gk else None
+                        if pool and want_t:
+                            same = [sq for sq, t in zip(pool, tl.get(gk) or []) if t == want_t]
+                            if len(same) >= SAME_TEX:
+                                pool = same
                         if pool:
                             if used is not None:
                                 used[reg] = used.get(reg, 0) + 1

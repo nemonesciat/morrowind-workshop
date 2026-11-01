@@ -2,7 +2,7 @@
 // A window over the World map's view: the cast the Workshop proposes for the place open (who would live
 // or work there, as the game's own places of its kind have them), to change, re-roll person by person,
 // lock, and place as one change. "Someone who'd live here" does the same for one person, at the spot clicked.
-const PO = {el: null, cell: null, data: null, params: {density: 'usual', wealth: 'auto', races: [], faction: '', occupations: [], only: false, own: true, lines: true, creatures: true, band: '', routines: true},
+const PO = {el: null, cell: null, data: null, params: {density: 'usual', wealth: 'auto', races: [], faction: '', occupations: [], only: false, own: true, lines: true, creatures: true, band: '', routines: true, lived: true},
   locked: new Set(), at: null, busy: false};
 const PO_TOPIC = {greeting: 'Greeting', 'my trade': 'My trade', 'someone in particular': 'Someone in particular', 'little secret': 'Little secret',
   'latest rumors': 'Latest rumors'};
@@ -139,6 +139,7 @@ function poDraw(){
       <button class="btn" data-pa="more">+ One more</button>
       <label class="msg"><input type="checkbox" data-pp="own" ${P.own ? 'checked' : ''}> the household owns the beds and chests</label>
       <label class="msg" title="Each sleeps by their own bed, eats at a table, works and spends the evening by the hours (OpenMW: a script in your mod keeps them to it; guards and patrons stay put)"><input type="checkbox" data-pp="routines" ${P.routines ? 'checked' : ''}> daily routines</label>
+      <label class="msg" title="What they leave round their beds, fires, tables and work spots, as the game's own people of their kind do: bowls and bread by a bedroll, tools at an anvil, a smuggler's skooma. A dungeon with too few beds for them gets the game's own camps of their kind first"><input type="checkbox" data-pp="lived" ${P.lived ? 'checked' : ''}> lived in</label>
       <label class="msg" title="The creatures and creature lists the game's places of this kind hold (a list picks by the player's level)"><input type="checkbox" data-pp="creatures" ${P.creatures ? 'checked' : ''}> creatures</label>
       <label class="msg" title="A greeting, my trade, someone in particular, a little secret and a rumour each, written from templates (no AI): change any of them below or later in Dialogue"><input type="checkbox" data-pp="lines" ${P.lines ? 'checked' : ''}> words of their own</label>
       <span style="flex:1"></span><button class="btn primary" data-pa="place" ${d.people.length || crs.length ? '' : 'disabled'}>Place them</button></div>
@@ -182,6 +183,7 @@ function poDraw(){
     else if (k === 'occ'){ if (v && !P.occupations.includes(v)) P.occupations.push(v); inp.value = ''; }
     else if (k === 'own'){ P.own = v; return; }
     else if (k === 'routines'){ P.routines = v; return; }
+    else if (k === 'lived'){ P.lived = v; return; }
     else if (k === 'lines'){ P.lines = v; if (!v) d.people.forEach(p => { p.lines = []; }); }
     else if (k === 'creatures'){ P.creatures = v; if (!v){ d.creatures = []; poDraw(); return; } poCast({count: d.people.length}, d.people); return; }
     else P[k] = v;
@@ -224,8 +226,8 @@ async function poPlace(){
   const btn = PO.el.querySelector('[data-pa="place"]'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Placing…';
   try {
     const r = await post('/api/populate/place', {cell: PO.cell, people: d.people, own: PO.params.own, creatures: d.creatures || [], loot: d.loot || [],
-      routines: PO.params.routines});
-    toast(`Placed ${r.placed} ${r.placed === 1 ? 'person' : 'people'}${r.creatures ? `, ${r.creatures} creature${r.creatures === 1 ? '' : 's'}` : ''}${r.loot ? `, ${r.loot} loot container${r.loot === 1 ? "" : "s"}` : ''}${r.owned ? `; they own ${r.owned} beds and containers` : ''}${r.routines ? `; ${r.routines} keep daily routines` : ''}. One Undo takes it all back. New people appear in the game after restarting it with Play here.`);
+      routines: PO.params.routines, lived: PO.params.lived, band: d.band || ''});
+    toast(`Placed ${r.placed} ${r.placed === 1 ? 'person' : 'people'}${r.creatures ? `, ${r.creatures} creature${r.creatures === 1 ? '' : 's'}` : ''}${r.loot ? `, ${r.loot} loot container${r.loot === 1 ? "" : "s"}` : ''}${r.owned ? `; they own ${r.owned} beds and containers` : ''}${r.routines ? `; ${r.routines} keep daily routines` : ''}${r.lived ? `; ${r.lived} of their things left about` : ''}. One Undo takes it all back. New people appear in the game after restarting it with Play here.`);
     const ck = PO.cell;
     poClose(); PO.data = null; PO.locked = new Set();
     await afterChange();

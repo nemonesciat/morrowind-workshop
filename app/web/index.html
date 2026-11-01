@@ -305,7 +305,8 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .v3tools .v3snapmenu{min-width:220px}.v3tools .v3snapmenu label{display:flex;gap:10px;align-items:center;justify-content:space-between;white-space:nowrap}
 .v3tools .v3snapmenu label:has(input[type=checkbox]){justify-content:flex-start}
 .v3snapnow{color:var(--muted);font-size:11px}
-#v3land{position:absolute;left:12px;top:56px;width:270px;max-height:calc(100% - 80px);overflow:auto;background:color-mix(in srgb,var(--bg2-b) 94%,transparent);border:1px solid var(--line2);border-radius:9px;padding:10px 12px;z-index:3;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
+#v3land[style*="height"] .br-grid,#v3land[style*="height"] .v3scat{max-height:none}
+#v3land{position:absolute;left:12px;top:56px;width:296px;max-height:calc(100% - 80px);overflow:auto;resize:both;min-width:250px;min-height:160px;max-width:calc(100% - 24px);box-sizing:border-box;background:color-mix(in srgb,var(--bg2-b) 94%,transparent);border:1px solid var(--line2);border-radius:9px;padding:10px 12px;z-index:3;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
 #v3land .v3lhead{display:flex;justify-content:space-between;align-items:center;color:var(--text);font-size:13.5px;cursor:move}
 /* (window chrome isn't text to pick up: titles, buttons, labels and the 3D view's own small windows don't
    highlight on a double-click or a drag; text boxes still do) */
@@ -2158,6 +2159,7 @@ async function gotoSpot(key, x, y, z, wholeCell){
 }
 async function worldOpenIndex(i){
   const m = await api('/api/cellmap?i=' + i);
+  if (!m.key){ toast('That place is no longer in your load order', true); return; }
   worldOpen(m.key);
 }
 async function worldOpen(key, keepCam){
@@ -3121,7 +3123,7 @@ function renderWside(){
     <div class="wtools">
       <button class="btn sm" id="w-create" title="Make something new (a place, a person, a container, an item, a note, a spell, a list) in a window over the map, without leaving it. Right-click a spot in the view for Create here.">✚ Create new…</button>
       <button class="btn sm" id="w-stylepal" title="Building pieces, furniture, decor and whole sets sorted by style (Hlaalu, Redoran, Telvanni, Nord, Imperial, Gold Coast...), the way the game's own places use them: see what goes with what, then click or drag to place">🎨 Style palette…</button>
-      ${i.interior ? '<button class="btn sm wt-wide" id="w-furnish" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" title="Look over the place for what\'s wrong (floating things, chairs with nothing to sit at, gaps…), each with a marker and a fix where there is one">🩺 Check place…</button>' : ''}
+      ${i.interior ? '<button class="btn sm wt-wide" id="w-furnish" title="Fill the rooms with fitting furniture and clutter in one go">🪑 Auto-furnish rooms…</button><button class="btn sm" id="w-fixit" title="Find black gaps, doorways that lead nowhere and missing ceilings, and fix them">🔧 Find gaps…</button><button class="btn sm" id="w-check" title="Look over the place for what\'s wrong (floating things, chairs with nothing to sit at, gaps…), each with a marker and a fix where there is one">🩺 Check place…</button><button class="btn sm" id="w-lived" title="What people leave round its beds, bedrolls, fires, tables and work spots, the way the game leaves it: bowls and bread by a bedroll, tools at an anvil. Spots with things round them already are left as they are. One Undo">🏕 Lived in</button>' : ''}
       <button class="btn sm wt-full" id="w-2win" title="This place in another view, looking where you look now: the World map here, this place there, both live">↗ Second window…</button></div>
     ${i.interior ? '<div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
@@ -3329,6 +3331,18 @@ function bindWside(){
     await refAction('/api/ref/swap', {cell: W.sel.cell, ref: selRef.k, id: r.id}, W.sel.cell, selRef.k, 'Swapped for ' + (r.name || r.id));
   }, true);
   const fb = $('#w-furnish'); if (fb) fb.onclick = () => furnishDialog(W.key);
+  const lv = $('#w-lived'); if (lv) lv.onclick = async () => {
+    if (!await needProject()) return;
+    lv.disabled = true; lv.innerHTML = '<span class="spin"></span>Lived in…';
+    try {
+      const r = await post('/api/lived/apply', {cell: W.key});
+      const told = [r.camps ? `${r.camps} camp${r.camps === 1 ? '' : 's'}` : '', r.stories ? `${r.stories} stor${r.stories === 1 ? 'y' : 'ies'} of what happened here` : ''].filter(Boolean).join(' and ');
+      const left = r.things ? `${r.things} things round ${r.anchors} of its ${r.looked} beds, fires, tables and work spots` : '';
+      toast(r.things || r.camps || r.stories ? `${told ? `Laid ${told}${left ? ', then left ' + left : ''}` : 'Left ' + left}. One Undo takes it all back.` : 'Nothing to add: its spots have things round them already, or it has none.');
+      if (typeof afterChange === 'function') afterChange();
+      worldOpen(W.key, true);
+    } catch (e){ toast(e.message, true); lv.disabled = false; lv.textContent = '🏕 Lived in'; }
+  };
   const fxb = $('#w-fixit'); if (fxb) fxb.onclick = () => fixitOpen(W.key);
   const pcb = $('#w-check'); if (pcb) pcb.onclick = () => placecheckOpen(W.key);
   const tw = $('#w-2win'); if (tw) tw.onclick = () => twOpen(W.key);
@@ -4039,7 +4053,7 @@ function formHtml(kind){
         <label class="msg" style="display:flex;gap:5px;align-items:center;white-space:nowrap"><input type="checkbox" id="cr-blamps" checked> Hang lanterns</label>
         <label class="msg" style="display:flex;gap:5px;align-items:center;white-space:nowrap" title="Going by the rooms' names: Bedroom, Kitchen, Storeroom, Study, Shop… You can redo it any time with Auto-furnish on the World map."><input type="checkbox" id="cr-bfurnish" checked> Furnish the rooms</label></div>
       <label class="bplan">Furnish as</label><div class="bplan">${furnishAsHtml('cr-b')}</div>
-      <label id="cr-placelabel">${copy ? 'Front door goes' : 'Outside door'}</label><div>${placeOptions(false, 'No outside door for now (you can link one later)')}
+      ${CR.fromBuilding && !copy ? `<label>Building</label><div class="msg">Inside the building at ${esc(CR.fromBuilding.where || '')}: its door and the building's are linked. <button class="btn sm" id="cr-fbx" title="Build it as a place of its own instead">✕</button></div>` : ''}<label id="cr-placelabel">${copy ? 'Front door goes' : 'Outside door'}</label><div>${placeOptions(false, 'No outside door for now (you can link one later)')}
         <div class="hint" id="cr-placehint">${copy ? 'Turn the door afterwards on the map if it faces the wrong way.' : 'Optional: a matching door is put at the spot and linked both ways.'}</div></div>
       <label class="bout">Outside</label><div class="bout"><div class="radios"><label><input type="radio" name="cr-bout" value="door" ${CR.bout !== 'building' ? 'checked' : ''}>Just the door (on a wall that is already there)</label><label><input type="radio" name="cr-bout" value="building" ${CR.bout === 'building' ? 'checked' : ''}>A whole new building in this style, with the door on it</label></div>
         <div id="cr-boutb" style="display:${CR.bout === 'building' ? 'flex' : 'none'};gap:6px;margin-top:6px;flex-wrap:wrap"><select class="inp" id="cr-bshell" style="max-width:280px"><option>Loading…</option></select>
@@ -4467,6 +4481,23 @@ async function createGo(){
       if (!val('cr-tpl')) throw new Error('Pick a place to copy.');
       r = await post('/api/create/interior', {template: val('cr-tpl'), name: val('cr-name'), contents: radio('cr-contents') || 'furnished', entrance: placeValue(), door: val('cr-door')});
       label = val('cr-name');
+    } else if (CR.kind === 'build' && CR.fromBuilding){
+      // (opened from "An interior for this building": made inside that building, its door and the building's linked)
+      const L = bLayout(), B = CR.fromBuilding;
+      msg.innerHTML = '<span class="spin"></span>Building it inside the building…';
+      r = await post('/api/build/from_building', {cell: B.cell, ref: B.ref, door: B.door, name: val('cr-name'), cellar: B.cellar, floors: B.floors,
+        seed: B.seed, lighting: val('cr-blight'), lights: $('#cr-blamps').checked, route: 'plan',
+        layout: {rooms: L.rooms, doors: L.doors, exit: L.exit, stairs: L.stairs}});
+      label = val('cr-name');
+      if ($('#cr-bfurnish').checked){
+        const level = furnishAsValue('cr-b'), floors = r.cells && r.cells.length ? r.cells : [{key: r.key, name: label}];
+        for (const [n, c] of floors.entries()){
+          msg.innerHTML = '<span class="spin"></span>Built. Furnishing the rooms' + (floors.length > 1 ? ` (${n + 1} of ${floors.length} floors)` : '') + '…';
+          try { await furnishWhenLearnt({cell: c.key, level}, msg); }
+          catch (e){ toast('Built, but could not furnish ' + c.name + ': ' + e.message, true); }
+        }
+      }
+      CR.fromBuilding = null;
     } else if (CR.kind === 'build'){
       const L = bLayout(), entrance = placeValue();
       msg.innerHTML = '<span class="spin"></span>Building the walls, floors, doors and stairs…';
@@ -4728,6 +4759,7 @@ poll();
 <script src="/web/pagepanels.js"></script>
 <script src="/web/viewwin.js"></script>
 <script src="/web/stylepal.js"></script>
+<script src="/web/minimap.js"></script>
 <script src="/web/forge.js"></script>
 <script src="/web/spellgive.js"></script>
 <script src="/web/physics.js"></script>

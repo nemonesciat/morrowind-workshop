@@ -183,11 +183,14 @@ async function fixitShow(i){
 }
 
 // other pieces of the style that fit the spot of a piece (or, for a loose piece, others its size)
-async function fixitVariants(cell, ref, id){
+async function fixitVariants(cell, ref, id, grid){
   let r;
   try { r = await api('/api/fixit/variants?cell=' + encodeURIComponent(cell) + '&ref=' + encodeURIComponent(ref)); }
   catch (e){ return toast(e.message, true); }
   if (!r.variants.length) return toast(r.note || 'No other pieces of this style fit here.', true);
+  // (in 3D: tried on the spot, one after another, so you can see which stops a clip; the user, 2026-10-31:
+  // "swap out candidate pieces easily so I can use my eyes to find the right one")
+  if (!grid && typeof V3 !== 'undefined' && V3.on && V3.objs && V3.objs.get(cell + '|' + ref)) return fixitCycle(cell, ref, id, r);
   fixitCss();
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   const word = {W: 'wall', D: 'doorway', O: 'open'};
@@ -211,4 +214,68 @@ async function fixitVariants(cell, ref, id){
       else { if (typeof worldReloadCell === 'function') await worldReloadCell(cell); if (typeof afterChange === 'function') afterChange(); if (V3.on) v3Refresh(); }
     } catch (e){ toast(e.message, true); }
   });
+}
+
+// the other pieces tried on the spot in the 3D view: ← → (or the buttons) put the next one in its place, Enter keeps
+// it as one change, Esc puts the piece back. Nothing is saved until you keep one
+const FXC = {};
+function fixitCycle(cell, ref, id, r){
+  fixitCycleEnd(false);
+  const key = cell + '|' + ref, o = V3.objs.get(key);
+  if (!o) return;
+  const list = [{id, rz: o.r.p[5], now: true}, ...r.variants];
+  Object.assign(FXC, {cell, ref, key, o, list, n: 0, g: null});
+  const bar = document.createElement('div'); bar.id = 'fx-cyc';
+  bar.style.cssText = 'position:absolute;left:50%;top:84px;transform:translateX(-50%);z-index:30;display:flex;gap:6px;align-items:center;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:6px 8px;box-shadow:0 8px 24px #000a;max-width:calc(100% - 32px)';
+  bar.innerHTML = `<button class="btn sm" data-fxc="-1" title="The one before (←)">◀</button><span id="fx-cyc-t" style="min-width:220px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span><button class="btn sm" data-fxc="1" title="The next one (→)">▶</button><button class="btn sm primary" id="fx-cyc-k" title="Keep this one (Enter)">Keep</button><button class="btn sm" id="fx-cyc-g" title="All of them as pictures">▦</button><button class="btn sm" id="fx-cyc-x" title="Put it back (Esc)">✕</button>`;
+  $('#v3wrap').appendChild(bar);
+  bar.querySelectorAll('[data-fxc]').forEach(b => b.onclick = () => fixitCycleGo(+b.dataset.fxc));
+  bar.querySelector('#fx-cyc-k').onclick = () => fixitCycleEnd(true);
+  bar.querySelector('#fx-cyc-x').onclick = () => fixitCycleEnd(false);
+  bar.querySelector('#fx-cyc-g').onclick = () => { fixitCycleEnd(false); fixitVariants(cell, ref, id, true); };
+  FXC.keys = e => {
+    if (!$('#fx-cyc')) return;
+    const k = e.key;
+    if (k === 'ArrowRight' || k === 'ArrowLeft' || k === 'Enter' || k === 'Escape'){
+      e.preventDefault(); e.stopPropagation();
+      if (k === 'Enter') fixitCycleEnd(true); else if (k === 'Escape') fixitCycleEnd(false); else fixitCycleGo(k === 'ArrowRight' ? 1 : -1);
+    }
+  };
+  window.addEventListener('keydown', FXC.keys, true);
+  fixitCycleGo(0);
+}
+async function fixitCycleGo(d){
+  if (!FXC.list) return;
+  FXC.n = (FXC.n + d + FXC.list.length) % FXC.list.length;
+  const v = FXC.list[FXC.n], n = FXC.n;
+  $('#fx-cyc-t').textContent = `${n + 1} / ${FXC.list.length} · ${v.id}${v.now ? ' (as it is)' : ''}`;
+  if (FXC.g){ V3.root.remove(FXC.g); FXC.g = null; }
+  FXC.o.g.visible = !!v.now;
+  if (!v.now){
+    await v3EnsureModels([v.id]);
+    if (!FXC.list || FXC.n !== n) return;
+    const p = FXC.o.r.p.slice(); p[5] = v.rz;
+    const r2 = Object.assign({}, FXC.o.r, {id: v.id, p});
+    FXC.g = v3Build(r2); v3Place(FXC.g, r2); V3.root.add(FXC.g);
+  }
+  v3Refresh();
+}
+async function fixitCycleEnd(keep){
+  const bar = $('#fx-cyc'); if (bar) bar.remove();
+  if (FXC.keys) window.removeEventListener('keydown', FXC.keys, true);
+  if (!FXC.list) return;
+  const {cell, ref, o, list, n, g} = FXC, v = list[n];
+  for (const k of Object.keys(FXC)) delete FXC[k];
+  if (g) V3.root.remove(g);
+  o.g.visible = true;
+  if (V3.on) v3Refresh();
+  if (!keep || v.now) return;
+  if (!await needProject()) return;
+  try {
+    await post('/api/fixit/apply', {cell, ops: [{op: 'swap', ref, id: v.id, rz: v.rz}], label: 'Swapped "' + list[0].id + '" for "' + v.id + '"'});
+    toast('Swapped. Undo takes it back.');
+    if (typeof worldReloadCell === 'function') await worldReloadCell(cell);
+    if (typeof afterChange === 'function') afterChange();
+    if (V3.on) v3Refresh();
+  } catch (e){ toast(e.message, true); }
 }

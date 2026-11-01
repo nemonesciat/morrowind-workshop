@@ -756,6 +756,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'issues': db.issues, 'sources': db.asset_sources, 'config': db.config,
                             'plugins': [{k: v for k, v in p.items() if k != 'counts'} for p in db.plugins]})
             elif u.path == '/api/cellmap':
+                if 'key' not in q and not 0 <= int(q['i']) < len(db.recs):
+                    # (a record number from before records were added or taken away)
+                    self._json({'exists': False}); return
                 key = q['key'] if 'key' in q else db.recs[int(q['i'])][7]
                 # (original=1: the place as the game and your other mods have it, without this mod: a
                 # "before" window, web/twowin.js)
@@ -770,6 +773,15 @@ class Handler(BaseHTTPRequestHandler):
                 if (x1 - x0 + 1) * (y1 - y0 + 1) > limit:
                     return self._json({'error': 'Too many cells at once.'}, 400)
                 self._json(mapdata.lands_overview(db, x0, y0, x1, y1, step))
+            elif u.path == '/api/town/cultures':
+                # the cultures a town can be planned in, the most towns first (townsurvey.py)
+                import townplan
+                import townwalls
+                import learning
+                if learning.town_pending(db):
+                    self._json({'cultures': [], 'walls': [], 'learning': True})
+                else:
+                    self._json({'cultures': townplan.cultures(db), 'walls': townwalls.choices(db)})
             elif u.path == '/api/land/autotex':
                 # the Ground brush's Auto paint: one cell's texture for every patch, as the region's land has it at
                 # that slope, height and shore (landshapes.texture_only), as {ids, paths} the brush paints with
@@ -809,7 +821,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(assets.for_record(db, int(q['i'])))
             elif u.path == '/api/assets/thumb':
                 import assets
-                t = assets.thumb(db, q.get('path', ''))
+                t = assets.thumb(db, q.get('path', ''), int(q.get('w') or 96))
                 if not t:
                     return self._json({'error': 'no picture'}, 404)
                 self.send_response(200)
@@ -916,6 +928,10 @@ class Handler(BaseHTTPRequestHandler):
                 # how far Shape them has got (asked while it works: not under the edit lock)
                 import landshapes
                 self._json(landshapes.progress())
+            elif u.path == '/api/town/progress':
+                # how far a town's Make it has got (the same: asked while it works)
+                import townbuild
+                self._json(townbuild.progress())
             elif u.path == '/api/land/looks':
                 # the regions whose rocks can dress land (cliffrocks.py)
                 import cliffrocks
@@ -1248,7 +1264,7 @@ class Handler(BaseHTTPRequestHandler):
                 import frombuilding
                 self._json(frombuilding.preview(db, q.get('cell', ''), q.get('ref', ''), q.get('door') or None, q.get('tolerance') or 'usual',
                                                 q.get('cellar') or None, int(q['floors']) if q.get('floors') else None,
-                                                int(q.get('seed') or 0)))
+                                                int(q.get('seed') or 0), q.get('route') or None))
             elif u.path == '/api/build/snaps':
                 # where the game joins a model to the made pieces near a spot outdoors: the 3D view's snapping (housemodules.snaps)
                 import housemodules
@@ -1433,7 +1449,7 @@ class Handler(BaseHTTPRequestHandler):
                 log = [{'id': e.get('id'), 't': e.get('t'), 'text': editing.note_label(p, e.get('text'), e.get('id')), 'undone': e.get('undone', False),
                         'can_undo': bool(e.get('diff')) and not e.get('undone'),
                         'parent': parent.get(e.get('id')), 'inside': sizes.get(e.get('id'), 0)}
-                       for e in (p.log[-200:] if p else [])]
+                       for e in (p.log[-500:] if p else [])]
                 self._json({'project': db.project_summary(), 'log': log,
                             'changes': changes_list() if p else [], 'path': editing.plugin_path(db) if p else None})
             else:
@@ -2264,7 +2280,8 @@ class Handler(BaseHTTPRequestHandler):
                                                          int(body['floors']) if body.get('floors') else None,
                                                          body.get('tiles') or None, body.get('tolerance') or 'usual',
                                                          body.get('cellar') or None, int(body.get('seed') or 0),
-                                                         body.get('lighting') or 'normal', body.get('lights', True) is not False))
+                                                         body.get('lighting') or 'normal', body.get('lights', True) is not False,
+                                                         body.get('route') or None, body.get('layout') or None))
                 if u.path == '/api/build/groundfit':
                     # the ground fitted to a building outdoors, the way the game's meet theirs (groundfit.py)
                     import groundfit
@@ -2323,7 +2340,48 @@ class Handler(BaseHTTPRequestHandler):
                     # Populate: the cast made real, as new people placed (populate.py), one change
                     import populate
                     return self._json(populate.place(db, body['cell'], body.get('people') or [], body.get('own', True) is not False,
-                                                     body.get('creatures') or [], body.get('loot') or [], bool(body.get('routines'))))
+                                                     body.get('creatures') or [], body.get('loot') or [], bool(body.get('routines')),
+                                                     bool(body.get('lived')), body.get('band') or ''))
+                if u.path in ('/api/town/plan', '/api/town/make'):
+                    # (towns wait for their surveys, learnt in the survey process: the page shows what and asks again)
+                    import learning
+                    lp = learning.town_pending(db, u.path == '/api/town/make' and body.get('interiors') is not False and bool(body.get('people', True)))
+                    if lp:
+                        return self._json({'learning': lp})
+                if u.path == '/api/town/plan':
+                    # a town planned in a culture's way inside an outline: streets and plots, nothing placed (townplan.py)
+                    import townplan
+                    out = body.get('outline') or []
+                    if len(out) < 3:
+                        return self._json({'error': "Draw the town's outline first."}, 400)
+                    cult = body.get('culture') or townplan.nearest_culture(db, out)
+                    import townbuild
+                    pl = townbuild.planned(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '')
+                    if body.get('walls'):
+                        # (its wall as it would be laid, for the map: townwalls.py)
+                        import townwalls
+                        pl['walls'] = townwalls.preview(db, pl, None if body['walls'] == 'auto' else body['walls'])
+                    import towninside
+                    pl['name'] = towninside.town_name(db, cult, int(body.get('seed') or 1))      # (the one Make it gives it, unless named)
+                    return self._json(pl)
+                if u.path == '/api/town/make':
+                    # the planned town built: the culture's own buildings on its plots, one change (townbuild.py)
+                    import townplan
+                    import townbuild
+                    out = body.get('outline') or []
+                    if len(out) < 3:
+                        return self._json({'error': "Draw the town's outline first."}, 400)
+                    cult = body.get('culture') or townplan.nearest_culture(db, out)
+                    inside = body.get('interiors') is not False
+                    return self._json(townbuild.make(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '',
+                                                     body.get('dress') is not False, inside, inside and body.get('people') is not False,
+                                                     (body.get('name') or '').strip()[:40]))
+                if u.path == '/api/lived/apply':
+                    # make a place lived in: what people leave round its beds, fires, tables and work spots, as the
+                    # game leaves it (livedin.py), one change
+                    import livedin
+                    return self._json(livedin.apply(db, body['cell'], body.get('band') or '', float(body.get('amount') or 1.0),
+                                                    body.get('seed'), None, set(body['refs']) if body.get('refs') else None))
                 if u.path == '/api/convo/build/save':
                     # the conversation builder: a tree of lines and answers, written back as the topic's lines
                     import convbuild

@@ -1272,7 +1272,7 @@ function v3AutoTex(gx, gy){
   const k = gx + ',' + gy, M = V3.autoTex = V3.autoTex || {};
   if (M[k] === undefined){
     M[k] = null;
-    api('/api/land/autotex?' + new URLSearchParams({gx, gy})).then(r => { M[k] = r && r.paths && r.paths.length === 256 ? r : false; })
+    api('/api/land/autotex?' + new URLSearchParams({gx, gy, region: V3.land.texLike || ''})).then(r => { M[k] = r && r.paths && r.paths.length === 256 ? r : false; })
       .catch(() => { delete M[k]; });
   }
   return M[k] || null;
@@ -1338,10 +1338,19 @@ const V3_BRUSH = [64, 4096];        // (64: just the land point under the brush,
 function v3BrushClamp(v){ return Math.max(V3_BRUSH[0], Math.min(V3_BRUSH[1], Math.round(v / 16) * 16)); }
 function v3PosSize(t){ return v3BrushClamp(V3_BRUSH[0] * Math.pow(V3_BRUSH[1] / V3_BRUSH[0], t / 1000)); }
 function v3SizePos(v){ return Math.round(1000 * Math.log(v3BrushClamp(v) / V3_BRUSH[0]) / Math.log(V3_BRUSH[1] / V3_BRUSH[0])); }
+// the Ground window's size: dragged by its corner (the user: "It should be possible to resize the ground window"), kept
+function v3LandSized(p){
+  try { const s = JSON.parse(localStorage.getItem('ws-size-ground') || 'null'); if (s){ p.style.width = s[0] + 'px'; p.style.height = s[1] + 'px'; } } catch (e) {}
+  if (typeof ResizeObserver !== 'function') return;
+  new ResizeObserver(() => {
+    if (!p.style.width && !p.style.height) return;          // (only a size the corner gave it)
+    try { localStorage.setItem('ws-size-ground', JSON.stringify([p.offsetWidth, p.offsetHeight])); } catch (e) {}
+  }).observe(p);
+}
 async function v3LandPanel(){
   let p = $('#v3land');
   if (!V3.landOpen || !W.ext){ if (p) p.remove(); return; }
-  if (!p){ p = document.createElement('div'); p.id = 'v3land'; $('#v3wrap').appendChild(p); if (typeof cfMovable === 'function') cfMovable(p, '.v3lhead', 'ground'); }
+  if (!p){ p = document.createElement('div'); p.id = 'v3land'; $('#v3wrap').appendChild(p); if (typeof cfMovable === 'function') cfMovable(p, '.v3lhead', 'ground'); v3LandSized(p); }
   const B = V3.land;
   p.innerHTML = `<div class="v3lhead"><b>Ground${typeof guideLink === 'function' ? guideLink('shaping-the-land.md', 'The Ground brush', 'How the Ground brush works') : ''}</b><button class="btn sm" data-lt="close" title="Close the ground tools">✕</button></div>
     <div class="v3lrow">${V3_LANDTOOLS.map(([k, l, t]) => `<button class="btn sm ${B.tool === k ? 'primary' : ''}" data-lt="${k}" title="${t}">${l}</button>`).join('')}</div>
@@ -1350,7 +1359,7 @@ async function v3LandPanel(){
     <label class="v3lrow" title="Things standing on the ground move up and down with it"><input type="checkbox" id="v3lfollow" ${B.follow !== false ? 'checked' : ''}> Objects follow the ground</label>
     <div id="v3ltex" style="display:${B.tool === 'paint' ? 'block' : 'none'}">
       <div class="v3lrow"><button class="btn sm ${B.texAuto ? 'primary' : ''}" id="v3lauto" title="Paint each patch with the texture the region's land has at its slope, height and shore. Roads and paving stay">✨ Auto</button>
-        ${B.texAuto ? '<span class="faint">The region\'s texture for each slope</span>' : `<button class="btn sm ${V3.landPick === 'paint' ? 'primary' : ''}" data-lpick="paint" title="Eyedropper: click the ground to paint with its texture (or Shift+click it any time)">💧 Pick</button>`}</div>
+        ${B.texAuto ? `<label title="Whose land the textures follow: the cell's own region, or another region's, on this land as it is">Like <select id="v3llike" class="inp" style="width:auto;max-width:160px"><option value="">this region</option></select></label>` : `<button class="btn sm ${V3.landPick === 'paint' ? 'primary' : ''}" data-lpick="paint" title="Eyedropper: click the ground to paint with its texture (or Shift+click it any time)">💧 Pick</button>`}</div>
       ${B.texAuto ? '' : `<div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id || 'Default ground')}</span>` : '<span class="faint">Pick a texture below, or from the ground</span>'}</div>
       <input id="v3lq" placeholder="Search textures…" value="${esc(V3.landQ || '')}">
       <div id="v3lgrid"></div>`}
@@ -1385,7 +1394,15 @@ async function v3LandPanel(){
   $('#v3lfollow').onchange = e => { B.follow = e.target.checked; v3LandSave(); };
   if (B.tool === 'paint'){
     $('#v3lauto').onclick = () => { B.texAuto = !B.texAuto; v3LandSave(); v3LandPanel(); };
-    if (!B.texAuto){
+    if (B.texAuto){
+      // (another region's textures on this land: the user 2026-10-30, Sea of Ghosts has little land to learn from)
+      const ls = $('#v3llike');
+      if (!V3.looks){ try { V3.looks = (await api('/api/land/looks')).looks || []; } catch (e){ V3.looks = []; } }
+      if (ls && document.body.contains(ls)){
+        ls.innerHTML = '<option value="">this region</option>' + V3.looks.map(o => `<option value="${esc(o.region)}" ${o.region === (B.texLike || '') ? 'selected' : ''}>${esc(o.name)}</option>`).join('');
+        ls.onchange = () => { B.texLike = ls.value; V3.autoTex = {}; v3LandSave(); };
+      }
+    } else {
       if (!V3.landTex) V3.landTex = await api('/api/land/textures');
       const q = $('#v3lq'); q.oninput = () => { V3.landQ = q.value; v3LandGrid(); };
       v3LandGrid();
@@ -1449,8 +1466,12 @@ async function v3ScatterPanel(){
   box.innerHTML = `<div class="v3lrow" style="flex-wrap:wrap">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="${s.mine ? 'One of your own brushes' : 'What grows in this region'}">${s.mine ? '★ ' : ''}${esc(s.label)}</button>`).join('')}
       <button class="btn sm" id="v3lnewbr" title="A brush of your own: any objects, from mods too">+ New brush</button></div>
     <label class="v3lrow" title="How thickly things grow: 5 as the game has this kind, 10 about three times as thick, 1 under half">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>` +
-    (set.mine ? '' : `<div class="faint" style="margin:4px 0">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</div>
-    <div class="v3scat">${set.items.map(it => `<label class="${B.scatOff[it.id.toLowerCase()] ? '' : 'on'}" title="${esc(it.id)} — used ${it.n} times nearby"><input type="checkbox" data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}> ${esc(it.name || it.id)}</label>`).join('')}</div>`);
+    (set.mine ? '' : `<div class="faint" style="margin:4px 0;display:flex;gap:4px;align-items:center"><span style="flex:1">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</span>${brViewSel()}</div>` +
+    (BR.view === 'grid'
+      ? `<div class="br-grid">${set.items.map(it => `<label class="br-tile ${B.scatOff[it.id.toLowerCase()] ? 'off' : ''}" title="${esc(it.name || it.id)} (${esc(it.id)}), used ${it.n} times nearby"><input type="checkbox" hidden data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}>${thumbImg(it.id, '', 96)}<span>${esc(it.name || it.id)}</span></label>`).join('')}</div>`
+      : `<div class="v3scat">${set.items.map(it => `<label class="${B.scatOff[it.id.toLowerCase()] ? '' : 'on'}" title="${esc(it.id)} — used ${it.n} times nearby"><input type="checkbox" data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}> ${esc(it.name || it.id)}</label>`).join('')}</div>`));
+  brCss();
+  if (!set.mine){ brViewHook(box, () => v3ScatterPanel()); v3ThumbScan(box); }
   if (set.mine) brEditor(box, set);
   $('#v3lnewbr').onclick = async () => { try { await brNew(); v3ScatterPanel(); } catch (e){ toast(e.message, true); } };
   if (B.scatSet === 'grass'){
@@ -1484,7 +1505,7 @@ async function v3ScatterPanel(){
   }
   box.querySelectorAll('[data-ss]').forEach(b => b.onclick = () => { B.scatSet = b.dataset.ss; v3LandSave(); v3ScatterPanel(); });
   $('#v3lthick').oninput = e => { B.scatThick = +e.target.value; e.target.nextElementSibling.textContent = B.scatThick; v3LandSave(); };
-  box.querySelectorAll('[data-si]').forEach(c => c.onchange = () => { const k = c.dataset.si.toLowerCase(); if (c.checked) delete B.scatOff[k]; else B.scatOff[k] = 1; v3LandSave(); c.parentElement.classList.toggle('on', c.checked); });
+  box.querySelectorAll('[data-si]').forEach(c => c.onchange = () => { const k = c.dataset.si.toLowerCase(); if (c.checked) delete B.scatOff[k]; else B.scatOff[k] = 1; v3LandSave(); const l = c.parentElement; if (l.classList.contains('br-tile')) l.classList.toggle('off', !c.checked); else l.classList.toggle('on', c.checked); });
 }
 function v3ScatterItems(){
   const S_ = V3.scatSets, B = V3.land; if (!S_) return [];

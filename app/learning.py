@@ -30,6 +30,8 @@ _SURVEYS = [
     # (how the game furnishes its trades' rooms: a smithy round its forge, the pieces each trade never holds,
     # the forges' whole sets; 600 places in about 25 s once the hearth survey is to hand, 2026-10-23)
     ('tradesurvey', 'ready'),
+    # (the game's whole stairwells, flight over flight: One stairwell takes its steps from them; 321 in about 8 s, 2026-10-31)
+    ('stairwellsurvey', 'ready'),
 ]
 
 
@@ -80,6 +82,28 @@ def ruin_pending(db, kind='dwemer'):
     except Exception:
         pass
     return _names() or before or [dwemer.learning_name(kind)]
+
+
+# the surveys a town goes by: the game's towns, how it puts its buildings together (the buildings and the walls), how
+# it dresses its towns. A first town on a fresh install planned in the request itself took 7 minutes behind a spinner
+# and came out with no buildings at all, the cold start of 2.5.9-test3
+_TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('towndress', 'ready')]
+
+
+def town_pending(db, people=False):
+    """Like pending(), for towns: [] when everything a town is planned, built and dressed by is learnt (and with
+    people, the game's people its households are cast from)."""
+    before = _names()
+    missing = 0
+    for mod, fn in _TOWN + ([('castsurvey', 'ready')] if people else []):
+        try:
+            if getattr(__import__(mod), fn)(db) is None:
+                missing += 1
+        except Exception:
+            missing += 1
+    if not missing:
+        return []
+    return _names() or before or ["the game's towns"]
 
 
 _warmed = {}

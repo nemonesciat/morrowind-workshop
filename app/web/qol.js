@@ -258,13 +258,13 @@ function qolEmptyMap(){
     <h3>Open a place</h3>
     <div class="dd"><input class="inp" id="me-goto" placeholder="Balmora, Seyda Neen, Caldera Mine…" autocomplete="off" spellcheck="false"><div class="ddlist" id="me-goto-l"></div></div>
     ${v && v.key ? `<button class="btn primary" id="q-reopen">↺ Back to ${esc(v.name || v.key)}</button>` : ''}
-    ${recent.length ? `<div class="me-h">Lately</div><div class="me-places">${recent.map(p => `<button class="btn sm" data-mei="${p.i}">${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</button>`).join('')}</div>` : ''}
+    ${recent.length ? `<div class="me-h">Lately</div><div class="me-places">${recent.map(p => `<button class="btn sm" data-mei="${WP.places.indexOf(p)}">${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</button>`).join('')}</div>` : ''}
     <div class="me-h">Or make a new one</div>
     <div class="me-places"><button class="btn sm" data-mek="build">🏠 Build a house</button><button class="btn sm" data-mek="ruin">⚒ Make a dungeon</button></div>
     <div class="msg me-foot">Ctrl+K finds any place too, and every cell in Browse has "Open on map".</div></div>`;
   ddSearch('me-goto', 'CELL', r => worldOpenIndex(r.i));
   const rb = $('#q-reopen'); if (rb) rb.onclick = e => { e.stopPropagation(); qolReopen(); };
-  box.querySelectorAll('[data-mei]').forEach(b => b.onclick = () => worldOpenIndex(+b.dataset.mei));
+  box.querySelectorAll('[data-mei]').forEach(b => b.onclick = () => wpPlaceOpen(+b.dataset.mei));
   box.querySelectorAll('[data-mek]').forEach(b => b.onclick = () => {
     showView('createv');
     const k = b.dataset.mek;

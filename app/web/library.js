@@ -4,6 +4,11 @@
 // mods live in, so the game can use it at once and a mod that uses it takes it along when shared.
 // Then place them like anything else, or retexture existing objects with your pictures.
 const LIB = {items: null, filter: 'all', cat: '', sub: '', q: ''};
+// a picture's address for an <img>: .dds and .tga, which browsers can't show, made a PNG about w across by the
+// server (assets.thumb); the rest as they are (the user, 2026-10-30: the Library's game pictures had no preview)
+function picUrl(file, w){
+  return /\.(dds|tga)$/i.test(file || '') ? `/api/assets/thumb?w=${w || 96}&path=${encodeURIComponent(file)}` : '/api/file?path=' + encodeURIComponent(file || '');
+}
 // Sorting what comes in: a category and a kind of it (set as it comes in, changed on its card), or names of your
 // own. The Forge offers a helmet's own model from "Armour › Helmet" first (library.set_group).
 const LIB_CATS = {
@@ -277,7 +282,7 @@ async function libLoad(){
     && words.every(w => `${i.name} ${i.cat || ''} ${i.sub || ''} ${i.from || ''}`.toLowerCase().includes(w)));
   if (!items.length){ grid.innerHTML = `<div class="msg">${LIB.items.length ? 'Nothing like that here.' : 'Nothing here yet. Drop a model or a picture above to start.'}</div>`; return; }
   grid.innerHTML = items.map(it => `<div class="lib-card" data-li="${esc(it.id)}">
-    <div class="pv" data-lpv="${esc(it.id)}">${it.type === 'texture' ? `<img src="/api/file?path=${encodeURIComponent(it.file)}" alt="">`
+    <div class="pv" data-lpv="${esc(it.id)}">${it.type === 'texture' ? `<img src="${picUrl(it.file, 192)}" alt="" onerror="this.style.visibility='hidden'">`
       : it.type === 'sound' ? `<div style="display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;padding:0 8px"><span style="font-size:28px">🔊</span>
           <audio controls preload="none" src="/api/file?path=${encodeURIComponent(it.file)}" style="width:100%;height:32px"></audio></div>` : '🧊 Click for a 3D look'}</div>
     <div class="bd"><span class="nm" title="${esc(it.name)}">${esc(it.name)}</span>
@@ -288,7 +293,7 @@ async function libLoad(){
         <input type="range" min="0" max="100" value="${Math.round((it.volume ?? 0.8) * 100)}" data-lvol="${esc(it.id)}" title="How loud" style="width:70px">
         ${it.records && it.records.SOUN ? '' : `<button class="btn sm" data-lsrec="${esc(it.id)}" title="Make it a sound your scripts can play">For scripts</button>`}`
       : it.type === 'model' ? `<button class="btn sm primary" data-lplace="${esc(it.id)}" title="Put it in the world">Place</button>
-        ${it.kind === 'item' || (it.kind === 'light' && it.light && it.light.carry) ? `<button class="btn sm" data-licon="${esc(it.id)}" title="Make its inventory icon again, from the model">${it.icon ? `<img src="/api/file?path=${encodeURIComponent('icons/' + it.icon.replace(/\\/g, '/'))}" style="width:16px;height:16px;vertical-align:middle"> ` : ''}Icon</button>` : ''}` : `<span class="sub">Use it with 🎨 Retexture on the map</span>`}
+        ${it.kind === 'item' || (it.kind === 'light' && it.light && it.light.carry) ? `<button class="btn sm" data-licon="${esc(it.id)}" title="Make its inventory icon again, from the model">${it.icon ? `<img src="${picUrl('icons/' + it.icon.replace(/\\/g, '/'), 32)}" style="width:16px;height:16px;vertical-align:middle"> ` : ''}Icon</button>` : ''}` : `<span class="sub">Use it with 🎨 Retexture on the map</span>`}
         <button class="btn sm" data-lrm="${esc(it.id)}" title="Take it off this list (its file stays, mods may use it)">✕</button></div></div></div>`).join('');
   grid.querySelectorAll('[data-lpv]').forEach(p => p.onclick = () => {
     const it = LIB.items.find(i => i.id === p.dataset.lpv); if (!it || it.type !== 'model') return;
@@ -566,7 +571,7 @@ async function libRetexture(sel){
   bg.innerHTML = `<div class="modal" style="width:min(620px,94vw)"><h2>🎨 Retexture ${esc(sel.name || sel.id)}</h2>
     <div class="msg">A new object like this one, with your pictures. The original stays as it is.</div>
     <div id="rt-rows" style="display:flex;flex-direction:column;gap:8px;margin:10px 0">${t.textures.map((x, n) => `<div style="display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center">
-      ${x.path ? `<img src="/api/file?path=${encodeURIComponent(x.path)}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;background:#000" onerror="this.style.visibility='hidden'">` : '<span></span>'}
+      ${x.path ? `<img src="${picUrl(x.path, 96)}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;background:#000" onerror="this.style.visibility='hidden'">` : '<span></span>'}
       <div><div class="msg" style="margin-bottom:4px">${esc(x.name)}</div><select class="inp" data-rt="${n}"><option value="">Keep this picture</option>
         ${lib.map(l => `<option value="${esc(l.texture)}">${esc(l.name)}</option>`).join('')}</select></div></div>`).join('')}</div>
     ${lib.length ? '' : '<div class="msg">There are no pictures in your Library yet: add some on the Library page first.</div>'}

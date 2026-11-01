@@ -457,7 +457,7 @@ PNL.show = function(space, id){
     const t = sp.types[it.type], L = sp.layout, R = sp.root.getBoundingClientRect();
     if (t.home === 'float' || !['left', 'right', 'bottom'].includes(t.home)){
       const n = L.floats.length;
-      L.floats.push({tabs: [id], on: id, x: Math.max(20, R.width / 2 - 180 + n * 24), y: 60 + n * 24, w: t.w || 360, h: Math.min(t.h || 480, R.height - 80)});
+      L.floats.push({tabs: [id], on: id, x: Math.max(20, R.width / 2 - 180 + n * 24), y: 60 + n * 24, w: t.w || 360, h: Math.max(180, Math.min(t.h || 480, R.height - 80))});   // (never a sliver: shown while its view was hidden, a float came out 120 tall)
     } else {
       const d = L[t.home];
       if (d.groups.length) { d.groups[0].tabs.push(id); d.groups[0].on = id; }

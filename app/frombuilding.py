@@ -1071,7 +1071,7 @@ def plan_with_cellar(db, b, pl, cellar):
     return pl
 
 
-def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None, floors=None, seed=0):
+def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None, floors=None, seed=0, route=None):
     """For the map: the building's check, the plan, and the planned tiles' corners in the world (to
     draw over the exterior), without building anything."""
     b = building_at(db, cell_key, ref_key, door_key)
@@ -1080,7 +1080,11 @@ def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None
            'door': b['door']['k'] if b['door'] else None}
     import podtwins
     pods = podtwins.pods_of(db, b)
-    if pods:
+    # (route 'plan': one interior planned to fit the whole building, though some of its pieces are shells the game makes
+    # a ready-made interior for: a custom prefab with a shack in it gave no say and no sight of what would be made, the
+    # user 2026-10-31)
+    out['pods'] = len(pods)
+    if pods and route != 'plan':
         # (Telvanni: a place per pod with a door, its interior twin; no tile plan)
         ch = check(db, b)
         with_door = sum(1 for pod, _t in pods if any(podtwins.reaches(d, pod) for d in b['doors']))
@@ -1090,7 +1094,8 @@ def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None
                     'plan': {'style': 'pods', 'style_name': 'Ready-made interiors', 'tile': None, 'rooms': [], 'doors': [], 'exit': None,
                              'floors': [0], 'notes': ['The game builds these as one ready-made piece each (a Telvanni pod, a shack, a hut, '
                                                       'a tent): a place each; bridges between pods are walkways outdoors.'], 'ratio': None},
-                    'tiles': [], 'sill': round(b['frame'].z) if b['frame'] else 0, 'name': _suggest_name(db, b)})
+                    'tiles': [], 'sill': round(b['frame'].z) if b['frame'] else 0, 'name': _suggest_name(db, b),
+                    'places': _pod_places(db, b, pods)})
         return out
     try:
         pl = plan_with_cellar(db, b, plan(db, b, floors=floors, tolerance=tolerance), cellar)
@@ -1117,6 +1122,20 @@ def preview(db, cell_key, ref_key, door_key=None, tolerance='usual', cellar=None
         out['plan']['dry'] = builder.plan(db, pl['style'], pl['rooms'], None, 'auto', pl['doors']).get('notes', [])
     except EditError as e:
         out['plan']['problem'] = str(e)
+    return out
+
+
+def _pod_places(db, b, pods):
+    """What the ready-made route makes, shell by shell: [{'k', 'id', 'p', 'door' (a door outside reaches it: it gets a place),
+    'from' (the game's interior its copy is made from: the most typical of 'examples')}]."""
+    import podtwins
+    out = []
+    for pod, twin in pods:
+        S = podtwins.fit_set(db, twin)
+        info = mapdata.cell_info(db, S['cell']) if S else None
+        out.append({'k': pod['k'], 'id': pod['id'], 'p': [round(v) for v in pod['p'][:3]],
+                    'door': any(podtwins.reaches(d, pod) for d in b['doors'] if 'marker' not in d['low']),
+                    'from': (info or {}).get('name') or (S or {}).get('cell'), 'examples': (S or {}).get('examples')})
     return out
 
 
@@ -1356,12 +1375,12 @@ def upper_ways(db, b, out, idoor):
 # ---------------------------------------------------------------- building it
 
 def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None,
-          seed=0, lighting='normal', lights=True):
+          seed=0, lighting='normal', lights=True, route=None, layout=None):
     """Plan, build, link the doors both ways and put the northmarker in."""
     import release
     b = building_at(db, cell_key, ref_key, door_key)
     b['seed'] = int(seed or 0)
-    if not tiles and not kit:
+    if not tiles and not kit and route != 'plan' and not layout:
         # (a shell the game makes a ready-made interior for, a Telvanni pod, a shack, a hut, a tent: a place per\n        # shell, that piece turned to the door and fitted out as one of the game's own; podtwins.py)
         import podtwins
         if podtwins.pods_of(db, b):
@@ -1376,11 +1395,20 @@ def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, til
     pl = plan_with_cellar(db, b, plan(db, b, kit=kit, floors=floors, tiles=tiles, tolerance=tolerance), cellar)
     if not pl['ok']:
         raise EditError('The building isn\'t closed and sound: %s' % '; '.join(l['text'] for l in pl['check'] if l['sev'] == 'error'))
+    stairs_ = None
+    if layout and layout.get('rooms'):
+        # (the plan as you changed it in the planner, "Open in the planner": its rooms, doorways, way out and stairs, in the
+        # building's own frame, so the door still lands behind the building's door and the two are linked)
+        pl['rooms'], pl['doors'] = layout['rooms'], layout.get('doors') or []
+        if layout.get('exit'):
+            pl['exit'] = layout['exit']
+        stairs_ = layout.get('stairs')
     out = None
     for ex_ in (pl['exit'], {'room': pl['exit']['room'], 'side': 'S'}, {'room': pl['exit']['room'], 'side': 'E'},
                 {'room': pl['exit']['room'], 'side': 'W'}):
         try:
-            out = builder.build_house(db, name, pl['style'], pl['rooms'], pl['doors'], ex_, None, lighting or 'normal', lights is not False)
+            out = builder.build_house(db, name, pl['style'], pl['rooms'], pl['doors'], ex_, None, lighting or 'normal', lights is not False,
+                                      stairs=stairs_)
         except EditError as e:
             if 'way out' not in str(e):
                 raise
@@ -1649,12 +1677,13 @@ def _like_ext_pairs(db):
     return out
 
 
-def copy_game_interior(db, cell_key, ref_key, template, name, contents='furnished', door_key=None):
+def copy_game_interior(db, cell_key, ref_key, template, name, contents='furnished', door_key=None, b=None):
     """One of the game's interiors for this building's shell (game_interiors), copied whole under a new name
     (create.create_interior: people and creatures left out) and its front door linked with the building's both
-    ways, as one change. {'key', 'name'}"""
+    ways, as one change. {'key', 'name'}. b: the building when the caller knows it ({'door', 'frame', 'cell'}: a built
+    town's, whose joined rows run on past what building_at takes for one building)."""
     import create
-    b = building_at(db, cell_key, ref_key, door_key)
+    b = b or building_at(db, cell_key, ref_key, door_key)
     if b['door'] is None:
         raise EditError('The building has no door to link the interior to: put a door in one of its walls first.')
     # (the original's front door: the load door that leads outside; its copy stands where it stood)

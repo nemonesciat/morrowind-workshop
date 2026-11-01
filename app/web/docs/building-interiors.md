@@ -44,8 +44,13 @@ time it ran (see *How the Workshop learns*), so a few tools wait for that and sa
 - **A room's name says what it's for**: Auto-furnish reads it ("Nemo's room" is a bedroom; the plan shows the
   kind when the name doesn't say it).
 - **Stairs** aren't a room: put rooms on another floor and stairs are added for you, from the style's own stair
-  pieces. Drag them where you want them (they then stay), **R** turns them, and the panel on the right pins them
-  or lets the Workshop find the best spot again.
+  pieces. Drag a flight where you want it: only that flight moves, and it stays exactly where you let go. Where it
+  can't stand, it turns red and the panel says why. **R** turns it; **✦ Pick a spot for me** has the Workshop pick one, once. Stairs never
+  move by themselves: adding or changing rooms leaves every flight where it stands.
+- **One stairwell** (three floors or more): each flight stands over the one below the way the game's stairwells do,
+  turning back and forth in two columns.
+- **A Stair hall** (**+ Room ▾**, or any room with "stair" in its name) keeps every flight inside it, so the stairs
+  stay out of the bedrooms and libraries. Three tiles wide fits every style.
 - **Plans ▾** has ready-made layouts, your saved plans (**💾 Save this plan…**), and **🏘 Plan from a place in the
   game**: one of the game's houses read as a plan, to study and build from.
 - **↶ ↷** undo and redo on the plan; **🗑 Clear plan** starts again from one room.
@@ -69,7 +74,9 @@ the game uses on that style. People and creatures are never copied.
   **Close it** lays the pieces that close what you built; on a dome's centre, its whole ring. **Esc** leaves, and
   all the steps become one change.
 - **Snap pieces** (3D toolbar, Snap ▾) lines up walls and floors with their neighbours as you move them;
-  **↻ Other pieces** (Selected panel) offers the other pieces of the style that fit the same spot.
+  **↻ Other pieces** (Selected panel, or right-click) offers the other pieces of the style that fit the same spot.
+  In 3D they're tried on the spot: **← →** step through them, **Enter** keeps one, **Esc** puts the piece back.
+  Good for a stair, a ceiling or a wall that clips.
 
 ## An interior for a building outdoors
 
@@ -83,6 +90,13 @@ linked both ways.
 - The rooms are cut the way the game's own storeys are: a big room and smaller ones round it. **🎲** gives
   other rooms in the same space.
 - **Furnish** (Bare, or how well off), **Light** and **Lanterns**: it is furnished and lit as it is made.
+- A building with a shell the game makes a ready-made interior for (a shack, a hut, a tent, a Telvanni pod) offers
+  two ways. **Ready-made per shell** makes a place for each such shell with a door outside, copied from the game's
+  own. The list shows each place and which game interior it is like (**⌖** shows the piece). **Planned to fit**
+  plans one interior for the whole building instead, floor by floor.
+
+**✎ Open in the planner** (planned interiors) opens the plan in Build from pieces, to change its rooms, doorways and
+stairs; **Build** there makes it inside the building, its door linked.
 
 **🔍 Check this building** looks it over by the game's own rules for its style: pieces standing on nothing, gaps
 in the walls, the roof.

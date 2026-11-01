@@ -322,21 +322,23 @@ def _pixel_key(raw):
 _THUMBS = {}
 
 
-def thumb(db, path):
-    """A small PNG of a texture for the asset window (PNG, JPEG and BMP files as they are), or None."""
+def thumb(db, path, want=96):
+    """A small PNG of a texture or icon for the asset window and the Library's cards (PNG, JPEG and BMP files as
+    they are), about want across, or None."""
     path = (path or '').lower().replace('\\', '/')
-    if not path.startswith('textures/') or '..' in path:
+    if not path.startswith(('textures/', 'icons/')) or '..' in path:
         return None
     raw = db.meshes.read(path)
     if raw is None:
         return None
-    key = (path, len(raw), hash(raw[:64]), hash(raw[-64:]))
+    want = max(32, min(512, int(want or 96)))
+    key = (path, len(raw), hash(raw[:64]), hash(raw[-64:]), want)
     if key in _THUMBS:
         return _THUMBS[key]
     if raw[:8] == b'\x89PNG\r\n\x1a\n' or raw[:2] in (b'\xff\xd8', b'BM'):
         out = (raw, 'image/png' if raw[:4] == b'\x89PNG' else 'image/jpeg' if raw[:2] == b'\xff\xd8' else 'image/bmp')
     else:
-        d = _decode(raw)
+        d = _decode(raw, want)
         out = (_png(*d), 'image/png') if d else None
     if len(_THUMBS) > 400:
         _THUMBS.clear()

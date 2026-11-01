@@ -35,9 +35,11 @@ import mapdata
 from editing import EditError, commit, _require_project
 
 # (area: an outline that shapes nothing, only where Dress… keeps to: landdecor.dress_all)
-KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area')
+# (town: an outline a town is planned in, townplan.py; it shapes nothing either)
+KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town')
 DEFAULTS = {
     'area': {},
+    'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'noinside': False, 'nopeople': False},
     'coast': {'height': 600, 'width': 6144, 'wander': 1.0, 'sea': 0},
     'plateau': {'height': 2000, 'width': 768, 'terraces': 0},
     # (width 3072, was 8192: that wide, the flanks covered the whole island and a ridge read as a swelling)
@@ -132,7 +134,7 @@ def _clean(L):
     if kind not in KINDS:
         raise EditError('Unknown shape "%s".' % kind)
     pts = [[float(a), float(b)] for a, b in (L.get('pts') or [])][:400]
-    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area') else 2
+    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town') else 2
     if len(pts) < need:
         raise EditError('A %s needs at least %d point%s.' % (kind, need, '' if need == 1 else 's'))
     prm = dict(DEFAULTS[kind])
@@ -751,7 +753,7 @@ def _work(db, cells, plan, s):
             raise EditError('None of the marked cells is in %s.' % ('that region' if len(only) == 1 else 'those regions'))
     if len(keys) > landrange.MAX_CELLS:
         raise EditError('That is %d cells; shape at most %d at once.' % (len(keys), landrange.MAX_CELLS))
-    layers = [_clean(L) for L in (plan.get('layers') or []) if L.get('on', True) is not False and L.get('kind') != 'area']
+    layers = [_clean(L) for L in (plan.get('layers') or []) if L.get('on', True) is not False and L.get('kind') not in ('area', 'town')]
     # (rivers and lakes are carved last, through whatever the other shapes raised: a volcano stamped after a river
     # was drawn would otherwise dam it; among themselves, and the others among themselves, the order stands)
     layers = [L for L in layers if L['kind'] not in WATER] + [L for L in layers if L['kind'] in WATER]

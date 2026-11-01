@@ -63,6 +63,9 @@ Every page's tools are **panels**.
 - **Drag a tab** to move it: dock it on a side, tab it with others, or float it.
 - **Drag the edges** to resize. **⋮** floats or closes a panel.
 - **▤ Panels** opens any panel and has ready-made layouts. You can save your own.
+- **🧭 Minimap** (in ▤ Panels on the World map) shows where you are. In 3D it follows the camera, with an arrow
+  for the way you face; indoors it shows your storey only. **Click** it to go there, **drag** to look around,
+  **scroll** to zoom, and **📍** follows you again. The line under it names what the pointer is over.
 - Groups of buttons over the map have a grip **⋮⋮**: drag it to put the group where you like. Right-click a grip
   to put them back in a row, or lock them.
 

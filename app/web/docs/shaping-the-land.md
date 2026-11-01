@@ -25,7 +25,7 @@ on the ground. A plain click does nothing, so you can still select things.
 | ▲ Raise / ▼ Lower | Raises or lowers the ground under the brush. Hold **Ctrl** for the opposite. |
 | ≈ Smooth | Evens out bumps. |
 | ▬ Flatten | Levels the ground to the height where the stroke started. |
-| 🖌 Paint | Paints a ground texture. Pick one from the list, or take the one on the ground: **💧 Pick**, then click it (or **Shift+click** it any time). **✨ Auto** paints each patch with the texture the region's land has at its slope, height and shore instead (roads and paving stay). |
+| 🖌 Paint | Paints a ground texture. Pick one from the list, or take the one on the ground: **💧 Pick**, then click it (or **Shift+click** it any time). **✨ Auto** paints each patch the way the region's own land is painted where the ground is like it (as steep, as high, on a crest or in a hollow, by the water or not), copying the game's layout so textures meet as they do in the game (roads and paving stay). **Like** takes another region's textures. |
 | 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **💧 Pick** (or **Shift+click**) takes the colour there. |
 | 🌿 Scatter | Scatters the region's own grass, plants, rocks or trees. **Ctrl** clears them away. |
 
@@ -36,6 +36,8 @@ on the ground. A plain click does nothing, so you can still select things.
   it. Buildings move too, so turn it off when you are fitting the ground to a building.
 - Each stroke is saved when you let go, as one Undo step.
 - The brush can't make a step steeper than the game's land can hold (about 83°).
+- Drag the Ground window by its title to move it, or by its bottom-right corner to make it bigger. It keeps its
+  place and size.
 
 ### Tint: shade automatically
 
@@ -48,6 +50,11 @@ its usual tint, and **Hollows** darkens the hollows and lightens the crests. **A
 - Pick a set (Grass, Flowers & plants, Rocks & stones, Trees, Logs & stumps). They are learnt from the region
   you're in, the commonest first; untick any you don't want. **＋ New brush** makes a set of your own, with
   any objects, from mods too.
+- **Your own brush**: add things with the search. Each row shows its picture and its share of what the brush
+  scatters. **Often** sets how often it comes up against the others; **Size** is the smallest and biggest it can be.
+  **⤓ Share** saves the brush as a file, **⤒ From file** adds brushes from one, and 🗑 deletes it.
+- **▦ / ☰** beside the search: pictures or a list. As pictures, the search shows a grid you click to add from
+  (✓ marks what's on the brush), and clicking one of the brush's pictures opens its Often and Size.
 - **Thickness**: 5 is as thick as the game has that kind; 10 is about three times as thick, 1 under half.
 - One stroke makes at most 1,500 things (15,000 grass tufts). Let go and paint again for more.
 - **Grass as groundcover** goes into its own grass file next to your mod. OpenMW draws it fast, sways it,
@@ -244,10 +251,13 @@ more and some **Tilt**.
 
 - **Rocks & cliffs:** as thickly as the game sets them on ground that steep, at the foot, on the face and at the
   crest, each turned to its own slope as the game turned that rock, so faces look out over the drop and crests hang
-  over it.
+  over it. Steep faces are then covered as much as the region covers its own: most of a West Gash cliff hides
+  behind rock, a coast's stays bare.
 - **Trees & plants:** trees, plants, grass and logs from the region's own land. Its wild land is cut into squares
   (1024 across), each kept whole with what grows on it, and yours is filled with squares of the same kind of ground
-  (as steep, as high, by the water or not). Groves, lone trees and undergrowth come out as the game lays them.
+  (as steep, as high, by the water or not), grown on the same texture where the region has them: grass tufts on the
+  grass, bare scree on the rock. Groves, lone trees and undergrowth come out as the game lays them. Texture the land
+  first, then Dress.
 - **Like:** *The land nearest* (each cell's own region; for open sea, the nearest region with land), or one region's
   look for all. Where a region has no ground like yours, the nearest regions with land fill in.
 - **Amount:** 1 is the game's own thickness.
@@ -256,6 +266,29 @@ more and some **Tilt**.
 - Not where something stands already, and not under water. One Undo takes it all back.
 
 To place rocks, cliffs, trees and plants by hand, open the **🎨 Style palette** and pick a region under **Regions**.
+
+## Towns
+
+Draw a **🏘 Town** shape round the ground it should take. The map shows its streets, plots and buildings.
+
+- **Like:** whose towns it is planned after (streets, spacing, shops and taverns). The Imperial looks are kept apart:
+  **Imperial** (the classic white towns and forts), **Anvil** and **Gold Coast**. **🎲 Another** gives another layout.
+- **Wall:** none, its culture's own, or one you pick. The wall is made of the game's pieces, each joined to the
+  next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out.
+  Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
+  the land round it), and the wall sunk deep enough that no foot shows.
+- **Dressed:** sets out what the culture's own towns set out. Before doors: benches, signs, lanterns, crates, a
+  smith's forge and anvil. Along the streets: carts, stools, barrels. In the square: a well or a shrine. And the
+  culture's own scenes, such as Telvanni slave pods or a gallows, as often as its towns have them.
+- **Name:** the town's name. Its interiors are called after it ("Varnhold, …"). Left blank, it takes the name shown,
+  made from the culture's own town names.
+- **Interiors:** behind every door, one of the game's own interiors for that very building, furnished, with its
+  door linked both ways. A home is named after the person who heads it ("Nala Niabhe's Lodge"), a shop after its
+  keeper and trade ("Gilas Mundrethi: Clothier"); temples, guilds and towers keep what they are.
+- **People:** a household in each, cast as the game's places of that kind have them, owning its beds and chests.
+  This takes a minute or two for a town.
+- **🏘 Make it** builds it. Each building is set on the ground, and the ground is raised where its foot or door
+  would show a gap. The streets are paved with the road of the nearest towns of that culture. One Undo takes it all back.
 
 ## Good to know
 

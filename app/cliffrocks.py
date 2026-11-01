@@ -24,8 +24,10 @@ import random
 
 import mapdata
 
-VERSION = 3
+VERSION = 4                     # (4: 'cover', the share of each steep band's ground under the region's rocks)
 BANDS = (0.0, 15.0, 30.0, 45.0, 60.0, 91.0)
+STEEP_BAND = 3                  # bands from this (45 degrees) on are faces the game covers with rocks, or not
+COVER_TRIES = 4                 # rocks tried a steep point still bare, at most, while covering faces
 WORDS = ('rock', 'stone', 'boulder', 'cliff', 'crag')
 NOT = ('road', 'wall', 'bridge', 'arch', 'cave', 'entr', 'menhir', 'door', 'sign', 'ruin', 'shrine', 'pillar', 'stair',
        'gate', 'tower', 'house', 'kelp', 'coral', 'lily', 'stoneflower', 'flora', 'plant', 'grave', 'tomb', 'dock',
@@ -76,6 +78,7 @@ REACH = 4                       # points (128 each) every way: 512 units
 FLAT = 48.0
 ASPECT_MIN = 8.0                # degrees: flatter ground has no way downhill to turn a rock by
 POSES = 40                      # poses kept a rock and steepness
+HOLDOUT = set()                 # cells never learnt from (the lab's held-out blocks; nothing then kept on disk)
 
 
 def _place_of(g, lo, hi):
@@ -107,17 +110,37 @@ def _tilt(pos):
     return min(a, 360 - a)
 
 
+class _Feet:
+    """Rocks' footprints (their boxes turned by their turn, the tilt left out), to ask whether a spot is under one."""
+    def __init__(self):
+        self.grid = {}
+
+    def add(self, x, y, rz, s, b):
+        r = max(abs(b[0]), abs(b[3]), abs(b[1]), abs(b[4])) * s * 1.42
+        for gx in range(int((x - r) // 512), int((x + r) // 512) + 1):
+            for gy in range(int((y - r) // 512), int((y + r) // 512) + 1):
+                self.grid.setdefault((gx, gy), []).append((x, y, math.cos(rz), math.sin(rz), s, b))
+
+    def under(self, px, py):
+        for x, y, c, sn, s, b in self.grid.get((int(px // 512), int(py // 512)), ()):
+            dx, dy = px - x, py - y
+            lx, ly = c * dx - sn * dy, sn * dx + c * dy
+            if b[0] * s <= lx <= b[3] * s and b[1] * s <= ly <= b[4] * s:
+                return True
+        return False
+
+
 def learn(db, region, sample=90):
     """The region's figures: {'bands': [{area, n, per_mu (rocks a million square units), items: [...]}], 'cells'}.
     Read from up to `sample` of its cells (spread over it), cached on disk by the load order."""
     region = (region or '').lower()
-    key = (id(db.recs), region)
+    key = (id(db.recs), region, tuple(sorted(HOLDOUT)))
     if key in _mem:
         return _mem[key]
     path = _disk(db)
     disk = {}
     try:
-        if os.path.isfile(path):
+        if os.path.isfile(path) and not HOLDOUT:
             with open(path, encoding='utf-8') as f:
                 disk = json.load(f)
     except (OSError, ValueError):
@@ -128,7 +151,7 @@ def learn(db, region, sample=90):
     import regions
     from project import ref_info
     rmap = regions.region_map(db)
-    cells = sorted((k for k, r in rmap.items() if r == region), key=lambda k: hashlib.md5(k.encode()).hexdigest())[:sample]
+    cells = sorted((k for k, r in rmap.items() if r == region and k not in HOLDOUT), key=lambda k: hashlib.md5(k.encode()).hexdigest())[:sample]
     area = [0.0] * (len(BANDS) - 1)
     stats = [dict() for _ in area]
     nb = [0] * len(area)
@@ -136,6 +159,7 @@ def learn(db, region, sample=90):
     pnb = [[0, 0, 0] for _ in area]
     bmemo = {}
     used = 0
+    cov = [[0, 0] for _ in area]                       # (steep ground: points under a rock, points)
     for ck in cells:
         gx, gy = (int(v) for v in ck.split(','))
         L = mapdata.land(db, gx, gy)
@@ -150,6 +174,7 @@ def learn(db, region, sample=90):
                 area[_band(s)] += 128.0 * 128.0
                 parea[_band(s)][pl[i]] += 128.0 * 128.0
         refs, _h = db.cell_refs('#' + ck)
+        feet = _Feet()
         for ref in refs.values():
             rid, pos, sc, dead = ref_info(ref['subs'])
             if dead:
@@ -165,6 +190,7 @@ def learn(db, region, sample=90):
                 continue
             b = info[0]
             sc = sc or 1.0
+            feet.add(pos[0], pos[1], pos[5], sc, b)
             fx, fy = (pos[0] - gx * 8192.0) / 128.0, (pos[1] - gy * 8192.0) / 128.0
             if not (1 <= fx < 63 and 1 <= fy < 63):
                 continue
@@ -201,6 +227,14 @@ def learn(db, region, sample=90):
                     turn = round(((pos[5] - _downhill(ggx, ggy)) + math.pi) % (2 * math.pi) - math.pi, 3)
                 # [rx, ry, turn from downhill (None: any), origin over the ground, scale, place]
                 st['poses'].append([round(pos[3], 3), round(pos[4], 3), turn, round(pos[2] - g, 1), round(sc, 2), plc])
+        # (how much of its steep ground the region hides under rocks: the West Gash 53-90% of its faces, the Azura's
+        # Coast and Sheogorad all but none; laid by density alone, a West Gash cliff came out a third covered, lab
+        # jcl1 2026-10-30)
+        for i, s in enumerate(sl):
+            if s is not None and H[i] > 0 and _band(s) >= STEEP_BAND:
+                c = cov[_band(s)]
+                c[1] += 1
+                c[0] += feet.under(gx * 8192.0 + (i % 65) * 128, gy * 8192.0 + (i // 65) * 128)
     bands = []
     for k in range(len(area)):
         items = []
@@ -219,9 +253,13 @@ def learn(db, region, sample=90):
         bands.append({'from': BANDS[k], 'to': BANDS[k + 1], 'area': round(area[k]), 'n': nb[k],
                       'per_mu': round(nb[k] / area[k] * 1e6, 3) if area[k] > 0 else 0.0, 'items': items,
                       # (rocks a million square units at the foot, on the face and at the crest of such ground)
-                      'per_place': [round(pnb[k][p] / parea[k][p] * 1e6, 3) if parea[k][p] > 0 else 0.0 for p in range(3)]})
+                      'per_place': [round(pnb[k][p] / parea[k][p] * 1e6, 3) if parea[k][p] > 0 else 0.0 for p in range(3)],
+                      # (the share of such ground under a rock, and how many points that is of)
+                      'cover': round(cov[k][0] / cov[k][1], 3) if cov[k][1] else 0.0, 'cover_n': cov[k][1]})
     out = {'region': region, 'cells': used, 'bands': bands}
     _mem[key] = out
+    if HOLDOUT:
+        return out
     disk[region] = out
     try:
         with open(path, 'w', encoding='utf-8') as f:
@@ -418,6 +456,93 @@ def plan_rocks(db, F, inside, weight, region_of, amount=1.0, seed=1, hold=None):
                                 'rx': (rng.random() * 2 - 1) * lean, 'ry': (rng.random() * 2 - 1) * lean,
                                 'rz': rng.random() * 2 * math.pi, 's': round(s, 2)})
                 taken.setdefault((cx, cy), []).append((x, y, r))
+    if COVER_FACES:
+        out += _cover_faces(db, F, inside, weight, hold, figs, region_of, out, bounds, amount, rng)
+    return out
+
+
+COVER_FACES = True              # steep faces covered as much as the region covers its own (the lab turns it off)
+
+
+def _cover_faces(db, F, inside, weight, hold, figs, region_of, laid, bounds, amount, rng):
+    """More of the region's rocks on its steep ground left bare, until each steep band is as much under rocks as the
+    region's own is (its 'cover'), times amount: the game hides most of a West Gash cliff behind rock models, and
+    leaves a coast's bare. [{id, x, y, z, rx, ry, rz, s}]."""
+    def bnd(rid):
+        low = rid.lower()
+        if low not in bounds:
+            bounds[low] = mapdata.object_bounds(db, db.resolve_id(rid))
+        return bounds[low]
+    feet = _Feet()
+    for r in laid:
+        b = bnd(r['id'])
+        if b:
+            feet.add(r['x'], r['y'], r['rz'], r['s'], b)
+    k = max(1, int(round(128.0 / F.step)))
+    groups = {}
+    for py in range(k, F.h - k, k):
+        for px in range(k, F.w - k, k):
+            i = py * F.w + px
+            if not inside[i] or weight[i] < 0.5 or F.z[i] <= 16 or (hold and hold[i]):
+                continue
+            x, y = F.world(i)
+            sl = _slope_at(F, x, y)
+            if sl is None or _band(sl) < STEEP_BAND:
+                continue
+            reg = region_of(x, y)
+            if reg not in figs:
+                figs[reg] = learn(db, reg)
+            groups.setdefault((reg, _band(sl)), []).append((x, y))
+    out = []
+    for (reg, bk), pts in groups.items():
+        band = figs[reg]['bands'][bk]
+        if band.get('cover_n', 0) < 200:
+            band = _band_for(figs[reg], bk)          # (too little such ground in the region to go by its own share)
+        target = min(0.95, float(band.get('cover') or 0.0) * amount)
+        if not band['items'] or target <= 0:
+            continue
+        near = {}
+        for p in pts:
+            near.setdefault((int(p[0] // 512), int(p[1] // 512)), []).append(p)
+        bare = {p for p in pts if not feet.under(*p)}
+        need = int(target * len(pts)) - (len(pts) - len(bare))
+        order = list(bare)
+        rng.shuffle(order)
+        for x, y in order:
+            if need <= 0:
+                break
+            if (x, y) not in bare:
+                continue
+            for _ in range(COVER_TRIES):
+                plc = _place_at(F, x, y)
+                wt = [(c['at'][plc] + 0.25) if c.get('at') else c['n'] for c in band['items']]
+                pick = rng.random() * sum(wt)
+                it = band['items'][0]
+                for c, w_ in zip(band['items'], wt):
+                    pick -= w_
+                    if pick <= 0:
+                        it = c
+                        break
+                g = _height(F, x, y)
+                ps = _posed(F, it, x, y, g, plc, rng) if g is not None else None
+                b = bnd(it['id'])
+                if not ps or not b:
+                    continue
+                r_ = dict(ps, id=it['id'], x=x, y=y)
+                gap = _lowest(F, r_, b)
+                if gap is not None and gap > FLOAT_MAX:
+                    r_['z'] -= gap + SETTLE_SINK
+                out.append(r_)
+                feet.add(x, y, r_['rz'], r_['s'], b)
+                # (the bare points it now covers)
+                rad = max(abs(b[0]), abs(b[3]), abs(b[1]), abs(b[4])) * r_['s'] * 1.42
+                for gx in range(int((x - rad) // 512), int((x + rad) // 512) + 1):
+                    for gy in range(int((y - rad) // 512), int((y + rad) // 512) + 1):
+                        for q in near.get((gx, gy), ()):
+                            if q in bare and feet.under(*q):
+                                bare.discard(q)
+                                need -= 1
+                break
     return out
 
 

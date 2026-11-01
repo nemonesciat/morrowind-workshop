@@ -236,12 +236,10 @@ async function fgSkinPicker(recs, mapping, onDone){
   try { t = (await post('/api/forge/textures', {recs})).textures; } catch (e){ return toast(e.message, true); }
   if (!t.length) return toast('Its models have no pictures to swap.', true);
   const pics = fgLibPics(), many = recs.length > 1;
-  // (the browser can't show .dds: those are drawn through the 3D view's swatches, world3d.js v3SwatchScan)
+  // (.dds and .tga made pictures by the server: library.js picUrl)
   const pic = (img, file) => {
     if (!file){ img.removeAttribute('src'); img.style.visibility = 'hidden'; return; }
-    img.style.visibility = '';
-    if (/\.dds$/i.test(file) && typeof v3SwatchScan === 'function'){ img.dataset.swatch = file; delete img.dataset.done; ensureThree().then(() => v3SwatchScan(img.parentNode)); }
-    else { delete img.dataset.swatch; img.src = '/api/file?path=' + encodeURIComponent(file); }
+    img.style.visibility = ''; img.src = picUrl(file, 96);
   };
   const libFile = tex => { const l = pics.find(p => p.texture === tex); return l && l.file; };
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.style.zIndex = 1300;
