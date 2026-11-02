@@ -210,7 +210,9 @@ $('#omwmenu').addEventListener('click', async e => {
     else if (a === 'settings') omsShow();
     else if (a === 'settingscfg'){ const r = await post('/api/openmw/settings/open', {}); toast('Opening ' + r.path + '…'); }
     else if (a === 'launcher'){ await post('/api/openmw/start', {mode: 'launcher'}); toast('Opening OpenMW\'s Launcher…'); }
-    else if (a === 'here'){ showView('world'); toast('Open a place on the map, then press "Play here" (or "Pick a spot") in the Place panel.'); }
+    // (straight into the Place panel's "Pick a spot": it only opened the map with a hint, and on the map already it seemed
+    // to do nothing, the user 2026-11-02)
+    else if (a === 'here'){ showView('world'); setTimeout(() => { if (typeof setMode === 'function') setMode('play'); }, 250); }
     else if (a === 'order') showView('plugins');
     else if (a === 'get') window.open('https://openmw.org/downloads/', '_blank');
     else if (a === 'pick'){

@@ -114,6 +114,10 @@ select{width:calc(100% - 16px);margin:4px 8px;background:var(--deep);color:var(-
 .row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:2px 10px;padding:7px 14px;border-bottom:1px solid var(--line0);cursor:pointer}
 .row:hover{background:var(--hover)}
 .row.sel{background:var(--sel)}
+/* (a button filled as a progress bar: its words haloed in the page colour, readable over the fill and the rest; the user 2026-11-02) */
+.btn.pbar{color:var(--text)!important;text-shadow:0 0 2px var(--bg),0 0 3px var(--bg),0 0 5px var(--bg);opacity:1!important}
+.row.msel{background:var(--sel);box-shadow:inset 3px 0 0 var(--gold2)}
+.mselbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 14px;border-bottom:1px solid var(--line);background:var(--panel2);font-size:12.5px}
 .row .ty{grid-row:span 2;font-size:11px;color:var(--gold2);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
 .row .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .nm b{font-weight:600}
@@ -208,6 +212,8 @@ table.t td.ty{color:var(--gold2);font-size:11px;text-transform:uppercase;white-s
 /* project + editing */
 .proj{border:1px solid var(--line2);background:var(--panel2);border-radius:20px;padding:5px 12px;cursor:pointer;color:var(--muted);font-size:12.5px;white-space:nowrap}
 .proj:hover{border-color:var(--gold)}
+.busychip{flex:0 0 auto;border:1px solid var(--gold);border-radius:20px;padding:3px 10px;margin-left:8px;color:var(--text-b);font-size:12px;white-space:nowrap;cursor:help;display:inline-flex;align-items:center;gap:6px}
+.busychip .btn.sm{padding:0 6px;font-size:11px;line-height:16px}
 .proj b{color:var(--gold2);font-weight:600}
 .proj.none{border-style:dashed}
 .btn.primary{background:var(--btn-primary);border-color:var(--goldline);color:var(--gold2)}
@@ -238,7 +244,7 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .home-hero h1{margin-bottom:4px}
 .home-hero .lead{max-width:720px}
 .home-proj{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 22px}
-.cgrid.home-cards{grid-template-columns:repeat(auto-fill,minmax(195px,1fr));max-width:900px}
+.cgrid.home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));max-width:1080px}
 .home-cards .ccard{display:flex;flex-direction:column;gap:2px;min-height:150px}
 .home-cards .ccard[data-home="tour"]{border-color:color-mix(in srgb,var(--gold) 60%,var(--line))}
 .home-places{display:flex;gap:6px;flex-wrap:wrap;max-width:900px}
@@ -778,7 +784,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
     <input id="q" placeholder="Search names, IDs, dialogue, meshes…" autocomplete="off" spellcheck="false">
     <kbd>/</kbd>
   </div>
-  <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span>
+  <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span><span id="busychip" class="busychip" style="display:none"></span>
   </div>
   <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><div class="omwwrap" id="learnwrap" style="display:none"><button class="btn" id="learnbtn" title="The Workshop is learning from your game's own places, once: click for what and why">📚<span class="tl"> Learning</span> <span id="learnn"></span><i class="learnbar"><i id="learnfill"></i></i></button><div class="omwmenu" id="learnmenu"></div></div><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
@@ -864,6 +870,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
 <script src="/web/rules.js"></script>
 <script src="/web/regions.js"></script>
 <script src="/web/landmap.js"></script>
+<script src="/web/castle.js"></script>
 <script src="/web/itemed.js"></script>
 <script src="/web/luaed.js"></script>
 <script src="/web/questtest.js"></script>
@@ -876,6 +883,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 // loading" that the page says calmly, not as a fault: the crawl test's five "Something went wrong" toasts)
 const api = async (p, opt) => {
   const read = !opt || !opt.method || opt.method === 'GET';
+  const done = busyTrack(p);
+  try {
   for (let n = 0; ; n++){
     // (no answer at all, the Workshop closing or starting again: a read asks again for a few seconds, then it's
     // said plainly, not as "Something went wrong in the page: TypeError: Failed to fetch")
@@ -890,7 +899,45 @@ const api = async (p, opt) => {
     if (!r.ok){ const e = new Error(j.error || r.status); if (r.status === 503) e.loading = true; throw e; }
     return j;
   }
+  } finally { done(); }
 };
+// The busy chip in the top bar: once a click has waited 3 s, what the Workshop is busy with and for how long, the
+// rest that waits in its tooltip, and ✕ for a land preview (the one thing safe to drop). PIN2's Clear marks looked
+// broken while a 2-minute coast preview ran, 2026-11-02. (window._busy: api runs before the code below has)
+function busyTrack(p){
+  const B = window._busy || (window._busy = {out: new Map(), n: 0, on: false});
+  if (/\/api\/busy/.test(p)) return () => {};
+  const id = ++B.n; B.out.set(id, Date.now());
+  if (!B.on){ B.on = true; setTimeout(busyPoll, 3000); }
+  return () => { B.out.delete(id); };
+}
+async function busyPoll(){
+  const B = window._busy;
+  if (!B.out.size){ B.on = false; busyShow(null); return; }
+  const now = Date.now(), first = Math.min(...B.out.values());
+  if (now - first >= 3000){
+    try {
+      const ctl = new AbortController(); setTimeout(() => ctl.abort(), 2500);
+      const r = await (await fetch('/api/busy', {signal: ctl.signal})).json();
+      busyShow(r.busy && r.busy.length ? r.busy : null);
+    } catch (e){ busyShow([{what: '', seconds: Math.round((now - first) / 1000)}]); }
+  }
+  setTimeout(busyPoll, 1500);
+}
+function busyName(w){
+  const m = BUSY_WHAT.find(([re]) => re.test(w));
+  return m ? m[1][0].toUpperCase() + m[1].slice(1) : 'Working';
+}
+function busyShow(list){
+  const el = $('#busychip'); if (!el) return;
+  if (!list){ el.style.display = 'none'; return; }
+  const top = list[0], prev = list.some(b => /\/api\/land\/plan\/preview$/.test(b.what));
+  el.style.display = '';
+  el.innerHTML = `⏳ ${esc(busyName(top.what))} · ${top.seconds} s${prev ? ' <button class="btn sm" id="busystop" title="Stop the land preview. It runs again when you change a shape">✕</button>' : ''}`;
+  el.title = 'The Workshop is busy. Your clicks are in and happen as soon as it is free.' + (list.length > 1 ? ' Waiting: ' + [...new Set(list.slice(1).map(b => busyName(b.what)))].join(', ') : '');
+  const st = el.querySelector('#busystop');
+  if (st) st.onclick = async e => { e.stopPropagation(); st.disabled = true; try { await fetch('/api/land/plan/preview/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); } catch (x){} };
+}
 const fmtN = n => Number(n).toLocaleString();
 // (which window an edit came from, so a second window reloads only what another one changed: twowin.js)
 const WIN_ID = Math.random().toString(36).slice(2, 10);
@@ -1208,6 +1255,7 @@ async function runSearch(){
   const r = await api('/api/search?' + p);
   if (seq !== searchSeq) return;
   S.rows = r.rows; S.total = r.total;
+  S.msel.clear(); mselShow();
   renderRows(); $('#rows').scrollTop = 0;
 }
 async function loadMore(){
@@ -1256,7 +1304,7 @@ function renderRows(append){
       : c === 'extra' ? hl(r.extra || '') : c === 'versions' ? (r.versions > 1 ? `<span class="ov">${r.versions} files</span>` : '') + (r.deleted ? ' <span class="del">deleted</span>' : '') : '';
     const sortable = {name: 1, id: 1, type: 1, plugin: 1, extra: 1};
     let html = `<div class="trow thead" style="grid-template-columns:${grid}">${cols.map(c => `<div data-sort="${sortable[c] ? c : ''}" class="${sortable[c] ? 'sortable' : ''}">${esc(LIST_COLS.find(x => x[0] === c)[1])}${S.sort === c ? ' ▲' : S.sort === '-' + c ? ' ▼' : ''}</div>`).join('')}</div>`;
-    html += S.rows.map(r => `<div class="row trow ${r.i===S.sel?'sel':''}" data-i="${r.i}" style="grid-template-columns:${grid}">${cols.map(c => `<div>${cell(r, c)}</div>`).join('')}</div>`).join('');
+    html += S.rows.map(r => `<div class="row trow ${r.i===S.sel?'sel':''} ${S.msel.has(r.i)?'msel':''}" data-i="${r.i}" style="grid-template-columns:${grid}">${cols.map(c => `<div>${cell(r, c)}</div>`).join('')}</div>`).join('');
     if (!S.rows.length) html += `<div class="empty"><h3>Nothing found</h3><p>Try fewer words, or clear the category filter.</p></div>`;
     else if (S.rows.length < S.total) html += `<div class="more">Scroll for more…</div>`;
     $('#rows').innerHTML = html;
@@ -1271,14 +1319,55 @@ function renderRows(append){
     if (r.type === 'INFO') sub.unshift('topic: ' + hl(r.extra));
     if (r.deleted) sub.push('<span class="del">deleted</span>');
     if (r.mine) sub[sub.indexOf(esc(r.plugin))] = '<span class="mine">✎ ' + esc(r.plugin) + '</span>';
-    return `<div class="row ${r.i===S.sel?'sel':''}" data-i="${r.i}"><div class="ty">${esc(S.typeLabels[r.type]||r.type)}</div><div class="nm">${title}</div><div class="sub">${sub.join(' · ')}</div></div>`;
+    return `<div class="row ${r.i===S.sel?'sel':''} ${S.msel.has(r.i)?'msel':''}" data-i="${r.i}"><div class="ty">${esc(S.typeLabels[r.type]||r.type)}</div><div class="nm">${title}</div><div class="sub">${sub.join(' · ')}</div></div>`;
   };
   let html = S.rows.map(rowHtml).join('');
   if (!S.rows.length) html = `<div class="empty"><h3>Nothing found</h3><p>Try fewer words, or clear the category filter.</p></div>`;
   else if (S.rows.length < S.total) html += `<div class="more">Scroll for more…</div>`;
   $('#rows').innerHTML = html;
 }
-$('#rows').addEventListener('click', e => { const row = e.target.closest('.row'); if (row) openRecord(+row.dataset.i, true); });
+// Shift and Ctrl click pick several rows, as in a file list, for one action on them all (PIN2 on Discord 2026-11-02:
+// "Shift and Control click assets in this to add them to a style ... or just do one action to multiple items")
+S.msel = new Set();
+$('#rows').addEventListener('click', e => {
+  const row = e.target.closest('.row'); if (!row || row.classList.contains('thead')) return;
+  const i = +row.dataset.i;
+  if (e.ctrlKey || e.metaKey || e.shiftKey){
+    e.preventDefault();
+    if (!S.msel.size && S.sel != null && S.rows.some(r => r.i === S.sel)) S.msel.add(S.sel);
+    if (e.shiftKey && S.anchor != null){
+      const a = S.rows.findIndex(r => r.i === S.anchor), b = S.rows.findIndex(r => r.i === i);
+      if (a >= 0 && b >= 0){ if (!e.ctrlKey && !e.metaKey) S.msel.clear(); for (let n = Math.min(a, b); n <= Math.max(a, b); n++) S.msel.add(S.rows[n].i); }
+    } else { if (S.msel.has(i)) S.msel.delete(i); else S.msel.add(i); S.anchor = i; }
+    if (S.anchor == null) S.anchor = i;
+    window.getSelection && window.getSelection().removeAllRanges();
+    mselShow(); return;
+  }
+  S.anchor = i;
+  if (S.msel.size){ S.msel.clear(); mselShow(); }
+  openRecord(i, true);
+});
+function mselShow(){
+  document.querySelectorAll('#rows .row').forEach(r => r.classList.toggle('msel', S.msel.has(+r.dataset.i)));
+  let bar = $('#mselbar');
+  if (S.msel.size < 2){ if (bar) bar.remove(); return; }
+  const rows = S.rows.filter(r => S.msel.has(r.i)), things = rows.filter(r => PLACEABLE.includes(r.type) && r.id);
+  if (!bar){ bar = document.createElement('div'); bar.id = 'mselbar'; bar.className = 'mselbar'; $('#listhead').after(bar); }
+  bar.innerHTML = `<b>${rows.length} picked</b>
+    <button class="btn sm" data-ms="style" ${things.length ? '' : 'disabled'} title="Put them all in a style's palette (Style palette)">🎨 Add to a style…</button>
+    <button class="btn sm" data-ms="brush" ${things.length ? '' : 'disabled'} title="Put them all on one of your scatter brushes, or a new one">🌿 Add to a brush…</button>
+    <button class="btn sm" data-ms="copy" title="Copy their IDs, one a line">⧉ Copy IDs</button>
+    <button class="btn sm" data-ms="none" style="margin-left:auto" title="Pick none (Esc)">✕</button>
+    ${things.length < rows.length ? `<span class="msg" title="Only things that stand in the world go in styles and brushes">${rows.length - things.length} can't go in a style</span>` : ''}`;
+  bar.querySelectorAll('[data-ms]').forEach(b => b.onclick = () => {
+    const k = b.dataset.ms;
+    if (k === 'style' && typeof spAddMenu === 'function') spAddMenu(things.map(r => r.id), b);
+    if (k === 'brush') brAddMany(things.map(r => ({id: r.id, name: r.name}))).catch(e => toast(e.message, true));
+    if (k === 'copy') navigator.clipboard.writeText(rows.map(r => r.id).join('\n')).then(() => toast(`Copied ${rows.length} IDs.`));
+    if (k === 'none'){ S.msel.clear(); mselShow(); }
+  });
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.msel && S.msel.size && !document.querySelector('.modal-bg, .pmenu')){ S.msel.clear(); mselShow(); } });
 
 // ---------- detail ----------
 function goHist(d){
@@ -1574,7 +1663,7 @@ function verifyHtml(v){
     <span class="msg">${v.findings.length ? `${n.error} to fix, ${n.warning} worth a look, ${n.info} good to know` : ''}</span></div>`;
   if (!v.findings.length) return h + `<div class="card"><span class="sev-ok">✓</span> Every record in your mod passes. (Missing files, broken links and scripts are checked under My mod → Get ready to share.)</div>`;
   h += `<table class="t">` + v.findings.map(f => `<tr class="vrow"><td class="ty sev-${f.sev}" style="white-space:nowrap">${sevName[f.sev]}</td>
-    <td>${f.i != null ? `<span class="lnk" data-vgo="${f.i}">${esc(f.text)}</span>` : f.cell ? `<span class="lnk" data-vcell="${esc(f.cell)}">${esc(f.text)}</span>` : esc(f.text)}</td></tr>`).join('') + `</table>`;
+    <td>${f.i != null ? `<span class="lnk" data-vgo="${f.i}">${esc(f.text)}</span>` : f.myrec ? `<span class="lnk" data-vmyrec="${esc(f.myrec.join('|'))}">${esc(f.text)}</span>` : f.cell ? `<span class="lnk" data-vcell="${esc(f.cell)}">${esc(f.text)}</span>` : esc(f.text)}</td></tr>`).join('') + `</table>`;
   return h;
 }
 async function runVerify(){
@@ -1587,6 +1676,7 @@ $('#healthwrap').addEventListener('click', e => {
   if (e.target.closest('#verify-go')){ runVerify(); return; }
   const vg = e.target.closest('[data-vgo]'); if (vg){ showView('browse'); openRecord(+vg.dataset.vgo, true); return; }
   const vc = e.target.closest('[data-vcell]'); if (vc){ showView('world'); worldOpen(vc.dataset.vcell); return; }
+  const vm = e.target.closest('[data-vmyrec]'); if (vm && typeof rcOpenOne === 'function'){ const [k, id] = vm.dataset.vmyrec.split('|'); rcOpenOne(k, id); return; }
   const f = e.target.closest('[data-hf]'); if (f) { hFilter = f.dataset.hf; renderHealth(); return; }
   const s = e.target.closest('[data-search]'); if (s) { $('#q').value = s.dataset.search; S.q = s.dataset.search; S.types = []; S.plugin = ''; buildSide(); showView('browse'); runSearch(); }
 });
@@ -1620,8 +1710,15 @@ $('#projpill').onclick = () => { if (S.summary && S.summary.project) showView('m
 // label saying what's happening, and after a few seconds, in the dialog, what the Workshop is busy with.
 // The user's Workshop stopped answering for two minutes and every click made meanwhile ran at once when
 // it caught up (a switch, file pickers in Explorer). Returns the function that puts the button back.
-const BUSY_WHAT = [[/\/api\/build/, 'building a place'], [/\/api\/furnish/, 'furnishing'], [/\/api\/play|\/api\/link/, 'getting the game ready'],
-  [/\/api\/fixit|\/api\/gaps/, 'finding or fixing gaps'], [/\/api\/project/, 'switching mods'], [/\/api\/adopt/, 'looking through your plugins'],
+const BUSY_WHAT = [[/\/api\/land\/plan\/preview/, 'previewing the land'], [/\/api\/land\/plan\/apply/, 'shaping the land'],
+  [/\/api\/land\/texture/, 'texturing the land'], [/\/api\/land\/dress/, 'dressing the land'], [/\/api\/land\/revert/, 'putting the land back'],
+  [/\/api\/land\/marks/, 'marking cells'], [/\/api\/land\/plan/, 'saving the land plan'], [/\/api\/town\/plan/, 'planning a town'],
+  [/\/api\/town\/make/, 'making a town'], [/\/api\/town\/remove/, 'removing a town'], [/\/api\/castle\/plan/, 'planning a castle'],
+  [/\/api\/castle\/make/, 'making a castle'], [/\/api\/castle\/remove/, 'removing a castle'], [/\/api\/populate/, 'populating'],
+  [/\/api\/lived/, 'making it lived in'], [/\/api\/undo|\/api\/redo/, 'undoing'], [/\/api\/search/, 'searching'],
+  [/\/api\/build/, 'building a place'], [/\/api\/furnish/, 'furnishing'], [/\/api\/play|\/api\/link/, 'getting the game ready'],
+  [/\/api\/fixit|\/api\/gaps/, 'finding or fixing gaps'], [/\/api\/project\/(open|new|adopt|saveas)/, 'switching mods'],
+  [/\/api\/project/, 'reading your mod'], [/\/api\/adopt/, 'looking through your plugins'],
   [/\/api\/merge/, 'merging a mod'], [/\/api\/check|placecheck/, 'checking a place']];
 function slowWait(btn, note, label){
   const was = btn ? btn.textContent : '';
@@ -1991,24 +2088,64 @@ async function renderMyMod(){
     // undone changes and the "Undid/Redid" notes about them are history, not current work: hidden unless asked for
     const isHistory = l => l.undone || l.text.startsWith('Undid:') || l.text.startsWith('Redid:');
     const nHistory = P.log.filter(isHistory).length;
-    const roots = P.log.filter(l => (l.parent == null || !byId[l.parent]) && (S.showUndone || !isHistory(l))).reverse();
+    let roots = P.log.filter(l => (l.parent == null || !byId[l.parent]) && (S.showUndone || !isHistory(l))).reverse();
+    // one operation, one row: a town's or a castle's Make (its outside, each house copied and peopled, the doors linked)
+    // under the row that names it, and ground reshaped several times in a row folded into one. The user 2026-11-02:
+    // two towns made after another were lost among its houses' rows and the ground reshaped before them.
+    // (older logs have no operation ids: a town's steps are found by its name)
+    const ops = {}, inOp = new Set();
+    for (const l of roots){ if (l.op) (ops[l.op] = ops[l.op] || []).push(l); }
+    for (const l of roots){
+      const m = !l.op && /^Built (.+?), an? [^:]*town/.exec(l.text); if (!m) continue;
+      const nm = m[1] + ', ', pre = ['Copied ' + nm, 'Populated ' + nm, 'Linked the other door of ' + nm, 'Linked the other doors of ' + nm];
+      const own = roots.filter(r => !r.op && r !== l && pre.some(p => r.text.startsWith(p)));
+      // (and the town's outside, "Built a … town", logged just before its houses)
+      const ids = own.map(r => r.id), low = Math.min(l.id, ...ids);
+      const out_ = roots.find(r => !r.op && /^Built an? [^:]*town:/.test(r.text) && r.id < low && r.id >= low - 3);
+      if (own.length || out_){ l.op = 'name:' + l.id; ops[l.op] = [l, ...own, ...(out_ ? [out_] : [])]; own.forEach(r => r.op = l.op); if (out_) out_.op = l.op; }
+    }
+    const head = {};
+    for (const [k, list] of Object.entries(ops)){
+      if (list.length < 2) continue;
+      const h_ = list.find(l => /^Built [^,]+, an? /.test(l.text)) || list.find(l => /^(Built|Made) /.test(l.text)) || list[0];
+      head[k] = h_; list.forEach(l => { if (l !== h_) inOp.add(l.id); });
+    }
+    roots = roots.filter(l => !inOp.has(l.id));
+    const opKids = l => { const k = l.op; return k && head[k] === l ? ops[k].filter(x => x !== l) : []; };
+    // runs of ground reshaping, one after another
+    const folded = [];
+    for (const l of roots){
+      const g = /^Ground reshaped/.test(l.text) && !l.undone, last = folded[folded.length - 1];
+      if (g && last && last.run) last.run.push(l);
+      else if (g){ const nx = roots[roots.indexOf(l) + 1]; if (nx && /^Ground reshaped/.test(nx.text) && !nx.undone) folded.push({run: [l]}); else folded.push(l); }
+      else folded.push(l);
+    }
+    roots = folded;
     S.actOpen = S.actOpen || new Set();
     S.actByText = {};
     const row = (l, depth) => {
-      const ch = (kids[l.id] || []).slice().reverse(), open = S.actOpen.has(l.id);
+      if (l.run){
+        const gid = 'g' + l.run[0].id, open = S.actOpen.has(gid);
+        const cells = l.run.reduce((a, x) => a + (+((/in (\d+) cells?/.exec(x.text) || [])[1] || 0)), 0);
+        return `<div class="arow" style="padding-left:${8 + depth * 22}px"><button class="atog" data-atog="${gid}" title="${open ? 'Hide' : 'Show'} each one">${open ? '▾' : '▸'}</button>
+          <span class="msg at">${esc(l.run[0].t)}</span><span class="atext">Ground reshaped ${l.run.length} times${cells ? ` · ${cells} cells` : ''}</span>
+          <span class="abtn">${l.run.some(x => x.can_undo) ? `<button class="btn sm" data-undogroup="${l.run.map(x => x.id).join(',')}" data-ulabel="ground reshaped ${l.run.length} times">↶ Undo all</button>` : ''}</span></div>` +
+          (open ? l.run.map(c => row(c, depth + 1)).join('') : '');
+      }
+      const ch = opKids(l).concat((kids[l.id] || []).slice().reverse()), open = S.actOpen.has(l.id);
       const redo = l.text.startsWith('Undid:');
       S.actByText[l.id] = l;
       let out = `<div class="arow ${l.undone ? 'undone' : ''}" style="padding-left:${8 + depth * 22}px">
         ${ch.length ? `<button class="atog" data-atog="${l.id}" title="${open ? 'Hide' : 'Show'} the changes made on top of this">${open ? '▾' : '▸'}</button>` : '<span class="atog"></span>'}
         <span class="msg at">${esc(l.t)}</span>
         <span class="atext">${l.undone ? '<s>' + esc(l.text) + '</s>' : esc(l.text)}${l.inside && !l.undone ? ` <span class="msg" title="Undoing this also takes these back">· ${l.inside} change${l.inside === 1 ? '' : 's'} built on this</span>` : ''}</span>
-        <span class="abtn">${l.can_undo ? `<button class="btn sm" data-undoentry="${l.id}">${redo ? '↷ Redo' : l.inside ? `↶ Undo all ${l.inside + 1}` : '↶ Undo'}</button>` : l.undone ? '<span class="msg">undone</span>' : ''}</span></div>`;
+        <span class="abtn">${opKids(l).length && !l.undone ? `<button class="btn sm" data-undogroup="${[l, ...opKids(l)].map(x => x.id).join(',')}" data-ulabel="${esc(l.text.split(':')[0])}" title="The whole of it: every step inside, and anything built on them">↶ Undo it all</button>` : l.can_undo ? `<button class="btn sm" data-undoentry="${l.id}">${redo ? '↷ Redo' : l.inside ? `↶ Undo all ${l.inside + 1}` : '↶ Undo'}</button>` : l.undone ? '<span class="msg">undone</span>' : ''}</span></div>`;
       if (open) out += ch.map(c => row(c, depth + 1)).join('');
       return out;
     };
     const shownRoots = roots.slice(0, S.logAll ? 400 : 40);
     h += `<h3 style="margin:26px 0 6px;color:var(--muted);font-weight:500">Recent activity</h3>
-      <p class="msg" style="margin:0 0 8px">Changes built on another (furniture in a house you built, lines in your topic) sit inside it: click ▸ to see them.
+      <p class="msg" style="margin:0 0 8px">A town's or castle's steps, and changes built on another (furniture in a house you built, lines in your topic), sit inside it: click ▸ to see them.
         Undoing a change takes back what's built on it too, in one step.</p>
       ${nHistory ? `<label class="msg" style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="mm-undone" ${S.showUndone ? 'checked' : ''}> Show undone changes and undo history (${nHistory}), to redo something</label>` : ''}
       <div class="alist">${shownRoots.map(l => row(l, 0)).join('') || '<div class="arow msg">Nothing in effect right now.</div>'}</div>` +
@@ -2042,7 +2179,16 @@ function landSelPaint(){
 }
 $('#mymodwrap').addEventListener('click', async e => {
   const tg = e.target.closest('[data-atog]');
-  if (tg){ const id = +tg.dataset.atog; S.actOpen.has(id) ? S.actOpen.delete(id) : S.actOpen.add(id); renderMyMod(); return; }
+  if (tg){ const id = /^g/.test(tg.dataset.atog) ? tg.dataset.atog : +tg.dataset.atog; S.actOpen.has(id) ? S.actOpen.delete(id) : S.actOpen.add(id); renderMyMod(); return; }
+  const ug = e.target.closest('[data-undogroup]');
+  if (ug){
+    const ids = ug.dataset.undogroup.split(',').map(Number);
+    if (!confirm(`This takes back "${ug.dataset.ulabel}": all ${ids.length} steps, and anything made on top of them since, newest first.\n\nIt all goes back in one step, and one Redo brings it all back.`)) return;
+    ug.disabled = true;
+    try { await post('/api/undo_group', {ids, label: ug.dataset.ulabel}); toast('Undone'); await refreshAfterEdits(); renderMyMod(); }
+    catch (err){ toast(err.message, true); ug.disabled = false; }
+    return;
+  }
   const ue = e.target.closest('[data-undoentry]');
   if (ue){
     const l = (S.actByText || {})[+ue.dataset.undoentry];
@@ -3321,7 +3467,8 @@ function renderPlacing(){
   box.innerHTML = W.mode === 'place' && W.placeId ? `<div class="placingbar">${thumbImg(W.placeId, W.placeType, 96)}<div>Placing <b>${esc(W.placeName)}</b><div class="msg">${V3.on ? 'Point in the view, wheel to turn, click to place.' : 'Click on the map to place it.'}</div></div><button class="btn sm" id="w-stopplace">Stop</button></div>` : '';
   const st = $('#w-stopplace'); if (st) st.onclick = () => setMode(null);
   // (only the tiles of things: a prefab's tile has no object id, and reading it threw a red page fault while placing)
-  document.querySelectorAll('#world .pbody .tile').forEach(t => t.classList.toggle('placing', !!(W.mode === 'place' && W.placeId && (t.dataset.pid || '').toLowerCase() === W.placeId.toLowerCase())));
+  // (and the Pieces panel's, floating or docked: its outline stayed after Esc)
+  document.querySelectorAll('#world .pbody .tile, .pppc[data-pid]').forEach(t => t.classList.toggle('placing', !!(W.mode === 'place' && W.placeId && (t.dataset.pid || '').toLowerCase() === W.placeId.toLowerCase())));
   v3ThumbScan(box);
 }
 function bindWside(){
@@ -3967,6 +4114,7 @@ const CR_CARDS = {
   weather: ['⛈', 'New weather', 'A weather of your own from one of the game\'s: its own sky, fog and light by the hour, particles and sounds, with its share of the regions you pick.', 'OpenMW 0.52'],
   addlist: ['🎁', 'Add to the game\'s lists', 'Your items or creatures into the game\'s random loot and creature lists, leaving what other mods add there.', 'OpenMW 0.52'],
   lootrule: ['💰', 'Loot rules', 'Loot picked in play from everything installed, other mods\' too, by kind, words, worth and the player\'s level. Glowing chests if you like.', 'OpenMW 0.52'],
+  happen: ['⚡', 'When… then…', 'When the player uses, activates or reads something, then a skill rises, items are given, a blessing grows with a stat. The building block of new skills.', 'OpenMW 0.52'],
   trap: ['⚠', 'Trap', 'A spell that strikes whoever opens, takes or uses a thing: a cursed chest, a burning door, a book that drains the reader.', 'OpenMW 0.52'],
   ingred: ['🌿', 'Ingredient effects', 'Give an ingredient any four effects, your own included, so alchemy brews them.', 'OpenMW 0.52'],
   lookat: ['👁', 'Look-at lines', 'A line shown while the player looks at a thing: a name scratched on a skull, a note on a door.', 'OpenMW 0.52'],
@@ -3974,10 +4122,10 @@ const CR_CARDS = {
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
   givespell: ['🪄', 'Give spells to people', 'Teach spells to everyone who fits: by race, class, faction, a spell they know or a skill, in the regions or towns you pick. In their records, or by a script that leaves them untouched.', 'Magic'],
 };
-const CR_REC = {skill: 'skills', attribute: 'attributes', weather: 'weathers', addlist: 'lists', lootrule: 'loot', trap: 'traps', ingred: 'ingredients', lookat: 'looks'};
+const CR_REC = {skill: 'skills', attribute: 'attributes', weather: 'weathers', addlist: 'lists', lootrule: 'loot', trap: 'traps', happen: 'happens', ingred: 'ingredients', lookat: 'looks'};
 const CR_GROUPS = [['Make something new', ['build', 'ruin', 'npc', 'container', 'item', 'forge', 'book', 'spell', 'effect', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
-                   ['New with OpenMW 0.52', ['skill', 'attribute', 'weather', 'addlist', 'lootrule', 'trap', 'ingred', 'lookat'],
+                   ['New with OpenMW 0.52', ['skill', 'attribute', 'weather', 'happen', 'addlist', 'lootrule', 'trap', 'ingred', 'lookat'],
                     'Your mod as an .omwaddon. Magic effects gain new steps too. <a data-guide="openmw-052.md">What 0.52 adds</a>'],
                    ['Change something that exists', ['itemed', 'givespell']]];
 // the rest of a form, folded away under a line
@@ -4778,6 +4926,7 @@ poll();
 <script src="/web/viewwin.js"></script>
 <script src="/web/stylepal.js"></script>
 <script src="/web/minimap.js"></script>
+<script src="/web/piecepanel.js"></script>
 <script src="/web/forge.js"></script>
 <script src="/web/spellgive.js"></script>
 <script src="/web/physics.js"></script>

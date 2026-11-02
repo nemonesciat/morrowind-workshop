@@ -346,13 +346,22 @@ async function spOwnBind(body, d){
 
 // (from Browse: a style picked from a menu at the button)
 async function spAddMenu(id, at){
+  // (id: one, or a list: Browse's Shift/Ctrl-picked rows, PIN2 on Discord 2026-11-02)
   let r;
   try { r = await api('/api/style/themes'); } catch (e){ return toast(e.message, true); }
   if (!r.ready) return toast('The styles are still being learnt; try again in a moment.');
-  const b = at.getBoundingClientRect();
-  pnlMenu({x: b.left, y: b.bottom}, [{label: 'Add ' + id + ' to the style…', disabled: true},
-    ...(r.own || []).map(t => ({label: '★ ' + t.name, act: () => spAdd(t.name, id)})),
-    ...r.themes.map(t => ({label: t.name, act: () => spAdd(t.name, id)})), '-', {label: 'Used everywhere', act: () => spAdd('*', id)}]);
+  const b = at.getBoundingClientRect(), many = Array.isArray(id) && id.length > 1;
+  const add = th => many ? spAddMany(th, id) : spAdd(th, Array.isArray(id) ? id[0] : id);
+  pnlMenu({x: b.left, y: b.bottom}, [{label: 'Add ' + (many ? id.length + ' things' : Array.isArray(id) ? id[0] : id) + ' to the style…', disabled: true},
+    ...(r.own || []).map(t => ({label: '★ ' + t.name, act: () => add(t.name)})),
+    ...r.themes.map(t => ({label: t.name, act: () => add(t.name)})), '-', {label: 'Used everywhere', act: () => add('*')}]);
+}
+async function spAddMany(theme, ids){
+  let ok = 0; const bad = [];
+  for (const id of ids){ try { await post('/api/style/add', {theme, id}); ok++; } catch (e){ bad.push(id); } }
+  delete SP.data[theme];
+  toast(`Added ${ok} to ${theme === '*' ? 'Used everywhere' : theme}.` + (bad.length ? ` ${bad.length} couldn't go in: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? '…' : ''}` : ''), !ok);
+  if (spWin()) spRender();
 }
 
 // what the search keeps: name or id words

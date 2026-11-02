@@ -226,9 +226,45 @@ def _axis(poly):
     return (cx, cy), (math.cos(a), math.sin(a))
 
 
+# (a Nord village is one road through it, its hall at the heart and the houses along both sides facing it, yards and
+# woodpiles between: the game's Skaal Village and Karthgad, and the village rules the user pointed to, 2026-11-01. With
+# its branch streets a dozen log houses stood scattered round a smear of cobbles, the user's "Blood Pallage")
+VILLAGE_ROAD = {'Nordic'}
+VILLAGE_MAX = 20               # (a town of fewer buildings than this is a village: one road)
+VILLAGE_WIDTH = 768            # (and a narrow one: a track, not an avenue)
+RING_GRID = True               # a walled town's streets on its wall's grid
 SPINE_SLOPE = 0.1              # an organic town whose ground rises this much a unit has its main street up the slope
 SPINE_RUN = 3000               # ...when the outline runs this far up it
 SPINE_ALONG = 0.4              # ...and its buildings are kept nearest the stair street, up and down it counting for this
+
+
+RING_GRID_RELIEF = 900         # (a town on ground rising more than this inside its outline is no strict grid: a walled one
+                               # leaves its wall's grid and a planned one's streets bend along the hill, as hill towns'
+                               # do; straight, a walled hilltop city's streets ran down the slopes, a quarter of them
+                               # steeper than 0.25, the city round of 2026-11-02)
+
+
+def _relief(poly, g):
+    """How far the ground rises inside the outline (its 90th height over its 10th), or 0 with no ground to ask."""
+    if not g:
+        return 0.0
+    xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+    step = max(256.0, max(max(xs) - min(xs), max(ys) - min(ys)) / 16.0)
+    zs = []
+    x = min(xs)
+    while x <= max(xs):
+        y = min(ys)
+        while y <= max(ys):
+            if _inside(poly, x, y):
+                z = g(x, y)
+                if z is not None and z > -64:
+                    zs.append(z)
+            y += step
+        x += step
+    if len(zs) < 8:
+        return 0.0
+    zs.sort()
+    return zs[int(len(zs) * 0.9)] - zs[int(len(zs) * 0.1)]
 
 
 def _slope_of(poly, g):
@@ -294,8 +330,50 @@ def _overlap(a, b):
 
 
 # ---------------------------------------------------------------- streets
-def _street(poly, x0, y0, ux, uy, length, bend, rng, ground=None):
-    """A street from (x0, y0) along (ux, uy), length long, bending gently: its points every PATCH."""
+STREET_GRADE = 0.15            # (a street steers along the slope where its line would climb more than this a unit)
+STREET_TURN = math.radians(50) # (at most this far off its line)
+STREETS_STEER = True
+
+
+def _steered(poly, x0, y0, ux, uy, length, ground):
+    """A street from (x0, y0) along (ux, uy), length long, that keeps under STREET_GRADE where it can: at each PATCH the
+    heading nearest its line that climbs no more, as the game's hill towns run their lanes along the hillside and
+    the land's own way; straight up, a hillside city's streets were a quarter of them steeper than 0.25 (the game's
+    9%), the city round of 2026-11-02. Its points every PATCH."""
+    base = math.atan2(uy, ux)
+    h, x, y = base, x0, y0
+    z = ground(x, y)
+    pts = [(round(x, 1), round(y, 1))]
+    walked = 0.0
+    while walked < length - 1:
+        best = None
+        for dd in (0, 10, -10, 20, -20, 30, -30, 40, -40, 50, -50):
+            t = h + math.radians(dd)
+            off = (t - base + math.pi) % (2 * math.pi) - math.pi
+            if abs(off) > STREET_TURN:
+                continue
+            nx_, ny_ = x + math.cos(t) * PATCH, y + math.sin(t) * PATCH
+            z2 = ground(nx_, ny_) if z is not None else None
+            g = abs(z2 - z) / PATCH if z2 is not None else 0.0
+            # (over the grade costs most; then being off its line, then turning)
+            c = max(0.0, g - STREET_GRADE) * 40 + abs(off) * 0.6 + abs(math.radians(dd)) * 0.3
+            if best is None or c < best[0]:
+                best = (c, t, nx_, ny_, z2)
+        _c, h, x, y, z2 = best
+        z = z2 if z2 is not None else z
+        if not _inside(poly, x, y):
+            break
+        pts.append((round(x, 1), round(y, 1)))
+        # (as far along its line as it went: a street turned along the slope goes on until it has gone its length)
+        walked += PATCH * max(0.3, math.cos(h - base))
+    return pts
+
+
+def _street(poly, x0, y0, ux, uy, length, bend, rng, ground=None, steer=False):
+    """A street from (x0, y0) along (ux, uy), length long, bending gently: its points every PATCH. steer: along the
+    slope where the ground is steep (_steered)."""
+    if steer and ground and STREETS_STEER:
+        return _steered(poly, x0, y0, ux, uy, length, ground)
     nx, ny = -uy, ux
     ph, amp = rng.random() * 6.28, bend * length
     pts = []
@@ -413,6 +491,7 @@ def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, r
     noble; 'counts' {kind: n} how many of each special building."""
     F = F or figures(db)
     fig = dict(F.get(culture) or F.get('Hlaalu') or next(iter(F.values())))
+    fig['_culture'] = culture
     O = opts or {}
     fig['_opts'] = O
     # ("the roads tend to be a bit too big for the kind of towns I'm going for", PIN2: a street is painted in whole
@@ -597,7 +676,7 @@ def _street_town(poly, fig, rng, spread):
         if qs:
             streets.append(qs)
     roads = _paint(streets, poly, fig.get('ground'))
-    courts = _courts(poly, streets, roads, fig, rng)
+    courts = [] if fig.get('_village') else _courts(poly, streets, roads, fig, rng)
     if courts:
         streets += courts
         roads = _paint(streets, poly, fig.get('ground'))
@@ -688,11 +767,27 @@ def _streets(poly, fig, rng, spread=1.0):
     if sp and sp[2] >= SPINE_SLOPE and _run(poly, cx, cy, sp[0], sp[1]) + _run(poly, cx, cy, -sp[0], -sp[1]) >= SPINE_RUN:
         a = math.atan2(sp[1], sp[0]) + (0.0 if planned else math.radians(rng.uniform(-10, 10)))
         fig['_spine'] = (sp[0], sp[1])
+    steep = _relief(poly, fig.get('ground')) >= RING_GRID_RELIEF
+    if fig.get('_ring') and RING_GRID and not steep:
+        # (inside a wall one grid, the wall's: its streets along and square to its sides, so the inner blocks line up with
+        # the rows backing the wall. Off at the culture's branch angles, a walled Imperial town's middle was a jumble of
+        # guild halls and temples at odd turns, "more random than real cities", the user's Tessellated Shores, 2026-11-01)
+        n_ = len(poly)
+        e = max(range(n_), key=lambda k: math.hypot(poly[(k + 1) % n_][0] - poly[k][0], poly[(k + 1) % n_][1] - poly[k][1]))
+        ea = math.atan2(poly[(e + 1) % n_][1] - poly[e][1], poly[(e + 1) % n_][0] - poly[e][0])
+        a = min((ea + k * math.pi / 2 for k in range(4)), key=lambda t: abs((t - a + math.pi) % (2 * math.pi) - math.pi))
+        planned = grid = True
+        fig['_planned'] = True
+    village = fig.get('_culture') in VILLAGE_ROAD and not fig.get('_ring') and _want(fig, poly) < VILLAGE_MAX
+    fig['_village'] = village
+    if village:
+        w = fig['width'] = min(fig['width'], VILLAGE_WIDTH)
     ax, ay = math.cos(a), math.sin(a)
     back = _run(poly, cx, cy, -ax, -ay)
     fwd = _run(poly, cx, cy, ax, ay)
     x0, y0 = cx - ax * back, cy - ay * back
-    main = _street(poly, x0, y0, ax, ay, back + fwd, 0.0 if grid else 0.05 + rng.random() * 0.05, rng, fig.get('ground'))
+    main = _street(poly, x0, y0, ax, ay, back + fwd, 0.0 if grid else 0.05 + rng.random() * 0.05, rng, fig.get('ground'),
+                   steer=(not grid or steep) and not fig.get('_spine'))
     streets = [{'pts': main, 'w': w, 'main': True}]
     # (a block: a building's depth and its setback each side of a street, twice over, and the street: the branch
     # streets run this far apart, so a row of buildings faces each)
@@ -704,7 +799,7 @@ def _streets(poly, fig, rng, spread=1.0):
     L = math.hypot(main[-1][0] - main[0][0], main[-1][1] - main[0][1]) if len(main) > 1 else 0
     k = 0
     d = block * (0.6 + 0.3 * rng.random())
-    while d < L - block * 0.4 and len(main) > 2:
+    while d < L - block * 0.4 and len(main) > 2 and not village:
         i = min(len(main) - 2, int(d // PATCH))
         bx, by = main[i]
         tx, ty = main[i + 1][0] - bx, main[i + 1][1] - by
@@ -720,7 +815,7 @@ def _streets(poly, fig, rng, spread=1.0):
             if reach < deep * 1.5:
                 continue
             ln = reach * (0.65 + 0.35 * rng.random())
-            br = _street(poly, bx, by, ux, uy, ln + w / 2, 0.0 if grid else 0.03 * rng.random(), rng, fig.get('ground'))
+            br = _street(poly, bx, by, ux, uy, ln + w / 2, 0.0 if grid else 0.03 * rng.random(), rng, fig.get('ground'), steer=not grid or steep)
             bw_ = max(512, w * (0.75 if w > 512 else 1))
             br = _until_near(br, bw_, [o for o in streets if not o.get('main')], deep + fig['setback'])
             if len(br) >= 3:

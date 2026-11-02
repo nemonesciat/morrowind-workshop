@@ -43,9 +43,9 @@ def read(db, cell_key):
     return {'pts': pts, 'edges': sorted(edges)}
 
 
-def save(db, cell_key, pts, edges, note=None):
+def save(db, cell_key, pts, edges, note=None, commit=True):
     """Walking paths edited by hand: points [[x, y, z]] (outdoors in world positions, like read() gives
-    them through the map) and links [[a, b]]. Saved into the mod as one change."""
+    them through the map) and links [[a, b]]. Saved into the mod as one change (commit False: the caller's)."""
     editing._require_project(db)
     info = mapdata.cell_info(db, cell_key)
     if not info:
@@ -80,7 +80,8 @@ def save(db, cell_key, pts, edges, note=None):
     else:
         db.project.set_record('PGRD', cell_key, 0, join_subs(subs), created=not had)
     n = sum(len(v) for v in links.values()) // 2
-    editing.commit(db, (note or 'Edited the walking paths in %s (%d points, %d links)') % (editing.cell_label(db, cell_key), len(pts), n))
+    if commit:
+        editing.commit(db, (note or 'Edited the walking paths in %s (%d points, %d links)') % (editing.cell_label(db, cell_key), len(pts), n))
     return {'points': len(pts), 'links': n}
 
 

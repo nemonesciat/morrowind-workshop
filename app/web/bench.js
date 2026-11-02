@@ -26,6 +26,7 @@ function benchCss(){
   #bench .bnshelf .bnlist{overflow:auto;flex:1;padding:4px 6px 10px}
   #bench details{margin:4px 0} #bench summary{cursor:pointer;font-weight:600;padding:3px 2px}
   #bench .bngrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:4px 0}
+  #bench .bnkinds{display:flex;flex-wrap:wrap;gap:3px;margin:2px 0 6px}#bench .bnkinds .btn{padding:1px 6px;font-size:11px}#bench .bnkinds .btn.on{background:var(--gold);color:#111}
   #bench .bnpc{border:1px solid var(--line);border-radius:6px;background:var(--panel2);padding:3px;cursor:grab;text-align:center;font-size:10.5px;overflow:hidden}
   #bench .bnpc:hover{border-color:var(--gold)} #bench .bnpc img,#bench .bnpc .nothumb{width:64px;height:64px;display:block;margin:0 auto}
   #bench .bnpc span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
@@ -167,13 +168,19 @@ async function benchStyles(){
   }
   const names = Object.keys(st).sort((a, b) => st[b] - st[a]);
   if (!BN.style || !names.includes(BN.style)) BN.style = names[0] || 'Hlaalu';
-  sel.innerHTML = names.map(n => `<option ${n === BN.style ? 'selected' : ''}>${esc(n)}</option>`).join('');
-  sel.onchange = () => { BN.style = sel.value; BN.shelf = null; benchShelf(); benchSaveSoon(); };
+  // ("All pieces, by ID": every static, door and activator by name, for modders who know them; PIN2 2026-11-02)
+  sel.innerHTML = `<option value="*all*" ${BN.browse ? 'selected' : ''}>All pieces, by ID</option>` +
+    names.map(n => `<option ${!BN.browse && n === BN.style ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  sel.onchange = () => {
+    if (sel.value === '*all*'){ BN.browse = true; benchShelf(); return; }
+    BN.browse = false; BN.style = sel.value; BN.shelf = null; benchShelf(); benchSaveSoon();
+  };
   benchShelf();
 }
 
 async function benchShelf(){
   const list = $('#bn-list'); if (!list) return;
+  if (BN.browse) return benchBrowse();
   if (!BN.shelf || BN.shelf.style !== BN.style){
     list.innerHTML = '<div class="msg">Reading the pieces…</div>';
     try { BN.shelf = await api('/api/bench/shelf?style=' + encodeURIComponent(BN.style)); } catch (e){ list.innerHTML = `<div class="msg">${esc(e.message)}</div>`; return; }
@@ -181,12 +188,63 @@ async function benchShelf(){
   benchShelfRender();
 }
 
+// a piece on the shelf: drag it onto the bench or click it; 👁 or right-click to see it in the game's buildings
+function benchTile(p, tip){
+  return `<div class="bnpc" draggable="true" data-id="${esc(p.id)}" data-type="${p.tag}" title="${esc(tip)}">
+        <button class="bneye" title="See it in use">👁</button><img data-tid="${esc(p.id)}" data-ts="64" data-tt="${p.tag}" alt=""><span>${esc(p.id)}</span></div>`;
+}
+
+// every static, door and activator whose ID has what's typed, in ID order (PIN2 on Discord 2026-11-02: "change the style
+// view to browse view ... quicker and easier for more experienced modders who know the file name structure", t_imp_fort)
+function benchBrowse(){
+  const list = $('#bn-list'); if (!list) return;
+  const q = BN.q.trim().toLowerCase();
+  // (which kinds: toggles over the list; the user 2026-11-02, "filter statics, doors, lights...")
+  BN.allKinds = BN.allKinds || new Set(['STAT', 'DOOR']);      // (statics and doors at first, PIN2's pick)
+  const kinds = `<div class="bnkinds">${BN_ALL.map(([t, l]) => `<button class="btn sm ${BN.allKinds.has(t) ? 'on' : ''}" data-bnk="${t}" title="Show or hide ${l.toLowerCase()}. Ctrl-click: only these">${l}</button>`).join('')}</div>`;
+  const bindKinds = () => list.querySelectorAll('[data-bnk]').forEach(b => b.onclick = e => {
+    const t = b.dataset.bnk;
+    if (e.ctrlKey || e.metaKey) BN.allKinds = new Set([t]);
+    else if (BN.allKinds.has(t) && BN.allKinds.size > 1) BN.allKinds.delete(t); else BN.allKinds.add(t);
+    BN.all = null; BN.allAsk = null; benchBrowse();
+  });
+  if (q.length < 2){ list.innerHTML = kinds + '<div class="msg">Type an ID or the start of one: t_imp_fort, ex_hlaalu_, in_dwrv…</div>'; bindKinds(); return; }
+  if (!(BN.all && BN.all.q === q)){
+    list.innerHTML = kinds + '<div class="msg">Looking through every piece…</div>'; bindKinds();
+    if (BN.allAsk === q) return;
+    BN.allAsk = q;
+    benchAllPage(q, 0);
+    return;
+  }
+  const rows = BN.all.rows;
+  list.innerHTML = kinds + (BN_ALL.map(([t, l]) => {
+    const ps = rows.filter(r => r.type === t);
+    return ps.length ? `<details data-kind="all-${t}" open><summary>${l} <span class="msg">${ps.length}</span></summary>
+      <div class="bngrid">${ps.map(r => benchTile({id: r.id, tag: r.type}, `${r.id}${r.name ? ' (' + r.name + ')' : ''}. Drag it onto the bench, or click it.`)).join('')}</div></details>` : '';
+  }).join('') || '<div class="msg">No piece by that ID.</div>') + (BN.all.total > rows.length
+    ? `<div class="msg" style="margin:6px 0">${rows.length} of ${BN.all.total}. <button class="btn sm" id="bn-allmore">Show ${Math.min(BN_PAGE, BN.all.total - rows.length)} more</button></div>` : '');
+  benchBindTiles(list); bindKinds();
+  const more = $('#bn-allmore'); if (more) more.onclick = () => { more.disabled = true; benchAllPage(q, rows.length); };
+}
+// (what Browse finds of the kinds a prefab holds: building pieces, lights, containers and loose things; a page at a time,
+// as Browse loads them, so nothing is out of reach, the user 2026-11-02)
+const BN_ALL = [['DOOR', 'Doors'], ['STAT', 'Statics'], ['ACTI', 'Activators'], ['LIGH', 'Lights'], ['CONT', 'Containers'], ['MISC', 'Odds and ends']];
+const BN_PAGE = 600;
+function benchAllPage(q, offset){
+  const kinds = BN_ALL.map(k => k[0]).filter(t => !BN.allKinds || BN.allKinds.has(t));
+  api('/api/search?' + new URLSearchParams({q, types: kinds.join(','), limit: BN_PAGE, offset, sort: 'id'})).then(r => {
+    const got = (r.rows || []).filter(x => kinds.includes(x.type));
+    BN.all = {q, rows: offset && BN.all && BN.all.q === q ? BN.all.rows.concat(got) : got, total: r.total || 0};
+    if (BN.browse && BN.q.trim().toLowerCase() === q) benchBrowse();
+  }).catch(e => { BN.allAsk = null; const l = $('#bn-list'); if (l) l.innerHTML = `<div class="msg">${esc(e.message)}</div>`; });
+}
+
 function benchShelfRender(){
+  if (BN.browse) return benchBrowse();
   const list = $('#bn-list'); if (!list || !BN.shelf) return;
   const q = BN.q.trim().toLowerCase();
   BN.openKinds = BN.openKinds || new Set(['wall', 'door']);
-  const tile = (p, tip) => `<div class="bnpc" draggable="true" data-id="${esc(p.id)}" data-type="${p.tag}" title="${esc(tip)}">
-        <button class="bneye" title="See it in use">👁</button><img data-tid="${esc(p.id)}" data-ts="64" data-tt="${p.tag}" alt=""><span>${esc(p.id)}</span></div>`;
+  const tile = benchTile;
   const onShelf = new Set();
   const html = BN.shelf.kinds.map(k => {
     const ps = k.pieces.filter(p => !q || p.id.toLowerCase().includes(q));
@@ -208,6 +266,11 @@ function benchShelfRender(){
       if (BN.q.trim().toLowerCase() === q) benchShelfRender();
     }).catch(() => { BN.other = {q, rows: []}; });
   }
+  benchBindTiles(list);
+}
+
+function benchBindTiles(list){
+  BN.openKinds = BN.openKinds || new Set(['wall', 'door']);
   list.querySelectorAll('details').forEach(d => d.ontoggle = () => { if (d.open){ BN.openKinds.add(d.dataset.kind); v3ThumbScan(d); } else BN.openKinds.delete(d.dataset.kind); });
   list.querySelectorAll('details[open]').forEach(d => v3ThumbScan(d));
   list.querySelectorAll('.bnpc').forEach(el => {

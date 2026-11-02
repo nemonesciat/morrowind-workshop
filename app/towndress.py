@@ -22,7 +22,7 @@ from collections import Counter, defaultdict
 import mapdata
 import townsurvey
 
-VERSION = 11                    # (6: the Anvil and Gold Coast cultures, out of Imperial; 8: each building's own surroundings; 9: no ladders; 11: holders, posts, instances)
+VERSION = 12                    # (6: the Anvil and Gold Coast cultures, out of Imperial; 8: each building's own surroundings; 9: no ladders; 11: holders, posts, instances; 12: lights on their posts, post_lights)
 YARD = 650                     # what stands this near a door, and before or beside it, is its yard's
 BEHIND = 250                   # (beside the building, up to this far behind the door's line)
 BIG = 600                      # things this long or more are buildings, walls, docks: not dressing
@@ -133,6 +133,7 @@ def _learn(db):
     smith = defaultdict(lambda: [0, 0])
     marks = defaultdict(lambda: {'scenes': [], 'towns': 0})
     around = defaultdict(list)
+    pairs = []
     for t in townsurvey.survey(db)['towns']:
         bl = [b for b in t['buildings'] if b.get('box')]
         if not bl:
@@ -141,6 +142,7 @@ def _learn(db):
         roads = {tuple(int(v) for v in r.split(',')) for r in t['roads']}
         sqset = {p for p in roads if all((p[0] + i, p[1] + j) in roads for i in (-1, 0, 1) for j in (-1, 0, 1))}
         scenes = defaultdict(list)
+        srefs, posted = defaultdict(list), defaultdict(list)
         loose, in_sq = [], []
         allrefs = [r for gx, gy in t['cells'] for r in mapdata.cellmap(db, '#%d,%d' % (gx, gy)).get('refs') or ()]
         marks[cult]['towns'] += 1
@@ -171,15 +173,34 @@ def _learn(db):
                     _d, i, lx, ly = best
                     b = bl[i]
                     if hang and (abs(lx) > BY_DOOR or abs(ly) > 60):
-                        continue                 # (strung or hung on something that is not the door's wall)
+                        # (strung or hung on something that is not the door's wall: kept only on a post of the yard's)
+                        if HUNG_KIND.search(r['id']):
+                            posted[('y', i)].append(r)
+                        continue
                     scenes[i].append(_thing(r, b['x'], b['y'], b['face'] + math.pi, z - b['z'] if hang else up, hang))
+                    srefs[i].append(r)
                 elif not hang:
                     patch = (int(x // 512), int(y // 512))
                     if patch in sqset:
                         in_sq.append((r, up))
                     elif any((patch[0] + i, patch[1] + j) in roads for i in (-1, 0, 1) for j in (-1, 0, 1)):
                         loose.append((r, up))
-        _around(db, bl, allrefs, around, t['name'])
+                elif HUNG_KIND.search(r['id']):
+                    posted['street'].append(r)
+        # (a lantern on a lamp post stands on its post, whatever the post's distance from the door: the yard kept the
+        # post and dropped its lantern, and a street group took no hung thing at all; a town had 16 of its 21 lamp
+        # posts bare, lab ja2, as the user saw at Tessellated Shores, 2026-11-01)
+        for i in list(scenes):
+            b = bl[i]
+            for r in posted.get(('y', i), ()):
+                j = _post_of(r, srefs[i])
+                if j is not None:
+                    scenes[i].append(_thing(r, b['x'], b['y'], b['face'] + math.pi, r['p'][2] - b['z'], True))
+                    scenes[i][-1]['on'] = j
+                    scenes[i][-1]['dz_on'] = round(r['p'][2] - srefs[i][j]['p'][2], 1)
+                    srefs[i].append(r)
+                    pairs.append((srefs[i][j], r))
+        _around(db, bl, allrefs, around, t['name'], pairs)
         for i, b in enumerate(bl):
             things = scenes.get(i, [])
             if len(things) > 24:
@@ -201,7 +222,17 @@ def _learn(db):
             ang = _toward_road(cx, cy, roads)
             if ang is None:
                 continue
-            S['groups'].append({'town': t['name'], 'things': [_thing(r, cx, cy, ang, up, False) for r, up in grp]})
+            things = [_thing(r, cx, cy, ang, up, False) for r, up in grp]
+            grefs = [r for r, _u in grp]
+            for r in posted.get('street', ()):
+                j = _post_of(r, grefs)
+                if j is not None:
+                    gz = mapdata.terrain_z(db, r['p'][0], r['p'][1]) or 0.0
+                    things.append(_thing(r, cx, cy, ang, r['p'][2] - gz, True))
+                    things[-1]['on'] = j
+                    things[-1]['dz_on'] = round(r['p'][2] - grefs[j]['p'][2], 1)
+                    pairs.append((grefs[j], r))
+            S['groups'].append({'town': t['name'], 'things': things})
         if in_sq:
             cx = sum(r['p'][0] for r, _u in in_sq) / len(in_sq)
             cy = sum(r['p'][1] for r, _u in in_sq) / len(in_sq)
@@ -213,13 +244,16 @@ def _learn(db):
             'smith': {c: round(v[0] / float(max(1, v[1])), 3) for c, v in smith.items()},
             'marks': {c: {'scenes': v['scenes'], 'per_town': round(len(v['scenes']) / float(max(1, v['towns'])), 3)}
                       for c, v in marks.items() if v['scenes']},
-            'around': dict(around)}
+            'around': dict(around), 'post_lights': _post_lights(pairs)}
 
 
 AROUND = 400                   # what stands this near a building's walls, and nearer it than any other, is its own
 AROUND_MAX = 40                # (more round one building is a market or a farm, not its surroundings)
 FENCE = re.compile(r'fence|railing|palisade')
-HOLDER = re.compile(r'hook|bracket|chain|hanger|lightpost|signpost|sign_?post|lantern_?post|post_?lantern|signbase|sign_?base')
+HOLDER = re.compile(r'hook|bracket|chain|hanger|lightpost|lamp_?post|lightstand|signpost|sign_?post|lantern_?post|post_?lantern|signbase|sign_?base')
+# (what holds a light, and is bare without one: a lamp post, a lantern hook or bracket)
+LIGHT_HOLDER = re.compile(r'lightpost|lamp_?post|lantern_?post|post_?lantern|lightstand|(lantern|light|lamp)_?(hook|bracket)', re.I)
+POST_NEAR = 120                # a light this near a holder, by its top, hangs from it
 HUNG_KIND = re.compile(r'lantern|light|lamp|sign|banner', re.I)
 SMALL_PLANT = re.compile(r'flora|plant|bush|kreshweed|marshmerrow|comberry|flower|shrub|herb|wickwheat|saltrice|heather')
 
@@ -240,7 +274,7 @@ def _around_thing(r):
     return bool(SMALL_PLANT.search(low)) and size < 300 and not re.search(r'tree|log|stump|rock', low)
 
 
-def _around(db, bl, refs, out, town):
+def _around(db, bl, refs, out, town, pairs=None):
     """Each building's own surroundings, by its main piece, in its door frame: the barrels against its side, the bench
     under its window, its sign and lanterns, its own fence and flowers. The yard caught only what stood before the door,
     and the game sets most of a town's things round its buildings' other walls: a made town had a sixth of a game
@@ -302,7 +336,35 @@ def _around(db, bl, refs, out, town):
                     best = (d, j)
             if best:
                 things[k]['on'] = best[1]
+                things[k]['dz_on'] = round(r['p'][2] - rs[best[1]][0]['p'][2], 1)
+                if pairs is not None and LIGHT_HOLDER.search(rs[best[1]][0]['id']):
+                    pairs.append((rs[best[1]][0], r))
         out[b['main'].lower()].append({'town': town, 'interior': (b.get('interior') or '').lower(), 'things': things})
+
+
+def _post_of(r, holders):
+    """The index of the holder (a post, hook or bracket) a hung light r hangs from among refs, or None: right by it,
+    reaching its top."""
+    top = r['p'][2] + r['b'][5] * (r['s'] or 1.0)
+    best = None
+    for j, o in enumerate(holders):
+        if o is r or not o.get('b') or not HOLDER.search(o['id'].lower()):
+            continue
+        os_ = o['s'] or 1.0
+        d = math.hypot(o['p'][0] - r['p'][0], o['p'][1] - r['p'][1])
+        if d <= POST_NEAR and o['p'][2] + o['b'][2] * os_ <= top + 60 and o['p'][2] + o['b'][5] * os_ >= top - 40 and (best is None or d < best[0]):
+            best = (d, j)
+    return best[1] if best else None
+
+
+def _post_lights(pairs):
+    """{holder model: [light model, x, y, z, turn] in the holder's own frame}: the light the game hangs on it most."""
+    c = defaultdict(Counter)
+    for h, r in pairs:
+        lx, ly = _local(h['p'][0], h['p'][1], h['p'][5], r['p'][0], r['p'][1])
+        c[h['id'].lower()][(r['id'], round(lx / 4) * 4, round(ly / 4) * 4, round((r['p'][2] - h['p'][2]) / 4) * 4,
+                            round((r['p'][5] - h['p'][5]) % (2 * math.pi), 2))] += 1
+    return {k: list(v.most_common(1)[0][0]) for k, v in c.items()}
 
 
 def _box_has(r, x, y):
@@ -398,11 +460,19 @@ def _overlap(a, b):
 class _Space:
     """What a town's dressing must keep clear of: its buildings, its wall, its doors' ways in, what it set already."""
 
-    def __init__(self, blocked):
+    def __init__(self, blocked, kinds=None):
         self.polys = [list(p) for p in blocked]
+        self.kind = {}
 
     def free(self, pts):
         return not any(_overlap(pts, p) for p in self.polys)
+
+    def why(self, pts):
+        # (what it ran into, for the checks: the n-th poly's kind)
+        for p in self.polys:
+            if _overlap(pts, p):
+                return self.kind.get(id(p), 'laid')
+        return '?'
 
     def take(self, pts):
         self.polys.append(pts)
@@ -412,13 +482,17 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
     """A scene's things set down in a frame at (ox, oy) turned ang; those that would not fit are left out."""
     out = []
     things = scene['things']
-    laid = set()
+    laid = {}
     # (holders first: a lantern or sign that hung from a hook, bracket or post in the game is laid only with it)
     # (and from the bottom up: what stands on the ground, then what is held, lowest first, so a thing on a stall or a
     # table finds it laid)
     for n_, t in sorted(enumerate(things), key=lambda it: (it[1].get('on') is not None, bool(it[1]['hang']), it[1]['z'])):
         if keep and not keep(t):
             continue
+        if t['id'].lower() in NAMED:
+            continue                    # (a shop's own sign, named for a game place)
+        if PALISADE.search(t['id']):
+            continue                    # (a palisade only in whole runs: its stakes stood about alone in fans, the user's Nordic village)
         on = t.get('on')
         if on is not None and on not in laid:
             continue
@@ -427,24 +501,36 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
         pts, b = _rect_of(t['id'], wx, wy, rz, t.get('s') or 1.0, memo, db)
         if not pts:
             continue
-        if t['hang']:
+        if t['hang'] and on is not None and t.get('dz_on') is not None:
+            z = laid[on]['p'][2] + t['dz_on']          # (on its post, hook or bracket, by the post's height)
+        elif t['hang']:
             if door_z is None:
                 continue
             z = door_z + t['z']
+            # (by the door's height its foot under the ground here: a Telvanni root hook and its lanterns stood 100 deep
+            # in the slope by a pod, the city round of 2026-11-02. Stood on the ground instead)
+            gz_ = mapdata.terrain_z(db, wx, wy)
+            sc_ = t.get('s') or 1.0
+            if gz_ is not None and z + b[2] * sc_ < gz_ - SUNK_HELD:
+                z = gz_ - b[2] * sc_ - 4
+                _count('stood up out of the ground')
             # (held by the built town, checked before anything is stacked on it: a cup stayed in the air when the
             # counter it stood on was left out after, the town audit of 2026-11-01)
             foot = z + b[2] * (t.get('s') or 1.0)
             on_laid = any(_in_poly(o['pts'], wx, wy) and abs(o['p'][2] + o['hi'] - foot) < 32 for o in out)
             if on is None and not on_laid and hold and not hold({'id': t['id'], 'p': [wx, wy, z], 's': t.get('s') or 1.0}):
+                _count('refused: not held')
                 continue
         else:
             gz = mapdata.terrain_z(db, wx, wy)
             if gz is None or gz < 0:
+                _count('refused: water')
                 continue
             # (nor on ground too steep to stand it on: benches stood on the cliff above the user's Nargorewatch, 2026-11-01)
             gs = [mapdata.terrain_z(db, x_, y_) for x_, y_ in pts]
             span = max(math.hypot(pts[0][0] - pts[2][0], pts[0][1] - pts[2][1]), 1.0)
             if None in gs or max(gs) - min(gs) > min(STEEP_MAX, max(STEEP_UNDER, STEEP_SLOPE * span)):
+                _count('refused: steep')
                 continue
             z = gz + t['z']
             sc_ = t.get('s') or 1.0
@@ -452,11 +538,12 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
                 z = max(gs) + 2 - b[5] * sc_       # (a flat thing's top clear of the ground under its uphill side)
             # (shrunk a little: things in a scene stand close, and their boxes are loose)
             if not space.free(_shrink(pts, 0.85)):
+                _count('refused: space ' + space.why(_shrink(pts, 0.85)))
                 continue
-        laid.add(n_)
         out.append({'id': t['id'], 'p': [round(wx, 2), round(wy, 2), round(z, 2), t.get('rx') or 0.0, t.get('ry') or 0.0, round(rz, 5)],
                     's': t.get('s') or 1.0, 'pts': pts, 'up': 0.0 if t['hang'] else t['z'],
-                    'lo': b[2] * (t.get('s') or 1.0), 'hi': b[5] * (t.get('s') or 1.0), 'dz': t.get('dz')})
+                    'lo': b[2] * (t.get('s') or 1.0), 'hi': b[5] * (t.get('s') or 1.0), 'dz': t.get('dz'), 'n': n_, 'on': on, 'hung': bool(t['hang'])})
+        laid[n_] = out[-1]
     # (a thing standing on another of the scene, a cup on its table, only where that stands too: the table left out
     # for want of room, its redware stood in the air, the town audit of 2026-11-01)
     out.sort(key=lambda o: o['up'])
@@ -467,8 +554,10 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
         if o['up'] + o['lo'] >= STANDS_ON:          # (by its foot: a lamp post's origin is near its top)
             # (and whose top reaches its bottom: a crate on a stack whose middle crate didn't fit stood a crate's height
             # over the bottom one, the town audit of 2026-11-01)
+            # (never on a canopy, an awning, a tent or a roof: a crate and a lantern stood on a market canopy, the
+            # user's Tessellated Shores, 2026-11-01)
             under = [k for k in kept if k['up'] + k['lo'] < o['up'] + o['lo'] - 4 and _in_poly(k['pts'], o['p'][0], o['p'][1])
-                     and k['up'] + k['hi'] >= o['up'] + o['lo'] - 24]
+                     and k['up'] + k['hi'] >= o['up'] + o['lo'] - 24 and not CANOPY.search(k['id'])]
             if not under:
                 # (what it stood on left out: by its height over the door, when the building holds it there)
                 if o.get('dz') is not None and door_z is not None and hold:
@@ -483,11 +572,214 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
             k = max(under, key=lambda k: k['up'])
             o['p'][2] = round(k['p'][2] + (o['up'] - k['up']), 2)
         kept.append(o)
-    out = kept
+    out = _lit_holders(db, kept, memo)
     for o in out:
-        if not any(t['hang'] for t in scene['things'] if t['id'] == o['id']):
+        if o.get('on') is None and not any(t['hang'] for t in scene['things'] if t['id'] == o['id']):
             space.take(o['pts'])
     return out
+
+
+SUNK_HELD = 24                 # (a held thing's foot this far under the ground is no wall's or porch's)
+CANOPY = re.compile(r'canopy|awning|overhang|tent|roof|shade|parasol', re.I)
+POSTS = {}                     # (the learnt holder -> light table, set by dress)
+NAMED = set()                  # (signs named for a game place, set by dress)
+PALISADE = re.compile(r'palisade|stockade', re.I)
+SIGN = re.compile(r'sign(?!post|_?post|base|_?base|way|al)', re.I)
+OWN_TRIES = 3                  # copies of a building's own surroundings tried
+SET_WHOLE = 0.75               # a yard's set is laid when this share of its ground things fit, else none of it
+SAME_SPOT = 12                 # (one model this near itself and turned within SAME_TURN is the same thing twice: it flickers)
+SAME_TURN = math.radians(5)
+SIGN_OFF = 2                   # a sign stands this clear of its wall's face
+SQUARE_MAX = math.radians(30)  # (and is turned square to it when it is within this of square)
+LAST = {}                      # (the last dressing's figures, for the checks)
+
+
+def _whole_sets(things, got, counts, space):
+    """got without the arrangements laid in part: the scene's ground things (counts(t)) grouped as the street groups
+    are (GROUP apart at most), each kept when SET_WHOLE of it was laid, else all of it taken out with what stood on it
+    or hung from it. (got, [(want, have)] per arrangement)."""
+    idx = [n for n, t in enumerate(things) if counts(t)]
+    parent = {n: n for n in idx}
+
+    def find(n):
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+    for a in range(len(idx)):
+        for b in range(a + 1, len(idx)):
+            ta, tb = things[idx[a]], things[idx[b]]
+            if math.hypot(ta['x'] - tb['x'], ta['y'] - tb['y']) <= GROUP:
+                parent[find(idx[a])] = find(idx[b])
+    sets_ = defaultdict(list)
+    for n in idx:
+        sets_[find(n)].append(n)
+    laid = {g.get('n') for g in got if g.get('n') is not None}
+    drop, out = set(), []
+    for root, ns in sets_.items():
+        have = sum(1 for n in ns if n in laid)
+        if have < SET_WHOLE * len(ns):
+            drop |= set(ns)
+            out.append((len(ns), 0))
+        else:
+            out.append((len(ns), have))
+    if not drop:
+        return got, out
+    # (and what stood on what was taken out, or hung from it)
+    gone = [g for g in got if g.get('n') in drop]
+    keep = []
+    for g in got:
+        if g.get('n') in drop or (g.get('on') is not None and g['on'] in drop):
+            continue
+        if g.get('up', 0) + g.get('lo', 0) >= STANDS_ON and any(_in_poly(o['pts'], g['p'][0], g['p'][1]) for o in gone if len(set(map(tuple, o['pts']))) > 2):
+            continue
+        keep.append(g)
+    for g in got:
+        if g not in keep and g['pts'] in space.polys:
+            space.polys.remove(g['pts'])
+    return keep, out
+
+
+def _count(k, n=1):
+    c = LAST.setdefault('count', {})
+    c[k] = c.get(k, 0) + n
+
+
+def _named(L):
+    """Signs the game stands in one town only: a shop's own, its name painted on (TR_m4_sign_cirifae, "Cirifae's
+    Tradehouse", stood on a house that was no tradehouse, the user's Tessellated Shores, 2026-11-01)."""
+    towns = defaultdict(set)
+    scs = [sc for v in (L.get('around') or {}).values() for sc in v]
+    scs += [sc for c in (L.get('yards') or {}).values() for v in c.values() for sc in v]
+    scs += [sc for c in (L.get('street') or {}).values() for sc in c.get('groups') or ()]
+    for sc in scs:
+        for t in sc.get('things') or ():
+            if SIGN.search(t['id']) and not HOLDER.search(t['id'].lower()):
+                towns[t['id'].lower()].add(sc.get('town'))
+    return {k for k, v in towns.items() if len(v) <= 1}
+
+
+def _no_doubles(out, also=()):
+    """out without a thing set twice in one spot, across the whole town: two buildings' surroundings each brought a
+    banner to one wall, and they flickered (the user's Tessellated Shores, 2026-11-01). also: [(id, p)] already set."""
+    grid = defaultdict(list)
+    keep = []
+    for i, p in also:
+        grid[(i.lower(), int(p[0] // 64), int(p[1] // 64))].append(p)
+    for o in out:
+        k = o['id'].lower()
+        cx, cy = int(o['p'][0] // 64), int(o['p'][1] // 64)
+        if any(math.dist(q[:3], o['p'][:3]) < SAME_SPOT and abs(((q[5] - o['p'][5]) + math.pi) % (2 * math.pi) - math.pi) < SAME_TURN
+               for i in (-1, 0, 1) for j in (-1, 0, 1) for q in grid.get((k, cx + i, cy + j), ())):
+            continue
+        grid[(k, cx, cy)].append(o['p'])
+        keep.append(o)
+    return keep
+
+
+WELL = re.compile(r'well(?!_?lit)', re.I)
+WELL_APART = 1400              # (no well nearer another than this: the game's own, nearest to nearest, p5 1,381, median 3,317)
+WELL_PARTS = 300               # (a well's pieces, its roof and its stone ring, stand this near one another)
+
+
+def _spaced_wells(out, also=()):
+    """out with no well nearer another than WELL_APART: each building's surroundings brought its own, and three stood in
+    one street, roofed and open (the user's Griffbarrow, 2026-11-02). A well's pieces go together."""
+    have = [p[:2] for i, p in also if WELL.search(i)]
+    wells = [o for o in out if WELL.search(o['id'])]
+    groups = []
+    for o in wells:
+        g = next((g for g in groups if any(math.dist(o['p'][:2], q['p'][:2]) <= WELL_PARTS for q in g)), None)
+        if g is None:
+            groups.append([o])
+        else:
+            g.append(o)
+    drop = set()
+    for g in groups:
+        cx = sum(o['p'][0] for o in g) / len(g)
+        cy = sum(o['p'][1] for o in g) / len(g)
+        if any(math.dist((cx, cy), h) < WELL_APART for h in have):
+            drop |= {id(o) for o in g}
+            _count('refused: a well near another', len(g))
+        else:
+            have.append((cx, cy))
+    return [o for o in out if id(o) not in drop]
+
+
+def _square_signs(db, out, memo):
+    """Each hung sign set out from its wall's face by its own depth and turned square to the wall: laid where the
+    game's stood on another building, a sign cut into the house it hung on (TR_m4_sign_cirifae in ex_nord_house_05,
+    the user's Tessellated Shores, 2026-11-01). A sign whose wall is too far off square is left out."""
+    import doors
+    import doorfronts
+    res = []
+    for o in out:
+        if not o.get('hung') or o.get('on') is not None or not SIGN.search(o['id']) or HOLDER.search(o['id'].lower()):
+            res.append(o)
+            continue
+        b = memo.get(('b', o['id']))
+        if b is None:
+            ri = db.resolve_id(o['id'])
+            b = memo[('b', o['id'])] = (mapdata.object_bounds(db, ri) if ri is not None else None) or (0, 0, 0, 0, 0, 0)
+        sc_ = o.get('s') or 1.0
+        ux, uy = doorfronts.thin_axis({'b': b, 'p': o['p']})
+        half = min(b[3] - b[0], b[4] - b[1]) * sc_ / 2.0
+        cz = o['p'][2] + (b[2] + b[5]) / 2.0 * sc_
+        sc = doors._local_scene(db, {'p': [o['p'][0], o['p'][1], cz, 0, 0, 0]})
+        best = None
+        for sg in (1, -1):
+            h = sc.nearest_any((o['p'][0], o['p'][1], cz), (ux * sg, uy * sg, 0.0), half + 160)
+            if h is not None and (best is None or h[0] < best[0]):
+                best = (h[0], sg, h[1])
+        if best is None:
+            res.append(o)
+            continue
+        d, sg, n = best
+        t = sc.tris[n]
+        nx, ny = t[4] * t[8] - t[5] * t[7], t[5] * t[6] - t[3] * t[8]
+        L = math.hypot(nx, ny)
+        if L > 1e-6:
+            nx, ny = nx / L, ny / L
+            # (the turn that brings the sign's thin axis onto the wall's normal, the nearer way)
+            da = (math.atan2(nx, ny) - math.atan2(ux, uy) + math.pi / 2) % math.pi - math.pi / 2
+            if abs(da) > SQUARE_MAX:
+                continue
+            o['p'][5] = round((o['p'][5] + da) % (2 * math.pi), 5)
+            vx, vy = doorfronts.thin_axis({'b': b, 'p': o['p']})
+            ux, uy = (vx, vy) if vx * ux + vy * uy >= 0 else (-vx, -vy)
+        # (its back SIGN_OFF clear of the face: moved along the thin axis, the wall at d on side sg)
+        move = d - (half + SIGN_OFF)
+        o['p'][0] = round(o['p'][0] + ux * sg * move, 2)
+        o['p'][1] = round(o['p'][1] + uy * sg * move, 2)
+        res.append(o)
+    return res
+
+
+def _lit_holders(db, out, memo):
+    """Every lamp post, lantern hook or bracket with its light: the scene's own where it was laid, else the light the
+    game hangs on that holder most, where it hangs it; a holder with neither is left out. (Lamp posts stood bare,
+    T_Imp_Set_Lamppost_02 in the user's Tessellated Shores, 2026-11-01.)"""
+    lit = {o.get('on') for o in out if o.get('on') is not None}
+    res = []
+    for o in out:
+        if o.get('hung') and HOLDER.search(o['id'].lower()) and not LIGHT_HOLDER.search(o['id']) and o.get('n') not in lit:
+            continue                    # (a bare hook or bracket, what hung on it left out: a hook in the air, lab ja3)
+        if not LIGHT_HOLDER.search(o['id']) or o.get('n') in lit:
+            res.append(o)
+            continue
+        pl = POSTS.get(o['id'].lower())
+        if not pl:
+            continue                    # (no light for it known: no bare post)
+        lid, lx, ly, dz, drz = pl
+        wx, wy = _world(o['p'][0], o['p'][1], o['p'][5], lx, ly)
+        b = memo.get(('b', lid))
+        if b is None:
+            ri = db.resolve_id(lid)
+            b = memo[('b', lid)] = (mapdata.object_bounds(db, ri) if ri is not None else None) or (0, 0, 0, 0, 0, 0)
+        res.append(o)
+        res.append({'id': lid, 'p': [round(wx, 2), round(wy, 2), round(o['p'][2] + dz, 2), 0.0, 0.0, round((o['p'][5] + drz) % (2 * math.pi), 5)],
+                    's': 1.0, 'pts': [(wx, wy)] * 4, 'up': o['up'] + dz, 'lo': b[2], 'hi': b[5], 'dz': None, 'n': None, 'on': o.get('n')})
+    return res
 
 
 STANDS_ON = 24                 # (a scene's thing this far over the ground stands on another of it)
@@ -519,8 +811,27 @@ def _held(db, g, face, memo):
             sc.nearest_any((x, y, z), (math.cos(a * math.pi / 4), math.sin(a * math.pi / 4), 0.0), ON_WALL) is not None for a in range(8)):
         return True
     foot, top = g['p'][2] + b[2] * s, g['p'][2] + b[5] * s
-    return (sc.nearest_any((x, y, foot + 8), (0.0, 0.0, -1.0), 40) is not None
-            or sc.nearest_any((x, y, top - 4), (0.0, 0.0, 1.0), 120) is not None)
+    down = sc.nearest_any((x, y, foot + 8), (0.0, 0.0, -1.0), 40)
+    if down is not None and CANOPY.search(_hit_id(db, sc, down, x, y, memo)):
+        down = None                     # (a canopy, an awning or a roof holds nothing up: never stood on)
+    return down is not None or sc.nearest_any((x, y, top - 4), (0.0, 0.0, 1.0), 120) is not None
+
+
+def _hit_id(db, sc, hit, x, y, memo):
+    """The model a ray hit belongs to ('' when not known)."""
+    k = sc.owner(hit[1]) if hasattr(sc, 'owner') else None
+    if k is None:
+        return ''
+    ids = memo.get('ids')
+    if ids is None:
+        ids = memo['ids'] = {}
+    if k not in ids:
+        gx, gy = math.floor(x / 8192.0), math.floor(y / 8192.0)
+        for cx in (gx - 1, gx, gx + 1):
+            for cy in (gy - 1, gy, gy + 1):
+                for r in mapdata.cellmap(db, '#%d,%d' % (cx, cy)).get('refs') or ():
+                    ids[r['k']] = r['id']
+    return ids.get(k, '')
 
 
 def _in_poly(pts, x, y):
@@ -554,21 +865,32 @@ def _door_clear(x, y, face):
     return [_world(x, y, ang, lx, ly) for lx, ly in ((-w, -d), (w, -d), (w, 20), (-w, 20))]
 
 
-def dress(db, plan, seed=1, blocked=(), amount=1.0):
+def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
     """Things for a made town (plan as townbuild.fit made it, each plot with 'door_z' once built): a yard scene of its
     culture and kind before every building (a smithy's forge before some shops, as often as the culture's shops are
     smiths), groups along its streets as many as the culture's towns stand a road patch, and its square's. blocked:
     polygons kept clear (the wall's pieces). [{'id', 'p', 's', 'role'}]."""
     L = learn(db)
+    POSTS.clear()
+    POSTS.update(L.get('post_lights') or {})
+    if LAST.get('L') != id(L):
+        NAMED.clear()
+        NAMED.update(_named(L))
+    LAST.clear()
+    LAST['L'] = id(L)
     cult = plan.get('culture')
     rng = random.Random('%s|%s|dress' % (seed, cult))
     near = _near_cultures(L, cult)
     rects = {id(q): [tuple(p) for p in q['rect']] for q in plan['plots'] if q.get('rect')}
     # (and what stood there already: slave pods went down over a walkway, lab 2026-10-30)
     space = _Space(list(blocked) + list(rects.values()) + [[tuple(p) for p in o] for o in plan.get('obstacles') or ()])
+    nb_, nr_ = len(blocked), len(rects)
+    for i, p_ in enumerate(space.polys):
+        space.kind[id(p_)] = 'wall' if i < nb_ else 'plot' if i < nb_ + nr_ else 'obstacle'
     for q in plan['plots']:
         if q.get('door') and q.get('b'):
             space.take(_door_clear(q['door'][0], q['door'][1], q['face']))
+            space.kind[id(space.polys[-1])] = 'door way'
     memo = {}
     out = []
     smith_share = L.get('smith', {}).get(cult, 0.2)
@@ -587,28 +909,49 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0):
         same = [sc_ for sc_ in own_sc or () if sc_.get('interior') and sc_['interior'] == ex]
         own_sc = same or own_sc
         sc = rng.choice(own_sc) if own_sc else _yard_pick(L, near, kind, rng)
+        _count('plots ' + ('own' if own_sc else 'yard' if sc and sc['things'] else 'bare'))
         if not sc or not sc['things'] or rng.random() > amount:
             continue
         fw = q['b'].get('w') or q.get('w') or 512
         lim = 1e9 if own_sc else max(300.0, fw / 2.0 + 250)
-        mirror = not own_sc and rng.random() < 0.5
-        sc2 = {'things': [dict(t, x=-t['x'], rz=(-t['rz']) % (2 * math.pi)) if mirror else t for t in sc['things']]}
-        # (its own outline cut back to the door's wall: the plot's outline reaches past it, porch and all, and
-        # every thing by the door fell inside it, lab 2026-10-30)
-        own = rects.get(id(q))
-        if own in space.polys:
-            space.polys.remove(own)
-            # (its own surroundings stood round this very model in the game, clear of it: its box is left out
-            # altogether; round a Telvanni tower its square box took every thing at the tower's foot, 2026-11-01)
-            cut = _behind_door(own, q['door'][0], q['door'][1], q['face']) if not own_sc else []
-            if cut:
-                space.take(cut)
-        got = _lay(db, sc2, q['door'][0], q['door'][1], q['face'] + math.pi, space, memo, q.get('door_z'),
-                   keep=lambda t: abs(t['x']) <= lim, hold=lambda g, f=q['face']: _held(db, g, f, memo))
-        if own is not None and own not in space.polys:
-            if cut:
-                space.polys.remove(cut)
-            space.take(own)
+        # (of the game's several copies of this building's surroundings, the one that fits most here, whole: one copy
+        # alone, half of the arrangements went for want of room, the buildings standing closer than the game's, lab jdd3)
+        cands = [sc] + [o for o in rng.sample(own_sc, min(len(own_sc), OWN_TRIES)) if o is not sc][:OWN_TRIES - 1] if own_sc else [sc]
+        before_ = list(space.polys)
+        best = None
+        for sc_ in cands:
+            space.polys[:] = before_
+            mirror = not own_sc and rng.random() < 0.5
+            sc2 = {'things': [dict(t, x=-t['x'], rz=(-t['rz']) % (2 * math.pi)) if mirror else t for t in sc_['things']]}
+            # (its own outline cut back to the door's wall: the plot's outline reaches past it, porch and all, and
+            # every thing by the door fell inside it, lab 2026-10-30)
+            own = rects.get(id(q))
+            cut = []
+            if own in space.polys:
+                space.polys.remove(own)
+                # (its own surroundings stood round this very model in the game, clear of it: its box is left out
+                # altogether; round a Telvanni tower its square box took every thing at the tower's foot, 2026-11-01)
+                cut = _behind_door(own, q['door'][0], q['door'][1], q['face']) if not own_sc else []
+                if cut:
+                    space.take(cut)
+            got = _lay(db, sc2, q['door'][0], q['door'][1], q['face'] + math.pi, space, memo, q.get('door_z'),
+                       keep=lambda t: abs(t['x']) <= lim, hold=lambda g, f=q['face']: _held(db, g, f, memo))
+            if own is not None and own not in space.polys:
+                if cut:
+                    space.polys.remove(cut)
+                space.take(own)
+            # (each arrangement whole or not at all: a smithy yard came out as three crates and a scrap on a bare street,
+            # the user's Tessellated Shores, 2026-11-01. By its ground things; a lantern off a wall that is not there
+            # doesn't count. A building's surroundings hold several arrangements, a forge's, a cart's, a bench's)
+            got, sets_ = _whole_sets(sc2['things'], got, lambda t: not t['hang'] and abs(t['x']) <= lim and t['id'].lower() not in NAMED, space)
+            if best is None or len(got) > len(best[0]):
+                best = (got, sets_, list(space.polys))
+        got, sets_, polys_ = best
+        space.polys[:] = polys_
+        LAST.setdefault('sets', []).extend((kind,) + x for x in sets_)
+        want = sum(w for w, _h in sets_)
+        _count('offered ' + ('own' if own_sc else 'yard'), want)
+        _count('laid ' + ('own' if own_sc else 'yard'), len(got))
         for g in got:
             g['role'] = 'yard:' + kind
         out.extend(got)
@@ -633,6 +976,8 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0):
                 ang = math.atan2(i, j)               # (-y toward the road: local (0,-1) -> world (-i, -j))
                 grp = rng.choice(St[0][1]['groups'])
                 got = _lay(db, grp, cx, cy, ang, space, memo)
+                _count('offered street', len(grp['things']))
+                _count('laid street', len(got))
                 if got:
                     for g in got:
                         g['role'] = 'street'
@@ -673,6 +1018,7 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0):
                     g['role'] = 'square'
                 out.extend(got)
                 break
+    out = _square_signs(db, _spaced_wells(_no_doubles(out, also), also), memo)
     for o in out:
         o.pop('pts', None)
     return out

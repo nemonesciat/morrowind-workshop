@@ -196,6 +196,7 @@ function renderGuide(){
     ${card('world', '🗺', 'World map', 'Open a place', 'Any town, house or cave of your game, in 2D or 3D. Move things, drag new ones in, furnish rooms, then Play here.')}
     ${card('create', '⚒', 'Create', 'Make something new', 'A house, a dungeon or ruin, a person, a spell, a book, or weapons and armour from the Forge, each one change you can undo.')}
     ${card('browse', '🔎', 'Browse', 'Find anything', 'Search every record in your load order by name, ID, dialogue or model, and open it to see and change it.')}
+    ${card('new052', '✨', 'New with OpenMW 0.52', 'New skills, weathers and more', 'Start from an example: a Fishing skill, Piety with its shrines and books, an aurora, a cursed chest. Then change it your way.')}
   </div>
 
   ${places.length ? `<h2>Where you were lately</h2><div class="home-places">${places.map((pl, n) => `<button class="btn sm" data-homeplace="${n}">${pl.interior ? '🏠' : '🌄'} ${esc(pl.name)}</button>`).join('')}</div>` : ''}
@@ -287,6 +288,7 @@ function renderGuide(){
     if (k === 'tour') coachHouse();
     else if (k === 'world') showView('world');
     else if (k === 'create') showView('createv');
+    else if (k === 'new052') rcOpenKind('happens');
     else { showView('browse'); $('#q').focus(); }
   });
   w.querySelectorAll('[data-homeplace]').forEach(b => b.onclick = () => { showView('world'); wpPlaceOpen(+b.dataset.homeplace); });

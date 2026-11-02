@@ -82,6 +82,8 @@ DREUGH_MAKE = re.compile(r'^t_dreu_|dreugh')
 HANGING_KINDS = ('shelf',)      # the only furniture put up on a wall (at the height the game hangs it)
 BED_OFF_THE_WAY = True          # a bed in a small room never across the line from its doorway to its middle (for the lab: off to compare)
 WORK_TABLE_REACH = 300          # a kitchen's hearth has a table or counter this near (the game's median 249): 0 to leave it to the recipe
+SPILL = True                    # a smithy's things on the floor round its anvil, at the game's rate (themesurvey; for the lab: off to compare)
+THEMED_WALL = True              # a themed room's theme on its wall, at the game's rate (themesurvey; for the lab: off to compare)
 WINERACK = re.compile(r'winerack|wine_rack|bottlerack')
 COUNTER_PART = re.compile(r'_end|_cnr|corner|_curve|_short|_half')      # the end and corner pieces of a counter run
 KEEPER_GAP = 96                 # a counter stands this far off the wall: the keeper's side (the game's traders stand 71 behind it)
@@ -1577,12 +1579,13 @@ def house_hangings(db, decor, rng, band=None):
     return out
 
 
-def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=1.0):
+def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=1.0, themed=None):
     """Hang things on the free walls of one room: flat against the wall, facing in, at the height the
     game hangs them, never over a doorway or into furniture that stands that high. hung: what hangs in
     the house so far, [(x, y, floor, direction it faces)]. hang_k: the game's count, times this (a poor
-    house's bare walls, a rich one's hung ones: wealthsurvey.py)."""
-    if not decor:
+    house's bare walls, a rich one's hung ones: wealthsurvey.py). themed: one piece of the room's theme
+    to hang first, as the game hangs it (themesurvey.wall_piece: its height, gap and turn against the wall)."""
+    if not decor and not themed:
         return []
     import wallsurvey
     floor = room['floor']
@@ -1718,6 +1721,39 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
             return True
         return False
     spots = [sp for sp in spots if not crowded(sp)]
+    got = []
+    if themed:
+        # the room's theme on its wall first (themesurvey): the game's own piece, as high, as far off the
+        # wall and turned against it as the game hangs it there, at a free spot clear of what stands that high
+        import shelfsurvey
+        import themesurvey
+        ri = db.resolve_id(themed['id'])
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        sc = themed.get('s') or 1.0
+        for sp in (list(spots) if b else []):
+            wrx, wry, wrz = shelfsurvey.compose_on(themed['rx'], themed['ry'], themed['rz'], themesurvey.wall_frame(sp['in']))
+            tb = shelfsurvey.box_turned(b, wrx, wry, wrz, sc)
+            back = {(0, 1): -tb[1], (0, -1): tb[4], (1, 0): -tb[0], (-1, 0): tb[3]}[sp['in']]
+            off = back + max(1.0, themed.get('gap') or 1.0)
+            x, y = sp['x'] + sp['in'][0] * off, sp['y'] + sp['in'][1] * off
+            z0 = floor + themed['h']
+            z1 = z0 + (tb[5] - tb[2])
+            box = (x + tb[0], y + tb[1], x + tb[3], y + tb[4])
+            pad = (box[0] - 24, box[1] - 24, box[2] + 24, box[3] + 24)
+            if any(_overlaps(pad if door else box, fb, 0) and (door or (zb < z1 + 4 and zt > z0 - 4)) for fb, zb, zt, door, tall in solid):
+                continue
+            rec = put(themed['id'], x, y, wrz, at_z=z0 - tb[2], tilt=(wrx, wry), scale=sc, room=room['name'])
+            if rec is None:
+                break
+            solid.append((box, z0, z1, False, False))
+            spots.remove(sp)
+            hung.append((sp['x'], sp['y'], floor, sp['in']))
+            spots[:] = [o for o in spots if not crowded(o)]
+            got.append(themed['id'])
+            last_trace.append((room['name'], 'decor', themed['id'], 'the room\'s theme on its wall'))
+            break
+    if not decor:
+        return got
     # how many: the game's rate per tile of wall for rooms of this kind (a bedroom three or four, a study
     # four, a living room two, a hall one); until the survey has run, about one for every four floor
     # tiles, fewer in stores and kitchens
@@ -1758,7 +1794,6 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
                 plan += [lights[0]] * min(2, n_sc)
         else:
             plan += [lights[0]] * min(2, max(1, want // 3))
-    got = []
     force = None                       # (the matching spot of a pair, to take the same model next)
     while plan:
         # (a pair's second half takes the same model as its first, out of turn)
@@ -3848,6 +3883,43 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             last_trace.append((room['name'], 'table', 'no wall within reach of the hearth took a work table'))
             return None
 
+        def lay_spill(anvil_):
+            """The smith's things on the floor round the anvil, as the game's anvils have them (themesurvey: round
+            38% of them, tongs, ingots, a broken piece within 200, lying as the game's lie); none as often as
+            the game's floors are clean. The ids laid."""
+            import shelfsurvey
+            import themesurvey
+            if sketch or not anvil_ or not SPILL:
+                return []
+            items = themesurvey.spill(db, rng)
+            if not items:
+                return []
+            ax_, ay_ = anvil_['p'][0], anvil_['p'][1]
+            laid_ = []
+            for it in items:
+                ri_ = db.resolve_id(it['id'])
+                ob_ = mapdata.object_bounds(db, ri_) if ri_ is not None else None
+                if not ob_:
+                    continue
+                sc_ = it.get('s') or 1.0
+                for _try in range(6):
+                    ang_ = rng.uniform(0, 2 * math.pi)
+                    d_ = max(50.0, it['d'] * rng.uniform(0.8, 1.1))
+                    x_, y_ = ax_ + d_ * math.cos(ang_), ay_ + d_ * math.sin(ang_)
+                    rz_ = rng.uniform(0, 2 * math.pi)
+                    tb_ = shelfsurvey.box_turned(ob_, it['rx'], it['ry'], rz_, sc_)
+                    box_ = (x_ + tb_[0], y_ + tb_[1], x_ + tb_[3], y_ + tb_[4])
+                    if not inside(box_) or not fits(box_):
+                        continue
+                    # (its bottom where the game's lies: the floor, a little into it for a flat piece)
+                    r_ = put(it['id'], x_, y_, rz_, at_z=fl + it['dz'], tilt=(it['rx'], it['ry']), scale=sc_, room=room['name'])
+                    if r_ is not None:
+                        laid_.append(it['id'])
+                        break
+            if laid_:
+                last_trace.append((room['name'], 'forge', anvil_['id'], 'the smith\'s things on the floor round the anvil: %d' % len(laid_)))
+            return laid_
+
         def lay_forge_set():
             """A smithy's anchor (tradesurvey.py): a forge of the house's kit or culture with its back to a wall,
             and one of the game's own sets round that model at their offsets and turns, the smith's pieces of it
@@ -3957,6 +4029,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         last_trace.append((room['name'], 'forge', rid, 'no anvil would stand at it: taken out'))
                         continue
                     got.extend([rid] + laid_)
+                    got.extend(lay_spill(anvil_))
                     if 'forge' in extras_left:
                         extras_left.remove('forge')
                     last_trace.append((room['name'], 'forge', rid, 'the game\'s smith set from %s: %d things with it' % (ex_.get('cell'), len(laid_))))
@@ -7171,7 +7244,15 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         got.append(rug[0])
                         break
         if (walls or walls_only) and purpose != 'ruin':      # (nobody hangs tapestries in a ruin)
-            got += _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=(L['hang'] if L else 1.0) * hall_hang)
+            # (the room's theme on its wall, at the game's rate for themed rooms: a sword or a shield in an
+            # armoury, a map in a study; themesurvey)
+            themed = None
+            if THEMED_WALL and not walls_only and not sketch:
+                import themesurvey
+                th_ = themesurvey.room_theme([(p['id'], p['type']) for p in placed if p.get('room') == room['name'] and p['type'] in themesurvey.SMALL])
+                if th_:
+                    themed = themesurvey.wall_piece(db, th_, rng)
+            got += _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=(L['hang'] if L else 1.0) * hall_hang, themed=themed)
             got += void_banners()
         if not walls_only and purpose == 'bath':
             # the game's bathing rooms have 5.5 lights per nine tiles, a standing lamp or a candle on

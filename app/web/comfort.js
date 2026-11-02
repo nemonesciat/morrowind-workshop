@@ -318,6 +318,21 @@ function cfMenuAt(e, hit, at, locked){
       else items.push({label: '🚪 Make it a hidden door', act: () => selAction('secretdoor')});
       if (r.type === 'STAT') items.push({label: '⚙ Make it an activator', act: () => selAction('secretacti')});
     }
+    // what it does in play (OpenMW 0.52, records.js): a chest that's a trap or glows until opened, and "when... then..." for
+    // anything the player opens, uses or reads (the user 2026-11-02: "on right click menus, like ... shelves and tables")
+    const ITEMS = ['MISC', 'WEAP', 'ARMO', 'CLOT', 'ALCH', 'INGR', 'APPA', 'LOCK', 'PROB', 'REPA', 'LIGH'];
+    if (typeof rcOpenWith === 'function' && (['CONT', 'ACTI', 'DOOR', 'BOOK'].includes(r.type) || ITEMS.includes(r.type))){
+      sep(); head('What it does');
+      const nm = r.name || r.id, here = W.info && W.info.interior ? (W.info.name || '') : '';
+      if (r.type === 'CONT'){
+        items.push({label: '⚠ Make it a trap…', act: () => rcOpenWith('traps', {name: nm + ' trap', objects: [r.id], cell: here, spell: '', once: true, text: ''})});
+        items.push({label: '✨ Glows until opened, with loot…', act: () => rcOpenWith('loot', {name: nm + ' treasure', what: ['potion', 'misc'], words: [], min: 0, max: 0, count: 2, chance: 100, perlevel: 0,
+          containers: [r.id], npcs: [], glow: '#ffd678'})});
+      }
+      const when = r.type === 'BOOK' ? 'read' : ITEMS.includes(r.type) ? 'use' : 'activate';
+      const verb = {read: 'read', use: 'used', activate: r.type === 'CONT' || r.type === 'DOOR' ? 'opened' : 'activated'}[when];
+      items.push({label: `⚡ When ${verb}…`, act: () => rcOpenWith('happens', {name: '', when, ids: [r.id], water: false, daily: false, once: false, chance: 100, by: null, miss: '', then: [{do: 'say', text: ''}]})});
+    }
     if (r.type === 'NPC_' || r.type === 'CREA'){ sep(); items.push({label: '💬 Dialogue', act: () => selAction('talk')}, {label: r.type === 'CREA' ? '🐾 Edit creature' : '👤 Edit character', act: () => selAction('char')}); }
     sep();
     // (a building piece: what the game stands at this joint, most often first, laid as one change; fixhere.js)

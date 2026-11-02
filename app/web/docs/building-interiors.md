@@ -106,9 +106,13 @@ in the walls, the roof.
 **Library → 🔨 Prefab workbench** (or **Ctrl+B** anywhere, right-click **Library**, or Ctrl+K "workbench") opens an
 empty space with a floor grid and its own camera.
 
-- Pick a style; its pieces are on the shelf on the left. Drag them in. They **snap** the way the game joins
+- Pick a style; its pieces are on the shelf on the left. Or pick **All pieces, by ID** and type an ID or its start
+  (`ex_imp_wall`, `t_imp_set`): every piece that has it, in ID order (statics and doors at first; the buttons over the list add lights, containers
+  and the rest). Drag them in. They **snap** the way the game joins
   them, else flush with the piece beside them. A door or window dragged to a frame, doorway or window hole drops
   into it. **🚪 Fill openings** fills them all the game's way.
+- The same shelf works in the World map and 3D view: **▤ Panels → Pieces**. Click a piece, then click where it goes,
+  or drag it into the view.
 - **Moving** (toolbar): **Joins & flush**, **Joins only** or **Free**; hold **Alt** while dragging to move freely
   once. For fine moves: the **arrow keys** (1 unit, Shift 16), **Page Up / Down**, or type **X Y Z**. **Turn 15°** /
   **Turn free** sets the turn ring's steps.
@@ -158,7 +162,8 @@ Staples come first. Rest the mouse on a piece to see what the game stands next t
 it into the map or the 3D view.
 
 Something the Workshop didn't learn in a style can be added by hand: **＋ Add…** in the palette finds anything in
-your load order, or **🎨 Add to a style…** on its page in Browse. It's listed first in its group with a green
+your load order, or **🎨 Add to a style…** on its page in Browse. To add many at once, Shift-click or Ctrl-click
+them in Browse's list, then **🎨 Add to a style…** (or **🌿 Add to a brush…**) on the bar above it. It's listed first in its group with a green
 **yours**; right-click it to take it back out. Your additions are kept apart from what the Workshop learns.
 
 **＋ New style** (under **Your own** in the palette's list) makes a style of your own: add anything to it with

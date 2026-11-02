@@ -23,6 +23,7 @@ const CM_GROUPS = [
   ['Replace and select', '⇄', [/^swap for/i, /^replace every/i, /^replace them/i, /^select the whole building/i, /^select all the/i, /^select it with everything/i,
     /^select everything you can see/i, /^clear the selection/i]],
   ['Looks and sound', '🎨', [/^animations and text keys/i, /^model (&|and) textures/i, /^retexture/i, /^add a sound/i, /^forge a new piece/i, /^into the world/i]],
+  ['What it does', '⚡', [/^make it a trap/i, /^glows until opened/i, /^when (opened|activated|used|read)…/i]],
   ['Secret entrance', '🔐', [/^make (it|this) a hidden door/i, /^make this a door to/i, /^rotating panel/i, /^sliding panel/i, /^make it an activator/i,
     /^make this an ordinary object/i]],
   ['Build', '🧱', [/^fix here/i, /^fix this edge/i, /^add a room through/i, /^extend (from here|by piece)|^leave extend mode/i, /^other pieces that fit/i,
@@ -36,7 +37,7 @@ const CM_GROUPS = [
 const CM_MORE = ['More', '…'];
 // (which group an entry belongs to is tried in this order, the narrow ones first: "Dress everything in the
 // room" is the room's, not "Dress it"; "Copy the lighting" the place's, not Edit's Copy)
-const CM_TRY = ['This room', 'This place', 'This door', 'This person', 'Dress it', 'Secret entrance', 'Build', 'Looks and sound',
+const CM_TRY = ['This room', 'This place', 'This door', 'This person', 'Dress it', 'What it does', 'Secret entrance', 'Build', 'Looks and sound',
   'Look and open', 'Move and place', 'Replace and select', 'Edit', 'View'];
 // what a kind of thing is right-clicked for most, first match wins
 const CM_QUICK = {

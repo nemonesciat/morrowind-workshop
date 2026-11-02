@@ -82,6 +82,8 @@ def plan(db, b):
     # (stairs, steps, a ladder or a walkway up to the door: the game's high doors have them; the ground is left)
     climb = door is not None and any(CLIMB.search(it['low']) and math.hypot(it['p'][0] - door['p'][0], it['p'][1] - door['p'][1]) < 600
                                      for it in (b.get('items') or ()))
+    # (the door's own sill: the frame may come from another, higher door)
+    sill = (door['p'][2] + ((door.get('b') or [0, 0, 0])[2]) * (door.get('s') or 1.0)) if door is not None and door.get('p') else fr.z
     reasons = {'sink': 0, 'landing': 0}
     for (x, y, lx, ly, gx, gy, ix, iy, z) in pts:
         c = (int(math.floor(lx / G)), int(math.floor(ly / G)))
@@ -95,7 +97,9 @@ def plan(db, b):
             if over:
                 bottom = min(over)
                 if z < bottom - 8 and bottom - z < 900:         # (a gap shows; a pier on a sea or a cliff: left as it is)
-                    target = min(bottom + SINK, fr.z - STEP)     # (never over the door's landing)
+                    # (never over the door's landing; the door's own sill too: a barn's frame came from its hayloft, and
+                    # its open floor was filled 300 deep, its goods buried, the city round of 2026-11-01)
+                    target = min(bottom + SINK, fr.z - STEP, sill - STEP)
                     reasons['sink'] += 1
         # (the landing: the ground points nearest the spot a tile out from the door; the ground's grid is 128
         # apart, coarser than a door's width)
@@ -118,18 +122,23 @@ def plan(db, b):
             nz = want[k][0]
         else:
             # (the change whose fade reaches here most strongly; each fades over its own reach, wider the bigger it is)
+            # (towards the change's own height, never past it: added as a difference, a fill at a low corner lifted the
+            # higher ground beside it as much, and an open barn up the slope filled 300 deep, the city round of 2026-11-01)
             best = None
+            h0 = land[(gx, gy)][iy * N + ix]
             for (k2, (tz, cx, cy)) in changed:
                 delta = tz - land[(k2[0], k2[1])][k2[3] * N + k2[2]]
+                here = tz - h0
+                if here * delta <= 0:
+                    continue
                 reach = max(BLEND, min(BLEND_MAX, BLEND_RISE * abs(delta)))
                 dd = math.hypot(cx - x, cy - y)
                 if dd < reach:
                     f = 1 - _smooth(dd / reach)
-                    if best is None or abs(delta) * f > abs(best[0]) * best[1]:
-                        best = (delta, f)
+                    if best is None or abs(here) * f > abs(best[0]) * best[1]:
+                        best = (here, f)
             if best is None:
                 continue
-            h0 = land[(gx, gy)][iy * N + ix]
             nz = h0 + best[0] * best[1]
         h0 = land[(gx, gy)][iy * N + ix]
         if abs(nz - h0) < 2:

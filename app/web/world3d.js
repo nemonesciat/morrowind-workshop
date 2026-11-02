@@ -1451,6 +1451,20 @@ async function v3TintPanel(){
 // ----- scattering what grows in the region
 async function v3ScatterPanel(){
   const box = $('#v3lscat'); if (!box) return;
+  // (drawn again on every pick: the panel and the lists in it keep where they were scrolled to. PIN2 on Discord
+  // 2026-11-01: "when I select a tree it snaps the menu back to the top")
+  const scrolled = [];
+  for (let e = box; e; e = e.parentElement) if (e.scrollTop) scrolled.push([e, e.scrollTop]);
+  const inner = [...box.querySelectorAll('.br-grid,.br-items,.v3scat')].map(e => [e.className + '|' + (e.id || ''), e.scrollTop]);
+  const putBack = () => {
+    for (const [e, t] of scrolled) e.scrollTop = t;
+    const seen = {};
+    for (const [k, t] of inner){
+      const n = seen[k] = (seen[k] || 0) + 1;
+      const e = [...box.querySelectorAll('.br-grid,.br-items,.v3scat')].filter(x => x.className + '|' + (x.id || '') === k)[n - 1];
+      if (e && t) e.scrollTop = t;
+    }
+  };
   const ck = cellKeyAt(...v3CamWorld().slice(0, 2));
   if (!V3.scatSets || V3.scatSets.cell !== ck){
     box.innerHTML = '<div class="faint"><span class="spin"></span>Finding what grows here…</div>';
@@ -1515,6 +1529,7 @@ async function v3ScatterPanel(){
   box.querySelectorAll('[data-se]').forEach(b => b.onclick = () => { B.scatErase = b.dataset.se === '1'; v3LandSave(); v3ScatterPanel(); });
   $('#v3lthick').oninput = e => { B.scatThick = +e.target.value; e.target.nextElementSibling.textContent = B.scatThick; v3LandSave(); };
   box.querySelectorAll('[data-si]').forEach(c => c.onchange = () => { const k = c.dataset.si.toLowerCase(); if (c.checked) delete B.scatOff[k]; else B.scatOff[k] = 1; v3LandSave(); const l = c.parentElement; if (l.classList.contains('br-tile')) l.classList.toggle('off', !c.checked); else l.classList.toggle('on', c.checked); });
+  putBack();
 }
 function v3ScatterItems(){
   const S_ = V3.scatSets, B = V3.land; if (!S_) return [];

@@ -895,6 +895,10 @@ class Handler(BaseHTTPRequestHandler):
                 # your own magic effects (Create > New magic effect), the game's effects to start from
                 import myeffects
                 self._json(myeffects.read(db))
+            elif u.path == '/api/myrecords/scripts':
+                # the scripts the 0.52 forms wrote, each with what it does (Create > See the script)
+                import myrecords
+                self._json({'scripts': myrecords.scripts(db) if db.project else []})
             elif u.path == '/api/myrecords':
                 # your own skills, attributes and weathers (OpenMW 0.52's custom records: myrecords.py)
                 import myrecords
@@ -954,6 +958,17 @@ class Handler(BaseHTTPRequestHandler):
                 # how far Shape them has got (asked while it works: not under the edit lock)
                 import landshapes
                 self._json(landshapes.progress())
+            elif u.path == '/api/castle/styles':
+                # the keep and castle styles there are game forts of (castle.py), once the walls are learnt
+                import learning
+                lp = learning.town_pending(db)
+                if lp:
+                    return self._json({'learning': lp})
+                import castle
+                return self._json({'styles': castle.choices(db)})
+            elif u.path == '/api/castle/progress':
+                import castle
+                return self._json(castle.progress())
             elif u.path == '/api/town/progress':
                 # how far a town's Make it has got (the same: asked while it works)
                 import townbuild
@@ -1474,7 +1489,7 @@ class Handler(BaseHTTPRequestHandler):
                     sizes = editing.branch_sizes(db)
                 log = [{'id': e.get('id'), 't': e.get('t'), 'text': editing.note_label(p, e.get('text'), e.get('id')), 'undone': e.get('undone', False),
                         'can_undo': bool(e.get('diff')) and not e.get('undone'),
-                        'parent': parent.get(e.get('id')), 'inside': sizes.get(e.get('id'), 0)}
+                        'parent': parent.get(e.get('id')), 'inside': sizes.get(e.get('id'), 0), 'op': e.get('op')}
                        for e in (p.log[-500:] if p else [])]
                 self._json({'project': db.project_summary(), 'log': log,
                             'changes': changes_list() if p else [], 'path': editing.plugin_path(db) if p else None})
@@ -1828,7 +1843,15 @@ class Handler(BaseHTTPRequestHandler):
                 # fast (no mesh rays) unless asked otherwise; gaps only with fast off
                 import roomscore
                 return self._json(roomscore.score_place(db, body['cell'], fast=body.get('fast', True), gaps=body.get('gaps', False)))
-            with edit_lock:
+            # (the land's preview and a town's or castle's plan change nothing: outside the editing lock. Under it, PIN2's
+            # coast preview (40 s to 2 minutes on his computer) held up every mark, Clear marks, plan and mod switch behind
+            # it, 2026-11-02)
+            if u.path == '/api/land/plan/preview/stop':
+                # (the busy chip's Stop: every land preview working now gives up at its next step)
+                import landshapes
+                return self._json(landshapes.stop_previews())
+            import contextlib
+            with contextlib.nullcontext() if u.path in ('/api/land/plan/preview', '/api/town/plan', '/api/castle/plan') else edit_lock:
                 if u.path == '/api/doors/pair':
                     # (two doors picked in two windows lead to each other: web/twowin.js)
                     return self._json(doors.link_pair(db, body['cell_a'], body['ref_a'], body['cell_b'], body['ref_b']))
@@ -1947,6 +1970,18 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/myrecords/save':
                     import myrecords
                     return self._json(myrecords.save(db, body.get('kind') or '', body.get('record') or {}, body.get('old_id')))
+                if u.path == '/api/myrecords/example':
+                    # one of the examples (Fishing, Piety, an aurora, a cursed chest...) made whole (examples.py)
+                    import examples
+                    return self._json(examples.make(db, body.get('key') or ''))
+                if u.path == '/api/myrecords/try':
+                    # ▶ Try it: the example's own test setup (what it needs, a chest put beside you...) saved and
+                    # switched on, with where to start; the page then asks where (Play here)
+                    import examples
+                    t = examples.try_setup(db, body.get('key') or '')
+                    cur = [x for x in test_setups()['list'] if x['name'] != t['name']]
+                    save_test_setups({'list': [{k: v for k, v in t.items() if k not in ('where', 'how')}] + cur, 'on': t['name']})
+                    return self._json({'setup': t['name'], 'where': t['where'], 'how': t['how'], 'items': t['items']})
                 if u.path == '/api/myrecords/option':
                     import myrecords
                     return self._json(myrecords.set_option(db, body.get('name') or '', bool(body.get('value'))))
@@ -2014,7 +2049,7 @@ class Handler(BaseHTTPRequestHandler):
                     amt = float(body.get('amount') or 1.0)
                     parts = body.get('parts') or {'rocks': amt, 'growth': amt}
                     return self._json(landdecor.dress_all(db, body.get('cells') or [], body.get('like') or '', parts,
-                                                          body.get('seed'), body.get('outline')))
+                                                          body.get('seed'), body.get('outline'), body.get('brush') or ''))
                 if u.path == '/api/land/revert':
                     # everything the mod changed in the marked cells taken back, as one step
                     return self._json(editing.revert_cells(db, body.get('cells') or []))
@@ -2033,7 +2068,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(landshapes.preview(db, body.get('cells') or [], body.get('plan') or {}))
                 if u.path == '/api/land/plan/apply':
                     import landshapes
-                    return self._json(landshapes.apply(db, body.get('cells') or [], body.get('plan') or {}))
+                    with editing.operation('land'):
+                        return self._json(landshapes.apply(db, body.get('cells') or [], body.get('plan') or {}))
                 if u.path == '/api/land/flow':
                     # the land map's flow overlay: where the rain runs on the marked cells (landshapes.flow_lines)
                     import landshapes
@@ -2097,8 +2133,14 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/build/copy_interior':
                     # one of the game's interiors for this building's shell, copied and linked to its door (one Undo)
                     import frombuilding
-                    return self._json(frombuilding.copy_game_interior(db, body.get('cell', ''), body.get('ref', ''), body.get('template', ''),
-                                                                      body.get('name', ''), body.get('contents') or 'furnished', body.get('door')))
+                    # (the source's architecture and doors only; furnished anew by the Workshop or left empty: never its decor)
+                    import towninside
+                    rooms_ = 'shells' if body.get('contents') in ('shells', 'empty', 'lights') else 'furnished'
+                    o_ = frombuilding.copy_game_interior(db, body.get('cell', ''), body.get('ref', ''), body.get('template', ''),
+                                                         body.get('name', ''), 'furnished', body.get('door'))
+                    towninside.make_own(db, o_['key'], body.get('template', ''), rooms_)
+                    editing.fold(db, 2, 'Copied %s for the building, %s' % (o_.get('name') or '', 'furnished anew' if rooms_ == 'furnished' else 'empty'))
+                    return self._json(o_)
                 if u.path.startswith('/api/bench/'):
                     # the prefab workbench (bench.py): kept, snapped, filled and checked; the world is not touched
                     import bench
@@ -2389,7 +2431,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path in ('/api/town/plan', '/api/town/make'):
                     # (towns wait for their surveys, learnt in the survey process: the page shows what and asks again)
                     import learning
-                    lp = learning.town_pending(db, u.path == '/api/town/make' and body.get('interiors') is not False and bool(body.get('people', True)))
+                    lp = learning.town_pending(db, u.path == '/api/town/make' and body.get('interiors') not in (False, 'none', 'shells') and bool(body.get('people', True)))
                     if lp:
                         return self._json({'learning': lp})
                 if u.path == '/api/town/plan':
@@ -2417,10 +2459,34 @@ class Handler(BaseHTTPRequestHandler):
                     if len(out) < 3:
                         return self._json({'error': "Draw the town's outline first."}, 400)
                     cult, opts_ = _town_culture(db, body, out)
-                    inside = body.get('interiors') is not False
-                    return self._json(townbuild.make(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '',
-                                                     body.get('dress') is not False, inside, inside and body.get('people') is not False,
-                                                     (body.get('name') or '').strip()[:40], opts_))
+                    # (interiors: 'none', 'shells' (the building's architecture only) or 'furnished'; true = furnished)
+                    iv = body.get('interiors')
+                    inside = False if iv in (False, 'none') else 'shells' if iv == 'shells' else True
+                    with editing.operation('town'):
+                        return self._json(townbuild.make(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '',
+                                                         body.get('dress') is not False, inside, inside and body.get('people') is not False,
+                                                         (body.get('name') or '').strip()[:40], opts_))
+                if u.path in ('/api/castle/plan', '/api/castle/make'):
+                    # a keep or castle in a culture's way (castle.py): planned for the map, or built as one change
+                    import learning
+                    lp = learning.town_pending(db, u.path == '/api/castle/make' and body.get('people') is not False)
+                    if lp:
+                        return self._json({'learning': lp})
+                    import castle
+                    out = body.get('outline') or []
+                    if len(out) < 3:
+                        return self._json({'error': "Draw the castle's outline first."}, 400)
+                    args = (db, out, body.get('style') or 'Imperial', body.get('size') or 'medium', int(body.get('seed') or 1),
+                            (body.get('name') or '').strip()[:40])
+                    if u.path == '/api/castle/plan':
+                        pl = castle.plan(*args)
+                        return self._json({k: pl[k] for k in ('style', 'size', 'seed', 'name', 'preview', 'rooms', 'fig', 'game', 'faults')})
+                    with editing.operation('castle'):
+                        return self._json(castle.make(*args, people=body.get('people') is not False, rooms=body.get('rooms') or 'furnished'))
+                if u.path == '/api/castle/remove':
+                    # what a castle's Make it built, taken away, rooms and all (castle.remove)
+                    import castle
+                    return self._json(castle.remove(db, body.get('outline') or [], bool(body.get('look'))))
                 if u.path == '/api/town/remove':
                     # what a town's Make it built, taken away (townbuild.remove; look: only count it)
                     import townbuild
@@ -2479,6 +2545,10 @@ class Handler(BaseHTTPRequestHandler):
                         except loadorder.LoadOrderError as e:
                             r['disable_error'] = str(e)
                     return self._json(r)
+                if u.path == '/api/undo_group':
+                    # one operation's changes (a town's Make) and everything built on them, as one step
+                    e = editing.undo_group(db, [int(i) for i in body.get('ids') or []], (body.get('label') or '')[:200])
+                    return self._json({'ok': True, 'text': e['text'] if e else ''})
                 if u.path == '/api/undo_entry':
                     # with everything built on it, unless asked to take back just this one
                     e = (editing.undo_entry if body.get('only') else editing.undo_branch)(db, int(body['id']))

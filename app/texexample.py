@@ -132,6 +132,7 @@ def paint(db, F, keys, regions, seed=1, pre=None):
     """{(gx, gy): [256 LTEX ids, None where no example fits]} for the cells whose region has enough land to copy
     from (the rest left out, for landdress's odds to paint). pre: landdress._prepare's (stats, shore distances, memo)."""
     import landdress
+    from landshapes import _check_stop      # (a land preview stopped from the busy chip gives up here too: most of its time)
     stats, sdist, _m = pre or landdress._prepare(F, keys)
     reach = landsurvey.SHORE_BANDS[-1]
     Z = {}
@@ -143,6 +144,7 @@ def paint(db, F, keys, regions, seed=1, pre=None):
     src = {}                       # (painted patch: the example it took)
     todo = []
     for (gx, gy) in keys:
+        _check_stop()
         I = index(db, regions.get((gx, gy), ''))
         if not I:
             continue
@@ -152,7 +154,9 @@ def paint(db, F, keys, regions, seed=1, pre=None):
     todo.sort(key=lambda r: (r[0], r[1]))
     want = {}                      # (the region's textures a cell, its median: landdress.pattern)
     in_cell = defaultdict(set)
-    for py, px, cell, n, I, b in todo:
+    for k_, (py, px, cell, n, I, b) in enumerate(todo):
+        if not k_ & 511:
+            _check_stop()
         p = (px, py)
         T, B = I['tex'], I['band']
         r = regions.get(cell, '')

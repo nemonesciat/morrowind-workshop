@@ -262,8 +262,28 @@ def findings(db):
 
 
 def summary(db):
-    f = findings(db)
+    f = findings(db) + _my_records(db)
     n = {'error': 0, 'warning': 0, 'info': 0}
     for x in f:
         n[x['sev']] += 1
     return {'findings': f, 'counts': n}
+
+
+def _my_records(db):
+    """Your own skills, attributes, weathers and rules (Create > New with OpenMW 0.52) that still lack what makes them do
+    anything in play: "I made a skill and nothing happens" (myrecords.missing), one row each, opening it."""
+    import myrecords
+    one = {'skills': 'skill', 'attributes': 'attribute', 'weathers': 'weather', 'lists': 'list', 'loot': 'loot rule',
+           'ingredients': 'ingredient', 'looks': 'look-at line', 'traps': 'trap', 'happens': 'When... then...'}
+    try:
+        d = myrecords.raw(db)
+        gaps = myrecords.missing(db, d)
+    except Exception:
+        return []
+    out = []
+    for kind, recs in gaps.items():
+        names = {r.get('id'): r.get('name') or r.get('id') for r in d.get(kind) or ()}
+        for rid, what in recs.items():
+            for w in what:
+                out.append({'sev': 'warning', 'text': 'Your %s %s: %s' % (one.get(kind, kind), names.get(rid, rid), w), 'myrec': [kind, rid]})
+    return out

@@ -55,6 +55,26 @@ def lua_content(db):
     return p.lua_omwscripts()
 
 
+# One operation made of several changes (a town's Make: its outside, each house copied and peopled, its doors linked):
+# each change logged inside it carries the operation's id, so My mod shows them as one row (the user 2026-11-02: two
+# towns made after another were lost among their houses' rows and the ground reshaped before them).
+_op = {'cur': None}
+
+
+class operation:
+    def __init__(self, kind):
+        self.kind, self.mine = kind, False
+
+    def __enter__(self):
+        if not _op['cur']:                  # (one inside another is part of the outer one)
+            _op['cur'], self.mine = '%s-%d' % (self.kind, int(time.time() * 1000)), True
+        return self
+
+    def __exit__(self, *_a):
+        if self.mine:
+            _op['cur'] = None
+
+
 def commit(db, note=None, reverts=None):
     p = db.project
     before = getattr(p, 'last_state', None)
@@ -64,6 +84,8 @@ def commit(db, note=None, reverts=None):
         entry = p.note(note, state_diff(before, after) if before is not None else None)
         if reverts:
             entry['reverts'] = reverts
+        if _op['cur']:
+            entry['op'] = _op['cur']
     if before is not None:
         stack = p.__dict__.setdefault('undo_stack', [])
         stack.append((before, note or 'change', entry['id'] if entry else None))
@@ -367,6 +389,8 @@ def fold(db, n, note):
     p.log[:] = [e for e in p.log if e.get('id') not in ids]
     after = p.state()
     entry = p.note(note, state_diff(before, after))
+    if _op['cur']:
+        entry['op'] = _op['cur']
     stack.append((before, note, entry['id']))
     p.last_state = after
     db.sync_project()
@@ -438,6 +462,12 @@ def _builds_on(later, earlier):
                 later['names'] & earlier['new_ids'] or later['dials'] & earlier['new_dials'])
 
 
+def _adds_to(later, earlier):
+    """later puts something into what earlier made (its places, things or topics), not just the same things again."""
+    return bool(later['cells'] & earlier['new_cells'] or later['names'] & earlier['new_ids'] or
+                later['dials'] & earlier['new_dials'])
+
+
 def activity(db):
     """For each change in the log: the change it builds on (parent) and how many later changes build
     on it, directly or through others (inside). Only changes still in effect count."""
@@ -446,8 +476,14 @@ def activity(db):
     fps = {e['id']: _footprint(db, e) for e in live}
     parent, kids = {}, {}
     for n, e in enumerate(live):
+        # (shown inside another only when it adds to what that one made: furniture in a house you built, lines in
+        # your topic. Changes that make places of their own (a town, a castle) and changes that only go over the same
+        # ground again stay on top, by time: each town levelled the ground reshaped before it and sank into a staircase
+        # of "Ground reshaped" rows, the user 2026-11-02. Undo still takes back everything built on a change.)
+        if fps[e['id']]['new_cells']:
+            continue
         for prev in reversed(live[:n]):
-            if _builds_on(fps[e['id']], fps[prev['id']]):
+            if _adds_to(fps[e['id']], fps[prev['id']]):
                 parent[e['id']] = prev['id']
                 kids.setdefault(prev['id'], []).append(e['id'])
                 break
@@ -528,6 +564,31 @@ def undo_branch(db, entry_id):
     label = ('Redid: ' + text[len('Undid: '):]) if text.startswith('Undid: ') else 'Undid: ' + text
     return commit(db, '%s (and %d change%s made on top of it)' % (label, len(deps), '' if len(deps) == 1 else 's'),
                   reverts=[entry_id] + deps)
+
+
+def undo_group(db, ids, label=''):
+    """Take back several changes (one operation's: a town's outside, its houses and doors) and every later change
+    built on any of them, newest first, as one step."""
+    _require_project(db)
+    p = db.project
+    by_id = {e['id']: e for e in p.log}
+    ids = [i for i in ids if i in by_id and by_id[i].get('diff') and not by_id[i].get('undone')]
+    if not ids:
+        raise EditError('Those changes are no longer in effect.')
+    live = _live(p)
+    fps = {e['id']: _footprint(db, e) for e in live}
+    group, low = set(ids), min(ids)
+    for e in live:
+        if e['id'] in group or e['id'] < low:
+            continue
+        if any(_builds_on(fps[e['id']], fps[g]) for g in group if g in fps):
+            group.add(e['id'])
+    for i in sorted(group, reverse=True):
+        _revert_diff(p, by_id[i]['diff'])
+    for i in group:
+        _set_active(p, i, False)
+    label = label or by_id[max(ids)]['text']
+    return commit(db, 'Undid: %s (%d change%s)' % (label, len(group), '' if len(group) == 1 else 's'), reverts=sorted(group))
 
 
 def undo_entry(db, entry_id):

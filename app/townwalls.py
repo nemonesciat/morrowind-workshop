@@ -812,6 +812,8 @@ CUT_TOL = 640                  # (towards the ring's one level: cut down this mu
 RAISE_TOL = 512
 LEVEL_R = 320                  # (full change within this of the run's line, fading to nothing over LEVEL_BLEND beyond)
 LEVEL_BLEND = 384
+LEVEL_FADE = 3.0               # (or this times the change, up to LEVEL_BLEND_MAX: a 640 cut faded over 384 left a bank of 59
+LEVEL_BLEND_MAX = 1024         # degrees under the wall on a hill, the city round of 2026-11-01; 3x keeps it under 30)
 
 
 def level_ground(db, W, skip=(), tol=LEVEL_TOL):
@@ -847,7 +849,7 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
                 segs.append(((q.x, q.y), (q.x, q.y), sum(near) / len(near)))
     if not segs:
         return 0
-    reach = LEVEL_R + LEVEL_BLEND
+    reach = LEVEL_R + LEVEL_BLEND_MAX
     xs = [c[0] for s_ in segs for c in s_[:2]]
     ys = [c[1] for s_ in segs for c in s_[:2]]
     G = landscape.CELL
@@ -872,17 +874,20 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
                 for i in range(landscape.N):
                     x, y = gx * G + i * step, gy * G + j * step
                     best = None
+                    n = j * landscape.N + i
+                    z = h[n]
                     for a, b, t in segs:
                         d = dist(x, y, a, b)
                         if d >= reach:
                             continue
-                        w = 1.0 if d <= LEVEL_R else 0.5 + 0.5 * math.cos(math.pi * (d - LEVEL_R) / LEVEL_BLEND)
+                        blend = max(LEVEL_BLEND, min(LEVEL_BLEND_MAX, LEVEL_FADE * abs(max(z - CUT_TOL, min(z + RAISE_TOL, t)) - z)))
+                        if d >= LEVEL_R + blend:
+                            continue
+                        w = 1.0 if d <= LEVEL_R else 0.5 + 0.5 * math.cos(math.pi * (d - LEVEL_R) / blend)
                         if best is None or w > best[0]:
                             best = (w, t)
                     if not best:
                         continue
-                    n = j * landscape.N + i
-                    z = h[n]
                     want = max(z - CUT_TOL, min(z + RAISE_TOL, best[1]))
                     nz = z + best[0] * (want - z)
                     if abs(nz - z) >= 1:
@@ -952,18 +957,24 @@ def grounded(db, W):
     big = [p for p in keep if 'dz' in p]
 
     def towered(i):
-        # (the step between order[i - 1] and order[i]: whichever of the two is a straight becomes the tower, so it
-        # stands at the change; a corner or a gate arch can't be one)
-        for p in [order[i]] + ([order[i - 1]] if i > 0 else [order[-1]]):
-            if 'tower' in p['id'].lower():
-                return
-            if tower_id and p['id'] == straight:
-                p['id'] = p['pose'].id = tower_id
-                p['kind'] = 'tower'
-                nb_ = _box(db, tower_id, p['pose'], memo)[1]
-                if nb_:
-                    p['_b'] = nb_
-                return
+        # (the step between order[i - 1] and order[i]: the HIGHER of the two becomes the tower when it is a straight, so
+        # the lower wall runs into the tower's side; the tower on the low side left the high wall's open end standing
+        # over it, the user's Tessellated Shores, 2026-11-01. The game's Imperial walls step at towers, 28 of 33
+        # towers level and the rest steps, never straight to straight (2 of 141), lab sj1/sj2. A corner or a gate
+        # arch on the high side closes the step itself)
+        a, b = order[i - 1] if i > 0 else order[-1], order[i]
+        hp = max((a, b), key=lambda p: p['pose'].z + p['_b'][5])
+        if any('tower' in p['id'].lower() and p['pose'].z + p['_b'][5] >= hp['pose'].z + hp['_b'][5] - 16 for p in (a, b)):
+            return
+        if tower_id and hp['id'] == straight:
+            top = hp['pose'].z + hp['_b'][5]
+            hp['id'] = hp['pose'].id = tower_id
+            hp['kind'] = 'tower'
+            nb_ = _box(db, tower_id, hp['pose'], memo)[1]
+            if nb_:
+                hp['_b'] = nb_
+                # (its top at least the wall's, its foot under its own ground)
+                hp['pose'].z = min(max(hp['pose'].z, top - nb_[5]), hp['_g'][0] - SINK - nb_[2]) if nb_[5] - nb_[2] > 0 else hp['pose'].z
     seg, starts = [], []
     for i, p in enumerate(order):
         if seg:

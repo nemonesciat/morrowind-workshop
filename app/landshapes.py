@@ -26,6 +26,7 @@ Then rolling ground as rough as the region's on all of the plan's land, the fade
 textures by the region, things and paths following the ground."""
 import math
 import re
+import threading
 from array import array
 from collections import Counter
 
@@ -37,13 +38,15 @@ from editing import EditError, commit, _require_project
 # (area: an outline that shapes nothing, only where Dress… keeps to: landdecor.dress_all)
 # (town: an outline a town is planned in, townplan.py; it shapes nothing either)
 # (street, zone, wall: drawn in a town, its streets, quarters and wall, townplan.plan_once's opts; they shape nothing)
-KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall')
-NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall')
+# (castle: an outline a keep or castle is planned in, castle.py; it shapes nothing)
+KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall', 'castle')
+NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle')
 DEFAULTS = {
     'area': {},
     'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'noinside': False, 'nopeople': False,
              'streets': '', 'counts': {}, 'skip': []},
     'street': {}, 'zone': {'zone': 'residential'}, 'wall': {},
+    'castle': {'style': 'Imperial', 'size': 'medium', 'seed': 1, 'name': '', 'nopeople': False, 'rooms': 'furnished'},
     'coast': {'height': 600, 'width': 6144, 'wander': 1.0, 'sea': 0},
     'plateau': {'height': 2000, 'width': 768, 'terraces': 0},
     # (width 3072, was 8192: that wide, the flanks covered the whole island and a ridge read as a swelling)
@@ -138,7 +141,7 @@ def _clean(L):
     if kind not in KINDS:
         raise EditError('Unknown shape "%s".' % kind)
     pts = [[float(a), float(b)] for a, b in (L.get('pts') or [])][:400]
-    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town', 'zone', 'wall') else 2
+    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town', 'zone', 'wall', 'castle') else 2
     if len(pts) < need:
         raise EditError('A %s needs at least %d point%s.' % (kind, need, '' if need == 1 else 's'))
     prm = dict(DEFAULTS[kind])
@@ -186,7 +189,9 @@ def _line_dist(F, pts, reach, closed=False):
         dx, dy = bx - ax, by - ay
         L2 = dx * dx + dy * dy
         L = math.sqrt(L2)
-        for i in F.near(min(ax, bx) - reach, min(ay, by) - reach, max(ax, bx) + reach, max(ay, by) + reach):
+        for n_, i in enumerate(F.near(min(ax, bx) - reach, min(ay, by) - reach, max(ax, bx) + reach, max(ay, by) + reach)):
+            if not n_ & 4095:
+                _check_stop()
             x, y = F.world(i)
             t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
             d = math.hypot(x - (ax + t * dx), y - (ay + t * dy))
@@ -241,7 +246,9 @@ def _coasts(F, Ls, seed):
         width, height, wander = max(128.0, float(P['width'])), float(P['height']), float(P['wander'])
         ins, sd = _outline(F, L, width * 2.0)
         ins_any |= ins
-        for i, d in sd.items():
+        for n_, (i, d) in enumerate(sd.items()):
+            if not n_ & 4095:
+                _check_stop()
             x, y = F.world(i)
             # (the waterline wanders by bays and headlands a few hundred units across, about the line drawn: it
             # was 0.45 of the coast width, 2,800 at 6,144, and sank half of a small island drawn by its shore, the
@@ -1029,9 +1036,42 @@ def preview(db, cells, plan):
     plan's land at every 4th point, for the map, with the textures it would lay; nothing written. With rock layers,
     every 2nd point on a plan of 36 cells or fewer: at every 4th (512 apart) a band's cliff was a single step and
     the layers hardly showed until applied."""
+    # (a preview can be stopped from the page's busy chip: it was the 2-minute coast preview PIN2 waited on, 2026-11-02;
+    # stopping says {'stopped': True}, and a Shape them is never stopped)
+    _STOPPING.gen = PREVIEWS[0] = PREVIEWS[0] + 1
+    try:
+        return _preview(db, cells, plan)
+    except _Stopped:
+        return {'stopped': True}
+    finally:
+        _STOPPING.gen = None
+
+
+def stop_previews():
+    """Every preview working now stops at its next step."""
+    PREVIEWS[1] = PREVIEWS[0]
+    return {'ok': True}
+
+
+class _Stopped(Exception):
+    pass
+
+
+PREVIEWS = [0, 0]                   # (the last preview started, the last one stopped)
+_STOPPING = threading.local()       # (this thread's preview, None when it isn't one)
+
+
+def _check_stop():
+    g = getattr(_STOPPING, 'gen', None)
+    if g is not None and g <= PREVIEWS[1]:
+        raise _Stopped()
+
+
+def _preview(db, cells, plan):
     rock = float(((plan.get('passes') or {}).get('rock')) or 0) > 0
     s = 2 if rock and len({landrange._key(k) for k in cells or []}) <= 36 else 4
     keys, G, F, _ins, reg = _work(db, cells, plan, s)
+    _check_stop()
     per = 64 // s
     out = {}
     files = {}
@@ -1060,6 +1100,7 @@ PROGRESS = {'on': False, 'what': '', 'frac': 0.0}
 
 
 def _say(what, frac):
+    _check_stop()
     if PROGRESS['on']:
         PROGRESS.update(what=what, frac=round(max(PROGRESS['frac'], min(1.0, frac)), 3))
 

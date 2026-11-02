@@ -7,6 +7,7 @@
 const ICONS = {
   dice: '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="8.5" cy="8.5" r=".9"/><circle cx="15.5" cy="15.5" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="15.5" cy="8.5" r=".9"/><circle cx="8.5" cy="15.5" r=".9"/>',
   chat: '<path d="M4 5.5h16v10H10l-4.5 3.5v-3.5H4z"/>',
+  music: '<path d="M9 18V5.5l10-2v12.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
   person: '<circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c.9-4 3.7-6 7.2-6s6.3 2 7.2 6"/>',
   people: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.7-3.4 3-5.2 6-5.2s5.3 1.8 6 5.2"/><path d="M15.5 5.6a3 3 0 0 1 0 5.8M17.6 14.6c1.8.6 3 2.2 3.4 4.9"/>',
   palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.3 0 1.9-.8 1.9-1.8 0-1.4-1.3-1.7-1.3-3 0-1 .8-1.7 1.9-1.7h2.3a3.7 3.7 0 0 0 3.7-3.7C20.5 6.5 16.7 3.5 12 3.5z"/><circle cx="7.6" cy="11" r="1"/><circle cx="10" cy="7.3" r="1"/><circle cx="14.4" cy="7.3" r="1"/>',
@@ -95,7 +96,7 @@ const ICONS = {
 const EMO_ICON = {
   '🎲': 'dice', '💬': 'chat', '🗣': 'chat', '👋': 'wave', '👤': 'person', '🧍': 'person', '🚶': 'person', '🧝': 'mask', '🎭': 'mask',
   '👥': 'people', '🎨': 'palette', '🖌': 'brush', '💧': 'dropper', '🪨': 'rock', '📍': 'pin', '📌': 'pin', '📜': 'scroll', '📝': 'page', '🗒': 'page', '📄': 'page', '📋': 'page', '📘': 'books',
-  '⚠': 'warn', '🔊': 'sound', '📦': 'box', '🧊': 'box', '🎁': 'gift', '📈': 'chart', '💪': 'hand', '💾': 'save', '🪄': 'wand', '✨': 'sparkle', '🌀': 'swirl', '👁': 'eye',
+  '⚠': 'warn', '🔊': 'sound', '📦': 'box', '🧊': 'box', '🎁': 'gift', '📈': 'chart', '💪': 'hand', '💾': 'save', '🪄': 'wand', '✨': 'sparkle', '⚡': 'wand', '🎣': 'wave', '🪕': 'music', '🙏': 'temple', '🌌': 'sparkle', '🌫': 'wave', '🌀': 'swirl', '👁': 'eye',
   '🚪': 'door', '⚙': 'gear', '🐾': 'paw', '🔧': 'wrench', '🧰': 'chest', '⚒': 'hammer', '🩺': 'pulse', '🧩': 'puzzle', '🧱': 'brick', '🏗': 'brick', '🏘': 'house',
   '📂': 'folder', '📁': 'folder', '🗂': 'folder', '🫳': 'settle', '🪑': 'chair', '🏠': 'house', '🏝': 'map', '🏛': 'temple', '🔎': 'search', '🔍': 'search',
   '🎞': 'film', '💡': 'bulb', '🧭': 'compass', '🗺': 'map', '🎮': 'play', '🔗': 'link', '🔒': 'lock', '🔐': 'lock', '🔓': 'unlock',

@@ -99,8 +99,8 @@ function fbGamesHtml(){
     <div style="display:flex;gap:6px;align-items:center"><b style="flex:1">📋 Copy one of the game's</b><button class="btn sm" id="fb-copyclose" title="Close the search">✕</button></div>
     <input id="fb-q" placeholder="Search ${rows.length} interiors…" value="${esc(FB.q || '')}" style="width:100%;margin:4px 0">
     <div style="max-height:140px;overflow:auto">${hits.slice(0, 40).map(([x, n]) => `<label style="display:block;cursor:pointer;margin:1px 0" title="${esc(x.style || '')}${x.floors > 1 ? ', ' + x.floors + ' floors' : ''}${x.area ? ', ' + x.area + ' m²' : ''}${x.own ? ', this building\'s own' : x.same ? '' : ', round a piece of it'}"><input type="radio" name="fb-game" value="${n}" ${n === pick ? 'checked' : ''}> ${esc(x.name)}</label>`).join('') || '<div class="msg">None by that name.</div>'}</div>
-    <div style="display:flex;gap:6px;align-items:center;margin-top:4px"><select id="fb-keep" title="What comes with it"><option value="furnished">Everything</option><option value="lights">Walls and lights</option><option value="empty">Bare walls</option></select>
-      <button class="btn" id="fb-copy" ${pick == null ? 'disabled' : ''} title="Copy it whole under the name above (people and creatures are left out), its door linked with this building's both ways (one Undo)">Copy it</button></div></div>`;
+    <div style="display:flex;gap:6px;align-items:center;margin-top:4px"><select id="fb-keep" title="Its rooms and doors, furnished by the Workshop or left empty for you; never the original's things"><option value="furnished">Furnished anew</option><option value="shells">Empty shell</option></select>
+      <button class="btn" id="fb-copy" ${pick == null ? 'disabled' : ''} title="Its rooms and doors under the name above, its door linked with this building's both ways (one Undo)">Copy it</button></div></div>`;
 }
 async function fbCopy(){
   const P = FB.panel, G = FB.games; if (!P || !G || FB.gamePick == null) return;

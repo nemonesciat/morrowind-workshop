@@ -59,8 +59,20 @@ def template(db, m, kind, rng, used=None):
         nm = _name_of(db, e)
         if not town_ok(nm):
             continue
-        rows.append((townsurvey.kind_of(e) != kind, bool(PART.search(nm)), used.get(e, 0), rng.random(), e))
+        rows.append((townsurvey.kind_of(e) != kind, _dead_doors(db, e) > 0, bool(PART.search(nm)), used.get(e, 0), rng.random(), e))
     return min(rows)[-1] if rows else None
+
+
+def _dead_doors(db, e):
+    """How many doors of e and the places copied with it would lead nowhere in a copy (to a crypt, a sewer, a place
+    past CLOSURE_MAX): such an interior is taken last. (19 such doors in a walled town of 61 interiors, lab jd5)"""
+    cells = _closure(db, [e])
+    n = 0
+    for c in cells:
+        for r in mapdata.cellmap(db, c).get('refs') or ():
+            if r['type'] == 'DOOR' and r.get('to') and r['to'].get('cell') and r['to']['cell'].lower() not in cells:
+                n += 1
+    return n
 
 
 # ---------------------------------------------------------------- names
@@ -101,9 +113,11 @@ def _tavern(db, culture, rng):
                 names.append(_tail(b['name']))
     words = [w for n in names for w in re.findall(r"[A-Z][a-z']+", TAVERN_WORDS.sub(' ', n)) if not w.endswith("'s")]
     ends = [m.group(1) for n in names for m in [re.search(r'\b(Inn|Tavern|Tradehouse|Hostel|Cornerclub|Club)\b', n)] if m] or ['Inn']
-    if len(words) < 2:
+    if len(set(words)) < 2:
         return None
-    return 'The %s %s %s' % (rng.choice(words), rng.choice(words), rng.choice(ends))
+    a = rng.choice(words)
+    b = rng.choice([w for w in words if w != a])          # ("The Iron Iron Tavern", lab jd3)
+    return 'The %s %s %s' % (a, b, rng.choice(ends))
 
 
 DWELLING = re.compile(r'(House|Shack|Hut|Lodge|Farmhouse|Cabin|Yurt|Tent|Manor|Hall|Apartment|Residence|Household|Tower|Farm)')
@@ -164,7 +178,7 @@ def _building(db, q, dr):
             'cell': dr[0]}
 
 
-def _link_more_doors(db, q):
+def _link_more_doors(db, q, done=()):
     """A building's other doors (a Nordic house's back door) lead into its interior too, as its front door does: left
     unlinked they opened onto nothing, five in a town of 26 (the town audit, 2026-11-01)."""
     import doors
@@ -179,6 +193,8 @@ def _link_more_doors(db, q):
         return
     n = 0
     for key, rk in q['more_doors']:
+        if rk in done:
+            continue                    # (linked as the game's led: copy_building)
         try:
             c, refs = editing._cell(db, key)
         except EditError:
@@ -186,13 +202,426 @@ def _link_more_doors(db, q):
         ref = refs.get(rk)
         if ref is None:
             continue
-        editing._store(c, rk, ref['origin'], ref['idx'], doors._set_link(ref['subs'], to['cell'], [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']]))
+        editing._store(c, rk, ref['origin'], ref['idx'], doors._set_link(ref['subs'], to['cell'], on_floor(db, to['cell'], [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']])))
         n += 1
     if n:
         editing.commit(db, 'Linked the other door%s of %s' % ('' if n == 1 else 's', to['cell']))
 
 
-def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None):
+# ---------------------------------------------------------------- the doors as the game led them
+
+# (a building's interior and the parts its doors lead on to, an upper level, a cellar, a turret, copied together; the
+# game's town templates: 985 of 1,106 are one place, 103 two to six, 48 run on into sewers or further, lab jd2)
+CLOSURE_MAX = 6
+DOOR_MATCH = 48                     # (a placed door is the game's door that stood within this of its spot, same model)
+_PAIRS = {}
+
+
+def _pair(db, key):
+    import shellsurvey as ss
+    if _PAIRS.get('recs') is not db.recs:
+        _PAIRS.clear()
+        _PAIRS['recs'] = db.recs
+        _PAIRS['by'] = {p['key']: p for p in ss.survey(db)['pairs']}
+    return _PAIRS['by'].get(key)
+
+
+def game_doors(db, t):
+    """The game's building outside interior t: (its door frame, the doors of it that lead somewhere, each
+    {'low', 'x', 'y', 'z' in the frame, 'to', 'p'}), or (None, [])."""
+    import math
+    import shellsurvey as ss
+    p = _pair(db, t)
+    if not p:
+        return None, []
+    ef = p['eframe']
+    fr = ss.Frame(ef['x'], ef['y'], ef['z'], ef['ux'], ef['uy'])
+    out = []
+    for it in ss.near_items(db, ef['x'], ef['y']):
+        if it['tag'] != 'DOOR' or not it.get('to'):
+            continue
+        lx, ly = fr.to(it['p'][0], it['p'][1])
+        if math.hypot(lx, ly) < 3000:
+            out.append({'low': it['low'], 'x': lx, 'y': ly, 'z': it['p'][2] - fr.z, 'to': it['to'], 'p': it['p']})
+    return fr, out
+
+
+def _match_doors(pieces, gdoors):
+    """{placed door's ref key: the game door that stood at its spot in the building}."""
+    out = {}
+    for dp in pieces or ():
+        d2 = lambda g: (g['x'] - dp['x']) ** 2 + (g['y'] - dp['y']) ** 2 + (g['z'] - dp['z']) ** 2
+        g = min((g for g in gdoors if g['low'] == dp['id'].lower()), key=d2, default=None)
+        if g is not None and d2(g) <= DOOR_MATCH ** 2:
+            out[dp['rk']] = g
+    return out
+
+
+def _closure(db, seeds):
+    """The places to copy for a building: its interior and those its inside doors lead on to (town places only)."""
+    cells, todo = [], list(seeds)
+    while todo and len(cells) < CLOSURE_MAX:
+        k = todo.pop(0)
+        if k in cells or not db.by_key.get(('CELL', k)) or not town_ok(_name_of(db, k)):
+            continue
+        cells.append(k)
+        for r in mapdata.cellmap(db, k).get('refs') or ():
+            if r['type'] == 'DOOR' and r.get('to') and r['to'].get('cell'):
+                todo.append(r['to']['cell'].lower())
+    return cells
+
+
+def _sub_name(db, name, t, c):
+    """A copied part's name: the main copy's and the part's own ("Anvil, Hasi Manor: Upper Level" behind
+    "Anvil, Hasi Manor" → "<name>: Upper Level")."""
+    tt, ct = _tail(_name_of(db, t)), _tail(_name_of(db, c))
+    if ct.lower().startswith(tt.lower()) and len(ct) > len(tt):
+        suffix = ct[len(tt):].lstrip(' :,-')
+    elif ':' in ct:
+        suffix = ct.split(':', 1)[1].strip()
+    else:
+        suffix = ct
+    suffix = (suffix or 'Back')[:30]
+    return name[:max(10, 60 - len(suffix) - 2)].rstrip(' ,:') + ': ' + suffix
+
+
+ARRIVE_LIFT = 12                # (an arrival this far over the floor or ground under it: the game's own stand 80 over it,
+                               # p10 80, p90 86, lab a01, and you drop a step at every door, the user's Griffbarrow)
+ARRIVE_REACH = 160             # (only onto a floor this near under the game's spot, or this near over it)
+
+
+def on_floor(db, dest, pos, memo=None):
+    """pos (an arrival in dest, '' outside) set on the floor or ground under it, ARRIVE_LIFT over it."""
+    import math
+    import seethrough
+    memo = {} if memo is None else memo
+    x, y, z = pos[0], pos[1], pos[2]
+    key = dest.lower() if dest else '#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0))
+    if key not in memo:
+        try:
+            refs = [r for r in mapdata.cellmap(db, key).get('refs') or () if r['type'] not in ('NPC_', 'CREA', 'DOOR')]
+            if not dest:
+                refs = [r for r in refs if r.get('arch')]
+            memo[key] = seethrough.place_scene(db, {'refs': refs})
+        except Exception:
+            memo[key] = None
+    sc, fl = memo[key], None
+    if sc is not None:
+        h = sc.nearest_any((x, y, z + ARRIVE_REACH), (0.0, 0.0, -1.0), 2 * ARRIVE_REACH)
+        fl = z + ARRIVE_REACH - h[0] if h else None
+    if not dest:
+        g = mapdata.terrain_z(db, x, y)
+        if g is not None and (fl is None or fl < g) and abs(g - z) <= 2 * ARRIVE_REACH:
+            fl = g
+    return list(pos) if fl is None else [x, y, fl + ARRIVE_LIFT] + list(pos[3:])
+
+
+def _carry(to, gp, xp):
+    """The game's arrival outside its door gp, carried to our door xp: the same spot and turn in the door's frame."""
+    import math
+    import create
+    lx, ly = create._rot2(to['x'] - gp[0], to['y'] - gp[1], -gp[5])
+    wx, wy = create._rot2(lx, ly, xp[5])
+    return [xp[0] + wx, xp[1] + wy, xp[2] + (to['z'] - gp[2]), 0.0, 0.0, (to['rz'] - gp[5] + xp[5]) % (2 * math.pi)]
+
+
+def copy_building(db, q, t, name, taken):
+    """The game's interior t copied for the plot's building with the places its doors lead on to, and every door
+    linked as the game's led: the building's outside doors to the copies of the inside doors the game paired them
+    with, arriving where the game's arrive; the inside doors out to those, a step in front of them, facing away; trap
+    doors and ladders between the copied storeys as the game joined them. None when the game's building can't be
+    read (the caller copies the old way). {'key', 'name', 'linked', 'dead'}"""
+    import math
+    import create
+    import doors
+    import editing
+    fr, G = game_doors(db, t)
+    M = _match_doors(q.get('door_pieces'), G)
+    dr = q.get('door_ref')
+    if not G or not dr or dr[1] not in M or (M[dr[1]]['to'].get('cell') or '').lower() != t:
+        return None
+    seeds = [t] + [(g['to'].get('cell') or '').lower() for g in M.values() if g['to'].get('cell')]
+    cells = _closure(db, seeds)
+    if t not in cells:
+        return None
+    names = {t: name}
+    for c in cells[1:]:
+        names[c] = _unique(db, _sub_name(db, name, t, c), taken)
+    n0 = len(getattr(db.project, 'undo_stack', []))
+    keys = {c: create.create_interior(db, c, names[c], 'furnished', None) for c in cells}
+    placed = {}
+    for dp in q.get('door_pieces') or ():
+        r = next((r for r in mapdata.cellmap(db, dp['key']).get('refs') or () if r['k'] == dp['rk']), None)
+        if r is not None:
+            placed[dp['rk']] = (dp['key'], r)
+    by_game = {id(g): rk for rk, g in M.items()}
+    links = []                          # (cell key, ref key, destination name, position)
+    dead = 0
+    for c in cells:
+        tm, cm = mapdata.cellmap(db, c), mapdata.cellmap(db, keys[c])
+        copies = [r for r in cm['refs'] if r['type'] == 'DOOR']
+        for r in tm['refs']:
+            if r['type'] != 'DOOR' or not r.get('to'):
+                continue
+            cr = min(copies, key=lambda o: math.dist(o['p'][:3], r['p'][:3]), default=None)
+            if cr is None or cr['id'].lower() != r['id'].lower() or math.dist(cr['p'][:3], r['p'][:3]) > 2:
+                continue
+            to = r['to']
+            tc = (to.get('cell') or '').lower()
+            if tc in names:
+                links.append((keys[c], cr['k'], names[tc], [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']]))
+                continue
+            if not tc:
+                # (out: the building's door the game's arrival stands in front of, among those that lead into this place)
+                g = min((g for g in G if (g['to'].get('cell') or '').lower() == c), default=None,
+                        key=lambda g: math.hypot(g['p'][0] - to['x'], g['p'][1] - to['y']))
+                rk = by_game.get(id(g)) if g is not None and math.hypot(g['p'][0] - to['x'], g['p'][1] - to['y']) < 400 else None
+                if rk in placed:
+                    xp = placed[rk][1]['p']
+                    out = _carry(to, g['p'], xp)
+                    gz = mapdata.terrain_z(db, out[0], out[1])
+                    if gz is not None and out[2] < gz + 4:
+                        out[2] = gz + 8
+                    links.append((keys[c], cr['k'], '', out))
+                    continue
+            dead += 1                   # (it led on past what was copied: left a plain door)
+    for rk, g in M.items():
+        tc = (g['to'].get('cell') or '').lower()
+        if tc in names and rk in placed:
+            to = g['to']
+            links.append((placed[rk][0], rk, names[tc], [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']]))
+    db.sync_project()
+    floors = {}
+    for ck, rk, dest, pos in links:
+        c_, refs = editing._cell(db, ck)
+        ref = refs.get(rk)
+        if ref is not None:
+            editing._store(c_, rk, ref['origin'], ref['idx'], doors._set_link(ref['subs'], dest, on_floor(db, dest, pos, floors)))
+    editing.commit(db, 'Linked the doors of %s as the game\'s led' % name)
+    editing.fold(db, len(getattr(db.project, 'undo_stack', [])) - n0, 'Copied %s for the building, its doors linked as the game\'s' % name)
+    linked = {rk for ck, rk, dest, pos in links}
+    return {'key': keys[t], 'name': name, 'parts': [names[c] for c in cells[1:]], 'linked': len(links), 'dead': dead,
+            'placed_linked': linked & set(placed), 'from': [(keys[c], c) for c in cells]}
+
+
+# ---------------------------------------------------------------- the Workshop's own furnishing
+
+# (the user, 2026-11-02: "we can learn as much as we want from other interiors about design and architecture, but we
+# can't just copy them wholesale ... the interior decor and furnishing at least has to be unique". A town's interior
+# keeps the game building's architecture, doors and door graph; its furnishing is the Workshop's own (castle.furnish_shell:
+# each room's kind read from what the source room held, never its spots), or none for a modder to furnish)
+ROOMS = ('none', 'shells', 'furnished')
+FIXTURE = re.compile(r'sconce|chandelier|wall_?torch|torch_?wall|torchholder|_brazier', re.I)
+PLAIN_LIGHT_UP = 170            # (a room's own plain light: this far over its floor)
+_PLAIN = {}
+
+
+def _kept_light(db, rid):
+    """A light of the architecture: one with no model (a glow the builder set) or a fixture on the wall that can't be
+    carried. Lamps, candles and lanterns are furnishing."""
+    ri = db.resolve_id(rid)
+    if ri is None or db.recs[ri][0] != 'LIGH':
+        return False
+    if not db.recs[ri][5]:
+        return True
+    if not FIXTURE.search(rid):
+        return False
+    import builder
+    return builder._light_carried(db, rid) is False
+
+
+def _plain_light(db):
+    """The game's most used warm light with no model, of a room's reach (256-768): an id, or None."""
+    k = id(db.recs)
+    if k in _PLAIN:
+        return _PLAIN[k]
+    import struct
+    from esm import iter_subrecords
+    best = None
+    for (tag, low), lst in db.by_key.items():
+        if tag != 'LIGH' or not lst:
+            continue
+        r = db.recs[lst[-1]]
+        if r[5]:
+            continue
+        try:
+            _t, _f, data = db.files[r[3]].record_at(r[4])
+        except Exception:
+            continue
+        for st, sd in iter_subrecords(data):
+            if st == 'LHDT' and len(sd) >= 24:
+                _w, _v, _d, rad, cr, cg, cb, _a, fl = struct.unpack_from('<fiiiBBBBi', sd, 0)
+                if 256 <= rad <= 768 and not fl & 4 and cr >= 150 and cr >= cg >= cb:
+                    n = len(db.used_in.get(low, ()))
+                    if best is None or n > best[0]:
+                        best = (n, r[1])
+    _PLAIN[k] = best[1] if best else None
+    return _PLAIN[k]
+
+
+def make_own(db, key, src, rooms='furnished', seed=1):
+    """A copied place made the Workshop's own: everything but its architecture, doors and built-in lights taken out;
+    then furnished by the Workshop's own furnisher (rooms 'furnished'), or left empty with a plain light in every room
+    that has none ('shells'). One step of its own. {'taken', 'placed', 'lights'}"""
+    import castle
+    import editing
+    from project import ref_info
+    c = db.project.cells.get(key)
+    if not c:
+        return {'taken': 0, 'placed': 0, 'lights': 0}
+    gone = []
+    for rk, ref in list(c['refs'].items()):
+        rid = ref_info(castle._subs(ref))[0]
+        if not (castle.is_shell(db, rid) or _kept_light(db, rid)):
+            gone.append(rk)
+    for rk in gone:
+        c['refs'].pop(rk, None)
+    db.sync_project()
+    placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), seed) if rooms == 'furnished' else 0
+    lit = _light_rooms(db, key) if rooms == 'shells' else 0
+    editing.commit(db, '%s %s' % ('Furnished' if rooms == 'furnished' else 'Emptied', (mapdata.cell_info(db, key) or {}).get('name') or key))
+    return {'taken': len(gone), 'placed': placed, 'lights': lit}
+
+
+def _light_rooms(db, key):
+    """A plain light in every room of the place with no light in it. The number added."""
+    import furnish
+    import fixit
+    lid = _plain_light(db)
+    if not lid:
+        return 0
+    try:
+        info = furnish.rooms(db, key)
+    except Exception as e:
+        print('shell rooms of', key, e)
+        return 0
+    T = info.get('tile') or 256
+    lights = [r['p'] for r in mapdata.cellmap(db, key).get('refs') or () if r['type'] == 'LIGH']
+    ops = []
+    for rm in info.get('rooms') or ():
+        tl = rm.get('_tiles') or []
+        if not tl:
+            continue
+        fz = rm.get('floor') if rm.get('floor') is not None else min(t.get('z', 0.0) for t in tl)
+        if any(any(abs(p[0] - t['x']) <= T / 2 and abs(p[1] - t['y']) <= T / 2 for t in tl) and -40 <= p[2] - fz <= 500 for p in lights):
+            continue
+        mx, my = sum(t['x'] for t in tl) / len(tl), sum(t['y'] for t in tl) / len(tl)
+        t0 = min(tl, key=lambda t: (t['x'] - mx) ** 2 + (t['y'] - my) ** 2)
+        ops.append({'op': 'place', 'id': lid, 'p': [t0['x'], t0['y'], fz + PLAIN_LIGHT_UP, 0.0, 0.0, 0.0]})
+    if ops:
+        fixit.apply(db, key, ops, commit=False)
+    return len(ops)
+
+
+# ---------------------------------------------------------------- rooms in the wall
+
+# (the game's own wall pieces with an interior behind a door of theirs: keeps, guard towers, curtain-wall towers, the
+# Imperial forts' and Firewatch's, Old Ebonheart's; a made town's towers stood doorless, the user's walk of 2026-11-01)
+WALL_ROOM = re.compile(r'keep|guardtower|wall_tower', re.I)
+WALL_ROOMS = 6                     # a town's wall holds at most this many rooms
+DOOR_GROUND = 64                   # (a wall door's sill this near the ground in front of it, or it is not used there)
+_WALLX = {}
+
+
+def _wall_examples(db):
+    """{wall model: [{'t', 'door', 'off': (x, y, z, turn) of the door from the piece, 's', 'to', 'gd'}]}: where the game
+    sets a door on that piece and the interior behind it."""
+    import math
+    import create
+    import shellsurvey as ss
+    if _WALLX.get('recs') is db.recs:
+        return _WALLX['out']
+    out = {}
+    for p in ss.survey(db)['pairs']:
+        main = (p['building'].get('main') or '').lower()
+        if not WALL_ROOM.search(main) or not town_ok(p.get('name') or '') or not db.by_key.get(('CELL', p['key'])):
+            continue
+        ef = p['eframe']
+        items = ss.near_items(db, ef['x'], ef['y'])
+        d = next((it for it in items if it['tag'] == 'DOOR' and it['to'] and (it['to'].get('cell') or '').lower() == p['key']
+                  and math.hypot(it['p'][0] - ef['x'], it['p'][1] - ef['y']) < 5), None)
+        if d is None:
+            continue
+        ms = [it for it in items if it['low'] == main]
+        if not ms:
+            continue
+        m = min(ms, key=lambda it: math.hypot(it['p'][0] - d['p'][0], it['p'][1] - d['p'][1]))
+        if math.hypot(m['p'][0] - d['p'][0], m['p'][1] - d['p'][1]) > 1500 or abs((m['s'] or 1.0) - 1.0) > 0.01:
+            continue
+        lx, ly = create._rot2(d['p'][0] - m['p'][0], d['p'][1] - m['p'][1], -m['p'][5])
+        out.setdefault(main, []).append({'t': p['key'], 'door': d['id'], 's': d['s'] or 1.0, 'to': d['to'], 'gd': d['p'],
+                                         'off': (lx, ly, d['p'][2] - m['p'][2], (d['p'][5] - m['p'][5]) % (2 * math.pi))})
+    _WALLX.update(recs=db.recs, out=out)
+    return out
+
+
+def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
+    """Doors into the wall's own towers and keep, each with the game's interior for that piece behind it: the door where
+    the game sets it on the piece, kept only where it opens into the town at the ground; linked both ways as the game's
+    are. pieces: [(cell key, ref key, id, pose [x, y, z, rx, ry, rz])]. The interiors' names."""
+    import math
+    import create
+    import doors
+    import editing
+    import townwalls
+    from project import set_ref_pos, zs
+    X = _wall_examples(db)
+    cand = [w for w in pieces if w[2].lower() in X]
+    # (the keep and the big towers first, then the wall towers, spread round the wall)
+    cand.sort(key=lambda w: (0 if re.search('keep', w[2], re.I) else 1 if re.search('guardtower', w[2], re.I) else 2, rng.random()))
+    names, used = [], set()
+    mine = db.project.plugin.lower()
+    for ck, rk, wid, pose in cand:
+        if len(names) >= WALL_ROOMS:
+            break
+        exs = sorted(X[wid.lower()], key=lambda e: (_dead_doors(db, e['t']) > 0, e['t'] in used, rng.random()))
+        for e in exs:
+            lx, ly, dz, drz = e['off']
+            wx, wy = create._rot2(lx, ly, pose[5])
+            dp = [pose[0] + wx, pose[1] + wy, pose[2] + dz, 0.0, 0.0, (pose[5] + drz) % (2 * math.pi)]
+            # (where you come out: the game's arrival, carried to this door; in the town, on the ground)
+            tm = mapdata.cellmap(db, e['t'])
+            back = [r for r in tm['refs'] if r['type'] == 'DOOR' and r.get('to') and not r['to'].get('cell')]
+            if not back:
+                continue
+            ib = min(back, key=lambda r: math.hypot(r['to']['x'] - e['gd'][0], r['to']['y'] - e['gd'][1]))
+            out = _carry(ib['to'], e['gd'], dp)
+            if not townwalls._inside(outline, (out[0], out[1])):
+                continue                    # (it opens outside the town)
+            gz = mapdata.terrain_z(db, out[0], out[1])
+            if gz is None or abs(out[2] - 12 - gz) > DOOR_GROUND + 60:
+                continue                    # (its sill in the air or in the ground here)
+            ri = db.resolve_id(e['door'])
+            if ri is None:
+                continue
+            # (named by the piece: the game's own names were "Interior", "Towers", "Prison")
+            name = _unique(db, '%s, %s' % (town, 'Keep' if re.search('keep', wid, re.I) else 'Guard Tower' if re.search('guardtower', wid, re.I) else 'Wall Tower'), taken)
+            key = create.create_interior(db, e['t'], name, 'furnished', None)
+            cm = mapdata.cellmap(db, key)
+            cb = min((r for r in cm['refs'] if r['type'] == 'DOOR'), key=lambda r: math.dist(r['p'][:3], ib['p'][:3]), default=None)
+            if cb is None:
+                continue
+            dk = '#%d,%d' % (math.floor(dp[0] / 8192.0), math.floor(dp[1] / 8192.0))
+            cell, _refs = editing._cell(db, dk)
+            nk = db.project.new_ref_key()
+            to = e['to']
+            subs = doors._set_link(set_ref_pos([('NAME', zs(db.recs[ri][1]))], tuple(dp), e['s']), name, on_floor(db, name, [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']]))
+            editing._store(cell, nk, mine, int(nk.rsplit('|', 1)[1]), subs)
+            c2, refs2 = editing._cell(db, key)
+            r2 = refs2[cb['k']]
+            editing._store(c2, cb['k'], r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', on_floor(db, '', out)))
+            editing.commit(db, 'A room in the wall of %s: %s' % (town, name))
+            try:
+                make_own(db, key, e['t'], rooms, rng.randrange(1, 1 << 30))
+            except EditError as e_:
+                print('wall room made its own:', name, e_)
+            used.add(e['t'])
+            names.append(name)
+            break
+    return names
+
+
+def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None, rooms='furnished'):
     """An interior behind every built plot's door (q['door_ref']), and its people. Each step its own change; the caller
     folds them with the town into one. say(done share): told as each plot is gone through (townbuild's progress bar).
     {'interiors', 'people', 'names', 'skipped'}"""
@@ -239,17 +668,25 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 family = castsurvey._split_name(h['name'], h.get('race') or '')[1] or None
         name = _unique(db, interior_name(db, town, tname, townsurvey.kind_of(tname), head, family, culture, rng), taken)
         try:
-            out = frombuilding.copy_game_interior(db, dr[0], dr[1], t, name, 'furnished', door_key=dr[1], b=_building(db, q, dr))
+            out = copy_building(db, q, t, name, taken)
+            if out is None:
+                out = frombuilding.copy_game_interior(db, dr[0], dr[1], t, name, 'furnished', door_key=dr[1], b=_building(db, q, dr))
         except EditError as e:
             print('town interior:', name, e)
             skipped += 1
             continue
         made += 1
         names.append(out['name'])
+        for k_, src_ in out.get('from') or [(out['key'], t)]:
+            try:
+                make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()))
+            except EditError as e:
+                print('town interior made its own:', name, e)
         q['inside_kind'] = kind
         q['interior'] = out['key']
-        _link_more_doors(db, q)
-        ppl = (cast_ or {}).get('people') or [] if people else []
+        q['interior_from'] = out.get('from') or [(out['key'], t)]
+        _link_more_doors(db, q, out.get('placed_linked') or ())
+        ppl = (cast_ or {}).get('people') or [] if people and rooms == 'furnished' else []
         if ppl:
             import populate
             try:

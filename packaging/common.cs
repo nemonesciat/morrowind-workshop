@@ -57,20 +57,24 @@ static class Common
 
     public static string RunningFile(string root) { return Path.Combine(root, "workshop_running.json"); }
 
-    // The address of a Workshop that is running from this folder, or null.
+    // The address of a Workshop that is running from this folder, or null. A busy one counts (its process there and
+    // listening on its port): asked with a 2 s limit, a busy Workshop looked gone (PIN2's "could not start", 2026-11-02)
     public static string RunningUrl(string root)
     {
         try
         {
             string text = File.ReadAllText(RunningFile(root));
             Match m = Regex.Match(text, "\"url\"\\s*:\\s*\"([^\"]+)\"");
-            if (!m.Success) return null;
-            string url = m.Groups[1].Value;
-            var req = (HttpWebRequest)WebRequest.Create(url + "api/link");
-            req.Timeout = 2000;
-            req.Proxy = null;
-            using (var resp = (HttpWebResponse)req.GetResponse())
-                return resp.StatusCode == HttpStatusCode.OK ? url : null;
+            Match pid = Regex.Match(text, "\"pid\"\\s*:\\s*(\\d+)");
+            Match port = Regex.Match(text, "\"port\"\\s*:\\s*(\\d+)");
+            if (!m.Success || !pid.Success || !port.Success) return null;
+            using (var p = Process.GetProcessById(int.Parse(pid.Groups[1].Value)))
+                if (p.HasExited) return null;
+            using (var c = new System.Net.Sockets.TcpClient())
+            {
+                if (!c.ConnectAsync("127.0.0.1", int.Parse(port.Groups[1].Value)).Wait(2000)) return null;
+                return m.Groups[1].Value;
+            }
         }
         catch { return null; }
     }

@@ -4,7 +4,18 @@
 const RC = {data: null, kind: 'skills', sel: null, form: null};
 const RC_KINDS = [['skills', 'Skills', 'skill'], ['attributes', 'Attributes', 'attribute'], ['weathers', 'Weathers', 'weather'], ['lists', 'Lists', 'list addition'],
                   ['loot', 'Loot rules', 'loot rule'], ['ingredients', 'Ingredients', 'ingredient'], ['looks', 'Look at', 'look-at line'],
-                  ['traps', 'Traps', 'trap']];
+                  ['traps', 'Traps', 'trap'], ['happens', 'When… then…', 'when… then…']];
+const RC_DO = {raise: 'Raise a skill', give: 'Give items', bless: 'A blessing', patron: 'A patron\'s bonus', cast: 'Cast a spell', say: 'Show a line'};
+// (a select of the game's skills and attributes and yours: values "s:id" / "a:id"; just skills when only='skill')
+function rcStatSel(attr, val, both, only){
+  const D = RC.data || {}, cap = x => x.replace(/(^|_)(\w)/g, (m, a, b) => (a ? ' ' : '') + b.toUpperCase());
+  const sk = (D.skills_game || []).map(s => ['s:' + s, cap(s)]).concat((D.skills || []).map(s => ['s:' + s.id, '★ ' + s.name]));
+  const at = (D.attributes_game || []).map(s => ['a:' + s, cap(s)]).concat((D.attributes || []).map(s => ['a:' + s.id, '★ ' + s.name]));
+  const v = only === 'skill' && val && !val.includes(':') ? 's:' + val : val;
+  const opt = list => list.map(([k_, t]) => `<option value="${esc(k_)}" ${k_.toLowerCase() === (v || '').toLowerCase() ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  return `<select class="inp" ${attr} style="width:auto">${both ? '<option value="">(none)</option>' : ''}${only === 'skill' ? opt(sk) : `<optgroup label="Attributes">${opt(at)}</optgroup><optgroup label="Skills">${opt(sk)}</optgroup>`}</select>`;
+}
+const rcStatOf = v => v ? {kind: v.startsWith('a:') ? 'attribute' : 'skill', stat: v.slice(2)} : null;
 const RC_LOOT = {weapon: 'Weapons', armor: 'Armour', clothing: 'Clothing', potion: 'Potions', ingredient: 'Ingredients', book: 'Books',
                  misc: 'Odds and ends', apparatus: 'Apparatus', lockpick: 'Lockpicks', probe: 'Probes', repair: 'Repair tools', light: 'Lights'};
 const RC_TIMES = {sunrise: 'Sunrise', day: 'Day', sunset: 'Sunset', night: 'Night'};
@@ -17,6 +28,10 @@ const RC_FLAGS = [['isStorm', 'A storm', 'People lean into it and move slower, a
                   ['hasRipples', 'Ripples', 'Rain ripples on the water']];
 
 function rcOpenKind(kind){ RC.kind = kind || 'skills'; RC.sel = null; RC.form = null; showView('myrec'); }
+// (a new one already filled in: the right-click menu's "Make it a trap…", "When opened…" for the thing clicked)
+function rcOpenWith(kind, form){ RC.kind = kind; RC.sel = null; RC.form = form; showView('myrec'); }
+// (one of yours opened from elsewhere: Health check's "Check my mod" rows)
+function rcOpenOne(kind, id){ RC.kind = kind; RC.sel = null; RC.form = null; RC.want = id; showView('myrec'); }
 
 async function renderMyRecords(){
   const nb = document.querySelector('nav [data-view="createv"]'); if (nb) nb.classList.add('on');
@@ -24,6 +39,7 @@ async function renderMyRecords(){
   if (!S.summary || !S.summary.project){ box.innerHTML = '<div class="wrap"><h1>Skills, attributes and weathers</h1><p class="lead">Start a mod first.</p></div>'; return; }
   box.innerHTML = '<div class="msg" style="padding:30px"><span class="spin"></span>Loading…</div>';
   try { RC.data = await api('/api/myrecords'); } catch (e){ box.innerHTML = `<div class="msg err" style="padding:30px">${esc(e.message)}</div>`; return; }
+  if (RC.want){ const w = RC.want; RC.want = null; if ((RC.data[RC.kind] || []).some(x => x.id === w)){ rcOpen(w); return; } }
   if (!RC.form) rcNew();
   rcDraw();
 }
@@ -36,6 +52,7 @@ function rcNew(){
     : RC.kind === 'ingredients' ? {id: '', effects: [{id: ''}, {id: ''}, {id: ''}, {id: ''}]}
     : RC.kind === 'looks' ? {object: '', cell: '', text: ''}
     : RC.kind === 'traps' ? {name: '', objects: [], cell: '', spell: '', once: true, text: ''}
+    : RC.kind === 'happens' ? {name: '', when: 'use', ids: [], water: false, daily: false, once: false, chance: 100, by: null, miss: '', then: [{do: 'say', text: ''}]}
     : {name: '', id: '', template: 'clear', colours: {}, fields: {}, regions: []};
 }
 function rcOpen(id){
@@ -84,6 +101,39 @@ function rcFormHtml(){
       <label>People</label><input class="inp" id="rc-npcs" value="${esc((f.npcs || []).join(', '))}" placeholder="NPC or creature IDs">
       <label>Glow</label><div style="display:flex;gap:6px;align-items:center"><label class="chk"><input type="checkbox" id="rc-glow" ${f.glow ? 'checked' : ''}> the containers glow until opened</label>
         <input type="color" id="rc-glowc" value="${rcHex(f.glow || [255, 214, 120])}" style="width:44px;height:26px;padding:0"><span class="msg">(OpenMW 0.52)</span></div></div>`;
+  if (k === 'happens'){
+    const then = f.then || [], by = f.by || {};
+    const row = (a, i) => {
+      const d = a.do || 'say', at = (n, p) => `data-h${n}="${i}"`;
+      const amt = `<input class="inp" type="number" step="0.5" ${at('amount')} value="${a.amount ?? 5}" style="width:70px" title="How much it adds">`;
+      const scale = `<span class="msg">+</span><input class="inp" type="number" step="0.05" min="0" ${at('sper')} value="${(a.scale || {}).per ?? 0}" style="width:70px" title="Added for each point of the stat beside it">
+        <span class="msg">a point of</span>${rcStatSel(`data-hsstat="${i}"`, a.scale && a.scale.stat ? (a.scale.kind === 'attribute' ? 'a:' : 's:') + a.scale.stat : '', true)}`;
+      const body = d === 'raise' ? `${rcStatSel(`data-hstat="${i}"`, a.stat || a.skill || '', false, 'skill')}<span class="msg">by</span><input class="inp" type="number" step="0.5" min="0" ${at('gain')} value="${a.gain ?? 1}" style="width:70px">`
+        : d === 'give' ? `<div class="dd" style="flex:1;min-width:180px"><input class="inp" ${at('id')} id="rc-hid-${i}" value="${esc(a.id || '')}" placeholder="An item… (search)" title="Or * for one more of what the thing activated holds (a plant's own ingredient)" autocomplete="off"><div class="ddlist" id="rc-hid-${i}-l"></div></div>
+            <span class="msg">×</span><input class="inp" type="number" min="1" max="100" ${at('count')} value="${a.count || 1}" style="width:60px">`
+        : d === 'bless' || d === 'patron' ? `${rcStatSel(`data-hstat="${i}"`, (a.kind === 'attribute' ? 'a:' : 's:') + (a.stat || ''), true)}${amt}${scale}
+            ${d === 'bless' ? `<span class="msg">for</span><input class="inp" type="number" min="0.1" step="1" ${at('hours')} value="${a.hours ?? 24}" style="width:60px"><span class="msg">hours</span>`
+                            : `<span class="msg">one at a time of</span><input class="inp" ${at('group')} value="${esc(a.group || 'patron')}" style="width:90px" title="Picking another of this group takes this one's bonus away: one patron at a time">`}`
+        : d === 'cast' ? `<div class="dd" style="flex:1;min-width:180px"><input class="inp" ${at('spell')} id="rc-hsp-${i}" value="${esc(a.spell || '')}" placeholder="A spell… (search)" autocomplete="off"><div class="ddlist" id="rc-hsp-${i}-l"></div></div>`
+        : `<input class="inp" ${at('text')} value="${esc(a.text || '')}" maxlength="200" placeholder="A line on screen" style="flex:1">`;
+      return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px"><select class="inp" data-hdo="${i}" style="width:auto">${Object.entries(RC_DO).map(([v, t]) => `<option value="${v}" ${v === d ? 'selected' : ''}>${t}</option>`).join('')}</select>${body}
+        <button class="btn sm" data-hdel="${i}" title="Take this out">✕</button></div>`;
+    };
+    return `<div class="msg" style="margin-bottom:10px">When the player does something, then something happens: the building block of a new skill's use,
+      a shrine's blessing, a book that teaches. No scripting: the Workshop writes the scripts. Needs OpenMW 0.52.</div>
+    <div class="frow"><label>Name</label><input class="inp" id="rc-name" maxlength="48" value="${esc(f.name || '')}" placeholder="e.g. Catch a fish">
+      <label>When the player</label><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select class="inp" id="rc-when" style="width:auto">
+        <option value="use" ${f.when === 'use' ? 'selected' : ''}>uses</option><option value="activate" ${f.when === 'activate' ? 'selected' : ''}>activates</option>
+        <option value="read" ${f.when === 'read' ? 'selected' : ''}>reads</option></select>
+        <input class="inp" id="rc-hids" value="${esc((f.ids || []).join(', '))}" placeholder="${f.when === 'read' ? 'book IDs, e.g. bk_PilgrimsPath' : f.when === 'activate' ? 'IDs, e.g. Furn_shrine_Rilm_cure_01' : 'item IDs, e.g. misc_de_fishing_pole'}" style="flex:1;min-width:240px"></div>
+      <label>Only if</label><div style="display:flex;gap:4px 14px;flex-wrap:wrap;align-items:center"><label class="chk"><input type="checkbox" id="rc-water" ${f.water ? 'checked' : ''}> by water</label>
+        <select class="inp" id="rc-often" style="width:auto"><option value="">every time</option><option value="daily" ${f.daily ? 'selected' : ''}>once a day for each one</option><option value="once" ${f.once ? 'selected' : ''}>once ever for each one</option></select></div>
+      <label>Chance</label><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input class="inp" type="number" min="0" max="100" id="rc-hchance" value="${f.chance ?? 100}" style="width:70px"><span class="msg">% +</span>
+        <input class="inp" type="number" step="0.1" min="0" id="rc-hper" value="${by.per ?? 0}" style="width:70px"><span class="msg">% a point of</span>${rcStatSel('id="rc-hby"', by.stat ? (by.kind === 'attribute' ? 'a:' : 's:') + by.stat : '', true)}</div>
+      <label>Else it says</label><input class="inp" id="rc-miss" maxlength="200" value="${esc(f.miss || '')}" placeholder="when the chance doesn't come up, e.g. Nothing bites.">
+      <label>Then</label><div>${then.map(row).join('')}<button class="btn sm" id="rc-hadd">+ Then…</button>
+        <div class="hint">Skills rise for trying; the rest happens when the chance comes up. Blessings and patrons grow with the stat named.</div></div></div>`;
+  }
   if (k === 'traps') return `<div class="msg" style="margin-bottom:10px">A spell strikes whoever opens, takes or uses a thing: a cursed chest, a door
       that burns, a book that drains the reader. With OpenMW 0.52 by the game's own rules, its area going off where the thing is.</div>
     <div class="frow"><label>Name</label><input class="inp" id="rc-name" maxlength="48" value="${esc(f.name || '')}" placeholder="e.g. Burning door">
@@ -188,7 +238,8 @@ function rcFormHtml(){
         <select class="inp" data-greg="${i}" style="max-width:280px">${D.regions.map(g => `<option value="${esc(g.id)}" ${g.id.toLowerCase() === (r.region || '').toLowerCase() ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>
         <input class="inp" type="number" min="0" max="100" step="0.5" data-gch="${i}" value="${r.chance ?? 10}" style="width:80px"> %
         <button class="btn sm" data-gdel="${i}">✕</button></div>`).join('') || '<div class="msg">Nowhere yet.</div>'}</div>
-    <div class="actions" style="margin-top:4px"><button class="btn sm" id="rc-gadd">+ A region</button></div>`;
+    <div class="actions" style="margin-top:4px"><button class="btn sm" id="rc-gadd">+ A region</button>
+      <label class="chk" title="It comes only after dark (8 pm to 5 am, that chance each hour) and clears at dawn: an aurora, a ghostly mist"><input type="checkbox" id="rc-night" ${f.night ? 'checked' : ''}> Only at night</label></div>`;
 }
 
 // where a skill or attribute of yours counts: classes, factions, races (the game's or your mod's)
@@ -216,14 +267,20 @@ function rcDraw(){
     : !D.ready ? `<div class="msg warn" style="margin-bottom:10px">Needs OpenMW ${D.needs} or newer; the Workshop starts ${D.openmw ? 'OpenMW ' + esc(D.openmw) : 'an OpenMW it can\'t date'}. Made now, they show once you play on ${D.needs}.</div>` : '';
   box.innerHTML = `<aside class="dside"><div class="actions" style="margin-top:0"><button class="btn sm primary" id="rc-new">+ New ${one}</button><button class="btn sm" id="rc-back">← Create</button></div>
       <div class="rctabs">${RC_KINDS.map(([kk, l]) => `<button class="btn sm ${kk === k ? 'on' : ''}" data-rctab="${kk}">${l}</button>`).join('')}</div>
-      ${D[k].length ? D[k].map(e => `<div class="li ${RC.sel === e.id ? 'on' : ''}" data-rcopen="${esc(e.id)}" style="cursor:pointer;padding:6px 8px;border-radius:6px">${esc(e.name)}<div class="msg">${esc(e.id)}</div></div>`).join('') : `<div class="msg">None yet.</div>`}
+      ${D[k].length ? D[k].map(e => `<div class="li ${RC.sel === e.id ? 'on' : ''}" data-rcopen="${esc(e.id)}" style="cursor:pointer;padding:6px 8px;border-radius:6px">${esc(e.name)}${((D.missing || {})[k] || {})[e.id] ? ' <span title="Something is still missing: open it to see what" style="color:#e0a040">⚠</span>' : ''}<div class="msg">${esc(e.id)}</div></div>`).join('') : `<div class="msg">None yet.</div>`}
+      ${(D.examples || []).length ? `<h4 style="margin:16px 0 6px">Start from an example</h4>
+        ${D.examples.map(x => `<div class="rcexrow"><button class="btn sm rcex" data-rcex="${x.key}" title="${esc(x.line)}">${x.icon} ${esc(x.name)}</button>${x.made
+          ? `<button class="btn sm" data-rctry="${x.key}" title="Try it in the game: its test setup switched on, then pick where to start (${esc(x.where)})">▶</button>` : ''}</div>`).join('')}
+        <div class="msg" style="margin-top:4px">Each makes everything it needs, ready to play and to change. ▶ tries it in the game.</div>` : ''}
       <div class="msg" style="margin-top:14px;line-height:1.6">${k === 'traps' ? 'Works on OpenMW 0.51 too; 0.52 adds the game\'s own spell rules.' : 'New to the game in OpenMW ' + D.needs + ': made as it loads.'}
         ${typeof guideLink === 'function' ? guideLink('openmw-052.md', 'What OpenMW 0.52 adds') : ''}</div></aside>
     <main class="dmain"><div class="wrap" style="max-width:860px">
       <h1>${RC.sel ? esc(RC.form.name || RC.sel) : 'New ' + one}</h1>${warn}
+      ${RC.sel && ((D.missing || {})[k] || {})[RC.sel] ? `<div class="msg warn" style="margin-bottom:10px"><b>Still missing:</b><ul style="margin:4px 0 0 18px;padding:0">${D.missing[k][RC.sel].map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}
       ${rcFormHtml()}
       <div class="actions" style="margin-top:20px"><button class="btn primary" id="rc-save">${RC.sel ? 'Save' : 'Make the ' + one}</button>
-        ${RC.sel ? '<button class="btn danger" id="rc-del">Remove it</button>' : ''}<span class="msg" id="rc-msg"></span></div>
+        ${RC.sel ? '<button class="btn danger" id="rc-del">Remove it</button>' : ''}
+        <button class="btn" id="rc-lua" title="The scripts the Workshop wrote for these, with what each does: to read, and learn from">📜 See the script</button><span class="msg" id="rc-msg"></span></div>
     </div></main>`;
   box.style.display = '';
   rcBind();
@@ -244,6 +301,27 @@ function rcKeep(){
   if (k === 'traps'){
     f.name = v('rc-name'); f.objects = ids('rc-objs'); f.cell = v('rc-cell'); f.spell = v('rc-spell');
     f.once = $('#rc-once').checked; f.text = v('rc-text');
+    return;
+  }
+  if (k === 'happens'){
+    f.name = v('rc-name'); f.when = v('rc-when'); f.ids = ids('rc-hids'); f.water = $('#rc-water').checked;
+    const of = v('rc-often'); f.daily = of === 'daily'; f.once = of === 'once';
+    f.chance = +v('rc-hchance'); f.miss = v('rc-miss');
+    const b = rcStatOf(v('rc-hby')); f.by = b ? Object.assign(b, {per: +v('rc-hper') || 0}) : null;
+    const g = (n, i) => document.querySelector(`[data-h${n}="${i}"]`);
+    f.then = (f.then || []).map((a, i) => {
+      const d = g('do', i).value, out = {do: d};
+      if (d === 'raise'){ out.skill = (rcStatOf(g('stat', i).value) || {}).stat; out.gain = +g('gain', i).value || 1; }
+      if (d === 'give'){ out.id = g('id', i).value.trim(); out.count = +g('count', i).value || 1; }
+      if (d === 'bless' || d === 'patron'){
+        Object.assign(out, rcStatOf(g('stat', i).value) || {}); out.amount = +g('amount', i).value || 0;
+        const sc = rcStatOf(g('sstat', i).value); if (sc) out.scale = Object.assign(sc, {per: +g('sper', i).value || 0});
+        if (d === 'bless') out.hours = +g('hours', i).value || 24; else out.group = g('group', i).value;
+      }
+      if (d === 'cast') out.spell = g('spell', i).value.trim();
+      if (d === 'say') out.text = g('text', i).value;
+      return out;
+    });
     return;
   }
   if (k === 'ingredients'){
@@ -296,8 +374,29 @@ function rcKeep(){
     document.querySelectorAll('[data-wf]').forEach(i => { if (i.value.trim() !== '') fl[i.dataset.wf] = i.value.trim(); });
     document.querySelectorAll('[data-wb]').forEach(i => { if (i.value !== '') fl[i.dataset.wb] = i.value === '1'; });
     f.fields = fl;
+    f.night = !!($('#rc-night') && $('#rc-night').checked);
     f.regions = (f.regions || []).map((r, i) => ({region: document.querySelector(`[data-greg="${i}"]`).value, chance: +document.querySelector(`[data-gch="${i}"]`).value || 0}));
   }
+}
+
+// the scripts the forms wrote, read-only, each with a line on what it does: a way in to writing your own
+async function rcScripts(){
+  let r; try { r = await api('/api/myrecords/scripts'); } catch (e){ return toast(e.message, true); }
+  if (!r.scripts.length) return toast('Nothing made yet: save one first, then its scripts are here.');
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(900px,94vw);max-height:88vh;display:flex;flex-direction:column"><h3 style="margin-top:0">📜 The scripts the Workshop wrote</h3>
+    <div class="msg" style="margin-bottom:8px">OpenMW Lua, kept in your mod and changed for you each time you save. Read them to see how it's done; to write your own, open the Scripts page.</div>
+    <div class="rctabs">${r.scripts.map((x, i) => `<button class="btn sm ${i ? '' : 'on'}" data-sct="${i}">${esc(x.name)} <span class="msg">${esc(x.kind)}</span></button>`).join('')}</div>
+    <div class="msg" id="rc-swhat" style="margin:4px 0 8px"></div>
+    <pre id="rc-stext" style="flex:1;overflow:auto;margin:0;padding:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;font-size:12px;white-space:pre"></pre>
+    <div class="foot"><button class="btn" id="rc-sclose">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  const show = i => { const x = r.scripts[i]; bg.querySelector('#rc-swhat').textContent = x.what; bg.querySelector('#rc-stext').textContent = x.text;
+    bg.querySelectorAll('[data-sct]').forEach(b => b.classList.toggle('on', +b.dataset.sct === i)); };
+  bg.querySelectorAll('[data-sct]').forEach(b => b.onclick = () => show(+b.dataset.sct));
+  const close = () => bg.remove();
+  bg.querySelector('#rc-sclose').onclick = close; bg.onclick = e => { if (e.target === bg) close(); };
+  show(0);
 }
 
 function rcBind(){
@@ -317,6 +416,12 @@ function rcBind(){
   if ($('#rc-ilook')) ddSearch('rc-ilook', 'INGR', r => { $('#rc-ilook').value = r.id; });
   const imp = $('#rc-imodelpic'); if (imp) imp.onclick = () => icModelPick(p => { $('#rc-imodel').value = p; });
   const iip = $('#rc-iiconpic'); if (iip) iip.onclick = () => icPick('item', {name: $('#rc-iname').value, onDone: p => { $('#rc-iicon').value = p; }});
+  const ha = $('#rc-hadd'); if (ha) ha.onclick = () => { rcKeep(); f.then = (f.then || []).concat([{do: 'say', text: ''}]); rcDraw(); };
+  document.querySelectorAll('[data-hdel]').forEach(b => b.onclick = () => { rcKeep(); f.then.splice(+b.dataset.hdel, 1); rcDraw(); });
+  document.querySelectorAll('[data-hdo]').forEach(s => s.onchange = () => { rcKeep(); f.then[+s.dataset.hdo] = {do: s.value}; rcDraw(); });
+  const hw = $('#rc-when'); if (hw) hw.onchange = () => { rcKeep(); rcDraw(); };
+  document.querySelectorAll('[id^="rc-hid-"]').forEach(i => { if (!i.id.endsWith('-l')) ddSearch(i.id, 'MISC,INGR,ALCH,WEAP,ARMO,CLOT,BOOK,APPA,LOCK,PROB,REPA,LIGH', r => { i.value = r.id; }); });
+  document.querySelectorAll('[id^="rc-hsp-"]').forEach(i => { if (!i.id.endsWith('-l')) ddSearch(i.id, 'SPEL', r => { i.value = r.id; }); });
   if ($('#rc-spell')) ddSearch('rc-spell', 'SPEL', r => { RC.form.spell = r.id; $('#rc-spell').value = r.id; });
   const aa = $('#rc-aadd'); if (aa) aa.onclick = () => { rcKeep(); f.add = (f.add || []).concat([{id: '', level: 1}]); rcDraw(); };
   document.querySelectorAll('[data-adel]').forEach(b => b.onclick = () => { rcKeep(); f.add.splice(+b.dataset.adel, 1); rcDraw(); });
@@ -340,6 +445,32 @@ function rcBind(){
   document.querySelectorAll('[data-cown]').forEach(c => c.onchange = () => document.querySelectorAll(`[data-col="${c.dataset.cown}"]`).forEach(i => { i.disabled = !c.checked; }));
   const tp = $('#rc-tpl'); if (tp) tp.onchange = () => { rcKeep(); rcDraw(); };
   const scb = $('#rc-school'); if (scb) scb.onchange = () => { rcKeep(); rcDraw(); };
+  $('#rc-lua').onclick = rcScripts;
+  // ▶ Try it: the example's test setup switched on (Play here gives it), then where to start, as Play here asks
+  document.querySelectorAll('[data-rctry]').forEach(b => b.onclick = async () => {
+    try {
+      const r = await post('/api/myrecords/try', {key: b.dataset.rctry});
+      showView('world');
+      setTimeout(() => { setMode('play'); setBanner(`Test setup <b>${esc(r.setup)}</b> is on. ${W.key ? 'Click where to start' : 'Open a place, then click where to start'}: ${esc(r.where)}. ${esc(r.how)} Esc to cancel.`, 'play'); }, 250);
+    } catch (e){ toast(e.message, true); }
+  });
+  document.querySelectorAll('[data-rcex]').forEach(b => b.onclick = async () => {
+    const x = RC.data.examples.find(e => e.key === b.dataset.rcex);
+    if (!confirm(`Add the ${x.name} example to your mod?
+
+${x.line}
+
+It's yours to change; My mod's Undo it all takes it back.`)) return;
+    b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(x.name)}…`;
+    try {
+      const r = await post('/api/myrecords/example', {key: x.key});
+      RC.data = r; const [kind, id] = r.example.open;
+      RC.kind = kind; RC.sel = null; RC.form = null; rcOpen(id);
+      toast(`Made ${r.example.made}. ▶ beside it tries it in the game.`);
+      if (typeof afterChange === 'function') await afterChange();
+      rcDraw();
+    } catch (e){ toast(e.message, true); b.disabled = false; b.textContent = `${x.icon} ${x.name}`; }
+  });
   $('#rc-save').onclick = async () => {
     rcKeep();
     const m = $('#rc-msg');
@@ -360,7 +491,7 @@ function rcBind(){
 
 (function(){
   const st = document.createElement('style');
-  st.textContent = `.rctabs{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0}.rctabs .btn.on{background:var(--gold);color:#111}
+  st.textContent = `.rctabs{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0}.rctabs .btn.on{background:var(--gold);color:#111}.rcexrow{display:flex;gap:4px;margin-bottom:4px}.rcex{display:block;flex:1;text-align:left}
     .rcgrid{display:grid;grid-template-columns:150px repeat(4, 70px);gap:6px 10px;align-items:center;font-size:13px}
     .rcgrid input[type=color]{width:60px;height:26px;padding:0;border:1px solid var(--line);border-radius:5px;background:none}
     .rcgrid input[type=color]:disabled{opacity:.35}`;

@@ -61,6 +61,7 @@ function worldPanelsInit(){
   if (typeof qolPanels === 'function') qolPanels();
   if (typeof spPanels === 'function') spPanels();      // (the Style palette, docked: stylepal.js)
   if (typeof mmPanels === 'function') mmPanels();      // (the Minimap: minimap.js)
+  if (typeof pcpPanels === 'function') pcpPanels();      // (Pieces: the workbench's shelf beside the view, piecepanel.js)
   PNL.start('world');
   wpAddPathsTab(); wpAddSkyLandTabs();
   for (const it of Object.values(PNL.spaces.world.inst)){ const t = PNL.spaces.world.types[it.type]; if (t.render && it.id !== 'objs') t.render(it); }

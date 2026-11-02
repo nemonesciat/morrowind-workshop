@@ -1360,10 +1360,10 @@ def upper_ways(db, b, out, idoor):
         ref = refs.get(d['k'])
         if ref is None:
             continue
-        editing._store(c, d['k'], ref['origin'], ref['idx'], doors._set_link(ref['subs'], info['name'], in_pos))
+        editing._store(c, d['k'], ref['origin'], ref['idx'], doors._set_link(ref['subs'], info['name'], _on_floor(db, info['name'], in_pos)))
         c2, refs2 = editing._cell(db, key)
         r2 = refs2[nk]
-        editing._store(c2, nk, r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', out_pos))
+        editing._store(c2, nk, r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', _on_floor(db, '', out_pos)))
         c_ext[d['k']] = key
         notes.append('The door %d up outside (%s) leads into the %s on floor %d, and back.' % (round(sill - fr.z), d['id'], hit['name'], k + 1))
     if c_ext:
@@ -1472,10 +1472,10 @@ def link_both(db, b, int_key, idoor):
     ref = refs.get(d['k'])
     if ref is None:
         raise EditError('The building\'s door is no longer there.')
-    editing._store(c, d['k'], ref['origin'], ref['idx'], doors._set_link(ref['subs'], info['name'], in_pos))
+    editing._store(c, d['k'], ref['origin'], ref['idx'], doors._set_link(ref['subs'], info['name'], _on_floor(db, info['name'], in_pos)))
     c2, refs2 = editing._cell(db, int_key)
     r2 = refs2[idoor['k']]
-    editing._store(c2, idoor['k'], r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', out_pos))
+    editing._store(c2, idoor['k'], r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', _on_floor(db, '', out_pos)))
     editing.commit(db, 'Linked %s both ways with its building outside (%s)' % (editing.cell_label(db, int_key), d['id']))
     return in_pos
 
@@ -1686,6 +1686,13 @@ def _like_ext_pairs(db):
     return out
 
 
+def _on_floor(db, dest, pos):
+    """An arrival set on the floor or ground under it (towninside.on_floor): the game's own stand 80 over it."""
+    import towninside
+    db.sync_project()
+    return towninside.on_floor(db, dest, list(pos))
+
+
 def copy_game_interior(db, cell_key, ref_key, template, name, contents='furnished', door_key=None, b=None):
     """One of the game's interiors for this building's shell (game_interiors), copied whole under a new name
     (create.create_interior: people and creatures left out) and its front door linked with the building's both
@@ -1696,9 +1703,16 @@ def copy_game_interior(db, cell_key, ref_key, template, name, contents='furnishe
     if b['door'] is None:
         raise EditError('The building has no door to link the interior to: put a door in one of its walls first.')
     # (the original's front door: the load door that leads outside; its copy stands where it stood)
+    # (an outside link has no place name: '#x,y' never matched, and the first linked door was taken, a tower's cellar
+    # trap door in 131 of 1,106 town templates, lab jd1, 2026-11-01; of several, the one whose arrival outside is at
+    # the game's front door of this building)
     tm = mapdata.cellmap(db, template)
-    front = next((r for r in tm.get('refs', []) if r['type'] == 'DOOR' and r.get('to') and (r['to'].get('cell') or '').startswith('#')), None) \
-        or next((r for r in tm.get('refs', []) if r['type'] == 'DOOR' and r.get('to')), None)
+    outs = [r for r in tm.get('refs', []) if r['type'] == 'DOOR' and r.get('to') and not r['to'].get('cell')]
+    pr = next((p for p in ss.survey(db)['pairs'] if p['key'] == template), None) if len(outs) > 1 else None
+    if pr:
+        ef = pr['eframe']
+        outs.sort(key=lambda r: math.hypot(r['to']['x'] - ef['x'], r['to']['y'] - ef['y']))
+    front = (outs[0] if outs else None) or next((r for r in tm.get('refs', []) if r['type'] == 'DOOR' and r.get('to')), None)
     key = create.create_interior(db, template, name, contents, None)
     m = mapdata.cellmap(db, key)
     ds = [r for r in m['refs'] if r['type'] == 'DOOR']

@@ -156,11 +156,14 @@ def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=No
     below 0: the one that gives the region's own number of textures a cell (landsurvey 'tex_per_cell', median).
     flow: landwater.patch_flow's {(patch x, y): ground draining through}; with flow_k a patch that much ground drains
     through (FLOW_BED / flow_k) takes the textures the region has at the water's edge, so stream beds show."""
+    from landshapes import _check_stop             # (a land preview stopped from the busy chip gives up between steps)
     beds = {p for p, a in flow.items() if a >= FLOW_BED / flow_k} if flow and flow_k > 0 else None
+    _check_stop()
     pre = _prepare(F, keys, also_grid)              # (the patches' slopes and shore distances, once for every try)
     s = landsurvey.ready(db)
     want, edges = [], []
     for r in set(regions.values()):
+        _check_stop()
         pt = pattern(db, r)
         if pt:
             want.append(pt['n'])

@@ -54,12 +54,31 @@ def tell(text, error=False):
 
 # ------------------------------------------------------------------ the running Workshop
 def running_url():
-    """The address of a Workshop that is running and answering, or None."""
+    """The address of a Workshop that is running, or None. A busy one counts (its process there and listening on its
+    port): asking it with a 2 s limit, a busy Workshop looked gone and a second one was started on the same mod."""
+    import socket
     try:
         with open(RUNNING, encoding='utf-8') as f:
-            url = json.load(f)['url']
-        with urllib.request.urlopen(url + 'api/link', timeout=2) as r:
-            return url if r.status == 200 else None
+            d = json.load(f)
+        os.kill(int(d['pid']), 0)
+        with socket.create_connection(('127.0.0.1', int(d['port'])), timeout=2):
+            return d['url']
+    except Exception:
+        return None
+
+
+def started(server):
+    """The address of the Workshop just started once it listens on its port, or None. Not by asking it (running_url):
+    a Workshop opening a big mod or busy with a preview can take more than 2 s to answer, and PIN2 got "could not start"
+    from one that was running, 2026-11-02."""
+    import socket
+    try:
+        with open(RUNNING, encoding='utf-8') as f:
+            d = json.load(f)
+        if d.get('pid') != server.pid:
+            return None
+        with socket.create_connection(('127.0.0.1', int(d['port'])), timeout=2):
+            return d['url']
     except Exception:
         return None
 
@@ -249,9 +268,9 @@ def main(argv):
     signal.signal(signal.SIGTERM, stop)
 
     t0 = time.time()
-    while not quitting and server.poll() is None and not running_url() and time.time() - t0 < 120:
+    while not quitting and server.poll() is None and not started(server) and time.time() - t0 < 120:
         time.sleep(0.4)
-    url = running_url()
+    url = started(server)
     if not url:
         if server.poll() is None:
             server.terminate()

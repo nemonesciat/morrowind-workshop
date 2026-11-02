@@ -49,12 +49,14 @@ function lmDraw(g){
       g.drawImage(img, sx, sy, size, size);
     }
     g.globalAlpha = 1;
-    if (LM.prevStale && D.marks.length){
-      g.font = '12px sans-serif'; g.textAlign = 'center';
-      const t = 'Updating the preview…', w = g.measureText(t).width + 16;
-      g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(W.w / 2 - w / 2, 8, w, 22);
-      g.fillStyle = '#fff'; g.fillText(t, W.w / 2, 23); g.textAlign = 'start';
-    }
+  }
+  // (also on the first preview, with nothing drawn yet: a big one takes a minute or two and the map said nothing)
+  if (LM.prevStale && LM.prevBusy && LM.prevOn !== false && D.marks.length){
+    g.font = '12px sans-serif'; g.textAlign = 'center';
+    const sec = LM.prevT ? Math.floor((Date.now() - LM.prevT) / 1000) : 0;
+    const t = 'Updating the preview…' + (sec >= 3 ? ` ${sec} s` : ''), w = g.measureText(t).width + 16;
+    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(W.w / 2 - w / 2, 8, w, 22);
+    g.fillStyle = '#fff'; g.fillText(t, W.w / 2, 23); g.textAlign = 'start';
   }
   for (let x = gx0; x <= gx1; x++) for (let y = gy0; y <= gy1; y++){
     const k = x + ',' + y, c = D.cells[k], own = D.own[k], [sx, sy] = toScreen(x * CELL, (y + 1) * CELL);
@@ -397,17 +399,19 @@ const LS_KINDS = {
   area:    {icon: '▢', label: 'Dress area', color: '#9be37a', closed: true, how: 'Click round a part of the land, then the first point to close. It changes no ground: 🪨 Dress… can dress only inside it.'},
   // (a town's outline: its streets and buildings planned in a culture's way, townplan.py; it shapes no ground itself)
   town:    {icon: '🏘', label: 'Town', color: '#ffb86b', closed: true, how: 'Click round where the town goes, then the first point to close. Its streets and buildings are planned the way a culture\'s towns are.'},
+  // (a keep or castle: its walls, towers, keep and rooms planned the way a culture builds its forts, castle.py, web/castle.js)
+  castle:  {icon: '🏰', label: 'Castle', color: '#e0a060', closed: true, how: 'Click round where the castle goes, then the first point to close. Its walls, towers and keep are planned the way a culture builds its forts.'},
   // (drawn in a town, from its panel: its own streets, quarters and wall, PIN2 2026-11-01; townplan opts)
   street:  {icon: '〰', label: 'Street', color: '#d8c8a8', town: true, how: 'Click along the street, double-click to finish. The town\'s streets follow the ones you draw.'},
   zone:    {icon: '▧', label: 'Zone', color: '#c890ff', closed: true, town: true, how: 'Click round a quarter of the town, then the first point to close. Pick what it is: houses, business or noble.'},
   wall:    {icon: '🧱', label: 'Wall', color: '#b08a60', closed: true, town: true, how: 'Click round the town: the wall keeps to a grid of its pieces from your first point, its corners square. The town fills it.'},
 };
 const LS_ZONES = {residential: ['Houses', '#7fbf7f'], business: ['Business', '#5aa0dc'], noble: ['Noble', '#c85a8c']};
-const lsNoShape = k => k === 'area' || k === 'town' || !!(LS_KINDS[k] && LS_KINDS[k].town);
+const lsNoShape = k => k === 'area' || k === 'town' || k === 'castle' || !!(LS_KINDS[k] && LS_KINDS[k].town);
 // sliders per kind: [param, label, min, max, step, tip]
 const LS_PARAMS = {
   area: [],
-  town: [], street: [], zone: [], wall: [],
+  town: [], castle: [], street: [], zone: [], wall: [],
   coast: [['height', 'Height', 0, 6000, 50, 'How high the land stands a coast width in from the water'], ['width', 'Coast width', 1024, 16384, 256, 'How far it takes to rise out of the sea'], ['wander', 'Wander', 0, 2, 0.1, 'Small bays and headlands along the waterline (a few hundred units either side of the line drawn)']],
   ridge: [['height', 'Crest', 500, 12000, 100, 'The crest\'s height (lower at the ends)'], ['width', 'Width', 1024, 24576, 256, 'From the crest out to its foot'], ['sharp', 'Sharp', 0, 1, 0.05, '0 rounded hills, 1 a knife-edge crest'], ['spurs', 'Spurs', 0, 2, 0.1, 'How much its width wanders, in spurs and gullies'],
     ['crags', 'Crags', 0, 2, 0.1, 'Sharp crags and arêtes near the crest (0: smooth)']],
@@ -420,7 +424,7 @@ const LS_PARAMS = {
   stamp: [['radius', 'Radius', 1024, 32768, 256, 'How far it reaches'], ['height', 'Height', -6000, 12000, 50, 'Its height (a crater: its depth); for the game\'s land, 0 keeps it as it is'], ['turn', 'Turn', 0, 359, 1, 'Its turn (the game\'s land only)']],
 };
 const LS_SHAPES = [['volcano', 'Volcano'], ['cone', 'Cone'], ['caldera', 'Caldera'], ['crater', 'Crater'], ['dome', 'Dome'], ['mesa', 'Mesa'], ['game', 'The game\'s own land']];
-const LS_DEFAULTS = {area: {}, town: {culture: '', seed: 1}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
+const LS_DEFAULTS = {area: {}, town: {culture: '', seed: 1}, castle: {style: 'Imperial', size: 'medium', seed: 1, rooms: 'furnished'}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
   valley: {depth: 900, width: 4096, round: 0.6}, plateau: {height: 2000, width: 768, terraces: 0}, lake: {depth: 400, width: 1536},
   stamp: {shape: 'volcano', radius: 8192, height: 4000, turn: 0, src: null}, spring: {rise: 800, wander: 1, depth: 256, width: 256, banks: 2048, canyon: 0}};
 
@@ -495,6 +499,7 @@ function lsHtml(){
     const p = sel.p || {};
     if (sel.kind === 'town') params += lsTownHtml(sel);
     if (LS_KINDS[sel.kind].town) params += lsTownPartHtml(sel);
+    if (sel.kind === 'castle' && typeof csHtml === 'function') params += csHtml(sel);
     if (sel.kind === 'stamp') params += `<label>Shape <select class="inp" id="ls-shape">${LS_SHAPES.map(([v, t]) => `<option value="${v}" ${p.shape === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
     if (sel.kind === 'stamp' && p.shape === 'game'){
       const s = p.src || ['', '', '', ''];
@@ -738,6 +743,7 @@ function lsBind(){
   // there began a land shape of a kind there is none of, PIN2/the user 2026-10-31)
   const root = lsRoot();
   lsTownBind();
+  if (typeof csBind === 'function') csBind();
   const zs = $('#ls-zone'); if (zs){ const S_ = P.layers[LM.sel]; zs.onchange = () => { S_.p.zone = zs.value; lsChanged(true); }; }
   if (P.layers.some(L => L.kind === 'town' && !(LM.towns && LM.towns[L.id]))) lsTownsSoon();
   root.querySelectorAll('[data-add]').forEach(b => b.onclick = () => lsStart(b.dataset.add));
@@ -812,6 +818,7 @@ function lsChanged(rerender){
   lsPreviewSoon();
   lmFlowSoon();                                       // (the water follows the plan's land, and Stream beds' brightness)
   lsTownsSoon();
+  if (typeof csSoon === 'function') csSoon();
   drawMap();
 }
 
@@ -855,12 +862,14 @@ function lsTownHtml(sel){
     <div class="v3lrow" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center" title="Draw the town's own streets, quarters or wall inside it: the town follows them">Draw ${['street', 'zone', 'wall'].map(k => `<button class="btn sm" data-add="${k}" title="${esc(LS_KINDS[k].how)}">${LS_KINDS[k].icon} ${LS_KINDS[k].label}</button>`).join('')}</div>
     ${lsTownCountsHtml(sel, T)}${lsTownChoicesHtml(sel, T)}
     <div class="v3lrow" style="display:flex;gap:10px;flex-wrap:wrap"><label title="Set out what the culture's towns set out: benches, signs, lamps, crates, a smith's forge, its own scenes"><input type="checkbox" id="ls-tdress" ${p.bare ? '' : 'checked'}> Dressed</label>
-      <label title="Behind every door one of the game's own interiors for that building, furnished, its door linked both ways"><input type="checkbox" id="ls-tins" ${p.noinside ? '' : 'checked'}> Interiors</label>
-      <label title="A household in each, as the game's places of its kind have them, owning its beds and chests; each house named after its head. Takes a minute or two"><input type="checkbox" id="ls-tppl" ${p.noinside ? 'disabled' : ''} ${p.nopeople || p.noinside ? '' : 'checked'}> People</label></div>
+      <label title="Behind every door: none; the game building's own rooms and doors, empty, for you to furnish; or those rooms furnished by the Workshop">Inside <select class="inp" id="ls-tins"><option value="">furnished</option><option value="shells" ${lsInside(p) === 'shells' ? 'selected' : ''}>empty shells</option><option value="none" ${lsInside(p) === 'none' ? 'selected' : ''}>none</option></select></label>
+      <label title="A household in each furnished house, as the game's places of its kind have them, owning its beds and chests; each house named after its head. Takes a minute or two"><input type="checkbox" id="ls-tppl" ${lsInside(p) ? 'disabled' : ''} ${p.nopeople || lsInside(p) ? '' : 'checked'}> People</label></div>
     <div class="actions"><button class="btn sm" id="ls-treroll" title="Another layout of the same town">🎲 Another</button>
       <button class="btn sm" id="ls-tremove" title="Take away what Make it built here: its buildings, wall, dressing and interiors. What you added later and the ground stay. One Undo">✕ Remove the town</button>
       <button class="btn sm primary" id="ls-tmake" ${T && T.plan && T.plan.plots.length ? '' : 'disabled'} title="Build it: the game's own buildings of this culture on every plot, as shown. One Undo takes it back">🏘 Make it</button></div>${info}`;
 }
+// (what goes behind a town's doors: '' furnished, 'shells' or 'none'; a town planned before kept noinside)
+function lsInside(p){ return p.inside || (p.noinside ? 'none' : ''); }
 function lsTownBind(){
   const P = LM.plan, sel = P && P.layers[LM.sel]; if (!sel || sel.kind !== 'town') return;
   const c = $('#ls-tcult'); if (c) c.onchange = () => { sel.p.culture = c.value; lsChanged(true); };
@@ -882,7 +891,7 @@ function lsTownBind(){
   const sc = $('#ls-tskipclear'); if (sc) sc.onclick = () => { sel.p.skip = []; lsChanged(true); };
   const dr = $('#ls-tdress'); if (dr) dr.onchange = () => { sel.p.bare = !dr.checked; lsChanged(false); };
   const nm = $('#ls-tname'); if (nm) nm.onchange = () => { sel.p.name = nm.value.trim(); lsChanged(false); };
-  const ins = $('#ls-tins'); if (ins) ins.onchange = () => { sel.p.noinside = !ins.checked; lsChanged(false); renderWside(); };
+  const ins = $('#ls-tins'); if (ins) ins.onchange = () => { sel.p.inside = ins.value; delete sel.p.noinside; lsChanged(false); renderWside(); };
   const pp = $('#ls-tppl'); if (pp) pp.onchange = () => { sel.p.nopeople = !pp.checked; lsChanged(false); };
   const r = $('#ls-treroll'); if (r) r.onclick = () => { sel.p.seed = ((sel.p.seed || 1) % 100000) + 1 + Math.floor(Math.random() * 1000); lsChanged(true); };
   const rm = $('#ls-tremove'); if (rm) rm.onclick = async () => {
@@ -908,7 +917,7 @@ async function lsMakeTown(sel, bsel){
     const bar = (what, pct) => {
       const b = $(bsel); if (!b) return;
       b.disabled = true; b.textContent = `${what}… ${pct}%`; b.title = 'Building: ' + what;
-      b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`;
+      b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`; b.classList.add('pbar');
     };
     const poll = setInterval(async () => {
       let p; try { p = await api('/api/town/progress'); } catch (e){ return; }
@@ -919,7 +928,7 @@ async function lsMakeTown(sel, bsel){
       let r_;
       try {
         r_ = await post('/api/town/make', {outline: sel.pts, culture: sel.p.culture || (T && T.plan && T.plan.culture) || '', seed: sel.p.seed || 1, walls: lsTownWalls(sel), opts: lsTownOpts(sel), dress: !sel.p.bare,
-          interiors: !sel.p.noinside, people: !sel.p.noinside && !sel.p.nopeople, name: sel.p.name || ''});
+          interiors: lsInside(sel.p) || 'furnished', people: !lsInside(sel.p) && !sel.p.nopeople, name: sel.p.name || ''});
       } finally { clearInterval(poll); }
       if (r_.learning) throw new Error('Still learning ' + r_.learning.join(', ') + ': try again in a minute.');
       bar('Showing it', 100);
@@ -1122,9 +1131,17 @@ async function lsPreview(){
   // sent its own, and on a big plan with rock layers they queued up on the server: 30 seconds behind, PIN2 2026-10-30)
   if (LM.prevBusy){ LM.prevAgain = true; return; }
   const ask = ++LM.prevN;
-  LM.prevBusy = true;
+  LM.prevBusy = true; LM.prevT = Date.now();
+  // (the seconds on "Updating the preview…" count up: a big coast takes a minute or two, PIN2 2026-11-02)
+  const tick = setInterval(() => { if (LM.prevStale) drawMap(); }, 1000);
   try {
     const r = await post('/api/land/plan/preview', {cells: LM.data.marks, plan: LM.plan});
+    if (r.stopped){
+      // (stopped from the busy chip: the old preview stays, and the next change to a shape previews again)
+      LM.prevAgain = false;
+      if (ask === LM.prevN){ LM.prevStale = false; drawMap(); const n = $('#ls-note'); if (n) n.textContent = 'Preview stopped. It runs again when you change a shape.'; }
+      return;
+    }
     if (ask !== LM.prevN || LM.prevAgain) return;     // (a newer one is on its way, or wanted)
     LM.prevStale = false; LM.prevSig = sig;
     LM.prevData = r; LM.prevTex = r.textures; LM.prevInfo = r.info || {};
@@ -1136,7 +1153,7 @@ async function lsPreview(){
     const ht = $('#ls-held-t'); if (ht && LM.prevInfo.held != null) ht.textContent = `(${LM.prevInfo.held} here, outlined on the map)`;
   } catch (e){ if (ask === LM.prevN){ LM.prevStale = false; drawMap(); } const n = $('#ls-note'); if (n) n.textContent = e.message; }
   finally {
-    LM.prevBusy = false;
+    LM.prevBusy = false; clearInterval(tick);
     if (LM.prevAgain){ LM.prevAgain = false; lsPreview(); }
   }
 }
@@ -1216,6 +1233,7 @@ document.addEventListener('keydown', e => {
 function lsDrawShapes(g){
   const P = LM.plan; if (!P) return;
   lsTownDraw(g, P);
+  if (typeof csDraw === 'function') csDraw(g, P);
   const line = (pts, closed, color, width, dash) => {
     if (!pts.length) return;
     g.beginPath(); pts.forEach((p, i) => { const [sx, sy] = toScreen(p[0], p[1]); if (i) g.lineTo(sx, sy); else g.moveTo(sx, sy); });
@@ -1481,7 +1499,7 @@ async function lsApply(btn){
     const pct = Math.round(p.frac * 100);
     for (const b of document.querySelectorAll('#ls-apply, #ls-apply-top')){
       b.disabled = true; b.textContent = `${p.what}… ${pct}%`; b.title = 'Shaping: ' + p.what;
-      b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`;
+      b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`; b.classList.add('pbar');
     }
   }, 600);
   try {
@@ -1543,13 +1561,16 @@ async function lmRaise(btn){
 async function lmDressAsk(){
   if (!await needProject()) return;
   const cells = (LM.data && LM.data.marks || []).slice(); if (!cells.length) return;
-  let looks = [];
+  let looks = [], mine = [];
   try { looks = (await api('/api/land/looks')).looks; } catch (e){}
+  // (your own scatter brushes can be what grows, PIN2 on Discord 2026-11-01)
+  try { mine = (await api('/api/scatter/sets?cell=')).sets.filter(s => s.mine); } catch (e){}
   // (shapes with an outline: dress only inside one; the picked one, else the first Dress area)
   const rings = (LM.plan && LM.plan.layers || []).map((L, i) => ({L, i}))
     .filter(o => LS_KINDS[o.L.kind] && LS_KINDS[o.L.kind].closed && !LS_KINDS[o.L.kind].town && o.L.pts && o.L.pts.length >= 3);
   const pick = rings.find(o => o.i === LM.sel) || rings.find(o => o.L.kind === 'area');
-  const D = LM.dress = LM.dress || {rocks: true, growth: true, amt: 1, like: ''};
+  const D = LM.dress = LM.dress || {rocks: true, growth: true, amt: 1, like: '', brush: ''};
+  if (D.brush && !mine.some(s => s.key === D.brush)) D.brush = '';
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(440px,92vw)"><h3 style="margin-top:0">🪨 Dress ${cells.length} cell${cells.length === 1 ? '' : 's'}</h3>
     <div class="msg" style="display:flex;gap:14px">
@@ -1557,6 +1578,8 @@ async function lmDressAsk(){
       <label title="Trees, plants, grass and logs: the region's own squares of land, laid where the ground is like theirs"><input type="checkbox" id="lmd-grow" ${D.growth ? 'checked' : ''}> Trees & plants</label></div>
     <label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="Whose look: the land nearest (each cell's own region, or for open sea the nearest region with land), or one region's for all">Like
       <select id="lmd-like" style="flex:1"><option value="">The land nearest</option>${looks.map(o => `<option value="${esc(o.region)}">${esc(o.name)}</option>`).join('')}</select></label>
+    ${mine.length ? `<label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="What the trees and plants are: the region's own, or one of your scatter brushes, spread at its own spacing">Grow
+      <select id="lmd-brush" style="flex:1"><option value="">The region's own</option>${mine.map(s => `<option value="${esc(s.key)}" ${s.key === D.brush ? 'selected' : ''}>★ ${esc(s.label)}</option>`).join('')}</select></label>` : ''}
     <label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="1: as thickly as the game dresses such land">Amount
       <input type="range" id="lmd-amt" min="0.25" max="2" step="0.25" value="${D.amt}" style="flex:1"><span id="lmd-amtv">${D.amt}</span></label>
     ${rings.length ? `<label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="Only the land inside a shape's outline, in the marked cells">Where
@@ -1574,11 +1597,12 @@ async function lmDressAsk(){
     const ok = bg.querySelector('#lmd-ok');
     D.rocks = bg.querySelector('#lmd-rocks').checked; D.growth = bg.querySelector('#lmd-grow').checked;
     D.like = bg.querySelector('#lmd-like').value; D.amt = +amt.value;
+    const bs = bg.querySelector('#lmd-brush'); D.brush = bs ? bs.value : '';
     if (!D.rocks && !D.growth) return toast('Pick rocks, trees and plants, or both.', true);
     const rs = bg.querySelector('#lmd-ring'), ring = rs && rs.value !== '' ? LM.plan.layers[+rs.value].pts : null;
     ok.disabled = true; ok.innerHTML = '<span class="spin"></span>Dressing…';
     try {
-      const r = await post('/api/land/dress', {cells, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: ring});
+      const r = await post('/api/land/dress', {cells, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: ring, brush: D.growth ? D.brush : ''});
       close();
       const what = [r.growth ? `${r.growth} trees and plants` : '', r.rocks ? `${r.rocks} rocks` : ''].filter(Boolean).join(' and ');
       toast(what ? `Set ${what} in ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.looks.length ? ', like ' + r.looks.join(', ') : ''}. Undo takes them back.`

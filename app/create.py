@@ -230,7 +230,12 @@ def create_interior(db, template_key, name, contents, entrance, door_id=None, sa
             continue
         subs = [(t, d) for t, d in ref['subs'] if t not in OWNER_TAGS]
         if rk != front_k:
-            subs = [(t, d) for t, d in subs if t not in DOOR_TAGS]      # other doors become normal doors
+            s_ = dict(subs)
+            if tinfo and 'DNAM' in s_ and zstr(s_['DNAM']).lower() == (tinfo.get('name') or '').lower():
+                # (a trap door to the storey above in the same place leads there in the copy too: the copy keeps every spot)
+                subs = [(t, zs(name) if t == 'DNAM' else d) for t, d in subs]
+            else:
+                subs = [(t, d) for t, d in subs if t not in DOOR_TAGS]      # other doors become normal doors
         new_refs.append((rk, subs))
         for a in range(3):
             centre[a] += pos[a]

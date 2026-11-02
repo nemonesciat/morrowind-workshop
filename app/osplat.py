@@ -182,26 +182,40 @@ def process_running(program='openmw'):
             return ('%s.exe' % program) in out.stdout.lower()
         except Exception:
             return None
+    def alive(pid):
+        try:
+            with open('/proc/%s/comm' % pid, encoding='utf-8', errors='replace') as f:
+                if f.read().strip() != program:
+                    return False
+            # (a zombie, a game that has quit but not been collected yet, is not running: one started from
+            # the Workshop stayed listed as "openmw" until the Workshop closed, so quitting the game wasn't
+            # seen; PIN2's report on Linux, 2026-10-28. The state is the field after the name in stat)
+            with open('/proc/%s/stat' % pid, encoding='utf-8', errors='replace') as f:
+                st = f.read()
+            return st[st.rfind(')') + 2:st.rfind(')') + 3] not in ('Z', 'X')
+        except OSError:
+            return False
+    # (the game found last time first; the whole of /proc read again at most every 3 s when it isn't: reading every
+    # process's files while the Workshop was busy took 20 s and held up the launcher's "are you running?", PIN2 2026-11-02)
+    seen = _PROC_SEEN.get(program)
+    if seen and alive(seen):
+        return True
+    now = time.time()
+    if not seen and now - _PROC_SCANNED.get(program, 0) < 3:
+        return False
+    _PROC_SCANNED[program] = now
+    _PROC_SEEN.pop(program, None)
     try:
         for pid in os.listdir('/proc'):
-            if pid.isdigit():
-                try:
-                    with open('/proc/%s/comm' % pid, encoding='utf-8', errors='replace') as f:
-                        if f.read().strip() != program:
-                            continue
-                    # (a zombie, a game that has quit but not been collected yet, is not running: one started from
-                    # the Workshop stayed listed as "openmw" until the Workshop closed, so quitting the game wasn't
-                    # seen; PIN2's report on Linux, 2026-10-28. The state is the field after the name in stat)
-                    with open('/proc/%s/stat' % pid, encoding='utf-8', errors='replace') as f:
-                        st = f.read()
-                    if st[st.rfind(')') + 2:st.rfind(')') + 3] in ('Z', 'X'):
-                        continue
-                    return True
-                except OSError:
-                    pass
+            if pid.isdigit() and alive(pid):
+                _PROC_SEEN[program] = pid
+                return True
         return False
     except OSError:
         return None
+
+
+_PROC_SEEN, _PROC_SCANNED = {}, {}
 
 
 # ------------------------------------------------------------------ the computer

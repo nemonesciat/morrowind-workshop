@@ -38,6 +38,7 @@ import arrangesurvey
 import fixit
 import furnish
 import hangsurvey
+import themesurvey
 import hearthsurvey
 import kits
 import mapdata
@@ -300,7 +301,10 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
         candle = x['type'] == 'LIGH' and 'candle' in low and not re.search(r'candelabra|chandelier', low)
         # --- through a wall face of its own tile
         # (a kit's fireplace stands into the wall, as the game seats its own: Gold Coast's 31 in)
-        if big and not candle and fam not in ('shelf', 'rug', 'plant') and not IN_WALL_OK.search(low) and not hearthsurvey.built_piece(low):
+        # (not a weapon or a shield hung up on the wall: its box, a bow's or a staff's laid along the wall and
+        # tilted, reads as standing into it; the game's own hung arms came out "into the wall" 26 times in 171)
+        hung_arms = x['type'] in ('WEAP', 'ARMO') and bottom > fl + 50
+        if big and not candle and not hung_arms and fam not in ('shelf', 'rug', 'plant') and not IN_WALL_OK.search(low) and not hearthsurvey.built_piece(low):
             for s, face, tx, ty in faces:
                 if s in 'NS' and not (bx[0] < tx + T / 2 - 8 and bx[3] > tx - T / 2 + 8 and abs(x['p'][1] - ty) < T / 2 + 8):
                     continue
@@ -341,7 +345,10 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                 # dressing stood on the fireplace's own mesh is on it, by the ray that laid it)
                 on_hearth = any(o['_fam'] == 'fire' for o in _under(x, around, above=140)) or _in_hearth(x, hearths, above=140)
                 # (a flat thing well up a wall, its back at the wall face, hangs there whatever its name)
-                on_wall = x['type'] in ('STAT', 'ACTI') and bottom > fl + 50 and min(bx[3] - bx[0], bx[4] - bx[1]) <= 44 and (
+                # (and a weapon, a shield or a pinned map or note hung on the wall: the game's armouries and
+                # studies hang them so, a themed room in five; themesurvey)
+                on_wall = (x['type'] in ('STAT', 'ACTI') or x['type'] in ('WEAP', 'ARMO') or themesurvey.WALL_THING.search(low)) \
+                    and bottom > fl + 50 and min(bx[3] - bx[0], bx[4] - bx[1]) <= 44 and (
                     _wall_dist(bx, faces, T) <= 24 or (info.get('traced') and _touches_wall(sc, bx)))
                 if drop is not None and drop > 24 and not _under(x, around) and not on_hearth and not on_wall:
                     out.append(_issue('floating', x, '%s floats %.0f above what\'s under it' % (x.get('name') or x['id'], drop), room,
@@ -453,8 +460,12 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                 and _wall_dist(bx, faces, T) <= 24 and furnish._tile_of(x['p'][0], x['p'][1], room, T) in win_tiles:
             out.append(_issue('window', x, '%s hangs over the window' % (x.get('name') or x['id']), room, [_remove(x)]))
         # --- tableware, a book, food or a tool on a bare floor
+        # (not a smith's things round the anvil: the game spills them there round 38% of its anvils; themesurvey)
         if x['type'] in ('MISC', 'BOOK', 'INGR', 'ALCH', 'APPA', 'PROB', 'REPA', 'LOCK') and bottom < fl + 12 and not _under(x, around, above=60) \
-                and not re.search(r'basket|sack|bundle_|rug|mat_|cushion|pillow|log|firewood|bucket|pail|crate|barrel|urn|pot_0|skull|bone', low):
+                and not re.search(r'basket|sack|bundle_|rug|mat_|cushion|pillow|log|firewood|bucket|pail|crate|barrel|urn|pot_0|skull|bone', low) \
+                and not ((x['type'] == 'REPA' or themesurvey.SMITH_THING.search(low)) and any(
+                    themesurvey.ANVIL.search(o['id'].lower()) and math.hypot(o['p'][0] - x['p'][0], o['p'][1] - x['p'][1]) <= themesurvey.SPILL_REACH + 20
+                    for o in inside)):
             out.append(_issue('floor', x, '%s lies on the floor with nothing under it' % (x.get('name') or x['id']), room, [_remove(x)]))
         elif FLAT_HANGING.search(low) and x['type'] == 'STAT' and _wall_dist(bx, faces, T) > 24 and not (traced and _touches_wall(sc, bx)):
             out.append(_issue('nowall', x, '%s hangs %.0f off the nearest wall' % (x.get('name') or x['id'], _wall_dist(bx, faces, T)), room, [_remove(x)]))

@@ -11,7 +11,7 @@ import json
 import math
 import random
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 
 import mapdata
 import strays
@@ -139,14 +139,91 @@ def _trim_yard(db, m, memo):
         if b and (apart(b, mb) or tall) and not holds(b):
             drop.add(k)
             boxes.append(b)
+    if drop:
+        for k, p in enumerate(m['fpieces']):
+            if k not in drop and p is not main and not p.get('door') and 'door' not in p['id'].lower():
+                b = _pbox(db, p, memo)
+                if b and apart(b, mb) and not holds(b) and any(o[0] <= (b[0] + b[2]) / 2 <= o[2] and o[1] <= (b[1] + b[3]) / 2 <= o[3] for o in boxes):
+                    drop.add(k)
+    # (and a yard wall left with an open end, its run cut where the rest stood clear of the house: dropped, and so on
+    # down the run, until every yard wall left runs into the house, a post or another wall. A dry-stone run stopped
+    # open and three pieces stood alone between houses, the user's Tessellated Shores, 2026-11-01; 25 open ends in 8
+    # walled towns, lab sw1)
+    while True:
+        kept = [(k, p) for k, p in enumerate(m['fpieces']) if k not in drop]
+        opens = [o for _j, o in kept if OPENING.search(o['id'])]
+        more = [k for k, p in kept if _yard_wall(db, p, memo) and not holds(_pbox(db, p, memo) or [0, 0, -1, -1])
+                and not any(_end_met(db, (o['x'], o['y'], o['z']), [p], memo, 100) for o in opens)
+                and any(not _end_met(db, e, [o for j, o in kept if j != k], memo) for e in _ends_of(db, p, memo))]
+        if not more:
+            break
+        drop |= set(more)
     if not drop:
         return m
-    for k, p in enumerate(m['fpieces']):
-        if k not in drop and p is not main and not p.get('door') and 'door' not in p['id'].lower():
-            b = _pbox(db, p, memo)
-            if b and apart(b, mb) and not holds(b) and any(o[0] <= (b[0] + b[2]) / 2 <= o[2] and o[1] <= (b[1] + b[3]) / 2 <= o[3] for o in boxes):
-                drop.add(k)
     return dict(m, fpieces=[p for k, p in enumerate(m['fpieces']) if k not in drop])
+
+
+def _yard_wall(db, p, memo):
+    """A yard's wall or fence length (not a house's own wall, a gateway or a door)."""
+    low = p['id'].lower()
+    return bool(WALLISH.search(low)) and not re.search(r'door|housewall|gateway|gate|post|end|tower|corner', low) and not p.get('door') \
+        and _height(db, low, memo) < FORT_HEIGHT
+
+
+def _local_box(db, p, memo):
+    low = p['id'].lower()
+    if low not in memo:
+        memo[low] = mapdata.object_bounds(db, db.resolve_id(p['id']))
+    return memo[low]
+
+
+def _ends_of(db, p, memo):
+    """A wall length's two ends, a little past them, in the module's frame: [(x, y, z)]. None for a piece no longer
+    than wide."""
+    b = _local_box(db, p, memo)
+    if not b:
+        return []
+    s = p.get('s') or 1.0
+    c, sn = math.cos(p['rz']), math.sin(p['rz'])
+    if b[3] - b[0] >= b[4] - b[1]:
+        if b[3] - b[0] < 1.5 * (b[4] - b[1]):
+            return []
+        loc = [(b[0] - 16 / s, (b[1] + b[4]) / 2), (b[3] + 16 / s, (b[1] + b[4]) / 2)]
+    else:
+        if b[4] - b[1] < 1.5 * (b[3] - b[0]):
+            return []
+        loc = [((b[0] + b[3]) / 2, b[1] - 16 / s), ((b[0] + b[3]) / 2, b[4] + 16 / s)]
+    zm = p['z'] + (b[2] + b[5]) / 2 * s
+    return [(p['x'] + lx * s * c + ly * s * sn, p['y'] - lx * s * sn + ly * s * c, zm) for lx, ly in loc]
+
+
+def _end_met(db, e, others, memo, pad=20):
+    """Does something of the module stand at this end point (inside its box, a little grown)?"""
+    for o in others:
+        b = _local_box(db, o, memo)
+        if not b:
+            continue
+        s = o.get('s') or 1.0
+        c, sn = math.cos(o['rz']), math.sin(o['rz'])
+        dx, dy = e[0] - o['x'], e[1] - o['y']
+        lx, ly = (dx * c - dy * sn) / s, (dx * sn + dy * c) / s
+        if b[0] - pad <= lx <= b[3] + pad and b[1] - pad <= ly <= b[4] + pad and o['z'] + b[2] * s - 40 - pad <= e[2] <= o['z'] + b[5] * s + 40 + pad:
+            return True
+    return False
+
+
+APART = 128                    # a module's piece this far clear of every other piece of it is a neighbour's, not its own
+
+
+def _drop_apart(db, m, memo):
+    """The module without pieces standing clear of the rest of its building: a log house brought the chimney and the
+    wheelbarrow of the game house next to it, set 760-915 off on the snow (the user's Nordic village, 2026-11-01).
+    Doors stay (a door is its building's)."""
+    boxes = [(p, _pbox(db, p, memo)) for p in m['fpieces']]
+    gap = lambda a, b: math.hypot(max(0.0, a[0] - b[2], b[0] - a[2]), max(0.0, a[1] - b[3], b[1] - a[3]))
+    keep = [p for p, b in boxes if p.get('door') or b is None or len(boxes) < 3
+            or any(o is not p and ob is not None and gap(b, ob) <= APART for o, ob in boxes)]
+    return m if len(keep) == len(m['fpieces']) else dict(m, fpieces=keep)
 
 
 REPEAT_NEAR = 8                # (one model this near itself, the same way up, is the same piece twice)
@@ -206,6 +283,65 @@ def _two_buildings(db, m, memo):
                 joined.add(j)
                 todo.append(j)
     return len(joined) < len(shells)
+
+
+SUPPORTS = re.compile(r'stair|steps|ramp|stem|stalk')
+STAIRS = re.compile(r'stair|steps|ramp')
+_over_ground = {}
+
+
+def _game_over_ground(db, low):
+    """How high the game stands a model's origin over its ground outdoors (median of its placements), or None."""
+    if low in _over_ground and _over_ground[low][0] is db.recs:
+        return _over_ground[low][1]
+    from project import ref_info
+    v = []
+    for ci in list(db.used_in.get(low, ()))[:40]:
+        r = db.recs[ci]
+        if r[0] != 'CELL' or not r[7].startswith('#') or r[3] == db.proj_pidx:
+            continue
+        refs, _h = db.cell_refs(r[7])
+        for ref in refs.values():
+            rid, pos, _s, dead = ref_info(ref['subs'])
+            if dead or rid.lower() != low:
+                continue
+            g = mapdata.terrain_z(db, pos[0], pos[1])
+            if g is not None:
+                v.append(pos[2] - g)
+    v.sort()
+    out = v[len(v) // 2] if len(v) >= 5 else None
+    _over_ground[low] = (db.recs, out)
+    return out
+
+
+def _fground(db, m, rmemo):
+    """The ground under a building's door, from its door (frame z 0). The survey keeps the game's own only for a door
+    up to 400 over its ground, else -40; a Telvanni pod's door is up its stalk or spiral stair, so every pod house
+    stood 200-600 too low, stalks and stairs in the ground (the user's Uvidrith, 2026-11-02). There its stalks and
+    stairs stand as high over the ground as the game stands them (ex_t_housestem_01: 315, ex_t_stair_spiral: -2)."""
+    g = m.get('fground')
+    # (a building with stairs up to its door stands its stairs on the ground, the way up from the street, whatever the
+    # survey made of its door: the user, "the stairs are supposed to carry the player off the ground level")
+    stairs = [p_ for p_ in m['fpieces'] if STAIRS.search(p_['id'].lower())]
+    if g is not None and g != -40.0 and not stairs:
+        return g
+    want = []
+    for p_ in stairs or m['fpieces']:
+        low = p_['id'].lower()
+        if SUPPORTS.search(low):
+            o = _game_over_ground(db, low)
+            if o is not None:
+                want.append(p_['z'] - o)
+    if want:
+        want.sort()
+        f = want[len(want) // 2]
+        if g is not None and g != -40.0:
+            # (raised only, and only where its stairs would stand well in the ground: never lowered, as stairs to an
+            # upper floor or a roof would have it; lab 2026-11-02, Hlaalu and Redoran huts went 200-700 down)
+            return f if f < g - 150 else g
+        if f < -120:                        # (only a door well up its supports: the others stand as they did)
+            return f
+    return g if g is not None else -40.0
 
 
 def _footprint(db, m, memo):
@@ -338,7 +474,7 @@ def game_catalog(db):
     s = es.ready(db)
     if s is None:
         return []                  # (not learnt yet: nothing kept, so the next ask finds the catalogue whole)
-    memo = {}
+    memo, tri = {}, {}
     out = []
     try:
         import townwalls
@@ -367,12 +503,18 @@ def game_catalog(db):
         m = strays.without(db, m)            # (windows learnt with it from the house next door: strays.py)
         m = _trim_yard(db, m, memo)
         m = _no_repeats(m)
+        m = _drop_apart(db, m, memo)
+        m = _without_lone_doors(db, m, memo, tri)
+        if m is None:
+            continue
         if _two_buildings(db, m, memo):
             continue
         fp = _footprint(db, m, memo)
         if not fp:
             continue
         if _floating(db, m, memo):
+            continue
+        if _open_walkway(db, m, memo):
             continue
         if _roof_door(db, m, memo):
             continue
@@ -449,8 +591,10 @@ KEEP = re.compile(r'keep', re.I)
 OPENING = re.compile(r'window|_win(_|\d|$)|_x_win(?!d)|triwin|door|entrance|shutter|awning|sign|banner', re.I)
 STACK_PART = re.compile(r'_top|top_|roof|_med_|_light_|_dark_|upper', re.I)
 BASE_PART = re.compile(r'base|_bottom|foundation', re.I)
-WATERFRONT = re.compile(r'_wf|waterfront|dock|pier|quay|jetty|mooring|_ship|boat|cutter|shipwreck|lighthouse', re.I)
-NOT_BUILDING = re.compile(r'well', re.I)
+WATERFRONT = re.compile(r'_wf|waterfront|dock|pier|quay|jetty|mooring|_ship|boat|cutter|shipwreck|shipwrk|wreck|lighthouse', re.I)
+# (and a stair, a deck, a plank or a chimney taken for a building: a log cabin's stairs alone lay flat on the snow as a
+# "house", the user's Nordic village, 2026-11-01)
+NOT_BUILDING = re.compile(r'well|stairs?|stairs?_|steps|_deck|plank|platform|truss|chimney|terrace', re.I)
 OPEN_REACH = 100               # a window's or door's middle stands at most this far from one of its building's walls
 FORT_HEIGHT = 600              # a wall kit's piece this tall is a town wall's, not a yard's (ex_imp_wall_01 921)
 KEEP_DROP = 480                # a keep whose pieces reach further than this under its door stood down a hill or a cliff
@@ -538,6 +682,101 @@ def _floating(db, m, memo):
         c = [(b[i] + b[i + 3]) / 2.0 for i in range(3)]
         return any(sum(max(s_[i] - c[i], 0.0, c[i] - s_[i + 3]) ** 2 for i in range(3)) <= OPEN_REACH ** 2 for s_ in solid)
     return any(o and (not any(touch(b, s_) for s_ in solid) or not near(b)) for o, b in boxes)
+
+
+WALKWAY = re.compile(r'bridge|skywalk|walkway|catwalk|gangway', re.I)
+WALKWAY_PAD = 48               # (a walkway's end meets a building piece this near it)
+
+
+def _open_walkway(db, m, memo):
+    """Does a walkway of the module end in the air: a covered bridge or skywalk out from the house to a neighbour that
+    isn't there (the user's Griffbarrow, test3: "building bridge with nothing attached to other side")? True when one of
+    its ends meets no other piece of the module."""
+    for p in m['fpieces']:
+        if not WALKWAY.search(p['id']):
+            continue
+        others = [o for o in m['fpieces'] if o is not p and not o.get('door')]
+        ends = _ends_of(db, p, memo)
+        if ends and not all(_end_met(db, e, others, memo, pad=WALKWAY_PAD) for e in ends):
+            return True
+    return False
+
+
+DOOR_SIDE = 220                # (along a door's own wall, past its frame: its building's wall stands there, one side or both)
+DOOR_OFFS = (0, 30, -30)       # (in its wall's plane and a little out or in: deeper in, a ray ran inside the house it
+                               # stood off; 1 of the user's 5 found at 45)
+DOOR_EDGE = 0.75               # (its frame's edge: a wall met nearer the door's middle than this of its half width)
+DOOR_BEHIND = 800              # (straight out of the door and into it)
+LONE_WITH = 160                # (a lone door's step, frame, awning, sign or window over it: this near, they go with it)
+NOT_A_WAY_IN = re.compile(r'trap|hatch|grate|gate|marker', re.I)
+
+
+def _lone_doors(db, m, memo, tri=None):
+    """The module's doors with no wall of it beside them: a Common row's house kept its neighbour's door, step and
+    window, the neighbour's walls left out, and the door stood alone in the street, an interior and a household behind
+    it (the user's Griffbarrow, test3: "phantom doors"). Their boxes grazed the house's corner, so _floating kept them;
+    rays along the door's own wall, out past its frame, find a wall or nothing."""
+    import seethrough
+    tri = {} if tri is None else tri
+    sc = None
+    out = []
+    for p in m['fpieces']:
+        if not p.get('door') and not (db.resolve_id(p['id']) is not None and db.recs[db.resolve_id(p['id'])][0] == 'DOOR'):
+            continue
+        if NOT_A_WAY_IN.search(p['id']):
+            continue
+        low = p['id'].lower()
+        if low not in memo:
+            memo[low] = mapdata.object_bounds(db, db.resolve_id(p['id']))
+        b = memo[low]
+        if not b:
+            continue
+        if sc is None:
+            sc = seethrough.Scene()
+            for o in m['fpieces']:
+                if OPENING.search(o['id']):
+                    continue
+                ri = db.resolve_id(o['id'])
+                model = db.recs[ri][5] if ri is not None else None
+                if not model or 'marker' in model.lower() or db.recs[ri][0] == 'DOOR':
+                    continue
+                if model not in tri:
+                    tri[model] = seethrough.model_tris(db, model)
+                sc.add_model(tri[model], (o['x'], o['y'], o['z'], o.get('rx', 0.0), o.get('ry', 0.0), o['rz']), o.get('s') or 1.0)
+        s = p.get('s') or 1.0
+        c, sn = math.cos(p['rz']), math.sin(p['rz'])
+        w = lambda ax, ay: (ax * c + ay * sn, -ax * sn + ay * c)
+        thinx = (b[3] - b[0]) < (b[4] - b[1])
+        n, t = (w(1, 0), w(0, 1)) if thinx else (w(0, 1), w(1, 0))
+        ox, oy = w((b[0] + b[3]) / 2 * s, (b[1] + b[4]) / 2 * s)
+        ox, oy = p['x'] + ox, p['y'] + oy
+        hl = ((b[4] - b[1]) if thinx else (b[3] - b[0])) / 2 * s
+        zs_ = [p['z'] + (b[2] + (b[5] - b[2]) * zf) * s for zf in (0.3, 0.6, 0.9)]
+        # (nothing along its wall, a little out of it or in; and nothing straight in front of it or behind it: a door in
+        # a curved or set-back wall has its building there. 14 of 923 game buildings, 5 doors of the user's town. A wall
+        # met inside the door's own width cuts through it: the end of the house it stood off, at the corner)
+        hit = lambda o_, d_, L_: (sc.nearest_any(o_, d_, L_) or (0.0,))[0] >= DOOR_EDGE * hl
+        beside = any(hit((ox + n[0] * off, oy + n[1] * off, z_), (t[0] * d, t[1] * d, 0.0), hl + DOOR_SIDE)
+                     for z_ in zs_ for d in (1, -1) for off in DOOR_OFFS)
+        if not beside and not any(sc.nearest_any((ox, oy, z_), (n[0] * d, n[1] * d, 0.0), DOOR_BEHIND) is not None
+                                  for z_ in zs_ for d in (1, -1)):
+            out.append(p)
+    return out
+
+
+def _without_lone_doors(db, m, memo, tri=None):
+    """The module without its lone doors and their steps, frames and signs; None when its way in is one of them."""
+    lone = _lone_doors(db, m, memo, tri)
+    if not lone:
+        return m
+    front = min((p for p in m['fpieces'] if p.get('door')), key=lambda p: p['x'] ** 2 + p['y'] ** 2 + (p['z'] * 3) ** 2, default=None)
+    if front is None or any(p is front for p in lone):
+        return None
+    drop = {id(p) for p in lone}
+    for p in m['fpieces']:
+        if OPENING.search(p['id']) and any(math.hypot(p['x'] - d['x'], p['y'] - d['y']) <= LONE_WITH for d in lone):
+            drop.add(id(p))
+    return dict(m, fpieces=[p for p in m['fpieces'] if id(p) not in drop])
 
 
 def _frame(face):
@@ -911,6 +1150,9 @@ def make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, p
         PROGRESS.update(on=False, what='', frac=0.0, ins=False)
 
 
+LAST = {}                      # (the last town's plan, for the checks)
+
+
 def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, people=False, name='', opts=None):
     """The town built: its plan (townplan.plan, the same seed gives the same town) and a building of the culture's on
     every plot, each set down on the ground in front of its door as the game's stands on its own. One Undo step.
@@ -924,6 +1166,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     from project import set_ref_pos, zs
     editing._require_project(db)
     plan = planned(db, outline, culture, seed, walls, opts)
+    LAST['plan'] = plan
     C = by_uid(catalog(db))
     mine = db.project.plugin.lower()
     made, pieces, cells = 0, 0, set()
@@ -940,11 +1183,17 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             townwalls.level_ground(db, W, new_refs)
         except Exception as e:
             print('wall ground:', e)
+    _say('Levelling the streets', 0.69)
+    try:
+        _level_streets(db, plan, new_refs)
+    except Exception as e:
+        print('streets:', e)
     _say('Levelling the ground', 0.7)
     try:
         _terrace(db, plan, W, new_refs)
     except Exception as e:
         print('terraces:', e)
+    plan.pop('_street_ground', None)
     _say('Clearing the ground', 0.74)
     try:
         cleared = _clear_ground(db, plan, W)
@@ -990,8 +1239,14 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         gz = mapdata.terrain_z(db, fx, fy)
         if gz is None:
             continue
-        z0 = gz - (m.get('fground') if m.get('fground') is not None else -40.0)
+        z0 = gz - _fground(db, m, rmemo)
         front = min((p_ for p_ in m['fpieces'] if p_.get('door')), key=lambda p_: p_['x'] ** 2 + p_['y'] ** 2 + (p_['z'] * 3) ** 2, default=None)
+        q.pop('door_pieces', None)
+        # (no door set without its building: a house whose walls are of a data file not loaded stood as a door alone,
+        # and an interior and a household were made behind it)
+        if not any(db.resolve_id(p_['id']) is not None for p_ in m['fpieces'] if not p_.get('door') and not OPENING.search(p_['id'])):
+            q['b'] = None
+            continue
         gid = None                           # (its pieces kept as one building: Select the whole building, groups.building)
         for p_ in m['fpieces']:
             low = p_['id'].lower()
@@ -1014,6 +1269,9 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             pieces += 1
             cells.add(key)
             new_refs.add(rk)
+            if db.recs[ri][0] == 'DOOR':
+                # (each door where the game's stood in its building's frame: towninside links it the way the game's led)
+                q.setdefault('door_pieces', []).append({'key': key, 'rk': rk, 'id': p_['id'], 'x': p_['x'], 'y': p_['y'], 'z': p_['z']})
             if p_.get('door'):
                 doors.append((key, rk))
                 q['door_z'] = pos[2]
@@ -1023,6 +1281,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 q.setdefault('more_doors', []).append((key, rk))      # (its back door leads in too: towninside)
         made += 1
     wall = 0
+    wall_refs = []
     if W is not None:
         _say('Setting the wall on the ground', 0.87)
         db.sync_project()
@@ -1042,6 +1301,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             rk = db.project.new_ref_key()
             editing._store(cell, rk, mine, int(rk.rsplit('|', 1)[1]),
                            set_ref_pos([('NAME', zs(db.recs[ri][1]))], (q_.x, q_.y, q_.z, 0.0, 0.0, q_.rz % (2 * math.pi)), 1.0))
+            wall_refs.append((key, rk, p_['id'], [q_.x, q_.y, q_.z, 0.0, 0.0, q_.rz % (2 * math.pi)]))
             wall += 1
             pieces += 1
             cells.add(key)
@@ -1057,7 +1317,11 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         _say('Dressing yards and streets', 0.89)
         import towndress
         blocked = [p_['corners'] for p_ in (W or {}).get('pieces') or () if p_.get('corners')]
-        for t in towndress.dress(db, plan, seed, blocked):
+        db.sync_project()
+        # (what the buildings already carry: a banner of a building's own and another its surroundings brought, set
+        # in one spot, flickered)
+        also = [(r_['id'], r_['p']) for ck_ in cells for r_ in mapdata.cellmap(db, ck_).get('refs') or () if r_['k'] in new_refs]
+        for t in towndress.dress(db, plan, seed, blocked, also=also):
             ri = db.resolve_id(t['id'])
             if ri is None:
                 continue
@@ -1081,26 +1345,79 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         _say('Fitting the ground to the buildings', 0.92)
         db.sync_project()
         # (the dressing follows the ground fitted round the buildings: left, it stood sunk in the raised ground)
-        fitted = _fit_ground(db, doors, new_refs - dress_refs)
+        fitted = _fit_ground(db, doors, new_refs - dress_refs, [(tuple(q['door_ref']), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect')])
         _say('Paving the roads', 0.96)
         painted = _paint_roads(db, plan)
+        try:
+            _unsnow(db, plan)
+        except Exception as e:
+            print('snow:', e)
+        _say('Laying the walking paths', 0.97)
+        walks = 0
+        if PATHS:
+            try:
+                walks = _lay_paths(db, plan, cells, outline)
+            except Exception as e:
+                print('paths:', e)
         _say('Saving', 0.98)
-        editing.commit(db, 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s' % (
+        editing.commit(db, 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s%s' % (
             culture, made, pieces, len(cells), ((', a wall of %d pieces' % wall) if wall else '') + ((', %d things set out' % dressed) if dressed else ''),
-            (', the ground fitted to %d' % fitted) if fitted else '', (', %d road patches' % painted) if painted else ''))
+            (', the ground fitted to %d' % fitted) if fitted else '', (', %d road patches' % painted) if painted else '',
+            (', %d path points' % walks) if walks else ''))
         if interiors and made:
-            # (each interior copied and linked, its people placed: steps of their own, folded with the town into one)
+            # (each interior copied and linked, its people placed: steps of their own, folded with the town into one.
+            # interiors 'shells': the game building's architecture and doors only, for you to furnish; else furnished by
+            # the Workshop's own furnisher, never the source's decor: towninside.make_own)
+            rooms = 'shells' if interiors == 'shells' else 'furnished'
+            people = people and rooms == 'furnished'
             stack = getattr(db.project, 'undo_stack', [])
             n0 = len(stack)
             what = 'Making interiors and their people' if people else 'Making interiors'
             inside = towninside.furnish(db, plan, name, culture, seed, people, catalog(db),
-                                        lambda f: PROGRESS.update(what=what, frac=round(STAGE_END + (1 - STAGE_END) * f, 3)) if PROGRESS['on'] else None)
+                                        lambda f: PROGRESS.update(what=what, frac=round(STAGE_END + (1 - STAGE_END) * f, 3)) if PROGRESS['on'] else None,
+                                        rooms=rooms)
+            if wall_refs and W and W.get('outline'):
+                try:
+                    # (the keep and big towers first: ways in at the ground and on the walk, a stair between, castle.py)
+                    import castle
+                    keeps = castle.wall_keeps(db, wall_refs, W['outline'], name, set(), random.Random('%s|%s|wall keeps' % (seed, culture)), rooms=rooms)
+                    inside['interiors'] += len(keeps)
+                except Exception as e:
+                    keeps = []
+                    print('wall keeps:', e)
+                try:
+                    wroom = towninside.wall_rooms(db, wall_refs, W['outline'], name, set(), random.Random('%s|%s|wall rooms' % (seed, culture)), rooms=rooms)
+                    inside['interiors'] += len(wroom)
+                    inside['wall_rooms'] = len(wroom) + len(keeps)
+                except Exception as e:
+                    print('wall rooms:', e)
             if len(stack) > n0:
                 editing.fold(db, len(stack) - n0 + 1, 'Built %s, a %s town: %d buildings, %d interiors%s%s' % (
                     name, culture, made, inside['interiors'], (', %d people' % inside['people']) if inside['people'] else '',
                     (', a wall of %d pieces' % wall) if wall else ''))
     return {'buildings': made, 'pieces': pieces, 'cells': sorted(cells), 'fitted': fitted, 'road': painted, 'wall': wall,
-            'dressed': dressed, 'interiors': inside.get('interiors', 0), 'people': inside.get('people', 0), 'name': name}
+            'dressed': dressed, 'interiors': inside.get('interiors', 0), 'wall_rooms': inside.get('wall_rooms', 0), 'people': inside.get('people', 0), 'name': name}
+
+
+PATHS = True                   # (the town's walking paths outdoors: townpaths)
+
+
+def _lay_paths(db, plan, cells, outline):
+    """The town's walking paths into its cells' path grids (townpaths), out of every built plot's front door. No Undo
+    step. The points laid."""
+    import townpaths
+    db.sync_project()
+    ways = []
+    for q in plan['plots']:
+        if not q.get('b') or not q.get('door_ref') or not q.get('door'):
+            continue
+        c, sn, _yaw = _frame(q['face'])
+        dx, dy = q['door']
+        fx, fy = _world(dx, dy, c, sn, 0.0, -1.0)
+        ways.append((dx, dy, fx - dx, fy - dy))
+    keys = sorted(set(cells) | {'#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0)) for x, y in outline})
+    P, L, _D = townpaths.lay(db, plan, keys, ways)
+    return sum(townpaths.write(db, P, L, [tuple(v) for v in outline]).values())
 
 
 REMOVE_PAD = 1600              # (a town's wall and dressing stand this far outside its outline at most)
@@ -1234,6 +1551,7 @@ TERRACE_FADE = 3.0             # (a cosine fade is steepest at its middle, pi/2 
 TERRACE_BLEND_MAX = 1024       # (a 256 rise faded over 320 left banks of 40-60 degrees between houses, 2026-11-01)
 
 
+TERRACE_CUT_IN = 768           # (inside a plot's own outline the ground is cut down this far at most)
 TERRACE_STEP = 0.5             # neighbouring terraces differ by at most this times the ground between them (about 27°)
 TERRACE_NEAR = 600             # (terraces this near each other are neighbours)
 TERRACE_GIVE = 128             # (and a terrace moves at most this from its own door's ground for them)
@@ -1279,6 +1597,7 @@ def _terrace(db, plan, W, skip=()):
     import landscape
     import townplan
     tol = townplan.TERRACE_TOL
+    street_ground = plan.get('_street_ground') or set()
     areas = []
     for q in plan['plots']:
         if not q.get('b') or not q.get('rect') or not q.get('door'):
@@ -1342,10 +1661,15 @@ def _terrace(db, plan, W, skip=()):
                     x, y = gx * G + i * step, gy * G + j * step
                     n = j * N + i
                     z0 = h[n]
+                    if (x, y) in street_ground:
+                        continue                  # (a levelled street's own ground)
                     ws, inside_z, miss = [], None, 1.0
                     for r, z in near:
                         d = dist(x, y, r)
-                        want = max(z0 - tol, min(z0 + tol, z))
+                        # (under the building itself the hill is cut away to its floor, deeper than round it: a barn
+                        # stood sunk 200 into the hillside, its goods buried, lab sg1; the user's house "with the
+                        # ground climbing up its walls on the high side")
+                        want = max(z0 - (TERRACE_CUT_IN if d <= 0 else tol), min(z0 + tol, z))
                         reach = max(TERRACE_BLEND, min(TERRACE_BLEND_MAX, TERRACE_FADE * abs(want - z0)))
                         if d >= reach:
                             continue
@@ -1379,12 +1703,166 @@ def _terrace(db, plan, W, skip=()):
     return len(new_h)
 
 
+STREET_TOL = 256               # a street's ground moves at most this from the land's
+STREET_SMOOTH = 768            # (its height along it the land's across its width, averaged this far either way)
+STREET_EDGE = 64               # level across its width and this beyond
+STREET_BLEND = 384             # fading back into the land over this
+
+
+def _street_profile(db, st, pinned):
+    """[(x, y, z)] every 128 along a street: the land's middle height across its width, smoothed along it and kept
+    within STREET_TOL of the land; where an earlier street levelled the ground (a junction), its level."""
+    pts = st.get('pts') or []
+    hw = (st.get('w') or 512) / 2.0
+    raw = []
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        L = math.hypot(bx - ax, by - ay)
+        if L < 1:
+            continue
+        ux, uy = (bx - ax) / L, (by - ay) / L
+        for k in range(int(L // 128)):
+            x, y = ax + ux * k * 128, ay + uy * k * 128
+            zs_ = sorted(z for z in (mapdata.terrain_z(db, x - uy * a * hw, y + ux * a * hw) for a in (-1, -0.5, 0, 0.5, 1)) if z is not None)
+            raw.append((x, y, zs_[len(zs_) // 2] if zs_ else None))
+    if len(pts) >= 2 and raw:
+        x, y = pts[-1]
+        z = mapdata.terrain_z(db, x, y)
+        raw.append((x, y, z))
+    n = len(raw)
+    W = max(1, int(STREET_SMOOTH // 128))
+    out = []
+    for i, (x, y, z0) in enumerate(raw):
+        if z0 is None or z0 < 0:
+            out.append((x, y, None))          # (across water: left as it is)
+            continue
+        pz = pinned(x, y)
+        if pz is not None:
+            out.append((x, y, pz))
+            continue
+        ws = [(1.0 - abs(j - i) / float(W + 1), raw[j][2]) for j in range(max(0, i - W), min(n, i + W + 1)) if raw[j][2] is not None and raw[j][2] >= 0]
+        z = sum(w * v for w, v in ws) / sum(w for w, _ in ws)
+        out.append((x, y, max(z0 - STREET_TOL, min(z0 + STREET_TOL, z))))
+    return out
+
+
+def _level_streets(db, plan, skip=()):
+    """Each street level across its width and running smoothly along it (the land's own grade, its humps and dips
+    taken out), main street first, fading back into the land round it; what stands there follows the ground. A
+    street that climbs climbs as the land does, smoothly. (The streets followed the land square by square: they
+    tilted sideways and humped between the houses, the user's Tessellated Shores, 2026-11-01.) Before the terraces,
+    so each plot's door front stands on the street's level. Cells changed."""
+    import landscape
+    G, N = landscape.CELL, landscape.N
+    step = G / (N - 1.0)
+    streets = sorted(plan.get('streets') or (), key=lambda s: (not s.get('main'), bool(s.get('lane') or s.get('court'))))
+    target = {}                               # (gx, gy, i, j): (z, weight)
+
+    def vkey(x, y):
+        return (int(math.floor(x / G)), int(math.floor(y / G)), int(round((x % G) / step)), int(round((y % G) / step)))
+
+    def pinned(x, y):
+        t = target.get(vkey(x, y))
+        return t[0] if t and t[1] >= 0.99 else None
+    for st in streets:
+        prof = _street_profile(db, st, pinned)
+        good = [(x, y, z) for x, y, z in prof if z is not None]
+        if len(good) < 2:
+            continue
+        hw = (st.get('w') or 512) / 2.0
+        reach = hw + STREET_EDGE + STREET_BLEND
+        xs, ys = [p[0] for p in good], [p[1] for p in good]
+        mine = {}
+        for vx in range(int(math.floor((min(xs) - reach) / step)), int(math.floor((max(xs) + reach) / step)) + 2):
+            for vy in range(int(math.floor((min(ys) - reach) / step)), int(math.floor((max(ys) + reach) / step)) + 2):
+                x, y = vx * step, vy * step
+                # (the nearest point of the profile line: between two samples, its height between theirs)
+                best = None
+                for (ax, ay, az), (bx, by, bz) in zip(prof, prof[1:]):
+                    if az is None or bz is None:
+                        continue
+                    dx, dy = bx - ax, by - ay
+                    L2 = dx * dx + dy * dy
+                    t = 0.0 if not L2 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+                    d = math.hypot(x - ax - dx * t, y - ay - dy * t)
+                    if best is None or d < best[0]:
+                        best = (d, az + (bz - az) * t)
+                if best is None or best[0] >= reach:
+                    continue
+                d, z = best
+                w = 1.0 if d <= hw + STREET_EDGE else 0.5 + 0.5 * math.cos(math.pi * (d - hw - STREET_EDGE) / STREET_BLEND)
+                k = vkey(x, y)
+                old = target.get(k)
+                if old is None or w > old[1] + 1e-6:
+                    mine[k] = (z, w)
+        target.update(mine)
+    # (the street's own ground kept by what follows: the terraces faded over the streets between plots and put their
+    # humps back, lab ja2)
+    plan['_street_ground'] = {(gx * G + i * step, gy * G + j * step) for (gx, gy, i, j), (z, w) in target.items() if w >= 0.99}
+    if not target:
+        return 0
+    cells_ = set()
+    for (gx, gy, i, j) in target:
+        cells_.add((gx, gy))
+        if i == 0:
+            cells_.add((gx - 1, gy))
+        if j == 0:
+            cells_.add((gx, gy - 1))
+        if i == 0 and j == 0:
+            cells_.add((gx - 1, gy - 1))
+    new_h, before = {}, {}
+    for gx, gy in cells_:
+        L = mapdata.land(db, gx, gy)
+        if not L or not L.get('h'):
+            continue
+        h = list(L['h'])
+        changed = False
+        for j in range(N):
+            for i in range(N):
+                # (each cell's own edge vertices by the world spot: a cell's last row is its neighbour's first)
+                zw = target.get(vkey(gx * G + i * step, gy * G + j * step))
+                if zw is None:
+                    continue
+                n = j * N + i
+                z0 = h[n]
+                if z0 < 0:
+                    continue                  # (water: no street raised out of it)
+                nz = z0 + zw[1] * (zw[0] - z0)
+                if abs(nz - z0) >= 1:
+                    h[n] = nz
+                    changed = True
+        if changed:
+            new_h[(gx, gy)] = h
+            before[(gx, gy)] = L['h']
+    for (gx, gy), h in new_h.items():
+        after = landscape.write(db, gx, gy, h, None, None, around=landscape.around_of(db, gx, gy, new_h))
+        landscape._follow_ground(db, gx, gy, before[(gx, gy)], after, skip)
+    if new_h:
+        db.sync_project()
+    return len(new_h)
+
+
 def townwalls_inside(W, p):
     import townwalls
     return townwalls._inside(W['outline'], p)
 
 
-def _fit_ground(db, doors, skip):
+def _in_rect(r, x, y):
+    """Is the point inside a convex plot outline (any winding)?"""
+    sgn = None
+    for i in range(len(r)):
+        x1, y1 = r[i]
+        x2, y2 = r[(i + 1) % len(r)]
+        cr = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+        if abs(cr) < 1e-9:
+            continue
+        if sgn is None:
+            sgn = cr > 0
+        elif (cr > 0) != sgn:
+            return False
+    return True
+
+
+def _fit_ground(db, doors, skip, plots=()):
     """The ground fitted to each new building the way the game's meet theirs (groundfit: raised where its foot would
     show a gap, a landing a step under its door; the game never levels the ground under a building), one after another
     so each sees the ground the last left; what else stands on the ground (trees, rocks) follows it. No Undo step."""
@@ -1400,6 +1878,24 @@ def _fit_ground(db, doors, skip):
             continue
         if not pl:
             continue
+        # (the ground inside the other buildings' plots left as it is: one building's landing faded out over its
+        # neighbour and filled an open barn 300 deep, its goods buried, lab sg2)
+        others = [r for d, r in plots if d != (key, rk)]
+        if others:
+            G, N = landscape.CELL, landscape.N
+            st = G / (N - 1.0)
+            for c in pl['cells']:
+                old = mapdata.land(db, c['gx'], c['gy']).get('h')
+                if not old:
+                    continue
+                c['h'] = list(c['h'])
+                for j in range(N):
+                    for i in range(N):
+                        n = j * N + i
+                        if c['h'][n] != old[n]:
+                            x, y = c['gx'] * G + i * st, c['gy'] * G + j * st
+                            if any(_in_rect(r, x, y) for r in others):
+                                c['h'][n] = old[n]
         new_h = {(c['gx'], c['gy']): c['h'] for c in pl['cells']}
         for c in pl['cells']:
             gx, gy = c['gx'], c['gy']
@@ -1487,7 +1983,82 @@ def _paint_set(plan):
     if sq:
         keep |= {p for p in rs if math.hypot((p[0] + 0.5) * 512 - sq[0], (p[1] + 0.5) * 512 - sq[1]) <= sq[2]}
     keep |= {tuple(p) for p in plan.get('paint_extra') or ()}          # (the roads out through the wall's gates)
+    # (squares meeting only at a corner joined by one of the two between: a slanting street painted as a staircase of
+    # corners blurred into a smudge, the user's Griffbarrow from above; 4.6% of our squares, the game's 0.3%)
+    for p in sorted(keep):
+        for i, j in ((1, 1), (1, -1)):
+            q = (p[0] + i, p[1] + j)
+            if q in keep and (p[0] + i, p[1]) not in keep and (p[0], p[1] + j) not in keep:
+                a, b = (p[0] + i, p[1]), (p[0], p[1] + j)
+                keep.add(a if a in rs or b not in rs else b)
+    # (and a square or two of ground left alone inside the road, no plot on it, painted: at a slanting junction a bare
+    # square ringed by road read as a loop round nothing, small rings 1.8 a hundred road squares, the game's 0.55)
+    import townplan
+    plots = [q['rect'] for q in plan.get('plots') or () if q.get('b') and q.get('rect')]
+    for p in sorted(keep):
+        for i, j in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            h = (p[0] + i, p[1] + j)
+            if h in keep:
+                continue
+            ring = {h} | ({(h[0] + i, h[1] + j)} if (h[0] + i, h[1] + j) not in keep else set())
+            near = {(a[0] + x, a[1] + y) for a in ring for x, y in ((1, 0), (-1, 0), (0, 1), (0, -1))} - ring
+            if near <= keep and not any(any(townplan._inside(r, (a[0] + 0.5) * 512, (a[1] + 0.5) * 512) for r in plots) for a in ring):
+                keep |= ring
     return keep or rs
+
+
+SNOW = re.compile(r'snow|glacier|_ice|ice_|frost', re.I)
+SNOW_TOWN = 0.6                # (a town whose ground is mostly snow keeps it: a Solstheim village stands in the snow)
+
+
+def _unsnow(db, plan):
+    """The region's snow off the town's own ground: its plots and streets, levelled, had the high land's snow paint
+    left on them, white slabs against the houses (the user's Tessellated Shores video, 2026-11-01). Each snow square
+    there is painted with the commonest other ground of the town's squares. No Undo step. Squares painted."""
+    import landscape
+    want = {tuple(r) for r in plan.get('roads') or ()}
+    for q in plan['plots']:
+        if not q.get('b') or not q.get('rect'):
+            continue
+        xs, ys = [p[0] for p in q['rect']], [p[1] for p in q['rect']]
+        for px in range(int((min(xs) - 128) // 512), int((max(xs) + 128) // 512) + 1):
+            for py in range(int((min(ys) - 128) // 512), int((max(ys) + 128) // 512) + 1):
+                want.add((px, py))
+    by = defaultdict(list)
+    for px, py in want:
+        by[(px // 16, py // 16)].append((px % 16) + (py % 16) * 16)
+    Ls, count, snowy = {}, Counter(), 0
+    for (gx, gy), idx in by.items():
+        L = landscape.read(db, gx, gy)
+        if not L.get('exists') or not L.get('t'):
+            continue
+        Ls[(gx, gy)] = L
+        tex = L.get('tex') or {}
+        for i in idx:
+            t = L['t'][i]
+            if t and SNOW.search(t + ' ' + (tex.get(t) or '')):
+                snowy += 1
+            elif t:
+                count[t] += 1
+    tot = snowy + sum(count.values())
+    if not snowy or not count or snowy >= SNOW_TOWN * tot:
+        return 0
+    tid = count.most_common(1)[0][0]
+    n = 0
+    for (gx, gy), L in Ls.items():
+        tex = L.get('tex') or {}
+        t = list(L['t'])
+        hit = False
+        for i in by[(gx, gy)]:
+            if t[i] and SNOW.search(t[i] + ' ' + (tex.get(t[i]) or '')):
+                t[i] = tid
+                hit = True
+                n += 1
+        if hit:
+            landscape.write(db, gx, gy, None, t, None)
+    if n:
+        db.sync_project()
+    return n
 
 
 def _paint_roads(db, plan):

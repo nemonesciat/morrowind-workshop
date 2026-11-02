@@ -29,9 +29,11 @@ LOOK = 'my_records_look'
 LOOT_TYPES = {'weapon': 'WEAP', 'armor': 'ARMO', 'clothing': 'CLOT', 'potion': 'ALCH', 'ingredient': 'INGR', 'book': 'BOOK',
               'misc': 'MISC', 'apparatus': 'APPA', 'lockpick': 'LOCK', 'probe': 'PROB', 'repair': 'REPA', 'light': 'LIGH'}
 PLAYER = 'my_records_player'
+HAPPEN = 'my_records_happen'
+HAPPEN_PLAYER = 'my_records_happen_player'
 BEGIN = '--[[ WORKSHOP MY RECORDS (kept by the Workshop: Create > New skill, attribute or weather write this)'
 END = 'WORKSHOP MY RECORDS END ]]'
-KINDS = ('skills', 'attributes', 'weathers', 'lists', 'loot', 'ingredients', 'looks', 'traps')
+KINDS = ('skills', 'attributes', 'weathers', 'lists', 'loot', 'ingredients', 'looks', 'traps', 'happens')
 ATTRIBUTES = ('strength', 'intelligence', 'willpower', 'agility', 'speed', 'endurance', 'personality', 'luck')
 SPECIALIZATIONS = ('combat', 'magic', 'stealth')
 SKILLS = ('block', 'armorer', 'mediumarmor', 'heavyarmor', 'bluntweapon', 'longblade', 'axe', 'spear', 'athletics', 'enchant',
@@ -167,7 +169,83 @@ def read(db):
                 weathers_game=list(WEATHERS), times=list(TIMES), colours=list(COLOURS), game_clouds=game_clouds(db),
                 weather_fields=WEATHER_FIELDS, regions=regs, openmw='%d.%d' % v if v else None,
                 ready=bool(v and v >= NEEDS), needs='%d.%d' % NEEDS,
-                lua=bool(db.project and db.project.lua_allowed()))
+                lua=bool(db.project and db.project.lua_allowed()), examples=_examples(db), missing=missing(db))
+
+
+def missing(db, data=None):
+    """{kind: {id: [what it still lacks to do anything in play]}}: the gaps a new modder falls into ("I made a skill and
+    nothing happens"), shown on its form with where to fix each."""
+    d = data or raw(db)
+    out = {k: {} for k in KINDS}
+    raised = {a.get('skill', '').lower() for h in d.get('happens') or () for a in h.get('then') or () if a.get('do') == 'raise'}
+    governs = {}
+    for sk in d['skills']:
+        governs.setdefault(sk.get('attribute', '').lower(), []).append(sk['name'])
+    for sk in d['skills']:
+        n = []
+        if not (sk.get('rises') or sk.get('books') or sk.get('school') or sk['id'].lower() in raised):
+            n.append('Nothing raises it in play yet: give it a way it rises, a book that teaches it, or a When… then… that raises it.')
+        if not (sk.get('people') or sk.get('links')):
+            n.append('No one has it: give it to people, a class (as a major or minor skill), a faction or a race.')
+        if n:
+            out['skills'][sk['id']] = n
+    for at in d['attributes']:
+        n = []
+        if not governs.get(at['id'].lower()):
+            n.append('It governs no skill, so levelling up never raises it: make a skill it governs.')
+        if not at.get('links'):
+            n.append('No race or class gives it a starting value.')
+        if n:
+            out['attributes'][at['id']] = n
+    try:
+        import myeffects
+        called = {str(st.get('weather') or '').lower() for e in myeffects.effects_raw(db) for st in e.get('steps') or ()}
+    except Exception:
+        called = set()
+    for w in d['weathers']:
+        if not w.get('regions') and w['id'].lower() not in called:
+            out['weathers'][w['id']] = ['It never comes: give it a region (or call it from one of your magic effects).']
+
+    def placed(i):
+        return bool(db.used_in.get(i.lower()))
+    for t in d['traps']:
+        if not any(placed(o) for o in t.get('objects') or ()):
+            out['traps'][t['id']] = ['None of these stands anywhere in the world yet: place one (search for it in the Place panel).']
+    for r in d['loot']:
+        if r.get('containers') and not any(placed(c) for c in r['containers']) and not r.get('npcs'):
+            out['loot'][r['id']] = ['None of its containers stands anywhere in the world yet: place one.']
+    return out
+
+
+SCRIPT_WHAT = {
+    SCRIPT: 'Runs as the game loads (a LOAD script): makes your skills, attributes, weathers and ingredients, and adds to the '
+            'game lists. The JSON between the markers is what the forms keep; the Lua under it reads it.',
+    GLOBAL: 'Runs in the world (a GLOBAL script): hears the player using and activating things to raise your skills, brings '
+            'your weathers to their regions, fills containers by your loot rules and springs your traps.',
+    PLAYER: 'Runs on the player (a PLAYER script): raises a skill when the world script says so.',
+    ACTOR: 'Runs on each person (an NPC script): gives your skills to the people, classes and factions named, once.',
+    LOOK: 'Runs on the player: shows your look-at lines while the player looks at the things named.',
+    HAPPEN: 'Runs in the world: hears the player using and activating the things your When… then… name, tells the '
+            'script on the player, and gives the items and casts the spells it asks for.',
+    HAPPEN_PLAYER: 'Runs on the player: checks the "only if" (water, once a day, the chance), raises skills, gives blessings '
+                   'and a patron bonus (stat modifiers that wear off or are replaced), and hears books being opened.',
+}
+
+
+def scripts(db):
+    """The scripts the forms wrote, each with what it does: to read, and learn from (Create > See the script)."""
+    out = []
+    for name in (SCRIPT, GLOBAL, PLAYER, ACTOR, LOOK, HAPPEN, HAPPEN_PLAYER):
+        sc = _script(db, name)
+        if sc:
+            out.append({'name': name, 'kind': sc.get('kind'), 'what': SCRIPT_WHAT.get(name, ''), 'text': sc.get('text') or ''})
+    return out
+
+
+def _examples(db):
+    import examples
+    done = examples.made(db) if db.project else set()
+    return [dict(x, made=x['key'] in done, where=examples.TRY.get(x['key'], {}).get('where', '')) for x in examples.EXAMPLES]
 
 
 def _id(name, given):
@@ -193,10 +271,10 @@ def _txt(v, n=400):
     return str(v or '').strip()[:n]
 
 
-def _ids(v):
+def _ids(v, n=40):
     if isinstance(v, str):
         v = re.split(r'[\s,;]+', v)
-    return [str(x).strip()[:64] for x in v or () if str(x).strip()][:40]
+    return [str(x).strip()[:64] for x in v or () if str(x).strip()][:n]
 
 
 def _colour(v):
@@ -219,6 +297,8 @@ def _clean(db, kind, e):
         return _clean_look(db, e)
     if kind == 'traps':
         return _clean_trap(db, e)
+    if kind == 'happens':
+        return _clean_happen(db, e)
     name = _txt(e.get('name'), 48)
     if not name:
         raise EditError('Give it a name.')
@@ -321,6 +401,7 @@ def _clean(db, kind, e):
             if rid:
                 regs.append({'region': rid, 'chance': _num(r.get('chance'), 'A chance', 0, 100, 10)})
         out['regions'] = regs[:40]
+        out['night'] = bool(e.get('night'))      # (only after dark, cleared at dawn: an aurora)
     return out
 
 
@@ -400,6 +481,107 @@ def _clean_trap(db, e):
         raise EditError('There is no spell called %s.' % (sid or 'that'))
     return {'id': _id(name, e.get('id')), 'name': name, 'objects': objs[:40], 'cell': _txt(e.get('cell'), 64),
             'spell': db.recs[ri][1], 'once': e.get('once') is not False, 'text': _txt(e.get('text'), 200)}
+
+
+HAPPEN_WHEN = ('use', 'activate', 'read')
+HAPPEN_DO = ('raise', 'give', 'bless', 'patron', 'cast', 'say')
+
+
+def _stat(db, data, kind, sid):
+    """A game or own skill or attribute's ID as OpenMW's Lua knows it (lower case for the game's), or an error."""
+    sid = _txt(sid, 64)
+    low = sid.lower().replace(' ', '')
+    if kind == 'attribute':
+        if low in ATTRIBUTES:
+            return low
+        mine = next((a['id'] for a in data['attributes'] if a['id'].lower() == sid.lower()), None)
+    else:
+        if low in SKILLS:
+            return low
+        mine = next((s['id'] for s in data['skills'] if s['id'].lower() == sid.lower()), None)
+    if not mine:
+        raise EditError('%s is not a %s of the game\'s or yours.' % (sid or 'That', kind))
+    return mine
+
+
+def _clean_happen(db, e):
+    """When this, then that (Create > When... then...): something the player does (uses an item, activates a thing, reads
+    a book), only if (near water, once a day, a chance that grows with a skill or attribute), then what happens (a skill
+    rises, items are given, a blessing or a patron's lasting bonus that grows with a stat, a spell, a line). The
+    examples' building block: Fishing, Piety (2026-11-02, the user's ideas for showing what OpenMW 0.52 opens up)."""
+    data = raw(db)
+    name = _txt(e.get('name'), 48)
+    if not name:
+        raise EditError('Give it a name.')
+    when = (e.get('when') or 'use').lower()
+    if when not in HAPPEN_WHEN:
+        raise EditError('It happens when the player uses, activates or reads something.')
+    objs = []
+    for i in _ids(e.get('ids'), 600):              # (every plant of the game and Tamriel Data, for Foraging)
+        ri = db.resolve_id(i)
+        if ri is None:
+            raise EditError('There is nothing called %s.' % i)
+        t = db.recs[ri][0]
+        if when == 'read' and t != 'BOOK':
+            raise EditError('%s is not a book.' % i)
+        if when == 'use' and t in ('NPC_', 'CREA', 'ACTI', 'DOOR', 'CONT', 'STAT', 'SPEL', 'CELL', 'LAND'):
+            raise EditError('%s is not an item the player uses.' % i)
+        objs.append(db.recs[ri][1])
+    if not objs:
+        raise EditError('Say what sets it off.')
+    out = {'id': _id(name, e.get('id')), 'name': name, 'when': when, 'ids': objs, 'water': bool(e.get('water')),
+           'daily': bool(e.get('daily')), 'once': bool(e.get('once')), 'chance': _num(e.get('chance'), 'The chance', 0, 100, 100),
+           'miss': _txt(e.get('miss'), 200), 'by': None, 'then': []}
+    by = e.get('by') or {}
+    if by.get('stat'):
+        kind = 'attribute' if by.get('kind') == 'attribute' else 'skill'
+        out['by'] = {'kind': kind, 'stat': _stat(db, data, kind, by['stat']), 'per': _num(by.get('per'), 'The chance a point', 0, 10, 0.5)}
+    for t in e.get('then') or ():
+        do = (t.get('do') or '').lower()
+        if do not in HAPPEN_DO:
+            continue
+        a = {'do': do}
+        if do == 'raise':
+            a['skill'] = _stat(db, data, 'skill', t.get('skill'))
+            a['gain'] = _num(t.get('gain'), 'The gain', 0.01, 100, 1)
+        elif do == 'give' and str(t.get('id') or '').strip() == '*':
+            # (one more of what the thing activated holds: a plant's own ingredient, for Foraging)
+            if when != 'activate':
+                raise EditError('"One more of what it holds" is for things the player activates (plants, chests).')
+            a['id'] = '*'
+            a['count'] = int(_num(t.get('count'), 'How many', 1, 100, 1))
+        elif do == 'give':
+            ri = db.resolve_id(_txt(t.get('id'), 64))
+            if ri is None or db.recs[ri][0] in ('NPC_', 'CREA', 'ACTI', 'DOOR', 'CONT', 'STAT', 'SPEL', 'CELL', 'LAND', 'LEVC'):
+                raise EditError('%s is not an item to give.' % (t.get('id') or 'That'))
+            a['id'] = db.recs[ri][1]
+            a['count'] = int(_num(t.get('count'), 'How many', 1, 100, 1))
+        elif do in ('bless', 'patron'):
+            kind = 'attribute' if t.get('kind') == 'attribute' else 'skill'
+            a['kind'], a['stat'] = kind, _stat(db, data, kind, t.get('stat'))
+            a['amount'] = _num(t.get('amount'), 'The bonus', -100, 100, 5)
+            sk = t.get('scale') or {}
+            if sk.get('stat'):
+                k2 = 'attribute' if sk.get('kind') == 'attribute' else 'skill'
+                a['scale'] = {'kind': k2, 'stat': _stat(db, data, k2, sk['stat']), 'per': _num(sk.get('per'), 'The bonus a point', 0, 10, 0.1)}
+            if do == 'bless':
+                a['hours'] = _num(t.get('hours'), 'How long', 0.1, 720, 24)
+            else:
+                a['group'] = re.sub(r'[^a-z0-9_]+', '', (_txt(t.get('group'), 32) or 'patron').lower()) or 'patron'
+        elif do == 'cast':
+            ri = db.resolve_id(_txt(t.get('spell'), 64))
+            if ri is None or db.recs[ri][0] != 'SPEL':
+                raise EditError('There is no spell called %s.' % (t.get('spell') or 'that'))
+            a['spell'] = db.recs[ri][1]
+        elif do == 'say':
+            a['text'] = _txt(t.get('text'), 200)
+            if not a['text']:
+                continue
+        out['then'].append(a)
+    if not out['then']:
+        raise EditError('Say what happens.')
+    out['then'] = out['then'][:12]
+    return out
 
 
 def _effect_ids(db):
@@ -648,7 +830,7 @@ def _put(db, name, kind, text, first=False):
 
 def _write(db, data):
     if not any(data[k] for k in KINDS) and not any((data.get('options') or {}).values()):
-        for n in (SCRIPT, GLOBAL, PLAYER, ACTOR, LOOK):
+        for n in (SCRIPT, GLOBAL, PLAYER, ACTOR, LOOK, HAPPEN, HAPPEN_PLAYER):
             _put(db, n, None, None)
         return
     # (in a --[[ ]] comment: a ]] in a name or description would end it; inside strings only, with indent)
@@ -669,6 +851,12 @@ def _write(db, data):
     people = [{'skill': s['id'], 'how': p['how'], 'id': p['id'].lower(), 'value': p['value']}
               for s in data['skills'] for p in s.get('people') or ()]
     _put(db, ACTOR, 'NPC', ACTOR_LUA % {'data': _lua(people)} if people else None)
+    # when this, then that: the world's half hears uses and activations, the player's does the rest (and reading)
+    hp = data.get('happens') or []
+    slug = db.project.lua_slug()
+    ev = {'event': 'WS_Happen_%s' % slug, 'give': 'WS_HappenGive_%s' % slug}
+    _put(db, HAPPEN, 'GLOBAL', HAPPEN_LUA % dict(ev, data=_lua(hp)) if hp else None)
+    _put(db, HAPPEN_PLAYER, 'PLAYER', HAPPEN_PLAYER_LUA % dict(ev, data=_lua(hp)) if hp else None)
 
 
 LOAD_LUA = '''-- Made by Morrowind Workshop: your own skills, attributes and weathers (Create > New skill / attribute / weather).
@@ -971,7 +1159,7 @@ local function weatherTables()
   local byRegion = {}
   for _, w in ipairs(data.weathers or {}) do
     local rec = core.weather.records[w.id]
-    local wid = rec and tostring(rec.recordId or w.id) or nil
+    local wid = (rec and not w.night) and tostring(rec.recordId or w.id) or nil
     if wid then
       for _, r in ipairs(w.regions or {}) do
         local k = tostring(r.region):lower()
@@ -1000,11 +1188,37 @@ local function weatherTables()
   return done
 end
 
+-- weathers only at night: a chance each hour after dark in their regions, and cleared at dawn where the player is
+local function nightHour()
+  local h = (core.getGameTime() %% 86400) / 3600
+  local dark = h >= 20 or h < 5
+  local player = world.players[1]
+  for _, w in ipairs(data.weathers or {}) do
+    local rec = w.night and core.weather.records[w.id]
+    if rec then
+      for _, r in ipairs(w.regions or {}) do
+        if dark then
+          if math.random() * 100 < r.chance then pcall(core.weather.changeWeather, r.region, rec) end
+        elseif player then
+          pcall(function()
+            local cur = core.weather.getCurrent(player.cell)
+            if cur and tostring(cur.recordId):lower() == tostring(rec.recordId):lower()
+               and tostring(player.cell.region or ''):lower() == r.region:lower() then
+              core.weather.changeWeather(r.region, core.weather.records['clear'])
+            end
+          end)
+        end
+      end
+    end
+  end
+end
+
 -- before that (or where a region has no table), a chance each game hour
 local function weatherHour()
+  nightHour()
   if tables then return end
   for _, w in ipairs(data.weathers or {}) do
-    local rec = core.weather.records[w.id]
+    local rec = (not w.night) and core.weather.records[w.id]
     if rec then
       for _, r in ipairs(w.regions or {}) do
         if math.random() * 100 < r.chance then
@@ -1222,6 +1436,217 @@ return {
           relativePosition = util.vector2(0.5, 0.8), anchor = util.vector2(0.5, 0.5), multiline = true, wordWrap = true, autoSize = true } })
       end
       shown = text
+    end,
+  },
+}
+'''
+
+
+HAPPEN_LUA = '''-- Made by Morrowind Workshop: when this, then that (Create > When... then...). The world's half: hears the player
+-- using and activating the things named and tells the player's half (my_records_happen_player), which decides; gives
+-- the items and casts the spells it asks for.
+local core = require('openmw.core')
+local world = require('openmw.world')
+local types = require('openmw.types')
+local I = require('openmw.interfaces')
+
+local data = %(data)s
+local byUse, byActivate = {}, {}
+for i, h in ipairs(data) do
+  for _, id in ipairs(h.ids) do
+    local list = (h.when == 'activate') and byActivate or (h.when == 'use' and byUse or nil)
+    if list then local k = id:lower(); list[k] = list[k] or {}; table.insert(list[k], i) end
+  end
+end
+
+-- (what a container holds as it is opened, its first ingredient else its first thing: "one more of what it holds")
+local function holds(o)
+  local id
+  pcall(function()
+    if not types.Container.objectIsInstance(o) then return end
+    local inv = types.Container.inventory(o)
+    if inv.resolve then inv:resolve() end
+    local it = inv:getAll(types.Ingredient)[1] or inv:getAll()[1]
+    if it then id = tostring(it.recordId) end
+  end)
+  return id
+end
+
+local function tell(list, o, actor)
+  local hs = list[tostring(o.recordId):lower()]
+  if hs and actor and types.Player.objectIsInstance(actor) then
+    actor:sendEvent('%(event)s', { list = hs, rid = tostring(o.recordId):lower(), key = tostring(o.id), holds = holds(o) })
+  end
+end
+
+if I.ItemUsage and next(byUse) then
+  for _, T in ipairs({ types.Miscellaneous, types.Potion, types.Ingredient, types.Book, types.Weapon, types.Armor, types.Clothing,
+                       types.Apparatus, types.Lockpick, types.Probe, types.Repair, types.Light }) do
+    pcall(function() I.ItemUsage.addHandlerForType(T, function(o, a) tell(byUse, o, a) end) end)
+  end
+end
+if I.Activation and next(byActivate) then
+  for _, T in ipairs({ types.Activator, types.Container, types.Door, types.NPC, types.Creature, types.Miscellaneous, types.Book, types.Light }) do
+    pcall(function() I.Activation.addHandlerForType(T, function(o, a) tell(byActivate, o, a) end) end)
+  end
+end
+
+local function cast(id, target)
+  local rec = core.magic.spells.records[id]
+  if not rec then return end
+  if I.SpellCasting and I.SpellCasting.inflict then
+    local seen = {}
+    for _, e in ipairs(rec.effects) do
+      if not seen[e.range] then seen[e.range] = true; pcall(I.SpellCasting.inflict, { id = id }, target, e.range) end
+    end
+    return
+  end
+  local idx = {}
+  for n = 1, #rec.effects do idx[n] = n - 1 end
+  pcall(function() types.Actor.activeSpells(target):add({ id = id, effects = idx, caster = target }) end)
+end
+
+return {
+  eventHandlers = {
+    ['%(give)s'] = function(e)
+      if not (e and e.player) then return end
+      if e.id then pcall(function() world.createObject(e.id, e.count or 1):moveInto(types.Actor.inventory(e.player)) end) end
+      if e.spell then cast(e.spell, e.player) end
+    end,
+  },
+}
+'''
+
+HAPPEN_PLAYER_LUA = '''-- Made by Morrowind Workshop: when this, then that (Create > When... then...). The player's half: checks "only if"
+-- (near water, once a day, once ever, a chance that grows with a skill or attribute), then raises skills, gives
+-- blessings and a patron's lasting bonus (each growing with a stat), and asks the world's half for items and spells.
+local self = require('openmw.self')
+local types = require('openmw.types')
+local core = require('openmw.core')
+local util = require('openmw.util')
+local I = require('openmw.interfaces')
+local okUi, ui = pcall(require, 'openmw.ui')
+
+local data = %(data)s
+local last, blessings, patrons = {}, {}, {}
+
+local function stat(kind, id)
+  local ok, s = pcall(function()
+    if kind == 'attribute' then return types.Actor.stats.attributes[id](self) end
+    return types.NPC.stats.skills[id](self)
+  end)
+  if ok then return s end
+end
+
+local function value(kind, id)
+  local s = stat(kind, id)
+  if not s then return 0 end
+  return s.modified or s.base or 0
+end
+
+local function bonus(a)
+  local n = a.amount or 0
+  if a.scale then n = n + value(a.scale.kind, a.scale.stat) * (a.scale.per or 0) end
+  return math.floor(n + 0.5)
+end
+
+local function add(kind, id, n)
+  local s = stat(kind, id)
+  if s then pcall(function() s.modifier = s.modifier + n end) end
+end
+
+local function say(text) if text and text ~= '' and okUi then ui.showMessage(text) end end
+
+-- standing by water: the land within a few steps dips under the water level, or (indoors) near it
+local function nearWater()
+  local cell = self.cell
+  if not (cell and cell.hasWater) then return false end
+  local wl, p = cell.waterLevel or 0, self.position
+  if p.z - wl > 500 then return false end
+  if not cell.isExterior then return p.z - wl < 250 end
+  for _, d in ipairs({ { 0, 0 }, { 300, 0 }, { -300, 0 }, { 0, 300 }, { 0, -300 }, { 220, 220 }, { -220, 220 }, { 220, -220 }, { -220, -220 } }) do
+    local ok, h = pcall(core.land.getHeightAt, util.vector3(p.x + d[1], p.y + d[2], p.z), cell)
+    if ok and h and h < wl then return true end
+  end
+  return false
+end
+
+local function day() return math.floor(core.getGameTime() / 86400) end
+
+local function happen(i, rid, key, held)
+  local h = data[i]
+  if not h then return end
+  if h.water and not nearWater() then
+    say(h.miss ~= '' and h.when == 'use' and 'There is no water here.' or nil)
+    return
+  end
+  local k = h.id .. ':' .. (h.when == 'read' and rid or key)
+  if h.once and last[k] then return end
+  if h.daily and last[k] == day() then return end
+  last[k] = h.once and true or day()
+  -- skills rise for trying; the rest happens when the chance comes up
+  for _, a in ipairs(h['then']) do
+    if a['do'] == 'raise' then pcall(function() I.SkillProgression.skillUsed(a.skill, { skillGain = a.gain, useType = 0 }) end) end
+  end
+  local c = h.chance or 100
+  if h.by then c = c + value(h.by.kind, h.by.stat) * (h.by.per or 0) end
+  if math.random() * 100 >= c then say(h.miss); return end
+  for _, a in ipairs(h['then']) do
+    local d = a['do']
+    if d == 'give' or d == 'cast' then
+      local id = a.id
+      if id == '*' then id = held end
+      if id or a.spell then core.sendGlobalEvent('%(give)s', { player = self.object, id = id, count = a.count, spell = a.spell }) end
+    elseif d == 'bless' then
+      local n = bonus(a)
+      add(a.kind, a.stat, n)
+      table.insert(blessings, { kind = a.kind, stat = a.stat, n = n, untilT = core.getGameTime() + (a.hours or 24) * 3600 })
+    elseif d == 'patron' then
+      local old = patrons[a.group]
+      if old then add(old.kind, old.stat, -old.n) end
+      local n = bonus(a)
+      add(a.kind, a.stat, n)
+      patrons[a.group] = { kind = a.kind, stat = a.stat, n = n, from = h.id }
+    elseif d == 'say' then
+      say(a.text)
+    end
+  end
+end
+
+-- blessings wear off
+local wait = 0
+local function onUpdate(dt)
+  wait = wait + dt
+  if wait < 2 then return end
+  wait = 0
+  local now, keep = core.getGameTime(), {}
+  for _, b in ipairs(blessings) do
+    if now >= b.untilT then add(b.kind, b.stat, -b.n) else keep[#keep + 1] = b end
+  end
+  blessings = keep
+end
+
+local byRead = {}
+for i, h in ipairs(data) do
+  if h.when == 'read' then for _, id in ipairs(h.ids) do local k = id:lower(); byRead[k] = byRead[k] or {}; table.insert(byRead[k], i) end end
+end
+
+return {
+  engineHandlers = {
+    onUpdate = onUpdate,
+    onSave = function() return { last = last, blessings = blessings, patrons = patrons } end,
+    onLoad = function(d)
+      if d then last = d.last or {}; blessings = d.blessings or {}; patrons = d.patrons or {} end
+    end,
+  },
+  eventHandlers = {
+    ['%(event)s'] = function(e) for _, i in ipairs(e.list or {}) do happen(i, e.rid, e.key, e.holds) end end,
+    -- (a book or scroll opened: OpenMW's UI tells the player's scripts, with the book)
+    UiModeChanged = function(e)
+      if e and (e.newMode == 'Book' or e.newMode == 'Scroll') and e.arg then
+        local rid = tostring(e.arg.recordId):lower()
+        for _, i in ipairs(byRead[rid] or {}) do happen(i, rid, tostring(e.arg.id)) end
+      end
     end,
   },
 }

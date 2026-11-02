@@ -378,11 +378,81 @@ def _in_outline(F, inside, outline):
     return out
 
 
-def dress_all(db, cells, like='', parts=None, seed=None, outline=None):
+def plan_brush(db, F, inside, hold, brush, amount=1.0, seed=1):
+    """One of your scatter brushes (scatter.custom_sets) laid over the field's land instead of the region's squares:
+    its things by how often each comes up, at their sizes and sinks, in clusters with the odd one alone as the Scatter
+    tool paints, the brush's own spacing over amount. PIN2 on Discord (2026-11-01): "custom Scatter brushes ... used
+    for the dress area layer in land menu"."""
+    import cliffrocks
+    rng = random.Random(seed * 7919 + 3)
+    items = [it for it in brush['items'] if it.get('n')]
+    if not items:
+        return []
+    total = sum(it['n'] for it in items)
+    gap = brush.get('gap') or 200
+    gap = gap / math.sqrt(max(0.1, amount))
+    cs = max(32.0, gap * 0.4)
+    grid = {}
+
+    def taken(x, y):
+        gx, gy = int(math.floor(x / cs)), int(math.floor(y / cs))
+        return any(math.hypot(p[0] - x, p[1] - y) < cs for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                   for p in grid.get((gx + dx, gy + dy), ()))
+
+    def ok(x, y):
+        fx, fy = int(round((x - F.ox) / F.step)), int(round((y - F.oy) / F.step))
+        if not (0 <= fx < F.w and 0 <= fy < F.h):
+            return False
+        i = fy * F.w + fx
+        return inside[i] and not (hold and hold[i])
+    x0, y0 = F.ox, F.oy
+    x1, y1 = F.ox + (F.w - 1) * F.step, F.oy + (F.h - 1) * F.step
+    land = sum(1 for i in range(len(inside)) if inside[i]) * F.step * F.step
+    tries = min(60000, int(land / (gap * gap)))
+    centres = [(rng.uniform(x0, x1), rng.uniform(y0, y1)) for _ in range(max(1, tries // 4))]
+    out = []
+    for _t in range(tries):
+        if rng.random() < 0.2:
+            x, y = rng.uniform(x0, x1), rng.uniform(y0, y1)
+        else:
+            cx, cy = rng.choice(centres)
+            a = rng.random() * 2 * math.pi
+            d = abs((rng.random() + rng.random() + rng.random() - 1.5) * gap * 0.9)
+            x, y = cx + math.cos(a) * d, cy + math.sin(a) * d
+        if not ok(x, y) or taken(x, y):
+            continue
+        g = cliffrocks._height(F, x, y)
+        if g is None or g <= 8:
+            continue
+        pick, it = rng.random() * total, items[0]
+        for i in items:
+            pick -= i['n']
+            if pick <= 0:
+                it = i
+                break
+        s = it['smin'] + rng.random() * max(0.0, it['smax'] - it['smin'])
+        lean = math.radians(it.get('tilt') or 0) if rng.random() < (it.get('tilt_share') or 0) else 0
+        out.append({'id': it['id'], 'lib': it.get('lib'), 'x': round(x, 1), 'y': round(y, 1),
+                    'z': round(g - (it.get('sink') or 0) * s - (it.get('zmin') or 0) * s, 1),
+                    'rx': round(rng.uniform(-lean, lean), 3), 'ry': round(rng.uniform(-lean, lean), 3),
+                    'rz': round(rng.random() * 2 * math.pi, 3), 's': round(s, 2)})
+        grid.setdefault((int(math.floor(x / cs)), int(math.floor(y / cs))), []).append((x, y))
+    # (your own Library models get their record now, as the Scatter tool's do when painted)
+    libs = {}
+    for o in out:
+        if o['lib'] and db.resolve_id(o['id']) is None:
+            if o['lib'] not in libs:
+                import library
+                libs[o['lib']] = library.resolve(db, o['id'], o['lib'], 'STAT')
+            o['id'] = libs[o['lib']] or o['id']
+    return out
+
+
+def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush=''):
     """The marked cells' land (or the part within outline) dressed as the game dresses the region's: rocks and
     cliffs (cliffrocks) and what grows (plan_growth), each part {'rocks': amount, 'growth': amount} (0: not), as
     one Undo step. like: a region for all; '' takes each cell's own region, or, where it has little land of its own
-    (the open sea), the nearest land's."""
+    (the open sea), the nearest land's. brush: 'my:<id>', one of your scatter brushes grown instead of the region's."""
     import cliffrocks
     import editing
     import landrange
@@ -407,9 +477,16 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None):
         chains[(gx, gy)] = [reg] + [r for r in nearest_lands(db, gx, gy, lambda r: _broad(db, r), FALLBACKS + 1) if r != reg][:FALLBACKS]
     region_of = lambda x, y: chains.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), [''])
     rocks = grown = 0
+    mine = None
     if float(parts.get('growth') or 0) > 0:
         from_ = {}
-        items = plan_growth(db, F, inside, hold, region_of, float(parts['growth']), seed, from_)
+        if brush:
+            import scatter
+            mine = next((s for s in scatter.custom_sets(db) if s['key'] == brush), None)
+            if mine is None:
+                raise editing.EditError('That brush is gone.')
+        items = (plan_brush(db, F, inside, hold, mine, float(parts['growth']), seed) if mine
+                 else plan_growth(db, F, inside, hold, region_of, float(parts['growth']), seed, from_))
         # (the looks the squares came from, the most used first)
         for reg in sorted(from_, key=lambda r: -from_[r]):
             if reg not in looks.values():
@@ -430,4 +507,6 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None):
     for reg in sorted(set(looks.values())):
         ri = db.resolve_id(reg)
         names.append((db.recs[ri][2] or db.recs[ri][1]) if ri is not None else reg)
+    if mine and grown:
+        names = [mine['label']] + (names if rocks else [])
     return {'rocks': rocks, 'growth': grown, 'cells': len(want), 'looks': names, 'seed': seed}

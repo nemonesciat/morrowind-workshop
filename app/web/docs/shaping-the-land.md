@@ -163,6 +163,10 @@ The map shows the plan's land over the marked cells, about half a second after y
 in your mod changes until you press Shape them.** You don't have to touch any setting below: each starts at
 the region's own figures.
 
+A big plan (a long coast over a hundred cells) can take a minute or more to preview: the map counts the seconds,
+and the top bar shows **⏳ Previewing the land**. Everything else goes on meanwhile. **✕** on it stops the preview;
+it runs again when you change a shape.
+
 ### Protection
 
 **Start from the land under my mod** (on by default): each Shape starts from the marked cells' land as it is
@@ -264,7 +268,9 @@ more and some **Tilt**.
   first, then Dress.
 - **Like:** *The land nearest* (each cell's own region; for open sea, the nearest region with land), or one region's
   look for all. Where a region has no ground like yours, the nearest regions with land fill in.
-- **Amount:** 1 is the game's own thickness.
+- **Grow:** *The region's own*, or one of your **★ scatter brushes**: its things, as often and at the sizes the brush
+  sets, in clusters at the brush's own spacing.
+- **Amount:** 1 is the game's own thickness (or the brush's spacing).
 - **Only part of a cell:** draw a **▢ Dress area** with the shapes (it changes no ground), then Dress… and pick it
   under **Where**: only the land inside is dressed. A region for each part: mark or draw it, Dress with that region, then the next.
 - Not where something stands already, and not under water. One Undo takes it all back.
@@ -296,17 +302,56 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   culture it names.
 - **Name:** the town's name. Its interiors are called after it ("Varnhold, …"). Left blank, it takes the name shown,
   made from the culture's own town names.
-- **Interiors:** behind every door, one of the game's own interiors for that very building, furnished, with its
-  door linked both ways. A home is named after the person who heads it ("Nala Niabhe's Lodge"), a shop after its
-  keeper and trade ("Gilas Mundrethi: Clothier"); temples, guilds and towers keep what they are.
-- **People:** a household in each, cast as the game's places of that kind have them, owning its beds and chests.
+- **Inside:** what goes behind every door. **Furnished:** the rooms and doors of that very building's own interior
+  (walls, floors, stairs, every door linked both ways), furnished by the Workshop room by room, never with the
+  original's things. **Empty shells:** the same rooms and doors, empty but lit, the same for the same building every
+  time, for you to furnish. **None:** outsides only. A home is named after the person who heads it ("Nala Niabhe's
+  Lodge"), a shop after its keeper and trade ("Gilas Mundrethi: Clothier"); temples, guilds and towers keep what
+  they are.
+- **People** (with Furnished): a household in each, cast as the game's places of that kind have them, owning its beds and chests.
   This takes a minute or two for a town.
+- **The wall's keep and towers** (with Furnished or Empty shells): each has a door at the ground on the town side and an arched
+  door on the wall walk where the wall runs into it. Behind them is a spiral-stair room joining the two, so you can
+  climb from the street to the walk inside. It is furnished by the Workshop, never with the original room's things.
 - **🏘 Make it** builds it (the button at the top of the panel builds every town drawn). Each building is set on the ground, and the ground is raised where its foot or door
   would show a gap. The streets are paved with the road of the nearest towns of that culture. One Undo takes it all back.
 - **Editing it afterwards:** right-click any piece of one of its buildings → **▣ Select the whole building**, then move
   or turn it as one. When a door moves, alone or with its building, the way out of its interior moves with it.
 - **✕ Remove the town** takes away what Make it built there (buildings, wall, dressing, interiors and their people),
   even under later work; what you added since and the ground stay. Then Make it again.
+
+## Keeps and castles
+
+Draw a **🏰 Castle** shape round where it should stand. The map shows its walls, towers, gate, keep and doors before
+anything is built.
+
+- **Like:** whose forts it is built like.
+  - **Imperial fort:** a curtain wall with its gate on the side the land falls away to. Round towers stand at the
+    corners and beside the gate, each with an arched door where the wall walk runs in and a trap door to its roof.
+    A Legion keep stands at the back, its door facing the gate.
+  - **Dunmer stronghold:** the old Chimer keep on its stepped platform, with its ways in to the upper and lower
+    levels, the dome and the propylon chamber. **Small** is a keep without the platform.
+  - **Redoran stronghold:** a house stronghold of manor, tower, services and a house, inside a Redoran wall and gate.
+- **Size:** small, medium or large, against the game's own forts of that kind; **As drawn** fills your outline.
+  A large Imperial fort has a second hall beside the keep (a chapel or an armoury).
+- **Name:** its rooms are called after it ("Fort Estmoth, Keep"). Left blank, it takes the name shown.
+- **Rooms:** **None**; **Empty shells** (walls, stairs and doors only, for you to furnish); or **Furnished** (the same
+  shells, furnished by the Workshop, each room as what it is: barracks, armoury, shrine, hall).
+- **People:** cast as the game's own rooms of each kind have them (furnished rooms only).
+- **🎲 Another** gives another keep and layout.
+
+**Its rooms.** Behind every door is a room built like the one the game put there (the keep's halls, its prison, its
+upper storey, a stronghold's levels), with its walls, stairs and doors but never the original's furniture or decor.
+The doors between those rooms lead to each other as the game's did.
+An Imperial fort's towers share one "Towers" place, as the game's forts keep theirs: a spiral-stair room for each
+tower. Each room's doors lead out onto the wall walk on both sides and up to the roof. Its other doors join the next
+tower and the keep, so you can walk from the keep into the towers without going outside.
+
+**Doors face the world.** Each outside door sets you down just inside, in front of the door that leads back. Going
+out, you stand a step outside it, facing away.
+
+**🏰 Make it** evens the ground under the wall and the keep, clears trees and rocks inside, and builds it all.
+One Undo takes it back. **✕ Remove** takes away what it built, rooms included; the ground stays.
 
 ## Good to know
 

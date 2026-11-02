@@ -122,7 +122,8 @@ function brEditor(box, set){
 }
 
 async function brNew(seed){
-  const n = ((V3.scatSets && V3.scatSets.sets) || []).filter(s => s.mine).length + 1;
+  // (counted from the saved brushes when the Scatter tool hasn't loaded its sets: two "My brush 1" from Browse)
+  const n = (V3.scatSets ? V3.scatSets.sets.filter(s => s.mine).length : (await api('/api/brushes')).brushes.length) + 1;
   const items = [];
   if (seed){ const d = await api('/api/brushes/item?id=' + encodeURIComponent(seed.id)); items.push({...d, id: seed.id, name: seed.name || d.name, weight: 5}); }
   const r = await post('/api/brushes/save', {brush: {name: 'My brush ' + n, items}});
@@ -132,7 +133,10 @@ async function brNew(seed){
 }
 
 // "Add to brush" for something picked on the map or in search
-async function brAddTo(id, name){
+async function brAddTo(id, name){ return brAddMany([{id, name}]); }
+// (several at once: Browse's Shift/Ctrl-picked rows, PIN2 on Discord 2026-11-02)
+async function brAddMany(things){
+  const one = things.length === 1, id = things[0].id, name = one ? things[0].name : things.length + ' things';
   const r = await api('/api/brushes');
   const list = r.brushes;
   let target;
@@ -140,7 +144,7 @@ async function brAddTo(id, name){
   else {
     // (a menu of the brushes where the pointer is, not a box to type a number into)
     target = await new Promise(res => {
-      const items = [{label: 'Add "' + (name || id) + '" to which brush?', disabled: true, head: true},
+      const items = [{label: 'Add ' + (one ? '"' + (name || id) + '"' : name) + ' to which brush?', disabled: true, head: true},
         ...list.map(b => ({label: '🌿 ' + b.name, act: () => res(b)})), '-', {label: '＋ A new brush', act: () => res(null)}];
       const m = pnlMenu({x: QOL_PT.x, y: QOL_PT.y}, items);
       m.querySelectorAll('button').forEach((b, n) => { const it = items.filter(x => x !== '-')[n]; if (it && it.head) b.className = 'phd'; });
@@ -150,13 +154,18 @@ async function brAddTo(id, name){
     });
     if (target === undefined) return;
   }
-  if (!target){ const b = await brNew({id, name}); toast(`Made a new brush, "${b.name}", with ${name || id} on it. Find it under 🌿 Scatter in the 3D view.`); return; }
-  if (target.items.some(i => i.id.toLowerCase() === id.toLowerCase())) return toast('It is on that brush already.');
-  const d = await api('/api/brushes/item?id=' + encodeURIComponent(id));
-  target.items.push({...d, id, name: name || d.name, weight: 5});
-  await post('/api/brushes/save', {brush: target});
+  let made = false;
+  if (!target){ target = await brNew(things[0]); made = true; }
+  const fresh = things.filter(t => !target.items.some(i => i.id.toLowerCase() === t.id.toLowerCase()));
+  if (!fresh.length && !made) return toast(one ? 'It is on that brush already.' : 'They are all on that brush already.');
+  for (const t of fresh){
+    const d = await api('/api/brushes/item?id=' + encodeURIComponent(t.id));
+    target.items.push({...d, id: t.id, name: t.name || d.name, weight: 5});
+  }
+  if (fresh.length) await post('/api/brushes/save', {brush: target});
   if (V3) V3.scatSets = null;
-  toast(`Added ${name || id} to "${target.name}".`);
+  toast(made ? `Made a new brush, "${target.name}", with ${one ? name || id : things.length + ' things'} on it. Find it under 🌿 Scatter in the 3D view.`
+             : `Added ${one ? name || id : fresh.length + ' things'} to "${target.name}".`);
 }
 
 function brExport(brushes){
