@@ -176,6 +176,8 @@ class Project:
         self.lua_files = d.get('lua_files', [])  # the Lua files last written, so old ones can be cleared
         self.grass = d.get('grass', {})         # groundcover: cell key -> [[id, x, y, z, rz, scale]] (own plugin)
         self.land = d.get('land', {})           # land shaping: {'marks': ['gx,gy', ...]} the cells marked on the land map
+        self.scattered = set(d.get('scattered') or [])   # ref keys the Scatter brush placed (its Remove clears only these)
+        self.town_parts = d.get('town_parts') or {}       # ref key -> its building's id, for the buildings a town built
         self.forged = d.get('forged', {})       # the Forge: piece id (lower) -> {'mat'} or {'between': [a, b, f]}, what it was
                                                 # forged as ("Duskglass" isn't glass); outside Undo, read only while the record is there
         # a plugin opened as the mod itself (adopt.py): the file it is saved into, the masters its header
@@ -273,6 +275,10 @@ class Project:
             d['land'] = self.land
         if self.forged:
             d['forged'] = self.forged
+        if self.scattered:
+            d['scattered'] = sorted(self.scattered)
+        if self.town_parts:
+            d['town_parts'] = self.town_parts
         if self.source:
             d.update({'source': self.source, 'masters': self.masters, 'tes3_version': self.tes3_version,
                       'plugin_backup': self.plugin_backup, 'order': self.order, 'hedr': self.hedr_raw})
@@ -287,13 +293,15 @@ class Project:
 
     def state(self):
         return json.dumps({'records': self.records, 'cells': self.cells, 'next_ref': self.next_ref, 'lua': self.lua,
-                           'grass': self.grass})
+                           'grass': self.grass, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts})
 
     def restore(self, state):
         d = json.loads(state)
         self.records, self.cells, self.next_ref = d['records'], d['cells'], d['next_ref']
         self.lua = d.get('lua', [])
         self.grass = d.get('grass', {})
+        self.scattered = set(d.get('scattered') or [])
+        self.town_parts = d.get('town_parts') or {}
 
     # ----- Lua scripts (OpenMW): files next to the plugin, listed in a .omwscripts file -----
     def lua_allowed(self):

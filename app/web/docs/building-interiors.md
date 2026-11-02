@@ -161,6 +161,11 @@ Something the Workshop didn't learn in a style can be added by hand: **＋ Add�
 your load order, or **🎨 Add to a style…** on its page in Browse. It's listed first in its group with a green
 **yours**; right-click it to take it back out. Your additions are kept apart from what the Workshop learns.
 
+**＋ New style** (under **Your own** in the palette's list) makes a style of your own: add anything to it with
+**＋ Add…**. Tick your prefabs under **Its town buildings**, each with what it is (house, shop, tavern…), and pick
+whose towns it is planned like; then **Like ★ your style** in a town's panel (Land) builds the town of them. A prefab
+needs a door: its outermost door is its front.
+
 ## Hidden doors and secret entrances
 
 Right-click a placed object (a wall, a bookcase, a log pile):

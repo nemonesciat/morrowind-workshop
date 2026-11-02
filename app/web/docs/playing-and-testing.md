@@ -66,6 +66,10 @@ Workshop instead.
 | OpenMW settings… | Graphics, shadows, the game's options: every setting, with what it does. |
 | Open settings.cfg | OpenMW's settings file, in your text editor. |
 
+**OpenMW settings…** lists the settings of the OpenMW the Workshop starts. With OpenMW 0.52, its new ones are marked
+**new in 0.52**: clustered lighting (no limit on lights per object), light radius, particle lighting, terrain blocking
+what you look at, and sound warm-up. Keep 0.51 if you prefer: everything else works, and features that need 0.52 say so.
+
 ## Testing as others will see it
 
 **My mod → Get ready to share → ▶ Start a clean test** starts the game with only the base game and the mods your

@@ -22,11 +22,68 @@ def _place_key(db, hint, x, y):
     return hint
 
 
+JOIN_GAP = 12                  # (two pieces this close every way are joined, for a building the Workshop has no record of)
+JOIN_REACH = 2500              # (and never further than this from the piece clicked)
+
+
+def building(db, cell_key, refkey):
+    """The whole building a piece belongs to: [{cell, ref}] and how it was found. A town's building by the record its
+    Make it kept (project.town_parts); any other, the building pieces and doors joined to it through pieces touching
+    one another, within JOIN_REACH. Moving a town's building took the user 130 single moves in a morning, 2026-11-01:
+    "I seem to be unable to grab every single piece"."""
+    parts = getattr(db.project, 'town_parts', None) or {}
+    gid = parts.get(refkey)
+    if gid:
+        out = []
+        for ck, c in db.project.cells.items():
+            for rk, ref in (c.get('refs') or {}).items():
+                if parts.get(rk) == gid and not ref.get('deleted'):
+                    out.append({'cell': ck, 'ref': rk})
+        if out:
+            return {'refs': out, 'how': 'built'}
+    m = mapdata.cellmap(db, cell_key)
+    r0 = next((r for r in m.get('refs') or () if r['k'] == refkey), None)
+    if r0 is None:
+        raise EditError('That piece is no longer there.')
+    keys = [cell_key]
+    if cell_key.startswith('#'):
+        gx, gy = (int(v) for v in cell_key[1:].split(','))
+        keys = ['#%d,%d' % (gx + dx, gy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
+    cand = []
+    for ck in keys:
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if r.get('b') and (r.get('arch') or r['type'] == 'DOOR') and math.hypot(r['p'][0] - r0['p'][0], r['p'][1] - r0['p'][1]) <= JOIN_REACH:
+                cand.append((ck, r, _box3(r)))
+    i0 = next((i for i, c_ in enumerate(cand) if c_[1]['k'] == refkey and c_[0] == cell_key), None)
+    if i0 is None:
+        return {'refs': [{'cell': cell_key, 'ref': refkey}], 'how': 'alone'}
+    near = lambda a, b: all(a[i] - JOIN_GAP <= b[i + 3] and b[i] - JOIN_GAP <= a[i + 3] for i in range(3))
+    seen, todo = {i0}, [i0]
+    while todo:
+        k = todo.pop()
+        for j, c_ in enumerate(cand):
+            if j not in seen and near(cand[k][2], c_[2]):
+                seen.add(j)
+                todo.append(j)
+    return {'refs': [{'cell': cand[j][0], 'ref': cand[j][1]['k']} for j in sorted(seen)], 'how': 'joined'}
+
+
+def _box3(r):
+    b, s = r['b'], r['s'] or 1.0
+    c, sn = math.cos(r['p'][5]), math.sin(r['p'][5])
+    xs = [r['p'][0] + (bx * c + by * sn) * s for bx in (b[0], b[3]) for by in (b[1], b[4])]
+    ys = [r['p'][1] + (-bx * sn + by * c) * s for bx in (b[0], b[3]) for by in (b[1], b[4])]
+    return (min(xs), min(ys), r['p'][2] + b[2] * s, max(xs), max(ys), r['p'][2] + b[5] * s)
+
+
 def move(db, moves):
-    """moves: [{cell, ref, p: [x, y, z, rx, ry, rz], s?}]."""
+    """moves: [{cell, ref, p: [x, y, z, rx, ry, rz], s?}]. A moved outdoor door's interior way out follows it
+    (doors.follow), in the same step."""
     editing._require_project(db)
     if not moves:
         raise EditError('Nothing to move.')
+    import doors
+    was = doors.door_spots(db, [(mv['cell'], mv['ref']) for mv in moves])
     cells = set()
     for mv in moves:
         c, refs = _cell(db, mv['cell'])
@@ -36,7 +93,10 @@ def move(db, moves):
         p = [float(v) for v in mv['p'][:6]]
         _store(c, mv['ref'], ref['origin'], ref['idx'], set_ref_pos(ref['subs'], tuple(p), mv.get('s')))
         cells.add(mv['cell'])
-    commit(db, 'Moved %d objects in %s' % (len(moves), ', '.join(sorted(cell_label(db, k) for k in cells))))
+    note = 'Moved %d objects in %s' % (len(moves), ', '.join(sorted(cell_label(db, k) for k in cells)))
+    commit(db, note)
+    if was and doors.follow(db, was):
+        editing.fold(db, 2, note)
     return {'cells': sorted(cells)}
 
 
@@ -109,10 +169,11 @@ def restore(db, refs):
     return {'cells': sorted(cells)}
 
 
-def place(db, cell_hint, items, x, y, z=None, yaw=0.0, label=None):
+def place(db, cell_hint, items, x, y, z=None, yaw=0.0, label=None, scattered=False):
     """Put a group down with its middle at (x, y). items: [{id, dx, dy, dz, rx, ry, rz, s}] relative to the
     group's middle and its lowest point. z None: set the group down on the floor or ground there.
-    yaw turns the whole group (clockwise, like the game)."""
+    yaw turns the whole group (clockwise, like the game). scattered: the Scatter brush's, marked so its Remove
+    takes out only what it placed."""
     editing._require_project(db)
     if not items:
         raise EditError('The group is empty.')
@@ -146,6 +207,8 @@ def place(db, cell_hint, items, x, y, z=None, yaw=0.0, label=None):
         cells.add(key)
     if not placed:
         raise EditError('None of these objects exist in your load order.')
+    if scattered:
+        db.project.scattered.update(p['ref'] for p in placed)
     commit(db, 'Placed %s (%d objects) in %s' % (('"%s"' % label) if label else 'a group', len(placed),
                                                   ', '.join(sorted(cell_label(db, k) for k in cells))))
     return {'placed': placed, 'cells': sorted(cells)}

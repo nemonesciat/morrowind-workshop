@@ -27,7 +27,7 @@ on the ground. A plain click does nothing, so you can still select things.
 | ▬ Flatten | Levels the ground to the height where the stroke started. |
 | 🖌 Paint | Paints a ground texture. Pick one from the list, or take the one on the ground: **💧 Pick**, then click it (or **Shift+click** it any time). **✨ Auto** paints each patch the way the region's own land is painted where the ground is like it (as steep, as high, on a crest or in a hollow, by the water or not), copying the game's layout so textures meet as they do in the game (roads and paving stay). **Like** takes another region's textures. |
 | 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **💧 Pick** (or **Shift+click**) takes the colour there. |
-| 🌿 Scatter | Scatters the region's own grass, plants, rocks or trees. **Ctrl** clears them away. |
+| 🌿 Scatter | Scatters the region's own grass, plants, rocks or trees. **✕ Remove** (or **Ctrl**) clears away what the brush scattered, of the kinds ticked: never the game's own nor what you placed by hand. |
 
 - **Size** is the brush's reach in game units (a cell is 8,192 across; the land has a point every 128, so 64 moves
   just the one under the brush). Type a size in the box, or press **[** and **]**. **Strength** is how much each pass
@@ -60,6 +60,8 @@ its usual tint, and **Hollows** darkens the hollows and lightens the crests. **A
 - **Grass as groundcover** goes into its own grass file next to your mod. OpenMW draws it fast, sways it,
   and lets you walk through it. **Grow it over this cell** (or **…and around**) grows it on the grassy
   ground of whole cells.
+- **Your own brush as grass:** tick **Paint as grass (groundcover)** on one of your brushes to paint it into the
+  grass file instead of the mod. It suits small plants and tufts, since groundcover can't be touched or picked.
 
 ## Land shaping: how it works
 
@@ -72,7 +74,8 @@ It always goes in four steps:
 1. **Draw shapes**. Each marks the cells it reaches as you draw, move or widen it (towns left out).
 2. **Mark more cells** if you like: land with no shape on it is smoothed into the rest.
 3. **Watch the preview** on the map, and change the sliders until it looks right.
-4. **Press Shape them** (pinned at the top of the panel) to write it into your mod.
+4. **Press the button pinned at the top of the panel** to write it into your mod. It does everything you drew, in
+   order: **Shape the ground**, **Build the town**, or **Shape, then build** when there are both.
 
 **Only marked cells ever change.** Everything else, including the edge a marked cell shares with an
 unmarked one, stays exactly as it is. Marking is how you say both "work here" and "leave the rest alone".
@@ -211,8 +214,9 @@ in** (the whole plan in one region), **🎲 Re-roll** (the same shapes with othe
 
 ## Step 4: Shape them
 
-**Shape them** (pinned at the top of the panel, and at the bottom) writes the plan into the marked cells, as
-one Undo step. Things standing on the ground follow it, and the note after it compares the new land's
+The button pinned at the top of the panel (**Shape the ground**, or **Shape, then build** with towns drawn too; and
+**Shape the marked cells** at the bottom) writes the plan into the marked cells, as one Undo step, then builds each
+town drawn. You don't need to select a town first. Town, street, zone and wall shapes change no ground. Things standing on the ground follow it, and the note after it compares the new land's
 slopes and roughness with the region's own.
 
 The shapes stay after shaping, so you can change them and shape again: with **Start from the land under my
@@ -280,6 +284,16 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **Dressed:** sets out what the culture's own towns set out. Before doors: benches, signs, lanterns, crates, a
   smith's forge and anvil. Along the streets: carts, stools, barrels. In the square: a well or a shrine. And the
   culture's own scenes, such as Telvanni slave pods or a gallows, as often as its towns have them.
+- **Streets:** as its towns' (wide), **narrower**, or **lanes**, one ground square (512) across.
+- **Draw 〰 Street / ▧ Zone / 🧱 Wall:** shapes of the town's own, drawn inside it.
+  - **Streets** you draw are its streets, in place of the ones it would plan.
+  - A **zone** is a quarter: **Houses** keeps shops, taverns and halls out; **Business** draws shops, taverns and
+    guild halls, every other house a shop; **Noble** draws manors and temples, its houses manors.
+  - A **wall** you draw keeps to a grid of the wall's pieces from your first point, its corners square; the town fills it.
+- **How many:** shops, taverns, temples, guild halls, manors and guard posts. Blank is as its towns have them.
+- **Which buildings:** the game's buildings it picks from, with how often each is used. Untick one to leave it out.
+- **Like ★ your style:** a style of your own (Style palette) builds the town of your prefabs, planned like the
+  culture it names.
 - **Name:** the town's name. Its interiors are called after it ("Varnhold, …"). Left blank, it takes the name shown,
   made from the culture's own town names.
 - **Interiors:** behind every door, one of the game's own interiors for that very building, furnished, with its
@@ -287,8 +301,12 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   keeper and trade ("Gilas Mundrethi: Clothier"); temples, guilds and towers keep what they are.
 - **People:** a household in each, cast as the game's places of that kind have them, owning its beds and chests.
   This takes a minute or two for a town.
-- **🏘 Make it** builds it. Each building is set on the ground, and the ground is raised where its foot or door
+- **🏘 Make it** builds it (the button at the top of the panel builds every town drawn). Each building is set on the ground, and the ground is raised where its foot or door
   would show a gap. The streets are paved with the road of the nearest towns of that culture. One Undo takes it all back.
+- **Editing it afterwards:** right-click any piece of one of its buildings → **▣ Select the whole building**, then move
+  or turn it as one. When a door moves, alone or with its building, the way out of its interior moves with it.
+- **✕ Remove the town** takes away what Make it built there (buildings, wall, dressing, interiors and their people),
+  even under later work; what you added since and the ground stay. Then Make it again.
 
 ## Good to know
 

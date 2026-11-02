@@ -7,12 +7,14 @@ at fground). Each is catalogued with its culture (townsurvey.town_style of its m
 interiors it serves) and its footprint (its pieces' boxes, turned, in its door's frame). A plot takes a building of the
 town's culture and the plot's kind about its size, set down with its middle on the plot's and its door facing the
 plot's way."""
+import json
 import math
 import random
 import re
 from collections import Counter
 
 import mapdata
+import strays
 import townsurvey
 
 _cat = {}
@@ -100,6 +102,10 @@ def _pbox(db, p, memo):
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
+TIPPED = re.compile(r'plat|plank|(?<!cup)board')
+TIPPED_UP = 250                # (only those standing on the ground: higher up, planks on edge are shutters and trim)
+
+
 def _trim_yard(db, m, memo):
     """The module without the walls, palisades, fences and platforms standing clear of the building itself, and what
     stands on them: in the game they join the neighbours' into a street wall or a harbour stage, and set down alone
@@ -121,6 +127,11 @@ def _trim_yard(db, m, memo):
     drop, boxes = set(), []
     for k, p in enumerate(m['fpieces']):
         low = p['id'].lower()
+        # (a plank or platform tipped up on edge on the ground: Firewatch leans half-size ones against its houses, and set down alone
+        # one read as a board stuck to a wall, the user's town twice, 2026-11-01)
+        if p is not main and not p.get('door') and TIPPED.search(low) and p['z'] < TIPPED_UP and max(abs(math.sin(p.get('rx') or 0.0)), abs(math.sin(p.get('ry') or 0.0))) > 0.7:
+            drop.add(k)
+            continue
         if p is main or p.get('door') or 'door' in low or 'housewall' in low or not (WALLISH.search(low) or 'platform' in low):
             continue
         b = _pbox(db, p, memo)
@@ -136,6 +147,65 @@ def _trim_yard(db, m, memo):
             if b and apart(b, mb) and not holds(b) and any(o[0] <= (b[0] + b[2]) / 2 <= o[2] and o[1] <= (b[1] + b[3]) / 2 <= o[3] for o in boxes):
                 drop.add(k)
     return dict(m, fpieces=[p for k, p in enumerate(m['fpieces']) if k not in drop])
+
+
+REPEAT_NEAR = 8                # (one model this near itself, the same way up, is the same piece twice)
+
+
+def _no_repeats(m):
+    """The module without a piece set twice in one spot: the game has a few (an ex_common_window_03 twice on one wall),
+    and a town built them twice, the town audit of 2026-11-01."""
+    out = []
+    for p in m['fpieces']:
+        if any(o['id'].lower() == p['id'].lower() and abs(o['x'] - p['x']) <= REPEAT_NEAR and abs(o['y'] - p['y']) <= REPEAT_NEAR
+               and abs(o['z'] - p['z']) <= REPEAT_NEAR and o.get('door') == p.get('door') for o in out):
+            continue
+        out.append(p)
+    return m if len(out) == len(m['fpieces']) else dict(m, fpieces=out)
+
+
+SHELL_AREA = 250000            # (a piece this big across and SHELL_HEIGHT tall is a building's own shell)
+SHELL_HEIGHT = 400
+SHELL_GAP = 48                 # (two shells this close, every way, are one building's)
+
+
+def _two_buildings(db, m, memo):
+    """Does the module hold another building with a door of its own? Learnt from the game's rows, a Common guard house
+    kept the tavern 810 along from it, door and all, and set down whole it stood over its neighbours, a house's door
+    opening inside the tavern four times in a town (the user's audit, 2026-11-01; PIN2's "multiple building pieces in
+    one"). True when a building shell stands apart from the front door's, joined to it by no chain of touching shells."""
+    boxes = []
+    for p in m['fpieces']:
+        low = p['id'].lower()
+        if low not in memo:
+            ri = db.resolve_id(p['id'])
+            memo[low] = mapdata.object_bounds(db, ri) if ri is not None else None
+        b = memo[low]
+        if not b:
+            boxes.append(None)
+            continue
+        sc, c, sn = p.get('s') or 1.0, math.cos(p.get('rz') or 0.0), math.sin(p.get('rz') or 0.0)
+        xs = [p['x'] + (bx * c + by * sn) * sc for bx in (b[0], b[3]) for by in (b[1], b[4])]
+        ys = [p['y'] + (-bx * sn + by * c) * sc for bx in (b[0], b[3]) for by in (b[1], b[4])]
+        boxes.append((min(xs), min(ys), p['z'] + b[2] * sc, max(xs), max(ys), p['z'] + b[5] * sc))
+    shells = [k for k, (p, b) in enumerate(zip(m['fpieces'], boxes)) if b and (b[3] - b[0]) * (b[4] - b[1]) >= SHELL_AREA
+              and b[5] - b[2] >= SHELL_HEIGHT and not OPENING.search(p['id']) and not WALLISH.search(p['id'].lower())]
+    if len(shells) < 2:
+        return False
+    gap = lambda a, b: max(0.0, max(a[0], b[0]) - min(a[3], b[3]), max(a[1], b[1]) - min(a[4], b[4]), max(a[2], b[2]) - min(a[5], b[5]))
+    pt = lambda b, x, y: math.hypot(max(b[0] - x, 0.0, x - b[3]), max(b[1] - y, 0.0, y - b[4]))
+    near = lambda x, y: min(shells, key=lambda k: pt(boxes[k], x, y))
+    # (the front door's shell and the shells joined to it, touching one another; any other is another building's,
+    # with its own door or without: a tavern with no door standing over the next house is as much a phantom)
+    front = near(0.0, 0.0)
+    joined, todo = {front}, [front]
+    while todo:
+        k = todo.pop()
+        for j in shells:
+            if j not in joined and gap(boxes[k], boxes[j]) <= SHELL_GAP:
+                joined.add(j)
+                todo.append(j)
+    return len(joined) < len(shells)
 
 
 def _footprint(db, m, memo):
@@ -158,12 +228,112 @@ def _footprint(db, m, memo):
     return [min(xs), min(ys), max(xs), max(ys)] if xs else None
 
 
+OWN = '\u2605'                  # (a style of your own as a town's culture: '★name')
+
+
+def _prefab_module(db, pf, memo):
+    """A prefab of yours as a building module: its pieces in the frame of its outer door (the door farthest from its
+    middle) at the origin, the building inward (+y), as the survey's modules are; None without a door."""
+    its = [it for it in pf.get('items') or () if db.resolve_id(it.get('id') or '') is not None]
+    tag = lambda it: it.get('type') or db.recs[db.resolve_id(it['id'])][0]
+    doors = [it for it in its if tag(it) == 'DOOR']
+    if not doors or len(its) < 2:
+        return None
+    cx = sum(float(it.get('dx', 0)) for it in its) / len(its)
+    cy = sum(float(it.get('dy', 0)) for it in its) / len(its)
+    door = max(doors, key=lambda it: math.hypot(float(it.get('dx', 0)) - cx, float(it.get('dy', 0)) - cy))
+    ux, uy = cx - float(door.get('dx', 0)), cy - float(door.get('dy', 0))
+    if math.hypot(ux, uy) < 1:
+        return None
+    # (inward square to the door, out of the wall it stands in, as the game's modules are framed; towards the
+    # prefab's middle, the frame came out turned, a game house saved as a prefab 1,119 by 1,462 against its own
+    # 1,223 by 1,045, lab jown)
+    db_ = mapdata.object_bounds(db, db.resolve_id(door['id']))
+    if db_:
+        import doorfronts
+        tx, ty = doorfronts.thin_axis({'b': db_, 'p': [0, 0, 0, 0, 0, float(door.get('rz', 0))]})
+        ux, uy = (tx, ty) if tx * ux + ty * uy >= 0 else (-tx, -ty)
+    L = math.hypot(ux, uy)
+    sn, c = ux / L, uy / L
+    th = math.atan2(ux, uy)
+    out = []
+    for it in its:
+        px, py = float(it.get('dx', 0)) - float(door.get('dx', 0)), float(it.get('dy', 0)) - float(door.get('dy', 0))
+        out.append({'id': it['id'], 'x': px * c - py * sn, 'y': px * sn + py * c, 'z': float(it.get('dz', 0)) - float(door.get('dz', 0)),
+                    'rx': float(it.get('rx', 0)), 'ry': float(it.get('ry', 0)), 'rz': (float(it.get('rz', 0)) - th) % (2 * math.pi),
+                    's': float(it.get('s', 1.0) or 1.0), 'door': tag(it) == 'DOOR'})
+    low = door['id'].lower()
+    if low not in memo:
+        memo[low] = mapdata.object_bounds(db, db.resolve_id(door['id']))
+    b = memo[low]
+    main = max(out, key=lambda p: 0 if p['door'] else 1)['id']
+    return {'main': main, 'fpieces': out, 'uses': 1, 'examples': [],
+            'fground': (b[2] * float(door.get('s', 1.0) or 1.0)) if b else 0.0}
+
+
+_own_cat = {}
+
+
+def own_catalog(db, game=None):
+    """Your prefabs as buildings of your own styles (stylesurvey.own_styles): [catalog entries], culture '★name', each
+    kind as you set it; behind its door, the interior of a game building of that kind (its look's 'like' culture's)."""
+    import groups
+    import stylesurvey
+    st = stylesurvey.own_styles()
+    pfs = {p['name']: p for p in groups.prefabs()}
+    sig = (id(db.recs), json.dumps(st, sort_keys=True), tuple(sorted((n, p.get('saved')) for n, p in pfs.items())))
+    if _own_cat.get('sig') == sig:
+        return _own_cat['out']
+    memo, out = {}, []
+    for name, o in st.items():
+        like = o.get('like') or ''
+        for pn, kind in (o.get('prefabs') or {}).items():
+            pf = pfs.get(pn)
+            m = _prefab_module(db, pf, memo) if pf else None
+            fp = _footprint(db, m, memo) if m else None
+            if not fp:
+                continue
+            w, d = fp[2] - fp[0], fp[3] - fp[1]
+            # (an interior to copy: a game building's of the kind and about the size, of the look it is like)
+            gl = [c for c in game or () if c['m'].get('examples') and (not like or c['culture'] == like)]
+            pick = sorted(gl, key=lambda c: (c['kind'] != kind, abs(math.log(max(1.0, c['w'] * c['d']) / max(1.0, w * d)))))
+            if pick:
+                m['examples'] = list(pick[0]['m']['examples'])
+            out.append({'key': 'prefab:' + pn, 'culture': OWN + name, 'kind': kind, 'w': round(w), 'd': round(d),
+                        'fp': [round(v) for v in fp], 'uses': 1, 'm': m, 'fort': False, 'keep': False, 'own': True,
+                        'uid': 'prefab:%s@%s' % (pn, name)})
+    _own_cat.update(sig=sig, out=out)
+    return out
+
+
 def catalog(db):
+    """The game's buildings (game_catalog) and your own prefab ones (own_catalog), each with its own 'uid'."""
+    g = game_catalog(db)
+    return g + own_catalog(db, g) if g else g
+
+
+def by_uid(C):
+    """{uid: entry}. Many of the game's buildings share their main piece (three taverns are ex_common_tavern_01, each
+    with its own pieces and footprint): looked up by that, the town built another of them than the plan had fitted,
+    bigger, into its neighbours, the user's "two buildings completely spawned into one another" (2026-11-01)."""
+    return {c['uid']: c for c in C}
+
+
+def built(C, b):
+    """The catalogue entry a plot's 'b' names (by its uid; by key for a plan made before uids)."""
+    if not b:
+        return None
+    return C.get(b.get('uid')) or next((c for c in C.values() if c['key'] == b.get('key') and c['w'] == b.get('w') and c['d'] == b.get('d')), None)
+
+
+def game_catalog(db):
     """[{'key': main piece, 'culture', 'kind', 'w', 'd', 'fp', 'uses', 'm': module}] for every whole building the game
     has outside a door."""
     key = id(db.recs)
-    if key in _cat:
-        return _cat[key]
+    # (built again once, when the strays arrive from the survey process: built before, it kept them for the session)
+    st = strays.ready(db) is not None
+    if key in _cat and (_cat[key][1] or not st):
+        return _cat[key][0]
     import exteriorsurvey as es
     s = es.ready(db)
     if s is None:
@@ -194,7 +364,11 @@ def catalog(db):
         # are laid whole, by the game's joins, in a stage of their own)
         if WALLISH.search(m['main']) or sum(1 for p in m['fpieces'] if WALLISH.search(p['id'])) > 0.5 * len(m['fpieces']):
             continue
+        m = strays.without(db, m)            # (windows learnt with it from the house next door: strays.py)
         m = _trim_yard(db, m, memo)
+        m = _no_repeats(m)
+        if _two_buildings(db, m, memo):
+            continue
         fp = _footprint(db, m, memo)
         if not fp:
             continue
@@ -253,14 +427,26 @@ def catalog(db):
         if NOT_BUILDING.search(m['main']):
             continue
         out.append({'key': m['main'], 'culture': cult, 'kind': kind, 'w': round(w), 'd': round(d), 'fp': [round(v) for v in fp],
-                    'uses': m.get('uses', 1), 'm': m, 'fort': fort, 'keep': keep})
-    _cat[key] = out
+                    'uses': m.get('uses', 1), 'm': m, 'fort': fort, 'keep': keep,
+                    # (by the game building it was learnt from, not its place in the list: the list changes when the
+                    # strays arrive, and a plan made before would have built other buildings than it showed)
+                    'uid': '%s#%s' % (m['main'].lower(), ((m.get('examples') or [''])[0] or str(len(out))).lower())})
+    seen = set()
+    for c in out:
+        if c['uid'] in seen:
+            c['uid'] += '#%d' % len(seen)
+        seen.add(c['uid'])
+    _cat[key] = (out, st)
     return out
 
 
 RUIN = re.compile(r'ruin|broken|collapsed|rubble', re.I)
 KEEP = re.compile(r'keep', re.I)
-OPENING = re.compile(r'window|door|shutter|awning|sign|banner', re.I)
+# (Nordic windows are ex_nord_win_01/02 and Tamriel's chapel ones _X_WinKynaret...: by "window" alone they counted as
+# walls, and a Common guard house's Nordic window hung in the air beside it four times in the user's Nargorewatch,
+# 2026-11-01. An entrance too: a Firewatch row's furnisher entrance and sign were learnt with the house next door,
+# 500 off, and stood alone in the user's town)
+OPENING = re.compile(r'window|_win(_|\d|$)|_x_win(?!d)|triwin|door|entrance|shutter|awning|sign|banner', re.I)
 STACK_PART = re.compile(r'_top|top_|roof|_med_|_light_|_dark_|upper', re.I)
 BASE_PART = re.compile(r'base|_bottom|foundation', re.I)
 WATERFRONT = re.compile(r'_wf|waterfront|dock|pier|quay|jetty|mooring|_ship|boat|cutter|shipwreck|lighthouse', re.I)
@@ -375,7 +561,7 @@ def fit(db, plan, seed=1):
     the plot's kind first, about the plot's size, not the same one over and over. Each plot gets 'b': {key, culture,
     kind, w, d}, its rect becomes the building's own outline and its door the building's door. The plan, changed."""
     C = catalog(db)
-    cult = plan['culture']
+    cult = plan.get('own') or plan['culture']
     pool = [c for c in C if c['culture'] == cult]
     for near in NEAR_CULTURES.get(cult, ()):
         if len(pool) >= 12:
@@ -429,6 +615,15 @@ def fit(db, plan, seed=1):
         for c in C:
             if c['culture'] == near and have[c['kind']] < 3:
                 lend.setdefault(c['kind'], []).append(c)
+    # (the buildings it would choose from, each to leave out by unticking: PIN2 2026-11-01, "give you a selection of
+    # buildings that would be used in the generation ... remove lets say certain chapels")
+    skip = {str(k).lower() for k in plan.get('skip') or ()}
+    ch = {}
+    for c_ in pool + [x for v in lend.values() for x in v]:
+        e = ch.setdefault(c_['key'].lower(), {'key': c_['key'], 'kind': c_['kind'], 'culture': c_['culture'], 'w': c_['w'], 'd': c_['d'],
+                                              'off': c_['key'].lower() in skip, 'n': 0})
+    pool = [c_ for c_ in pool if c_['key'].lower() not in skip]
+    lend = {k_: [c_ for c_ in v if c_['key'].lower() not in skip] for k_, v in lend.items()}
     used = {}
     import townplan
     placed = [[tuple(p_) for p_ in r] for r in plan.get('obstacles') or ()]
@@ -495,7 +690,7 @@ def fit(db, plan, seed=1):
         used[b['key']] = used.get(b['key'], 0) + 1
         if b.get('keep'):
             keeps.append(q)
-        q['b'] = {'key': b['key'], 'culture': b['culture'], 'kind': b['kind'], 'w': b['w'], 'd': b['d']}
+        q['b'] = {'key': b['key'], 'culture': b['culture'], 'kind': b['kind'], 'w': b['w'], 'd': b['d'], 'uid': b['uid']}
         q['door'] = [round(dx, 1), round(dy, 1)]
         if mx or my:
             q['x'], q['y'] = round(q['x'] + mx, 1), round(q['y'] + my, 1)      # (where it was nudged)
@@ -503,44 +698,64 @@ def fit(db, plan, seed=1):
         q['way'] = [[round(v, 1) for v in p_] for p_ in way]
     plan['plots'] = [q for q in plan['plots'] if q in keep]
     _close_rows(plan, rng)
-    _lone_forts(plan, {c['key']: c for c in C})
+    _lone_forts(plan, by_uid(C))
     _shut_doors(plan)
+    for q in plan['plots']:
+        e = ch.get(((q.get('b') or {}).get('key') or '').lower())
+        if e:
+            e['n'] += 1
+    plan['choices'] = sorted(ch.values(), key=lambda e: (e['kind'] == 'house', e['kind'], -e['n'], e['key'].lower()))
     return plan
 
 
 WALL_BACK = 320                # a walled town's buildings stand back to its wall this close (its own depth ~250)
 
 
-def planned(db, outline, culture, seed=1, walls=''):
+def planned(db, outline, culture, seed=1, walls='', opts=None):
     """The town planned and its buildings fitted (townplan.plan, fit). Walled: planned twice, the second time inside the
     wall the first plan's buildings call for, so its streets and buildings fill the wall corner to corner as the game's
     walled towns do: planned once, the town's streets made a long blob and the wall's box round it left its corners
     bare, two fifths of the ground inside empty against a fifth or less in Firewatch and Ebonheart (the Tamriel
-    practice, 2026-11-01)."""
+    practice, 2026-11-01). opts: the user's choices (townplan.plan_once); opts['wall'], a wall drawn on the map, is
+    the wall, squared to its pieces' steps (townwalls.square_up), and the town fills it."""
     import townplan
+    opts = opts or {}
     # (the bar's planning share: a walled town is planned twice, its two plans the most of it)
     P = PLAN_END
-    pl = townplan.plan(db, outline, culture, seed, walled=bool(walls))
+    pl = townplan.plan(db, outline, culture, seed, walled=bool(walls), opts=opts)
+    if opts.get('own'):
+        pl['own'] = opts['own']             # (built of your own style's prefabs, planned like `culture`'s towns)
+    pl['skip'] = list(opts.get('skip') or ())
     _say('Choosing the buildings', P * (0.3 if walls else 0.8))
     plan = fit(db, pl, seed)
     if not walls:
         return plan
     import townwalls
     _say('Planning inside the wall', P * 0.4)
-    try:
-        W = townwalls.lay(db, plan, None if walls == 'auto' else walls)
-    except Exception as e:
-        print('town wall:', e)
-        return plan
-    poly = W.get('outline') or []
+    drawn = opts.get('wall') or []
+    if len(drawn) >= 3:
+        # (drawn by the user, "like ridges that lock into a grid once you put down your first point", PIN2)
+        K = townwalls.kits(db)
+        fam = walls if walls in K else townwalls.pick_family(db, plan)
+        poly = townwalls.square_up(drawn, K[fam]['L']) if fam else []
+    else:
+        try:
+            W = townwalls.lay(db, plan, None if walls == 'auto' else walls)
+        except Exception as e:
+            print('town wall:', e)
+            return plan
+        poly = W.get('outline') or []
     if len(poly) < 4:
         return plan
     inner = townplan.inset(poly, WALL_BACK)
-    pl = townplan.plan(db, inner, culture, seed, walled=True, ring=True)
+    pl = townplan.plan(db, inner, culture, seed, walled=True, ring=True, opts=opts)
+    if opts.get('own'):
+        pl['own'] = opts['own']
+    pl['skip'] = list(opts.get('skip') or ())
     _say('Choosing the buildings', P * 0.85)
     again = fit(db, pl, seed)
     built = lambda p_: sum(1 for q in p_['plots'] if q.get('b'))
-    if built(again) < 0.75 * built(plan):
+    if built(again) < 0.75 * built(plan) and len(drawn) < 3:
         return plan
     again['wall_outline'] = [list(p_) for p_ in poly]
     return again
@@ -573,8 +788,8 @@ def _lone_forts(plan, C):
     """A fort's tower or stretch of fort wall, left out: in the game they stand in a fort's own run, and set among houses
     they read as broken wall or open stumps, in groups too (round guard towers are open at the top). The user,
     2026-10-31: "keep a whole keep and clean up the loose bits that don't fit and don't have neighbours"."""
-    lone = [q for q in plan['plots'] if q.get('b') and (C.get(q['b']['key']) or {}).get('fort')
-            and not (C.get(q['b']['key']) or {}).get('keep')]
+    lone = [q for q in plan['plots'] if q.get('b') and (built(C, q['b']) or {}).get('fort')
+            and not (built(C, q['b']) or {}).get('keep')]
     if lone:
         plan['plots'] = [q for q in plan['plots'] if q not in lone]
 
@@ -687,16 +902,16 @@ def progress():
     return {k: v for k, v in PROGRESS.items() if k != 'ins'}
 
 
-def make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, people=False, name=''):
+def make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, people=False, name='', opts=None):
     """_make, with how far it has got said as it goes (PROGRESS)."""
     PROGRESS.update(on=True, what='Planning streets and plots', frac=0.0, ins=bool(interiors))
     try:
-        return _make(db, outline, culture, seed, walls, dress, interiors, people, name)
+        return _make(db, outline, culture, seed, walls, dress, interiors, people, name, opts)
     finally:
         PROGRESS.update(on=False, what='', frac=0.0, ins=False)
 
 
-def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, people=False, name=''):
+def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, people=False, name='', opts=None):
     """The town built: its plan (townplan.plan, the same seed gives the same town) and a building of the culture's on
     every plot, each set down on the ground in front of its door as the game's stands on its own. One Undo step.
     walls: '' none, 'auto' the culture's own, or a wall family (townwalls.py): laid round it, piece joined to piece.
@@ -708,8 +923,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     import townplan
     from project import set_ref_pos, zs
     editing._require_project(db)
-    plan = planned(db, outline, culture, seed, walls)
-    C = {c['key']: c for c in catalog(db)}
+    plan = planned(db, outline, culture, seed, walls, opts)
+    C = by_uid(catalog(db))
     mine = db.project.plugin.lower()
     made, pieces, cells = 0, 0, set()
     rmemo = {}
@@ -757,7 +972,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                                                  math.atan2(dx_ / h_, dy_ / h_), 640, GATE_CLEAR))
     for k_, q in enumerate(plan['plots']):
         _say('Setting the buildings', 0.76 + 0.1 * k_ / float(len(plan['plots']) or 1))
-        b = q.get('b') and C.get(q['b']['key'])
+        b = q.get('b') and built(C, q['b'])
         if not b:
             continue
         if W and W.get('outline') and q.get('rect') and not all(townwalls._inside(W['outline'], p_) for p_ in q['rect'] + (q.get('way') or [])):
@@ -777,6 +992,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             continue
         z0 = gz - (m.get('fground') if m.get('fground') is not None else -40.0)
         front = min((p_ for p_ in m['fpieces'] if p_.get('door')), key=lambda p_: p_['x'] ** 2 + p_['y'] ** 2 + (p_['z'] * 3) ** 2, default=None)
+        gid = None                           # (its pieces kept as one building: Select the whole building, groups.building)
         for p_ in m['fpieces']:
             low = p_['id'].lower()
             if low not in rmemo:
@@ -793,6 +1009,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             rk = db.project.new_ref_key()
             pos = (wx, wy, z0 + p_['z'], p_.get('rx', 0.0), p_.get('ry', 0.0), (p_['rz'] + yaw) % (2 * math.pi))
             editing._store(cell, rk, mine, int(rk.rsplit('|', 1)[1]), set_ref_pos([('NAME', zs(db.recs[ri][1]))], pos, p_.get('s') or 1.0))
+            gid = gid or rk
+            db.project.town_parts[rk] = gid
             pieces += 1
             cells.add(key)
             new_refs.add(rk)
@@ -801,6 +1019,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 q['door_z'] = pos[2]
                 if p_ is front:
                     q['door_ref'] = (key, rk)        # (the way in, at the module's origin: its interior's door links here)
+            elif db.recs[ri][0] == 'DOOR' and not re.search(r'trap|hatch|gate|marker', p_['id'], re.I):
+                q.setdefault('more_doors', []).append((key, rk))      # (its back door leads in too: towninside)
         made += 1
     wall = 0
     if W is not None:
@@ -828,8 +1048,11 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             new_refs.add(rk)
         # (the streets carried out through the gates, to be paved with the rest)
         have = {tuple(r) for r in plan.get('roads') or ()}
-        plan['roads'] = sorted([list(r) for r in have | townwalls.road_patches(W.get('roads') or [])])
+        gate = townwalls.road_patches(W.get('roads') or [])
+        plan['roads'] = sorted([list(r) for r in have | gate])
+        plan['paint_extra'] = sorted([list(r) for r in gate])
     dressed = 0
+    dress_refs = set()
     if dress and made:
         _say('Dressing yards and streets', 0.89)
         import towndress
@@ -849,6 +1072,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             pieces += 1
             cells.add(key)
             new_refs.add(rk)
+            dress_refs.add(rk)
     fitted = painted = 0
     inside = {}
     import towninside
@@ -856,7 +1080,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     if pieces:
         _say('Fitting the ground to the buildings', 0.92)
         db.sync_project()
-        fitted = _fit_ground(db, doors, new_refs)
+        # (the dressing follows the ground fitted round the buildings: left, it stood sunk in the raised ground)
+        fitted = _fit_ground(db, doors, new_refs - dress_refs)
         _say('Paving the roads', 0.96)
         painted = _paint_roads(db, plan)
         _say('Saving', 0.98)
@@ -876,6 +1101,63 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                     (', a wall of %d pieces' % wall) if wall else ''))
     return {'buildings': made, 'pieces': pieces, 'cells': sorted(cells), 'fitted': fitted, 'road': painted, 'wall': wall,
             'dressed': dressed, 'interiors': inside.get('interiors', 0), 'people': inside.get('people', 0), 'name': name}
+
+
+REMOVE_PAD = 1600              # (a town's wall and dressing stand this far outside its outline at most)
+REMOVE_BEFORE = 80             # (a building's pieces are made at most this many before its front door)
+
+
+def remove(db, outline, look=False):
+    """Everything a town's Make it built, taken away as one step: its buildings, wall and dressing (the objects made in
+    one unbroken run, from its first building to its last interior, round its outline) and its interiors with their
+    people. What you added later, and the ground, stay. For rebuilding a town whose Undo lies under later work (the
+    user's Nargorewatch, 2026-11-01: 500 edits on top of it). look: only count. {'things', 'interiors', 'name'}"""
+    import editing
+    import townplan
+    from editing import EditError, commit
+    editing._require_project(db)
+    p = db.project
+    poly = [(float(a), float(b)) for a, b in outline]
+    if len(poly) < 3:
+        raise EditError("Draw the town's outline first.")
+    near = lambda x, y: townplan._inside(poly, x, y) or townplan._edge_dist(poly, x, y) <= REMOVE_PAD
+    xs, ys = [q[0] for q in poly], [q[1] for q in poly]
+    keys = ['#%d,%d' % (gx, gy) for gx in range(int((min(xs) - REMOVE_PAD) // 8192), int((max(xs) + REMOVE_PAD) // 8192) + 1)
+            for gy in range(int((min(ys) - REMOVE_PAD) // 8192), int((max(ys) + REMOVE_PAD) // 8192) + 1)]
+    idx = lambda rk: int(rk.rsplit('|', 1)[1]) if rk.rsplit('|', 1)[-1].isdigit() else -1
+    made, fronts = [], {}
+    for ck in keys:
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if r.get('new') and near(r['p'][0], r['p'][1]):
+                made.append((ck, r))
+                to = r.get('to') if r['type'] == 'DOOR' else None
+                if to and to.get('cell') and to['key'] in p.cells:
+                    fronts[to['key']] = min(fronts.get(to['key'], 1 << 30), idx(r['k']))
+    # (its interiors: the places its doors lead into, named "<town>, ...")
+    pre = Counter(k.split(', ', 1)[0] for k in fronts if ', ' in k).most_common(1)
+    if not pre:
+        raise EditError('No town built here: none of the doors inside it leads into an interior a town made.')
+    town = pre[0][0]
+    inside = [k for k in p.cells if k.startswith(town + ', ')]
+    hi = max([idx(rk) for k in inside for rk in (p.cells[k].get('refs') or {})] + [max(fronts.values())])
+    lo = min(v for k, v in fronts.items() if k.startswith(town + ', ')) - REMOVE_BEFORE
+    out = [(ck, r['k']) for ck, r in made if lo <= idx(r['k']) <= hi]
+    # (an interior a door left standing still leads into stays: another town of the same name, or one you linked)
+    gone = {rk for _ck, rk in out}
+    kept = {(r.get('to') or {}).get('key') for _ck, r in made if r['type'] == 'DOOR' and r['k'] not in gone}
+    inside = [k for k in inside if k not in kept]
+    if look:
+        return {'things': len(out), 'interiors': len(inside), 'name': town.title()}
+    for ck, rk in out:
+        c = p.cells.get(ck)
+        if c and rk in (c.get('refs') or {}):
+            c['refs'].pop(rk)
+            p.town_parts.pop(rk, None)
+    for k in inside:
+        p.cells.pop(k, None)
+        p.records.pop('PGRD|' + k, None)
+    commit(db, 'Removed the town %s: %d things and %d interiors' % (town.title(), len(out), len(inside)))
+    return {'things': len(out), 'interiors': len(inside), 'name': town.title()}
 
 
 CLEARABLE = re.compile(r'tree|flora|plant|bush|shrub|grass|fern|log|stump|root|kelp|weed|reed|rock|boulder|stone_|mushroom|'
@@ -947,7 +1229,46 @@ def _clear_ground(db, plan, W):
     return n
 
 
-TERRACE_BLEND = 320            # (a terrace fades back into the land round it over this far)
+TERRACE_BLEND = 320            # (a terrace fades back into the land round it over this far, or TERRACE_FADE times its rise)
+TERRACE_FADE = 3.0             # (a cosine fade is steepest at its middle, pi/2 times its mean: 3x keeps that under 30 degrees)
+TERRACE_BLEND_MAX = 1024       # (a 256 rise faded over 320 left banks of 40-60 degrees between houses, 2026-11-01)
+
+
+TERRACE_STEP = 0.5             # neighbouring terraces differ by at most this times the ground between them (about 27°)
+TERRACE_NEAR = 600             # (terraces this near each other are neighbours)
+TERRACE_GIVE = 128             # (and a terrace moves at most this from its own door's ground for them)
+
+
+def _terrace_steps(areas):
+    """[(rect, level)] with neighbouring levels drawn together: each plot levelled to its own door left two joined
+    houses 200-500 apart in height with a gap of 40-200 between them, a cliff no fade could soften (the town practice
+    of 2026-11-01: plot levelling took the steep ground of a town from 1.2% to 3.7%)."""
+    def gap(a, b):
+        return min(math.hypot(p[0] - q[0], p[1] - q[1]) for p in a for q in b)
+    zs = [z for _r, z in areas]
+    z0 = list(zs)
+    pairs = []
+    for i in range(len(areas)):
+        for j in range(i + 1, len(areas)):
+            d = gap(areas[i][0], areas[j][0])
+            if d < TERRACE_NEAR:
+                pairs.append((i, j, max(32.0, TERRACE_STEP * d)))
+    for _round in range(30):
+        moved = False
+        for i, j, allow in pairs:
+            dz = zs[i] - zs[j]
+            if abs(dz) > allow + 1:
+                fix = (abs(dz) - allow) / 2.0 * (1 if dz > 0 else -1)
+                # (each at most TERRACE_GIVE from its own door's ground: further, and on a hillside the plot itself
+                # came out sloped under the land's own limit)
+                ni = max(z0[i] - TERRACE_GIVE, min(z0[i] + TERRACE_GIVE, zs[i] - fix))
+                nj = max(z0[j] - TERRACE_GIVE, min(z0[j] + TERRACE_GIVE, zs[j] + fix))
+                if abs(ni - zs[i]) + abs(nj - zs[j]) > 0.5:
+                    zs[i], zs[j] = ni, nj
+                    moved = True
+        if not moved:
+            break
+    return [(r, z) for (r, _z), z in zip(areas, zs)]
 
 
 def _terrace(db, plan, W, skip=()):
@@ -972,6 +1293,7 @@ def _terrace(db, plan, W, skip=()):
         areas.append(([tuple(p_) for p_ in q['rect']], gz))
     if not areas:
         return 0
+    areas = _terrace_steps(areas)
     G, N = landscape.CELL, landscape.N
     step = G / (N - 1.0)
     xs = [x for r, _z in areas for x, _y in r]
@@ -1004,13 +1326,13 @@ def _terrace(db, plan, W, skip=()):
             best = min(best, math.hypot(px - (ax + dx * t), py - (ay + dy * t)))
         return best
     new_h, before = {}, {}
-    for gx in range(int(math.floor((min(xs) - TERRACE_BLEND) / G)), int(math.floor((max(xs) + TERRACE_BLEND) / G)) + 1):
-        for gy in range(int(math.floor((min(ys) - TERRACE_BLEND) / G)), int(math.floor((max(ys) + TERRACE_BLEND) / G)) + 1):
+    for gx in range(int(math.floor((min(xs) - TERRACE_BLEND_MAX) / G)), int(math.floor((max(xs) + TERRACE_BLEND_MAX) / G)) + 1):
+        for gy in range(int(math.floor((min(ys) - TERRACE_BLEND_MAX) / G)), int(math.floor((max(ys) + TERRACE_BLEND_MAX) / G)) + 1):
             L = mapdata.land(db, gx, gy)
             if not L or not L.get('h'):
                 continue
-            near = [(r, z) for r, z in areas if min(x for x, _y in r) - TERRACE_BLEND <= gx * G + G and max(x for x, _y in r) + TERRACE_BLEND >= gx * G
-                    and min(y for _x, y in r) - TERRACE_BLEND <= gy * G + G and max(y for _x, y in r) + TERRACE_BLEND >= gy * G]
+            near = [(r, z) for r, z in areas if min(x for x, _y in r) - TERRACE_BLEND_MAX <= gx * G + G and max(x for x, _y in r) + TERRACE_BLEND_MAX >= gx * G
+                    and min(y for _x, y in r) - TERRACE_BLEND_MAX <= gy * G + G and max(y for _x, y in r) + TERRACE_BLEND_MAX >= gy * G]
             if not near:
                 continue
             h = list(L['h'])
@@ -1018,20 +1340,31 @@ def _terrace(db, plan, W, skip=()):
             for j in range(N):
                 for i in range(N):
                     x, y = gx * G + i * step, gy * G + j * step
-                    best = None
-                    for r, z in near:
-                        d = dist(x, y, r)
-                        if d >= TERRACE_BLEND:
-                            continue
-                        w = 1.0 if d <= 0 else 0.5 + 0.5 * math.cos(math.pi * d / TERRACE_BLEND)
-                        if best is None or w > best[0]:
-                            best = (w, z)
-                    if not best:
-                        continue
                     n = j * N + i
                     z0 = h[n]
-                    want = max(z0 - tol, min(z0 + tol, best[1]))
-                    nz = z0 + best[0] * (want - z0)
+                    ws, inside_z, miss = [], None, 1.0
+                    for r, z in near:
+                        d = dist(x, y, r)
+                        want = max(z0 - tol, min(z0 + tol, z))
+                        reach = max(TERRACE_BLEND, min(TERRACE_BLEND_MAX, TERRACE_FADE * abs(want - z0)))
+                        if d >= reach:
+                            continue
+                        if d <= 0:
+                            inside_z = want
+                            break
+                        w = 0.5 + 0.5 * math.cos(math.pi * d / reach)
+                        ws.append((w, want))
+                        miss *= 1.0 - w
+                    if inside_z is not None:
+                        nz = inside_z
+                    elif ws:
+                        # (between plots, all of them by how near: the nearest alone flipped from one plot's level to the
+                        # next's halfway, and where neither reached the ground stayed low, a trench between two raised
+                        # houses, the town practice of 2026-11-01. How strongly: as near as the plots together are)
+                        tw = sum(w for w, _z in ws)
+                        nz = z0 + (1.0 - miss) * (sum(w * z for w, z in ws) / tw - z0)
+                    else:
+                        continue
                     if abs(nz - z0) >= 1:
                         h[n] = nz
                         changed = True
@@ -1125,17 +1458,49 @@ def road_texture(db, culture, near=None):
     return max(score, key=score.get)
 
 
+PAINT_SHARE = 0.7              # a road square is painted within this share of its street's half-width of the street's line
+PAINT_MIN = 256                # (or this, whichever is more)
+
+
+def _paint_set(plan):
+    """The road squares to paint: the plan's own, narrowed to its streets' middles. The ground's texture squares are 512
+    across, and a street 300 wide touched two of them: the whole of a street's squares painted made the streets bare
+    fields of dirt, a town's road a fifth to a third of it where the game's is a tenth to a fifth (Common 21% vs 7%,
+    the town practice of 2026-11-01). Its square whole."""
+    rs = {tuple(r) for r in plan.get('roads') or ()}
+    S = plan.get('streets') or []
+    if not S:
+        return rs
+    keep = set()
+    for st in S:
+        r = max(PAINT_MIN, (st.get('w') or 0) / 2.0 * PAINT_SHARE)
+        pts = st.get('pts') or []
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            L = math.hypot(bx - ax, by - ay) or 1.0
+            for k in range(int(L // 64) + 1):
+                x, y = ax + (bx - ax) * k * 64 / L, ay + (by - ay) * k * 64 / L
+                for px in range(int((x - r) // 512), int((x + r) // 512) + 1):
+                    for py in range(int((y - r) // 512), int((y + r) // 512) + 1):
+                        if (px, py) in rs and math.hypot((px + 0.5) * 512 - x, (py + 0.5) * 512 - y) <= r:
+                            keep.add((px, py))
+    sq = plan.get('square')
+    if sq:
+        keep |= {p for p in rs if math.hypot((p[0] + 0.5) * 512 - sq[0], (p[1] + 0.5) * 512 - sq[1]) <= sq[2]}
+    keep |= {tuple(p) for p in plan.get('paint_extra') or ()}          # (the roads out through the wall's gates)
+    return keep or rs
+
+
 def _paint_roads(db, plan):
     """The plan's streets painted with the culture's road texture. No Undo step. The patches painted."""
     import landscape
     if not plan.get('roads'):
         return 0
-    rs = plan['roads']
+    rs = sorted(_paint_set(plan))
     tid = road_texture(db, plan['culture'], (sum(r[0] for r in rs) / len(rs) * 512 + 256, sum(r[1] for r in rs) / len(rs) * 512 + 256))
     if not tid:
         return 0
     by = {}
-    for px, py in plan['roads']:
+    for px, py in rs:
         by.setdefault((px // 16, py // 16), []).append((px % 16) + (py % 16) * 16)
     n = 0
     for (gx, gy), idx in by.items():

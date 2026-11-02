@@ -164,12 +164,41 @@ def _building(db, q, dr):
             'cell': dr[0]}
 
 
+def _link_more_doors(db, q):
+    """A building's other doors (a Nordic house's back door) lead into its interior too, as its front door does: left
+    unlinked they opened onto nothing, five in a town of 26 (the town audit, 2026-11-01)."""
+    import doors
+    import editing
+    dr = q.get('door_ref')
+    if not dr or not q.get('more_doors'):
+        return
+    m = mapdata.cellmap(db, dr[0])
+    front = next((r for r in m.get('refs') or () if r['k'] == dr[1]), None)
+    to = front and front.get('to')
+    if not to or not to.get('cell'):
+        return
+    n = 0
+    for key, rk in q['more_doors']:
+        try:
+            c, refs = editing._cell(db, key)
+        except EditError:
+            continue
+        ref = refs.get(rk)
+        if ref is None:
+            continue
+        editing._store(c, rk, ref['origin'], ref['idx'], doors._set_link(ref['subs'], to['cell'], [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']]))
+        n += 1
+    if n:
+        editing.commit(db, 'Linked the other door%s of %s' % ('' if n == 1 else 's', to['cell']))
+
+
 def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None):
     """An interior behind every built plot's door (q['door_ref']), and its people. Each step its own change; the caller
     folds them with the town into one. say(done share): told as each plot is gone through (townbuild's progress bar).
     {'interiors', 'people', 'names', 'skipped'}"""
     import frombuilding
-    C = {c['key']: c for c in (catalog or ())}
+    import townbuild
+    C = townbuild.by_uid(catalog or ())
     # (a cast for every interior when the people survey is learnt, people or not: a home is named after its head, and
     # without one nine homes were "Farmhands' Lodge" 1 to 3; only placing them is slow)
     import castsurvey
@@ -182,7 +211,7 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         if say:
             say(k / float(len(plan['plots']) or 1))
         dr = q.get('door_ref')
-        b = q.get('b') and C.get(q['b']['key'])
+        b = q.get('b') and townbuild.built(C, q['b'])
         if not dr or not b:
             continue
         kind = q.get('kind') or b['kind']
@@ -219,6 +248,7 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         names.append(out['name'])
         q['inside_kind'] = kind
         q['interior'] = out['key']
+        _link_more_doors(db, q)
         ppl = (cast_ or {}).get('people') or [] if people else []
         if ppl:
             import populate

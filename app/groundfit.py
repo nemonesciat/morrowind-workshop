@@ -27,7 +27,10 @@ EDGE = 64            # (a ground point outside the building this near its edge s
 STEP = 52            # the landing in front of the door: this far under its sill (the game's median)
 LANDING_MAX = 160    # (a landing lower than this under the sill is raised, unless stairs or a ladder lead up to the door)
 CLIMB = re.compile(r'stair|step|ramp|ladder|platform|walkway|bridge|dock|pier')
-BLEND = 256          # changes fade back to the ground as it was over this far
+BLEND = 256          # changes fade back to the ground as it was over this far, or BLEND_RISE times their height
+BLEND_RISE = 3.0     # (a 200 drop to a landing faded over 256 left a trench of 50-70 degrees, the town practice of 2026-11-01;
+                     # a smooth fade is steepest at its middle, 1.5 times its mean: 3x keeps that under 30 degrees)
+BLEND_MAX = 1024
 N = landscape.N
 CELL = landscape.CELL
 
@@ -48,7 +51,7 @@ def plan(db, b):
         raise EditError('The building stands on nothing the Workshop can read.')
     cells = set(bo['cells'])
     x0, y0, x1, y1 = bo['box']
-    pad = BLEND + EDGE + 128
+    pad = BLEND_MAX + EDGE + 128
     corners = [fr.back(x, y) for x in (x0 - pad, x1 + pad) for y in (y0 - pad, y1 + pad)]
     wx0, wx1 = min(c[0] for c in corners), max(c[0] for c in corners)
     wy0, wy1 = min(c[1] for c in corners), max(c[1] for c in corners)
@@ -114,18 +117,20 @@ def plan(db, b):
         if k in want:
             nz = want[k][0]
         else:
+            # (the change whose fade reaches here most strongly; each fades over its own reach, wider the bigger it is)
             best = None
-            for (_k2, (tz, cx, cy)) in changed:
+            for (k2, (tz, cx, cy)) in changed:
+                delta = tz - land[(k2[0], k2[1])][k2[3] * N + k2[2]]
+                reach = max(BLEND, min(BLEND_MAX, BLEND_RISE * abs(delta)))
                 dd = math.hypot(cx - x, cy - y)
-                if dd < BLEND and (best is None or dd < best[0]):
-                    best = (dd, tz)
+                if dd < reach:
+                    f = 1 - _smooth(dd / reach)
+                    if best is None or abs(delta) * f > abs(best[0]) * best[1]:
+                        best = (delta, f)
             if best is None:
                 continue
             h0 = land[(gx, gy)][iy * N + ix]
-            # (the nearest change's own rise, faded by the distance)
-            k0 = min(changed, key=lambda kv: math.hypot(kv[1][1] - x, kv[1][2] - y))[0]
-            delta = want[k0][0] - land[(k0[0], k0[1])][k0[3] * N + k0[2]]
-            nz = h0 + delta * (1 - _smooth(best[0] / BLEND))
+            nz = h0 + best[0] * best[1]
         h0 = land[(gx, gy)][iy * N + ix]
         if abs(nz - h0) < 2:
             continue

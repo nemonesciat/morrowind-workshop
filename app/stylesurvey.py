@@ -681,8 +681,10 @@ def themes(db):
     if not s:
         import learning
         return {'ready': False, 'waiting': learning._names() or ["the game's styles"]}
+    own = [{'name': n, 'places': 0, 'line': o.get('line') or '', 'mine': True, 'like': o.get('like') or '',
+            'prefabs': o.get('prefabs') or {}} for n, o in sorted(own_styles().items())]
     return {'ready': True, 'themes': [{'name': t, 'places': s['themes'][t]['places'], 'line': s['themes'][t]['line']} for t in s['order']],
-            'everywhere': True, 'places': s['places']}
+            'own': own, 'everywhere': True, 'places': s['places']}
 
 
 def _place_name(db, ck):
@@ -724,6 +726,11 @@ def theme(db, name):
         secs = s['everywhere']
         out = {'name': 'Used everywhere', 'places': s['places'], 'line': 'What the game stands in places of every style alike: '
                'crates, sacks, bread and the common clutter', 'sets': [], 'examples': []}
+    elif name in own_styles() and name not in s['themes']:
+        o = own_styles()[name]
+        secs = {}
+        out = {'name': name, 'places': 0, 'line': o.get('line') or 'A style of your own: add things to it with + Add',
+               'sets': [], 'examples': [], 'mine': True, 'like': o.get('like') or '', 'prefabs': o.get('prefabs') or {}}
     else:
         if name not in s['themes']:
             return None
@@ -833,7 +840,7 @@ def add_to(db, name, rid):
     s = ready(db)
     if not s:
         raise EditError('The styles are still being learnt; try again in a moment.')
-    if name != '*' and name not in s['themes']:
+    if name != '*' and name not in s['themes'] and name not in own_styles():
         raise EditError('There is no style "%s".' % name)
     low = (rid or '').strip().lower()
     cls = classify(db, low)
@@ -875,6 +882,77 @@ def _with_added(db, s, name, out):
             groups.append(g)
         g['items'] = [row] + [x for x in g['items'] if x['id'].lower() != low]
     return out
+
+
+# ------------------------------------------------------------------ styles of your own
+# New styles beside the game's (PIN2, 2026-11-01: "make new style categories"): a name, a line, the things you add to it
+# (added(), as for the game's), and the prefabs a town of its own is built of, each with its kind, planned like a game
+# culture's towns ('like'). Kept in the Workshop's home, as your additions are.
+OWN_KINDS = ('house', 'shop', 'tavern', 'temple', 'guild', 'manor', 'guard')
+
+
+def _own_path():
+    from project import APP_DIR
+    return os.path.join(APP_DIR, 'style_own.json')
+
+
+def own_styles():
+    """{name: {'line', 'like', 'prefabs': {prefab name: kind}}}"""
+    try:
+        with open(_own_path(), encoding='utf-8') as f:
+            d = json.load(f)
+        return {str(k): v for k, v in (d.get('styles') or {}).items() if isinstance(v, dict)}
+    except Exception:
+        return {}
+
+
+def _save_own(d):
+    p = _own_path()
+    with open(p + '.part', 'w', encoding='utf-8') as f:
+        json.dump({'styles': d}, f, indent=1)
+    os.replace(p + '.part', p)
+
+
+def own_edit(db, name, new=None, line=None, like=None, prefabs=None, delete=False):
+    """Make, change, rename or delete a style of your own. {'name', 'styles'}"""
+    from editing import EditError
+    name = (name or '').strip()[:40]
+    d = own_styles()
+    s = ready(db)
+    game = set(s['themes']) if s else set()
+    if delete:
+        d.pop(name, None)
+        _save_own(d)
+        a = added()
+        if a.pop(name, None) is not None:
+            _save_added(a)
+        return {'name': None, 'styles': d}
+    if not name:
+        raise EditError('Give the style a name.')
+    if name not in d:
+        if name in game or name == '*':
+            raise EditError('The game has a style called "%s" already.' % name)
+        d[name] = {'line': '', 'like': '', 'prefabs': {}}
+    st = d[name]
+    if line is not None:
+        st['line'] = str(line)[:120]
+    if like is not None:
+        st['like'] = str(like)[:40]
+    if prefabs is not None:
+        st['prefabs'] = {str(k)[:80]: (v if v in OWN_KINDS else 'house') for k, v in dict(prefabs).items()}
+    if new is not None:
+        new = new.strip()[:40]
+        if new and new != name:
+            if new in d or new in game or new == '*':
+                raise EditError('There is a style called "%s" already.' % new)
+            d[new] = d.pop(name)
+            a = added()
+            if name in a:
+                a[new] = a.pop(name)
+                _save_added(a)
+            name = new
+    _save_own(d)
+    return {'name': name, 'styles': d}
 
 
 def _set_feet(db, st):

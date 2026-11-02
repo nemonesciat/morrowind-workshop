@@ -283,6 +283,11 @@ class Database:
         try:
             self.state = 'loading'
             self._load()
+            try:
+                import tdeffects
+                tdeffects.refresh(self)     # (a mod's effect script from before 2.6.5 written again in today's form)
+            except Exception as e:
+                print('Tamriel Data effects script:', e)
             self.state = 'ready'
         except Exception as e:
             import traceback

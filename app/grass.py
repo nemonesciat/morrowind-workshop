@@ -129,7 +129,17 @@ def fill(db, cells, thickness=5, ids=None, seed=None):
             continue
         sets = scatter.sets(db, ck)
         grass = next((s for s in sets['sets'] if s['key'] == 'grass'), None)
-        items = [i for i in (grass['items'] if grass else []) if not ids or i['id'].lower() in {x.lower() for x in ids}]
+        idl = {x.lower() for x in ids or ()}
+        items = [i for i in (grass['items'] if grass else []) if not ids or i['id'].lower() in idl]
+        if not items and ids:
+            # (one of your own brushes painted as grass, PIN2 2026-11-01: its things, from whichever set has them)
+            seen = {}
+            for st in sets['sets']:
+                for i in st['items']:
+                    if i['id'].lower() in idl and i['id'].lower() not in seen:
+                        seen[i['id'].lower()] = dict({'smin': 1.0, 'smax': 1.0, 'sink': 0.0, 'zmin': 0.0}, **{k: v for k, v in i.items() if k != 'n'}, n=max(1, i.get('n') or 1))
+            items = list(seen.values()) or [{'id': x, 'n': 1, 'smin': 1.0, 'smax': 1.0, 'sink': 0.0, 'zmin': 0.0} for x in ids
+                                             if db.resolve_id(x) is not None]
         if not items:
             continue
         total = sum(i['n'] for i in items)
@@ -233,6 +243,12 @@ def _masters(db, ids):
     for i in sorted(need):
         pl = db.plugins[i]
         out.append((pl['name'], pl['size'] or (os.path.getsize(pl['path']) if pl['path'] else 0)))
+    # (your own brush may hold the mod's own objects: then the mod itself is a master, last)
+    if any(db.resolve_id(i) is not None and db.recs[db.resolve_id(i)][3] == db.proj_pidx for i in ids):
+        try:
+            out.append((db.project.plugin, os.path.getsize(editing.plugin_path(db))))
+        except OSError:
+            out.append((db.project.plugin, 0))
     return out
 
 

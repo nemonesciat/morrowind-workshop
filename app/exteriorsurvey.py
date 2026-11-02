@@ -383,9 +383,13 @@ def survey(db):
            'big': {k: {s_: dict(c) for s_, c in v.items()} for k, v in bigj.items()},
            'sets': dict(sets.most_common(60)), 'modules': mods, 'outdoor': outdoor_joins(db, (2, 3))}
     _cache['survey'] = (db.recs, out)
+    # (written aside and swapped in whole: a request reading it while the survey process was still writing it found
+    # half a file and learnt the whole survey again itself, 3 minutes in the request, the 2.6.5 cold start)
     try:
-        with open(path, 'w', encoding='utf-8') as f:
+        tmp = '%s.%d.tmp' % (path, os.getpid())
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(out, f)
+        os.replace(tmp, path)
     except Exception:
         pass
     return out

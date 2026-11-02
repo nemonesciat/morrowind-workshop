@@ -105,6 +105,22 @@ LAUNCH_PRESETS = [
 _ENV_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
+def _town_culture(db, body, outline):
+    """The culture a town is planned as, and its opts: a style of your own ('★name', stylesurvey.own_styles) is
+    planned like the game culture it names (else the nearest town's) and built of its prefabs."""
+    import townplan
+    opts = dict(body.get('opts') or {})
+    cult = body.get('culture') or ''
+    if cult.startswith('★'):
+        import stylesurvey
+        o = stylesurvey.own_styles().get(cult[1:])
+        if not o or not o.get('prefabs'):
+            raise editing.EditError('"%s" has no prefabs to build with: give it some in the Style palette.' % cult[1:])
+        opts['own'] = cult
+        cult = o.get('like') or ''
+    return cult or townplan.nearest_culture(db, outline), opts
+
+
 def launch_settings():
     s = load_settings().get('launch') or {}
     return {'on': [k for k in s.get('on', []) if any(k == p[0] for p in LAUNCH_PRESETS)], 'args': s.get('args', ''),
@@ -717,6 +733,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(out)
             elif u.path == '/api/about':
                 self._json(helpinfo.about(db))
+            elif u.path == '/api/openmw/version':
+                # (which OpenMW the Workshop starts, for the notes on features that need a newer one)
+                self._json({'openmw': helpinfo.openmw_version(db), 'new': helpinfo.openmw_new(db), 'new_in': '%d.%d' % helpinfo.NEW_IN})
             elif u.path == '/api/settings':
                 self._json(helpinfo.get_settings(db))
             elif u.path == '/api/backups':
@@ -781,7 +800,10 @@ class Handler(BaseHTTPRequestHandler):
                 if learning.town_pending(db):
                     self._json({'cultures': [], 'walls': [], 'learning': True})
                 else:
-                    self._json({'cultures': townplan.cultures(db), 'walls': townwalls.choices(db)})
+                    import stylesurvey
+                    own = [{'id': '\u2605' + n, 'towns': 0, 'own': True, 'like': o.get('like') or '', 'prefabs': len(o.get('prefabs') or {})}
+                           for n, o in sorted(stylesurvey.own_styles().items()) if o.get('prefabs')]
+                    self._json({'cultures': townplan.cultures(db) + own, 'walls': townwalls.choices(db)})
             elif u.path == '/api/land/autotex':
                 # the Ground brush's Auto paint: one cell's texture for every patch, as the region's land has it at
                 # that slope, height and shore (landshapes.texture_only), as {ids, paths} the brush paints with
@@ -873,6 +895,10 @@ class Handler(BaseHTTPRequestHandler):
                 # your own magic effects (Create > New magic effect), the game's effects to start from
                 import myeffects
                 self._json(myeffects.read(db))
+            elif u.path == '/api/myrecords':
+                # your own skills, attributes and weathers (OpenMW 0.52's custom records: myrecords.py)
+                import myrecords
+                self._json(myrecords.read(db))
             elif u.path == '/api/ref/props':
                 # who owns a placed object, its lock, key, trap, uses left, soul
                 import refprops
@@ -1918,6 +1944,15 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/myeffects/delete':
                     import myeffects
                     return self._json(myeffects.delete(db, body.get('id') or ''))
+                if u.path == '/api/myrecords/save':
+                    import myrecords
+                    return self._json(myrecords.save(db, body.get('kind') or '', body.get('record') or {}, body.get('old_id')))
+                if u.path == '/api/myrecords/option':
+                    import myrecords
+                    return self._json(myrecords.set_option(db, body.get('name') or '', bool(body.get('value'))))
+                if u.path == '/api/myrecords/delete':
+                    import myrecords
+                    return self._json(myrecords.delete(db, body.get('kind') or '', body.get('id') or ''))
                 if u.path == '/api/ref/props':
                     import refprops
                     r = refprops.save(db, body['cell'], body['ref'], body.get('data') or {})
@@ -1962,6 +1997,11 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/land/marks':
                     import landsurvey
                     return self._json(landsurvey.set_marks(db, body.get('add') or [], body.get('remove') or [], bool(body.get('clear'))))
+                if u.path == '/api/style/own':
+                    # a style of your own made, changed, renamed or deleted (stylesurvey.own_edit)
+                    import stylesurvey
+                    return self._json(stylesurvey.own_edit(db, body.get('name') or '', body.get('new'), body.get('line'), body.get('like'),
+                                                           body.get('prefabs'), bool(body.get('delete'))))
                 if u.path in ('/api/style/add', '/api/style/remove'):
                     # your own additions to a style's palette (stylesurvey.added): not the mod, the Workshop's own file
                     import stylesurvey
@@ -2023,6 +2063,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(landscape.edit(db, body.get('cells') or [], body.get('keep_objects', True)))
                 if u.path == '/api/group/move':
                     return self._json(groups.move(db, body.get('moves') or []))
+                if u.path == '/api/group/building':
+                    # every piece of the building this one belongs to (groups.building)
+                    return self._json(groups.building(db, body.get('cell') or '', body.get('ref') or ''))
                 if u.path == '/api/group/delete':
                     return self._json(groups.delete(db, body.get('refs') or []))
                 if u.path == '/api/group/swap':
@@ -2037,7 +2080,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(play_as(body))
                 if u.path == '/api/group/place':
                     return self._json(groups.place(db, body.get('cell'), body.get('items') or [], body['x'], body['y'],
-                                                   body.get('z'), float(body.get('yaw') or 0), body.get('label')))
+                                                   body.get('z'), float(body.get('yaw') or 0), body.get('label'),
+                                                   bool(body.get('scattered'))))
                 if u.path == '/api/group/copy':
                     return self._json({'items': groups.from_refs(db, body.get('refs') or [])})
                 if u.path == '/api/prefabs/save':
@@ -2354,9 +2398,10 @@ class Handler(BaseHTTPRequestHandler):
                     out = body.get('outline') or []
                     if len(out) < 3:
                         return self._json({'error': "Draw the town's outline first."}, 400)
-                    cult = body.get('culture') or townplan.nearest_culture(db, out)
+                    cult, opts_ = _town_culture(db, body, out)
                     import townbuild
-                    pl = townbuild.planned(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '')
+                    pl = townbuild.planned(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '', opts_)
+                    pl['paint'] = sorted([list(p_) for p_ in townbuild._paint_set(pl)])   # (the road squares Make it paints)
                     if body.get('walls'):
                         # (its wall as it would be laid, for the map: townwalls.py)
                         import townwalls
@@ -2371,11 +2416,15 @@ class Handler(BaseHTTPRequestHandler):
                     out = body.get('outline') or []
                     if len(out) < 3:
                         return self._json({'error': "Draw the town's outline first."}, 400)
-                    cult = body.get('culture') or townplan.nearest_culture(db, out)
+                    cult, opts_ = _town_culture(db, body, out)
                     inside = body.get('interiors') is not False
                     return self._json(townbuild.make(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '',
                                                      body.get('dress') is not False, inside, inside and body.get('people') is not False,
-                                                     (body.get('name') or '').strip()[:40]))
+                                                     (body.get('name') or '').strip()[:40], opts_))
+                if u.path == '/api/town/remove':
+                    # what a town's Make it built, taken away (townbuild.remove; look: only count it)
+                    import townbuild
+                    return self._json(townbuild.remove(db, body.get('outline') or [], bool(body.get('look'))))
                 if u.path == '/api/lived/apply':
                     # make a place lived in: what people leave round its beds, fires, tables and work spots, as the
                     # game leaves it (livedin.py), one change

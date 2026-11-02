@@ -69,6 +69,8 @@ def cellmap(db, cell_key, original=False):
     out, gone = [], []
     type_cache = {}
     mine_plugin = db.project.plugin.lower() if getattr(db, 'project', None) else None
+    scattered = (getattr(db.project, 'scattered', None) or ()) if getattr(db, 'project', None) else ()
+    parts = (getattr(db.project, 'town_parts', None) or {}) if getattr(db, 'project', None) else {}
     for rk, ref in refs.items():
         rid, pos, scale, deleted = ref_info(ref['subs'])
         if deleted:
@@ -104,6 +106,10 @@ def cellmap(db, cell_key, original=False):
                     's': round(scale, 3), 'mine': ref['pidx'] == db.proj_pidx,
                     'new': ref['pidx'] == db.proj_pidx and ref['origin'] == mine_plugin,
                     'src': db.plugins[ref['pidx']]['name']})
+        if rk in scattered and ref['pidx'] == db.proj_pidx:
+            out[-1]['sc'] = 1
+        if rk in parts and ref['pidx'] == db.proj_pidx:
+            out[-1]['tb'] = parts[rk]
     info['exists'] = True
     info['refs'] = out
     info['gone'] = gone
@@ -190,12 +196,37 @@ def _rotated_contains(ref, x, y):
     return b[0] <= lx <= b[3] and b[1] <= ly <= b[4]
 
 
+_HGT = {}
+
+
+def _heights(db, gx, gy):
+    """The cell's land heights (land()['h']) or None, kept while its record is the same: terrain_z read the whole LAND
+    record again for every point, and a town plan on the user's own land asked 7,000 times, 21 of its 22 seconds
+    (2026-11-01, "this is bugged badly now. Slow"). A project record is a new object when it changes; the game's never do."""
+    lst = [v for v in db.by_key.get(('LAND', '%d,%d' % (gx, gy)), []) if v not in db.dead]
+    if not lst:
+        return None
+    ri = lst[-1]
+    r = db.recs[ri]
+    f = db.files[r[3]]
+    slots = getattr(f, 'slots', None)
+    tok = slots.get(r[4]) if slots is not None else (r[3], r[4])
+    e = _HGT.get((gx, gy))
+    if e and e[0] is db.recs and e[1] == ri and (e[2] is tok if slots is not None else e[2] == tok):
+        return e[3]
+    L = land(db, gx, gy)
+    H = L['h'] if L.get('exists') else None
+    if len(_HGT) > 4000:
+        _HGT.clear()
+    _HGT[(gx, gy)] = (db.recs, ri, tok, H)
+    return H
+
+
 def terrain_z(db, x, y):
     gx, gy = math.floor(x / CELL_SIZE), math.floor(y / CELL_SIZE)
-    L = land(db, gx, gy)
-    if not L.get('exists'):
+    H = _heights(db, gx, gy)
+    if H is None:
         return None
-    H = L['h']
     fx, fy = (x - gx * CELL_SIZE) / 128.0, (y - gy * CELL_SIZE) / 128.0
     x0, y0 = min(63, int(fx)), min(63, int(fy))
     tx, ty = fx - x0, fy - y0

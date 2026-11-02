@@ -542,8 +542,27 @@ def lay(db, plan, family=None, cell=None):
             # (the corner at vertex k stands between side k - 1's run and side k's)
             pieces.append({'id': q.id, 'pose': q, 'kind': 'corner' if q.id != kit['straight'] else 'wall', 'corner': k})
     pieces += _big_towers(db, fam, kit, poly, [need[t] == dom for t in turns], pieces)
+    pieces = _once(pieces)
     return {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': gates, 'faults': faults,
             'roads': roads if gates else []}
+
+
+SAME = 8                       # (two pieces of one model this close, facing the same way or back to back, are one)
+
+
+def _once(pieces):
+    """The pieces with none laid twice: a side's run and the corner chain it runs into could both lay the length where
+    they meet, two of ex_imp_wall_01 in one spot four times round the user's Nargorewatch (2026-11-01, "lots of walls
+    overlapping/double spawned"). A corner, gate or tower is kept over a plain length."""
+    rank = lambda q: 0 if q.get('kind') == 'wall' else 1
+    out = []
+    for q in sorted(pieces, key=rank, reverse=True):
+        P = q['pose']
+        if any(o['id'] == q['id'] and math.hypot(o['pose'].x - P.x, o['pose'].y - P.y) <= SAME
+               and abs(((o['pose'].rz - P.rz + math.pi / 2) % math.pi) - math.pi / 2) <= math.radians(3) for o in out):
+            continue
+        out.append(q)
+    return sorted(out, key=lambda q: pieces.index(q))
 
 
 # the towers that rise over a wall, standing in its line with its lengths running into them, and the keep among them:
@@ -978,6 +997,43 @@ def grounded(db, W):
     return W
 
 
+def square_up(pts, step):
+    """A wall drawn on the map made one the kit can lay: its points on a grid of the pieces' step from its first point,
+    turned as its first side runs, each side straight along the grid (a slanting side becomes a step), points on a
+    straight line dropped. [(x, y)]."""
+    pts = [(float(p[0]), float(p[1])) for p in pts]
+    if len(pts) < 3 or step <= 0:
+        return []
+    x0, y0 = pts[0]
+    a = math.atan2(pts[1][1] - y0, pts[1][0] - x0)
+    c, s = math.cos(a), math.sin(a)
+    g = [(round(((x - x0) * c + (y - y0) * s) / step), round((-(x - x0) * s + (y - y0) * c) / step)) for x, y in pts]
+    sq = []
+    for k, p in enumerate(g):
+        q = g[(k + 1) % len(g)]
+        sq.append(p)
+        if p[0] != q[0] and p[1] != q[1]:
+            sq.append((q[0], p[1]))
+    out = []
+    for p in sq:
+        if not out or out[-1] != p:
+            out.append(p)
+    while len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    changed = True
+    while changed and len(out) >= 4:
+        changed = False
+        for k in range(len(out)):
+            a_, b_, c_ = out[k - 1], out[k], out[(k + 1) % len(out)]
+            if (a_[0] == b_[0] == c_[0]) or (a_[1] == b_[1] == c_[1]) or a_ == c_:
+                out.pop(k)
+                changed = True
+                break
+    if len(out) < 4:
+        return []
+    return [(x0 + (u * c - v * s) * step, y0 + (u * s + v * c) * step) for u, v in out]
+
+
 def preview(db, plan, family=None):
     """The wall for the map: {'family', 'outline', 'pieces': [[kind, [[x, y] x4]]], 'gates', 'faults', 'roads'}."""
     W = lay(db, plan, family)
@@ -987,7 +1043,7 @@ def preview(db, plan, family=None):
         cs, _b = _box(db, p['id'], p['pose'], memo)
         if cs:
             ps.append([p['kind'], [[round(x), round(y)] for x, y in cs]])
-    return {'family': W['family'], 'outline': [[round(x), round(y)] for x, y in W['outline']], 'pieces': ps,
+    return {'family': W['family'], 'step': (W.get('kit') or {}).get('L'), 'outline': [[round(x), round(y)] for x, y in W['outline']], 'pieces': ps,
             'gates': W['gates'], 'faults': W['faults'][:6], 'roads': [[list(a), list(b), w] for a, b, w in W.get('roads') or []]}
 
 
@@ -995,7 +1051,7 @@ def choices(db):
     """[{'id', 'piece', 'towns', 'cultures'}]: the walls the game runs, the most used first."""
     out = []
     for f, k in kits(db).items():
-        out.append({'id': f, 'piece': k['straight'], 'towns': (k.get('towns') or [])[:4], 'cultures': k.get('cultures') or {},
+        out.append({'id': f, 'piece': k['straight'], 'step': k['L'], 'towns': (k.get('towns') or [])[:4], 'cultures': k.get('cultures') or {},
                     'placed': k['placed'], 'gate': any(v['kind'] == 'gate' for v in k['inline'].values())})
     return sorted(out, key=lambda o: -o['placed'])
 

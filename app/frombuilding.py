@@ -1458,6 +1458,15 @@ def link_both(db, b, int_key, idoor):
     sill = idoor['p'][2] + (idoor.get('b') or [0, 0, 0])[2] * (idoor.get('s') or 1.0)
     in_pos = [idoor['p'][0] + iu[0] * 110, idoor['p'][1] + iu[1] * 110, sill + 12, 0.0, 0.0, math.atan2(iu[0], iu[1]) % (2 * math.pi)]
     out_pos = [fr.ox - fr.ux * 110, fr.oy - fr.uy * 110, fr.z + 12, 0.0, 0.0, (fr.yaw() + math.pi) % (2 * math.pi)]
+    # (the door's open side by its walls and roofs, the building's frame only breaking a tie: doors.outside_spot)
+    dref = next((r for r in mapdata.cellmap(db, d['cell']).get('refs') or () if r['k'] == d['k']), None)
+    try:
+        spot = doors.outside_spot(db, dref, (-fr.ux, -fr.uy)) if dref else None
+    except Exception as e:
+        print('outside spot:', e)
+        spot = None
+    if spot:
+        out_pos = spot
     info = mapdata.cell_info(db, int_key)
     c, refs = editing._cell(db, b['cell'] if d['cell'] == b['cell'] else d['cell'])
     ref = refs.get(d['k'])

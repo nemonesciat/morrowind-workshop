@@ -26,6 +26,7 @@ const VW_HOST = {
   mymod: {title: () => '📦 My mod' + (S.summary && S.summary.project ? ': ' + S.summary.project.name : ''), render: () => renderMyMod(), w: 900},
   release: {title: () => '📦 Get ready to share', render: () => renderRelease(), w: 980},
   myeff: {title: () => '🪄 Magic effects', render: () => renderMyEffects(), w: 980},
+  myrec: {title: () => '📈 Skills, attributes and weathers', render: () => renderMyRecords(), w: 980},
   health: {title: () => '🩺 Health check', render: () => {}, w: 920},
   plugins: {title: () => '☰ Load order', render: () => {}, w: 920},
   guide: {title: () => 'Home', render: () => renderGuide(), w: 900},
@@ -52,7 +53,7 @@ function vwCss(){
   /* (a page laid out in panels is a row of docks, as on its own page: as a grid, Browse's Record dock sat in
      its old third column, half empty, and its edge dragged the wrong way) */
   .vwbody > .view.pspace{display:flex !important;overflow:hidden}
-  .vwbody > #createv,.vwbody > #itemed,.vwbody > #myeff,.vwbody > #library,.vwbody > #mymod,.vwbody > #release,.vwbody > #health,.vwbody > #plugins,.vwbody > #guide,.vwbody > #settings{display:block !important}
+  .vwbody > #createv,.vwbody > #itemed,.vwbody > #myeff,.vwbody > #myrec,.vwbody > #library,.vwbody > #mymod,.vwbody > #release,.vwbody > #health,.vwbody > #plugins,.vwbody > #guide,.vwbody > #settings{display:block !important}
   .vwbody > .view > .wrap{padding:8px 20px 30px}
   .vwbody > .view{padding-top:0 !important;padding-bottom:0 !important}
   .vwbody #createwrap{padding-bottom:10px !important}
@@ -135,7 +136,7 @@ function vwClose(v){
   if (typeof PL !== 'undefined' && PL && PL.paint && v === 'createv') PL.paint = null;
 }
 // the buttons at the top whose page is open in a window get a line under them (their size stays as it is)
-const VW_NAVOF = {itemed: 'createv', lists: 'createv', myeff: 'createv', release: 'mymod'};
+const VW_NAVOF = {itemed: 'createv', lists: 'createv', myeff: 'createv', myrec: 'createv', release: 'mymod'};
 function vwNavMark(){
   const open = new Set(Object.keys(VW.wins).map(v => VW_NAVOF[v] || v));
   document.querySelectorAll('nav button[data-view]').forEach(b => b.classList.toggle('vwopen', open.has(b.dataset.view)));

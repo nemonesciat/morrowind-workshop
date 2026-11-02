@@ -2492,6 +2492,63 @@ def _scan(db, cell_key):
             'door_frame': fr['id'] if fr and not tiles[0]['kit'].get('entry_doors') else None, 'posts': share}
 
 
+# an outdoor building's parts by what they are, for "Other pieces that fit" on a window, chimney or dormer (the user's
+# town, 2026-11-01: "should be able to cycle thru chimneys ... dormers or windows"; it said "This isn't one of a building
+# style's pieces", the interior tile kits being all it knew)
+PART_KINDS = [('window', r'window|_win(_|\d|$)|_x_win(?!d)|triwin'), ('chimney', r'chimney'), ('dormer', r'dormer'),
+              ('door', r'door(?!f)|_ent_|entrance'), ('doorframe', r'doorf|doorframe'), ('sign', r'sign'), ('awning', r'awning'),
+              ('shutter', r'shutter'), ('balcony', r'balcony|porch'), ('stair', r'stair|steps'), ('roof', r'roof'),
+              ('tower', r'tower'), ('addon', r'addon|annex|extension'), ('platform', r'plat(_|form)')]
+PART_SIZE = 0.4                # (a part offered for another this close in size each way, as a share of its own)
+_parts = {}
+
+
+def _part_kind(low):
+    return next((k for k, rx in PART_KINDS if re.search(rx, low)), None)
+
+
+def _parts_of(db):
+    """{kind: [record index]}: every outdoor building part (ex_ and t_ statics and doors) by what it is."""
+    key = id(db.recs)
+    if key not in _parts:
+        out = {}
+        for i, r in enumerate(db.recs):
+            if r is None or r[0] not in ('STAT', 'DOOR', 'ACTI') or not db.winner[i]:
+                continue
+            low = (r[1] or '').lower()
+            if not low.startswith(('ex_', 't_')) or low.startswith('t_glb') or '_i_' in low:      # (_I_: Tamriel's interior pieces)
+                continue
+            k = _part_kind(low)
+            if k:
+                out.setdefault(k, []).append(i)
+        _parts.clear()
+        _parts[key] = out
+    return _parts[key]
+
+
+def _outdoor_variants(db, r):
+    """Other building parts of the same kind as this one and about its size, its own set first, then the most used."""
+    low = r['id'].lower()
+    k = _part_kind(low)
+    b = r.get('b')
+    if not k or not b:
+        return []
+    import townbuild
+    fam = townbuild.family(low)
+    out = []
+    for ri in _parts_of(db).get(k, ()):
+        rid = db.recs[ri][1]
+        if rid.lower() == low or db.recs[ri][0] != r['type']:
+            continue
+        ob = mapdata.object_bounds(db, ri)
+        if not ob:
+            continue
+        if all(abs((ob[j + 3] - ob[j]) - (b[j + 3] - b[j])) <= max(32, (b[j + 3] - b[j]) * PART_SIZE) for j in range(3)):
+            out.append({'id': rid, 'rz': r['p'][5], 'uses': kits.game_uses(db, rid.lower()), 'same_set': townbuild.family(rid.lower()) == fam})
+    out.sort(key=lambda v: (not v['same_set'], -v['uses']))
+    return out[:24]
+
+
 def variants(db, cell_key, refkey):
     """Other pieces of the same style that fit the spot of this floor piece, most alike first:
     [{id, rz, pattern ('NESW' letters), same (how many sides match), ceiling}]."""
@@ -2503,8 +2560,12 @@ def variants(db, cell_key, refkey):
         r = next((x for x in m['refs'] if x['k'] == refkey), None)
         prefix = kits.kit_prefix(r['id']) if r else None
         kp = kits.kit_pieces(db, prefix) if prefix and prefix in kits.kits(db) else None
+        if r and not kp:
+            out = _outdoor_variants(db, r)
+            if out:
+                return {'variants': out}
         if not r or not kp:
-            return {'variants': [], 'note': 'This isn\'t one of a building style\'s pieces.'}
+            return {'variants': [], 'note': 'No other piece of its kind fits here.'}
         b = r.get('b')
         out = []
         # (a stair is offered stairs: a post the same size is no choice for a flight)

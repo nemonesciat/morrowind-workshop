@@ -95,7 +95,7 @@ const ICONS = {
 const EMO_ICON = {
   '🎲': 'dice', '💬': 'chat', '🗣': 'chat', '👋': 'wave', '👤': 'person', '🧍': 'person', '🚶': 'person', '🧝': 'mask', '🎭': 'mask',
   '👥': 'people', '🎨': 'palette', '🖌': 'brush', '💧': 'dropper', '🪨': 'rock', '📍': 'pin', '📌': 'pin', '📜': 'scroll', '📝': 'page', '🗒': 'page', '📄': 'page', '📋': 'page', '📘': 'books',
-  '⚠': 'warn', '🔊': 'sound', '📦': 'box', '🧊': 'box', '🎁': 'gift', '💾': 'save', '🪄': 'wand', '✨': 'sparkle', '🌀': 'swirl', '👁': 'eye',
+  '⚠': 'warn', '🔊': 'sound', '📦': 'box', '🧊': 'box', '🎁': 'gift', '📈': 'chart', '💪': 'hand', '💾': 'save', '🪄': 'wand', '✨': 'sparkle', '🌀': 'swirl', '👁': 'eye',
   '🚪': 'door', '⚙': 'gear', '🐾': 'paw', '🔧': 'wrench', '🧰': 'chest', '⚒': 'hammer', '🩺': 'pulse', '🧩': 'puzzle', '🧱': 'brick', '🏗': 'brick', '🏘': 'house',
   '📂': 'folder', '📁': 'folder', '🗂': 'folder', '🫳': 'settle', '🪑': 'chair', '🏠': 'house', '🏝': 'map', '🏛': 'temple', '🔎': 'search', '🔍': 'search',
   '🎞': 'film', '💡': 'bulb', '🧭': 'compass', '🗺': 'map', '🎮': 'play', '🔗': 'link', '🔒': 'lock', '🔐': 'lock', '🔓': 'unlock',

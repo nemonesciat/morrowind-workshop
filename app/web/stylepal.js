@@ -38,6 +38,13 @@ function spCss(){
   .sp-tabs button:hover{background:var(--panel2)}
   .sp-tabs button.on{border-left-color:var(--gold);background:var(--panel2);color:var(--gold2);font-weight:600}
   .sp-tabs button small{color:var(--faint);font-weight:400}
+  .sp-tabs button[data-spnew]{color:var(--gold2)}
+  .sp-own{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin:4px 0 8px;display:flex;flex-direction:column;gap:6px}
+  .sp-ownrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.sp-ownrow label{display:flex;gap:4px;align-items:center;font-size:12px}
+  .sp-hd2{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em}
+  .sp-ownpf{display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}
+  .sp-ownpf label{display:flex;gap:6px;align-items:center;font-size:12.5px}.sp-ownpf label span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sp-ownpf select{width:auto;padding:1px 4px}
   .sp-tabs .sp-hd{font-size:11px;color:var(--faint);padding:8px 10px 2px;text-transform:uppercase;letter-spacing:.04em}
   .sp-main{flex:1;min-width:0;overflow:auto;padding:8px 12px 24px}
   .sp-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
@@ -175,9 +182,9 @@ async function spLoadThemes(){
     let r;
     try { r = await api('/api/style/themes' + (W.key ? '?key=' + encodeURIComponent(W.key) : '')); } catch (e){ w.el.querySelector('.sp-main').innerHTML = `<div class="sp-wait msg">${esc(e.message)}</div>`; return; }
     if (r.ready){
-      SP.themes = r.themes; SP.here = r.here || null; SP.hereKey = W.key;
+      SP.themes = r.themes; SP.own = r.own || []; SP.here = r.here || null; SP.hereKey = W.key;
       try { const g = await api('/api/style/regions' + (W.key ? '?key=' + encodeURIComponent(W.key) : '')); SP.regions = g.regions; SP.hereRegion = g.here; } catch (e){ SP.regions = []; }
-      if (!SP.cur || (SP.cur !== '*' && SP.cur !== '**' && !SP.cur.startsWith('r:') && !r.themes.some(t => t.name === SP.cur))) SP.cur = SP.here || r.themes[0].name;
+      if (!SP.cur || (SP.cur !== '*' && SP.cur !== '**' && !SP.cur.startsWith('r:') && !r.themes.some(t => t.name === SP.cur) && !SP.own.some(t => t.name === SP.cur))) SP.cur = SP.here || r.themes[0].name;
       return;
     }
     const box = w.el.querySelector('.sp-main');
@@ -203,6 +210,9 @@ function spTabsHtml(){
   return btn('**', '🔍 All', null, 'Search every style at once: each thing under the style that has it most') +
     `<div class="sp-hd">Styles${SP.fits && SP.here ? ' that fit here' : ''}</div>` +
     list.map(x => btn(x.name, (x.name === SP.here ? '◆ ' : '') + x.name, x.places, x.line + ` (${x.places} of the game's places)` + (x.name === SP.here ? '. The place open now is built in this style.' : ''))).join('') +
+    `<div class="sp-hd" title="Styles you make: things you add, and prefabs a town of its own is built of">Your own</div>` +
+    (SP.own || []).map(x => btn(x.name, '★ ' + x.name, null, x.line || 'A style of your own')).join('') +
+    `<button data-spnew="1" title="A style of your own: add any pieces to it, and your prefabs to build towns of it">＋ New style</button>` +
     `<div class="sp-hd">And</div>` + btn('*', 'Used everywhere', null, 'What the game stands in places of every style alike: crates, sacks, bread, the common clutter') +
     ((SP.regions || []).length ? `<div class="sp-hd" title="Each region's own rocks and cliffs, trees and plants, as the game sets them over its land">Regions</div>` +
       SP.regions.map(r => btn('r:' + r.region, (r.region === SP.hereRegion ? '◆ ' : '') + r.name, null,
@@ -237,10 +247,11 @@ async function spRender(){
   try { d = await spTheme(SP.cur); } catch (e){ if (seq === SP.seq) body.innerHTML = `<div class="msg">${esc(e.message)}</div>`; return; }
   // (an older search answering late is dropped)
   if (!spWin() || seq !== SP.seq) return;
-  body.innerHTML = `<div class="sp-line">${esc(d.line)}. ${SP.cur === '*' || SP.cur === '**' ? '' : SP.cur.startsWith('r:') ? `Learnt from ${fmtN(d.places)} of its cells.` : `Learnt from ${fmtN(d.places)} of the game's places.`}
-      ${SP.cur === '**' ? 'The badge is the style that has it most (rest the mouse on it for how often).' : `The badge is how many of them have it: <span class="sp-badge staple" style="position:static">40%</span> a staple, <span class="sp-badge" style="position:static">4%</span> now and then.`}
+  body.innerHTML = `<div class="sp-line">${esc(d.line)}. ${SP.cur === '*' || SP.cur === '**' || d.mine ? '' : SP.cur.startsWith('r:') ? `Learnt from ${fmtN(d.places)} of its cells.` : `Learnt from ${fmtN(d.places)} of the game's places.`}
+      ${d.mine ? '' : SP.cur === '**' ? 'The badge is the style that has it most (rest the mouse on it for how often).' : `The badge is how many of them have it: <span class="sp-badge staple" style="position:static">40%</span> a staple, <span class="sp-badge" style="position:static">4%</span> now and then.`}
       ${d.examples && d.examples.length ? `<span class="lnk" data-spshow="${esc(d.examples[0][0])}" title="Open ${esc(d.examples[0][1])}, one of the game's own places in this style">Show me a place in this style</span>` : ''}</div>` +
-    (SP.view === 'tree' ? spTreeHtml(d) : spGridHtml(d));
+    (d.mine ? spOwnHtml(d) : '') + (SP.view === 'tree' ? spTreeHtml(d) : spGridHtml(d));
+  if (d.mine) spOwnBind(body, d);
   v3ThumbScan(body);
 }
 function spBar(main){
@@ -287,6 +298,52 @@ async function spTakeOut(id){
   try { await post('/api/style/remove', {theme: SP.cur, id}); delete SP.data[SP.cur]; toast(`Took ${id} out of ${SP.cur === '*' ? 'Used everywhere' : SP.cur}.`); spRender(); }
   catch (e){ toast(e.message, true); }
 }
+// ---------------------------------------------------------------- styles of your own (stylesurvey.own_edit)
+// (PIN2 2026-11-01: "make new style categories", and towns of your own culture from your prefabs: a style of your own
+// holds what you add to it and the prefabs its towns are built of, each with its kind, planned like a game culture's)
+const SP_KINDS = [['house', 'House'], ['shop', 'Shop'], ['tavern', 'Tavern'], ['temple', 'Temple'], ['guild', 'Guild hall'], ['manor', 'Manor'], ['guard', 'Guard post']];
+async function spOwnSave(name, ch){
+  const r = await post('/api/style/own', Object.assign({name}, ch));
+  SP.own = Object.entries(r.styles).map(([n, o]) => ({name: n, line: o.line || '', like: o.like || '', prefabs: o.prefabs || {}, mine: true}));
+  if (typeof LM !== 'undefined'){ LM.cultures = null; LM.culturesAsked = false; }      // (the Town panel's Like list)
+  return r;
+}
+async function spNewStyle(){
+  const name = (prompt('A name for your style:', 'My style') || '').trim(); if (!name) return;
+  try { const r = await spOwnSave(name, {}); SP.cur = r.name; delete SP.data[r.name]; spKeep(); spRender(); toast(`Made ${r.name}. Add things to it with ＋ Add…, and prefabs for its towns.`); }
+  catch (e){ toast(e.message, true); }
+}
+function spOwnHtml(d){
+  const cs = SP.cultures || [], pf = SP.prefabs || [], have = d.prefabs || {};
+  return `<div class="sp-own">
+    <div class="sp-ownrow"><button class="btn sm" id="sp-own-ren" title="Give it another name">✎ Rename</button><button class="btn sm" id="sp-own-del" title="Delete this style (your prefabs stay)">✕ Delete</button>
+      <label title="A town of this style is planned like this culture's towns: its streets, how close its buildings stand, its walls, roads and interiors">Towns like <select class="inp" id="sp-own-like"><option value="">the nearest town's</option>${cs.filter(c => !c.own).map(c => `<option ${d.like === c.id ? 'selected' : ''}>${esc(c.id)}</option>`).join('')}</select></label></div>
+    <div class="sp-hd2" title="Tick the prefabs a town of this style is built of (each needs a door), and what each is">Its town buildings: your prefabs${Object.keys(have).length ? ` (${Object.keys(have).length})` : ''}</div>
+    ${pf.length ? `<div class="sp-ownpf">${pf.map(p => `<label><input type="checkbox" data-sppf="${esc(p.name)}" ${have[p.name] ? 'checked' : ''}><span>${esc(p.name)}</span><select class="inp" data-sppk="${esc(p.name)}" ${have[p.name] ? '' : 'disabled'}>${SP_KINDS.map(([k, l]) => `<option value="${k}" ${(have[p.name] || 'house') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`).join('')}</div>`
+      : '<div class="msg">You have no prefabs yet: select a building in the world and save it as a prefab (right-click → Save as a prefab…), door and all.</div>'}
+    ${Object.keys(have).length ? `<div class="msg" style="font-size:11.5px">Pick ★ ${esc(d.name)} under Like in a town's panel (Land) to build it of these.</div>` : ''}</div>`;
+}
+async function spOwnBind(body, d){
+  const name = d.name;
+  if (!SP.prefabs || !SP.cultures){
+    try { SP.prefabs = await api('/api/prefabs'); } catch (e){ SP.prefabs = []; }
+    try { SP.cultures = (await api('/api/town/cultures')).cultures || []; } catch (e){ SP.cultures = []; }
+    delete SP.data[name]; return spRender();
+  }
+  const save = async ch => { try { await spOwnSave(name, ch); delete SP.data[name]; spRender(); } catch (e){ toast(e.message, true); } };
+  const pfs = () => { const o = {}; body.querySelectorAll('[data-sppf]').forEach(c => { if (c.checked) o[c.dataset.sppf] = body.querySelector(`[data-sppk="${CSS.escape(c.dataset.sppf)}"]`).value; }); return o; };
+  body.querySelectorAll('[data-sppf],[data-sppk]').forEach(c => c.onchange = () => save({prefabs: pfs()}));
+  const lk = body.querySelector('#sp-own-like'); if (lk) lk.onchange = () => save({like: lk.value});
+  const rn = body.querySelector('#sp-own-ren'); if (rn) rn.onclick = async () => {
+    const nn = (prompt('A new name:', name) || '').trim(); if (!nn || nn === name) return;
+    try { const r = await spOwnSave(name, {new: nn}); SP.cur = r.name; delete SP.data[name]; spKeep(); spRender(); } catch (e){ toast(e.message, true); }
+  };
+  const dl = body.querySelector('#sp-own-del'); if (dl) dl.onclick = async () => {
+    if (!confirm(`Delete the style "${name}"? Your prefabs stay.`)) return;
+    try { await spOwnSave(name, {delete: true}); SP.cur = SP.themes[0].name; delete SP.data[name]; spKeep(); spRender(); } catch (e){ toast(e.message, true); }
+  };
+}
+
 // (from Browse: a style picked from a menu at the button)
 async function spAddMenu(id, at){
   let r;
@@ -294,6 +351,7 @@ async function spAddMenu(id, at){
   if (!r.ready) return toast('The styles are still being learnt; try again in a moment.');
   const b = at.getBoundingClientRect();
   pnlMenu({x: b.left, y: b.bottom}, [{label: 'Add ' + id + ' to the style…', disabled: true},
+    ...(r.own || []).map(t => ({label: '★ ' + t.name, act: () => spAdd(t.name, id)})),
     ...r.themes.map(t => ({label: t.name, act: () => spAdd(t.name, id)})), '-', {label: 'Used everywhere', act: () => spAdd('*', id)}]);
 }
 
@@ -335,7 +393,7 @@ function spGridHtml(d){
       : groups.map(g => `<div class="sp-grp">${esc(g.group)}</div><div class="sp-grid">${spFold(g.items).map(spTileHtml).join('')}</div>`).join('');
     return `<details class="sp-sec" data-spsec="${k}" ${SP.open[k] !== false ? 'open' : ''}><summary title="${esc(title)}">${label}<small>${n}</small></summary>${body}</details>`;
   }).join('');
-  return any ? h : `<div class="msg">${SP.q ? 'Nothing in this style matches "' + esc(SP.q) + '".' : 'Nothing learnt for this style.'}</div>`;
+  return any ? h : `<div class="msg">${SP.q ? 'Nothing in this style matches "' + esc(SP.q) + '".' : (d && d.mine ? 'Nothing in it yet: ＋ Add… puts things in it.' : 'Nothing learnt for this style.')}</div>`;
 }
 // (one tile per model: the records that share a mesh, the twenty bags of salt rice, fold under the first)
 function spFold(items){ return SP.q ? items : groupByMesh(items, it => it.mesh).map(g => g[0]); }
@@ -385,6 +443,7 @@ function spBind(el){
   el.addEventListener('click', e => {
     const tab = e.target.closest('[data-sptab]');
     if (tab){ SP.cur = tab.dataset.sptab; SP.q = ''; spKeep(); spRender(); return; }
+    if (e.target.closest('[data-spnew]')){ spNewStyle(); return; }
     const sh = e.target.closest('[data-spshow]');
     if (sh){ e.stopPropagation(); spShow(sh.dataset.spshow, sh.dataset.spshowid); return; }
     const st = e.target.closest('[data-spset]');

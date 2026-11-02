@@ -439,7 +439,16 @@ def _put_lists(db, rid, lists):
     """Into each list at its level (one save each); how many lists changed."""
     import levlists
     n = 0
+    import myrecords
+    by_script = myrecords.lists_by_script(db)
     for x in lists:
+        if by_script:
+            # (OpenMW 0.52: added as the game loads, the list itself left as it is, so other mods' additions stay)
+            if myrecords.add_to_list(db, x['list'], rid, max(1, int(x.get('level') or 1))):
+                import editing
+                editing.commit(db, 'Added %s to the list %s (as the game loads)' % (rid, x['list']))
+                n += 1
+            continue
         o = levlists.read(db, x['list'])
         if any(e['id'].lower() == rid.lower() for e in o['entries']):
             continue

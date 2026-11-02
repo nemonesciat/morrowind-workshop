@@ -28,7 +28,18 @@ POPULAR = [
     ('Game', 'graphic herbalism'), ('Game', 'weapon sheathing'), ('Game', 'shield sheathing'),
     ('Game', 'use additional anim sources'), ('Game', 'smooth movement'), ('Game', 'turn to movement direction'),
     ('Game', 'day night switches'), ('Sound', 'master volume'), ('Sound', 'music volume'),
+    # (OpenMW 0.52's: shown only when the OpenMW in use has them)
+    ('Shaders', 'clustered lighting'), ('Shaders', 'max lights'), ('Shaders', 'light radius multiplier'),
+    ('Shaders', 'particle point lighting'), ('Game', 'terrain obstructs focus'), ('Sound', 'warm sounds'),
 ]
+
+# settings new in OpenMW 0.52 (against 0.51's defaults.bin), marked "new in 0.52"; and those 0.52 dropped, which a
+# settings.cfg written by 0.51 may still hold
+NEW_052 = {('shaders', 'clustered lighting'), ('shaders', 'light radius multiplier'), ('shaders', 'particle point lighting'),
+           ('game', 'terrain obstructs focus'), ('hud', 'mouse emulation cursor'), ('sound', 'head cache size'), ('sound', 'warm sounds')}
+GONE_052 = {('models', 'load unsupported nif files'), ('models', 'weatherashcloud'), ('models', 'weatherblightcloud'),
+            ('models', 'weatherblizzard'), ('models', 'weathersnow'), ('shaders', 'light bounds multiplier'),
+            ('shaders', 'lighting method'), ('water', 'refraction scale')}
 
 
 # settings whose values are words, by their default: the words OpenMW takes
@@ -133,8 +144,11 @@ def read(userdir, install):
         known.add(k)
         r['value'] = mine.get(k, r['default'])
         r['changed'] = k in mine and mine[k] != r['default']
+        if k in NEW_052:
+            r['new_in'] = '0.52'
     # (lines in your file that this OpenMW doesn't list: kept as they are, shown so they can be seen)
-    extra = [{'section': s, 'key': k, 'value': v} for (s, k), v in mine.items() if (s, k) not in known]
+    extra = [dict({'section': s, 'key': k, 'value': v}, **({'gone_in': '0.52'} if (s, k) in GONE_052 else {}))
+             for (s, k), v in mine.items() if (s, k) not in known]
     have = {(r['section'].lower(), r['key'].lower()) for r in rows}
     popular = [[s, k] for s, k in POPULAR if (s.lower(), k.lower()) in have]
     return {'path': path, 'exists': os.path.isfile(path), 'settings': rows, 'popular': popular, 'unknown': extra,

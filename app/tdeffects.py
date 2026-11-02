@@ -45,6 +45,19 @@ local function exists(id)
   return ok and rec ~= nil
 end
 
+-- (a Tamriel Data effect our records use, made here as Tamriel Data makes it when this script runs before Tamriel
+-- Data's own: with this mod's scripts earlier in the load order the stand-in stayed, a Hunger for a Frost Monarch,
+-- Altvaddert 2026-11-01. Tamriel Data's summon script then brings the right creature, whichever ran first)
+local function make(id)
+  local m = makes[id]
+  if not m then return false end
+  local recs = content.magicEffects.records
+  local ok, base = pcall(function() return recs[m.tpl] end)
+  if not ok or not base then return false end
+  recs[id] = { template = base, name = m.name, baseCost = m.cost, icon = m.icon, allowsSpellmaking = true, allowsEnchanting = true }
+  return exists(id)
+end
+
 local function apply(kind, id, rows)
   local list = content[LISTS[kind]]
   local rec = list and list.records[id]
@@ -54,7 +67,7 @@ local function apply(kind, id, rows)
     local e = rec.effects[i]
     if not e then break end
     local r = rows[i]
-    if r and exists(r.id) then
+    if r and (exists(r.id) or make(r.id)) then
       effects[i] = { id = r.id, range = RANGE[r.range], area = r.area, duration = r.duration,
                      magnitudeMin = r.min, magnitudeMax = r.max }
       changed = true
@@ -138,7 +151,7 @@ def effects(db):
                         'skill': False, 'attribute': False,
                         'magnitude': tv.get('magnitude', True) if mag is None else mag,
                         'duration': tv.get('duration', True) if dur is None else dur,
-                        'td': True, 'template': t, 'icon': icon, 'enchanting': ench, 'spellmaking': spell})
+                        'td': True, 'template': t, 'tpl': template, 'icon': icon, 'enchanting': ench, 'spellmaking': spell})
         if re.search(r'addSummons\(\)', lm):
             for line in block('td_summon_effects').splitlines():
                 v = [a or b for a, b in strs(line)]
@@ -211,6 +224,23 @@ def _text(table):
     return 'local wanted = {\n' + BEGIN + '\n' + '\n'.join(lines) + ('\n' if lines else '') + END + '\n}'
 
 
+def _lua_str(v):
+    return '"%s"' % str(v).replace('\\', '\\\\').replace('"', '\\"')
+
+
+def _makes(db, table):
+    """The Tamriel Data effects the records use, as Tamriel Data makes them (for make() in the script)."""
+    E = by_id(db)
+    lines = []
+    for eid in sorted({r['id'] for _rid, rows in table.values() for r in rows.values()}):
+        e = E.get(eid) or {}
+        if not e.get('td') or not e.get('tpl'):
+            continue
+        lines.append('  [%s] = { tpl = %s, name = %s, cost = %s, icon = %s },' % (
+            _lua_str(eid), _lua_str(e['tpl']), _lua_str(e.get('name') or eid), e.get('cost') or 1, _lua_str((e.get('icon') or '').replace('\\\\', '\\'))))
+    return 'local makes = {\n' + '\n'.join(lines) + ('\n' if lines else '') + '}'
+
+
 def _write(db, table):
     p = db.project
     s = script(db)
@@ -223,7 +253,22 @@ def _write(db, table):
         s = {'name': SCRIPT, 'kind': 'LOAD', 'attach': [], 'text': ''}
         p.lua.append(s)
     s['kind'] = 'LOAD'
-    s['text'] = LUA % ('', body)
+    s['text'] = LUA % (_makes(db, table), body)
+
+
+def refresh(db):
+    """The mod's effect script written again in today's form when it is older (no make(): its Tamriel Data effects
+    stayed stand-ins when it ran before Tamriel Data's). Saved with the project; the files go out at the next save."""
+    p = db.project
+    s = script(db) if p else None
+    if s is None or 'local function make(' in (s.get('text') or ''):
+        return False
+    table = wanted(db)
+    if not table:
+        return False
+    _write(db, table)
+    p.save()
+    return True
 
 
 def remember(db, tag, rid, effs):

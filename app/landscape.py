@@ -389,8 +389,11 @@ def _follow_ground(db, gx, gy, before, after, skip=()):
         return 0
     moved = 0
     c = None
+    # (a town's building stays as one: its door, steps and porch are small enough to follow the ground, and walked off
+    # from the house when the land was shaped under a built town, the user's town, 2026-11-01)
+    parts = (getattr(db.project, 'town_parts', None) or {}) if getattr(db, 'project', None) else {}
     for r in m['refs']:
-        if r['k'] in skip:
+        if r['k'] in skip or r['k'] in parts:
             continue
         x, y = r['p'][0], r['p'][1]
         if not (gx * CELL <= x < (gx + 1) * CELL and gy * CELL <= y < (gy + 1) * CELL):

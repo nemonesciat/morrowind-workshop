@@ -811,9 +811,14 @@ def move_ref(db, cell_key, refkey, pos, scale=None):
         raise EditError('That object is no longer in this cell.')
     if len(pos) < 6:
         pos = list(pos) + list(ref_info(ref['subs'])[1][len(pos):])
+    import doors
+    was = doors.door_spots(db, [(cell_key, refkey)])
     _store(c, refkey, ref['origin'], ref['idx'], set_ref_pos(ref['subs'], tuple(pos[:6]), scale))
     rid = ref_info(ref['subs'])[0]
-    commit(db, 'Moved "%s" in %s' % (rid, cell_label(db, cell_key)))
+    note = 'Moved "%s" in %s' % (rid, cell_label(db, cell_key))
+    commit(db, note)
+    if was and doors.follow(db, was):
+        fold(db, 2, note)
     return refkey
 
 

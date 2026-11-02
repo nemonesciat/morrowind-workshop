@@ -89,7 +89,20 @@ function mxLookBind(f){
   $('#mx-speed').oninput = e => { if (e.target.value === '') delete f.look.speed; else f.look.speed = +e.target.value; };
 }
 const MX_WHEN = {land: 'as it lands', second: 'each second', end: 'as it ends'};
+const MX_MOON = {any: 'any time', full: 'only at full moon', new: 'only at new moon', up: 'only with a moon up'};
 const MX_ONLY = {any: 'on anyone', npc: 'only on people', creature: 'only on creatures', undead: 'only on undead', daedra: 'only on Daedra', player: 'only on the player', notplayer: 'on anyone but the player'};
+// the steps by what they do, the ones new with OpenMW 0.52 marked (2.6.6: 32 steps in one row had become a wall)
+const MX_GROUPS = [['Body', ['health', 'magicka', 'fatigue', 'aura', 'leech', 'scale']],
+                   ['Move', ['push', 'pull', 'launch', 'dash', 'swap', 'blink', 'teleport']],
+                   ['Fight', ['stagger', 'strike', 'knockdown', 'calm', 'frenzy']],
+                   ['Magic', ['cast', 'burst', 'glow', 'every', 'summon', 'resurrect', 'transmute']],
+                   ['World', ['quake', 'weather', 'spawn', 'mwscript', 'global', 'message', 'lua']]];
+const MX_NEW052 = ['stagger', 'strike', 'knockdown', 'glow', 'burst', 'every', 'mwscript', 'blink'];
+(function(){ const st = document.createElement('style');
+  st.textContent = '.mx-addrow{display:grid;grid-template-columns:52px 1fr;gap:4px;align-items:start;margin:3px 0}.mx-addrow>.msg{padding-top:5px}.mx-addrow>div{display:flex;flex-wrap:wrap;gap:4px}.mx-052{color:var(--gold);font-size:9px;margin-left:3px}';
+  document.head.appendChild(st); })();
+const MX_LAND = {stand: 'on their feet', stagger: 'reeling', fall: 'knocked down'};
+const MX_EVERY = {hide: 'hidden', show: 'shown again', glow: 'made to glow', cast: 'a spell cast on each'};
 const MX_STATS = {health: 'health', magicka: 'magicka', fatigue: 'fatigue'};
 const mxSel = (k, n, opts, cur) => `<select class="inp" data-mxd="${k}" data-n="${n}" style="width:auto">${Object.entries(opts).map(([v, t]) => `<option value="${v}" ${String(cur) === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
 const mxNum = (k, n, v, w, ph) => `<input class="inp" type="number" step="any" data-mxd="${k}" data-n="${n}" value="${v != null ? v : ''}" ${ph ? `placeholder="${esc(ph)}"` : ''} style="width:${w || 80}px">`;
@@ -97,17 +110,39 @@ function mxDoesRow(d, n){
   const K = MX.data.does.find(x => x.kind === d.kind) || {};
   let inner = '';
   // (when, whom, how likely: every step has them; some kinds only make sense at one time)
-  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', resurrect: 'land', summon: 'land', quake: 'land', aura: 'second', leech: 'second'}[d.kind];
+  const fixedWhen = {scale: 'land', calm: 'land', frenzy: 'land', swap: 'land', blink: 'land', knockdown: 'land', glow: 'land', resurrect: 'land', summon: 'land', quake: 'land', aura: 'second', leech: 'second'}[d.kind];
   if (!d.when) d.when = fixedWhen || (['health', 'magicka', 'fatigue'].includes(d.kind) ? (d.per === 'once' ? 'land' : 'second') : 'land');
   const common = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;width:100%;margin-top:4px">
       ${fixedWhen ? `<span class="msg">${esc(MX_WHEN[fixedWhen])}${d.kind === 'scale' || d.kind === 'calm' || d.kind === 'frenzy' ? ', undone as it ends' : ''}</span>` : mxSel('when', n, MX_WHEN, d.when)}
       ${mxSel('only', n, MX_ONLY, d.only || 'any')}
+      <span title="Moon phases need OpenMW 0.52; before it, a step limited to a moon never happens">${mxSel('moon', n, MX_MOON, d.moon || 'any')}</span>
       <span class="msg">chance</span>${mxNum('chance', n, d.chance != null ? d.chance : 100, 70)}<span class="msg">%</span></div>`;
   if (['health', 'magicka', 'fatigue'].includes(d.kind)){
     inner = `${mxSel('sign', n, {'-1': 'takes away', '1': 'gives back'}, d.sign < 0 ? '-1' : '1')}
       <span class="msg">the magnitude${d.when === 'second' ? ' each second' : ''}</span>`;
   } else if (['push', 'pull', 'launch', 'dash'].includes(d.kind)){
-    inner = `${mxNum('feet', n, d.feet || '', 90, 'magnitude')}<span class="msg">feet ${d.kind === 'launch' ? 'up' : d.kind === 'dash' ? 'forward' : d.kind === 'pull' ? 'towards the caster' : 'away from the caster'} (empty: the magnitude, in feet)</span>`;
+    inner = `${mxNum('feet', n, d.feet || '', 90, 'magnitude')}<span class="msg">feet ${d.kind === 'launch' ? 'up' : d.kind === 'dash' ? 'forward' : d.kind === 'pull' ? 'towards the caster' : 'away from the caster'} (empty: the magnitude, in feet)</span>
+      ${d.kind === 'dash' ? '' : `<span class="msg">, landing</span><span title="Reeling and knocked down need OpenMW 0.52 (before it, knocked down is a fatigue drain)">${mxSel('land', n, MX_LAND, d.land || (d.kind === 'push' ? 'stagger' : 'stand'))}</span>`}`;
+  } else if (d.kind === 'stagger'){
+    inner = mxSel('how', n, {always: 'every time', odds: 'by the game\'s odds of a fall'}, d.how || 'always') + '<span class="msg">(OpenMW 0.52)</span>';
+  } else if (d.kind === 'strike'){
+    inner = `<span class="msg">a blow of</span>${mxNum('amount', n, d.amount || '', 90, 'magnitude')}<span class="msg">health</span>
+      <label class="chk" title="Off: straight through armour"><input type="checkbox" data-mxc="armor" data-n="${n}" ${d.armor !== false ? 'checked' : ''}> armour counts</label>
+      <label class="chk" title="A hard blow can stagger or floor them, as the game's weapons do"><input type="checkbox" data-mxc="stagger" data-n="${n}" ${d.stagger !== false ? 'checked' : ''}> can stagger</label>
+      <span class="msg">(OpenMW 0.52)</span>`;
+  } else if (d.kind === 'glow'){
+    inner = `<input type="color" data-mxcol="color" data-n="${n}" value="${mxHex(d.color || [255, 214, 120])}" style="width:44px;height:26px;padding:0">
+      <span class="msg">for</span>${mxNum('seconds', n, d.seconds || '', 120, 'while it lasts')}<span class="msg">seconds (OpenMW 0.52)</span>`;
+  } else if (d.kind === 'burst'){
+    inner = `<div class="dd" style="flex:1"><input class="inp" id="mx-cast-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="A spell with an area… (search)" autocomplete="off"><div class="ddlist" id="mx-cast-${n}-l"></div></div>
+      <span class="msg">goes off there (OpenMW 0.52)</span>`;
+  } else if (d.kind === 'every'){
+    const act = d.act || 'glow';
+    inner = `<span class="msg">every</span><input class="inp" data-mxd="what" data-n="${n}" value="${esc(d.what || '')}" placeholder="an ID or a word, e.g. lantern" style="width:190px">
+      <span class="msg">within</span>${mxNum('feet', n, d.feet != null ? d.feet : 30, 70, 'all')}<span class="msg">feet (0: the whole place) is</span>${mxSel('act', n, MX_EVERY, act)}
+      ${act === 'glow' ? `<input type="color" data-mxcol="color" data-n="${n}" value="${mxHex(d.color || [255, 214, 120])}" style="width:44px;height:26px;padding:0"><span class="msg">for</span>${mxNum('seconds', n, d.seconds || 10, 60)}<span class="msg">s</span>` : ''}
+      ${act === 'cast' ? `<div class="dd" style="flex:1;min-width:200px"><input class="inp" id="mx-cast-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="A spell… (search)" autocomplete="off"><div class="ddlist" id="mx-cast-${n}-l"></div></div>` : ''}
+      <span class="msg">(OpenMW 0.52)</span>`;
   } else if (d.kind === 'scale'){
     inner = `<span class="msg">times</span>${mxNum('factor', n, d.factor != null ? d.factor : 2, 80)}<span class="msg">their size (2 twice as big, 0.5 half)</span>`;
   } else if (d.kind === 'aura'){
@@ -130,7 +165,8 @@ function mxDoesRow(d, n){
   } else if (d.kind === 'cast'){
     inner = `<div class="dd" style="flex:1"><input class="inp" id="mx-cast-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="A spell… (search)" autocomplete="off"><div class="ddlist" id="mx-cast-${n}-l"></div></div>`;
   } else if (d.kind === 'weather'){
-    inner = mxSel('weather', n, Object.fromEntries((MX.data.weathers || []).map(w => [w, w])), d.weather || 'thunderstorm') + '<span class="msg">in the region they are in</span>';
+    const wn = MX.data.weather_names || {};
+    inner = mxSel('weather', n, Object.fromEntries((MX.data.weathers || []).map(w => [w, wn[w] ? wn[w] + ' (yours, 0.52)' : w])), d.weather || 'thunderstorm') + '<span class="msg">in the region they are in</span>';
   } else if (d.kind === 'transmute'){
     const pairs = d.pairs && d.pairs.length ? d.pairs : (d.pairs = [{from: '', to: ''}]);
     inner = `<div style="flex:1">${pairs.map((p, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
@@ -156,6 +192,9 @@ function mxDoesRow(d, n){
     inner = `${mxNum('count', n, d.count || 1, 60)}
       <div class="dd" style="flex:1;min-width:320px"><input class="inp" id="mx-summon-${n}" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="A creature, person or random creature list… (search)" autocomplete="off" style="width:100%"><div class="ddlist" id="mx-summon-${n}-l"></div></div>
       <span class="msg" style="width:100%">Beside the caster, on their side and following them, for as long as the effect lasts (give the spell a duration). They go when it ends, when the caster dies, or when it's cast again.</span>`;
+  } else if (d.kind === 'mwscript'){
+    inner = `<input class="inp" data-mxd="id" data-n="${n}" value="${esc(d.id || '')}" placeholder="a script ID, e.g. MyMod_Curse" style="max-width:240px">
+      <span class="msg">started on the one it lands on (OpenMW 0.52)</span>`;
   } else if (d.kind === 'global'){
     inner = `<div class="dd"><input class="inp" id="mx-glob-${n}" data-mxd="name" data-n="${n}" value="${esc(d.name || '')}" placeholder="A global variable… (search)" autocomplete="off" style="max-width:240px"><div class="ddlist" id="mx-glob-${n}-l"></div></div>
       <span class="msg">to</span><input class="inp" type="number" data-mxd="value" data-n="${n}" value="${d.value || 0}" style="width:90px">`;
@@ -185,12 +224,16 @@ function mxDraw(){
         <label>Base cost</label><div><input class="inp" type="number" step="0.1" min="0" id="mx-cost" value="${f.cost != null ? f.cost : t.cost}" style="max-width:120px"><div class="hint">What a point of it costs to cast or enchant; ${esc(t.name || 'the one it looks like')} costs ${t.cost}.</div></div>
         <label>Has</label><div style="display:flex;gap:16px">${chk('mx-mag', 'a magnitude', f.magnitude)}${chk('mx-dur', 'a duration', f.duration)}</div>
         <label>Description</label><textarea class="inp" id="mx-desc" rows="2" placeholder="What the game says it does">${esc(f.description || '')}</textarea>
+        ${(D.schools || []).length ? `<label>School</label><div><select class="inp" id="mx-school" style="max-width:240px"><option value="">${esc(t.school || 'the one it looks like')}'s</option>${D.schools.map(s => `<option value="${esc(s.id)}" ${s.id.toLowerCase() === (f.school || '').toLowerCase() ? 'selected' : ''}>${esc(s.name)} (yours)</option>`).join('')}</select>
+          <div class="hint">A school of yours (Create &gt; New skill) needs OpenMW 0.52; its spells train that skill.</div></div>` : ''}
       </div>
       ${mxLookHtml(f, t)}
       <h3 style="margin-top:18px">What it does</h3>
       <div class="msg" style="margin-bottom:8px">On the one it lands on, while it lasts. A magnitude of 10 that takes away health per second takes 10 a second.</div>
       <div id="mx-does">${(f.does || []).map(mxDoesRow).join('') || '<div class="msg">Nothing yet: it would only look the part. Add what it does:</div>'}</div>
-      <div class="actions" style="margin-top:6px">${D.does.filter(d => !d.untried).map(d => `<button class="btn sm" data-mxadd="${d.kind}" title="${esc(d.what)}">+ ${esc(d.label)}</button>`).join('')}</div>
+      <div class="mx-addg" style="margin-top:6px">${MX_GROUPS.map(([g, kinds]) => { const ds = kinds.map(k => D.does.find(d => d.kind === k && !d.untried)).filter(Boolean);
+          return ds.length ? `<div class="mx-addrow"><span class="msg">${g}</span><div>${ds.map(d => `<button class="btn sm" data-mxadd="${d.kind}" title="${esc(d.what)}">+ ${esc(d.label)}${MX_NEW052.includes(d.kind) ? '<sup class="mx-052">0.52</sup>' : ''}</button>`).join('')}</div></div>` : ''; }).join('')}
+        ${(() => { const rest = D.does.filter(d => !d.untried && !MX_GROUPS.some(([, ks]) => ks.includes(d.kind))); return rest.length ? `<div class="mx-addrow"><span class="msg">More</span><div>${rest.map(d => `<button class="btn sm" data-mxadd="${d.kind}" title="${esc(d.what)}">+ ${esc(d.label)}</button>`).join('')}</div></div>` : ''; })()}</div>
       <div class="actions" style="margin-top:20px"><button class="btn primary" id="mx-save">${MX.sel ? 'Save' : 'Make the effect'}</button>
         ${MX.sel ? '<button class="btn danger" id="mx-del">Remove it</button>' : ''}<span class="msg" id="mx-msg"></span></div>
       <div class="cwhat"><b>${MX.sel ? 'Save' : 'Make the effect'}</b> ${MX.sel ? 'changes' : 'adds'} the effect in your mod's scripts: made as the game loads, looking like ${esc(t.name || '…')}${(f.does || []).length ? ', doing ' + (f.does || []).length + ' thing' + ((f.does || []).length === 1 ? '' : 's') + ' when it lands' : ', doing nothing yet'}. Then pick it in a spell, enchantment or potion like any effect (it shows as "(yours)"). One Undo takes it back.</div>
@@ -203,6 +246,7 @@ function mxDraw(){
     f.name = $('#mx-name').value; f.id = $('#mx-id').value; f.template = +$('#mx-tpl').value; f.icon = $('#mx-icon').value;
     f.cost = $('#mx-cost').value === '' ? null : +$('#mx-cost').value; f.magnitude = $('#mx-mag').checked; f.duration = $('#mx-dur').checked;
     f.description = $('#mx-desc').value;
+    const sch = $('#mx-school'); if (sch) f.school = sch.value;
   };
   ['mx-name', 'mx-id', 'mx-icon', 'mx-cost', 'mx-desc'].forEach(id => $('#' + id).oninput = keep);
   ['mx-mag', 'mx-dur'].forEach(id => $('#' + id).onchange = keep);
@@ -213,8 +257,10 @@ function mxDraw(){
   box.querySelectorAll('[data-mxd]').forEach(el => el.oninput = el.onchange = () => {
     const d = f.does[+el.dataset.n], k = el.dataset.mxd;
     d[k] = ['sign', 'x', 'y', 'z', 'value', 'chance', 'factor', 'count', 'strength', 'seconds'].includes(k) ? +el.value : k === 'feet' ? (el.value === '' ? '' : +el.value) : el.value;
-    if (k === 'when' && el.tagName === 'SELECT') mxDraw();
+    if ((k === 'when' || k === 'act') && el.tagName === 'SELECT') mxDraw();
   });
+  box.querySelectorAll('[data-mxc]').forEach(el => el.onchange = () => { f.does[+el.dataset.n][el.dataset.mxc] = el.checked; });
+  box.querySelectorAll('[data-mxcol]').forEach(el => el.oninput = () => { const h = el.value.slice(1); f.does[+el.dataset.n][el.dataset.mxcol] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); });
   box.querySelectorAll('[data-mxp]').forEach(el => el.oninput = () => { f.does[+el.dataset.n].pairs[+el.dataset.i][el.dataset.mxp] = el.value; });
   box.querySelectorAll('[data-mxpair]').forEach(b => b.onclick = () => { keep(); f.does[+b.dataset.mxpair].pairs.push({from: '', to: ''}); mxDraw(); });
   box.querySelectorAll('[data-mxai]').forEach(b => b.onclick = async () => {
@@ -234,7 +280,8 @@ function mxDraw(){
     keep(); const k = b.dataset.mxadd;
     f.does.push(['health', 'magicka', 'fatigue'].includes(k) ? {kind: k, sign: -1, when: 'second'} : k === 'teleport' ? {kind: k, cell: '', x: 0, y: 0, z: 0}
       : k === 'scale' ? {kind: k, factor: 2} : k === 'aura' ? {kind: k, sign: -1, stat: 'health', feet: 10} : k === 'leech' ? {kind: k, stat: 'health'}
-      : k === 'weather' ? {kind: k, weather: 'thunderstorm'} : k === 'transmute' ? {kind: k, pairs: [{from: '', to: ''}], count: 1} : k === 'summon' ? {kind: k, count: 1} : k === 'quake' ? {kind: k, feet: 30, strength: 5, seconds: 10} : {kind: k});
+      : k === 'weather' ? {kind: k, weather: 'thunderstorm'} : k === 'transmute' ? {kind: k, pairs: [{from: '', to: ''}], count: 1} : k === 'summon' ? {kind: k, count: 1} : k === 'quake' ? {kind: k, feet: 30, strength: 5, seconds: 10}
+      : k === 'every' ? {kind: k, what: '', feet: 30, act: 'glow', seconds: 10} : k === 'strike' ? {kind: k, armor: true, stagger: true} : {kind: k});
     mxDraw();
   });
   box.querySelectorAll('[data-mxhere]').forEach(b => b.onclick = () => {
@@ -246,7 +293,7 @@ function mxDraw(){
     if (d.kind === 'spawn' && $('#mx-spawn-' + n)) ddSearch('mx-spawn-' + n, 'CREA,NPC_,LEVC,STAT,ACTI,MISC,WEAP,ARMO,CLOT,LIGH,CONT,ALCH,INGR,BOOK', r => { d.id = r.id; $('#mx-spawn-' + n).value = r.id; });
     if (d.kind === 'summon' && $('#mx-summon-' + n)) ddSearch('mx-summon-' + n, 'CREA,NPC_,LEVC', r => { d.id = r.id; $('#mx-summon-' + n).value = r.id; });
     if (d.kind === 'global' && $('#mx-glob-' + n)) ddSearch('mx-glob-' + n, 'GLOB', r => { d.name = r.id; $('#mx-glob-' + n).value = r.id; });
-    if (d.kind === 'cast' && $('#mx-cast-' + n)) ddSearch('mx-cast-' + n, 'SPEL', r => { d.id = r.id; $('#mx-cast-' + n).value = r.id; });
+    if (['cast', 'burst', 'every'].includes(d.kind) && $('#mx-cast-' + n)) ddSearch('mx-cast-' + n, 'SPEL', r => { d.id = r.id; $('#mx-cast-' + n).value = r.id; });
     if (d.kind === 'transmute') (d.pairs || []).forEach((p, i) => {
       const items = 'MISC,INGR,WEAP,ARMO,CLOT,ALCH,BOOK,APPA,LOCK,PROB,REPA,LIGH';
       if ($(`#mx-tf-${n}-${i}`)) ddSearch(`mx-tf-${n}-${i}`, items, r => { p.from = r.id; $(`#mx-tf-${n}-${i}`).value = r.id; });

@@ -1128,9 +1128,13 @@ function v3StrokeStart(e){
     // what already stands around counts as taken
     const near = [];
     for (const c of Object.values(W.cells)) for (const r of c.refs || []) if (Math.hypot(r.p[0] - at[0], r.p[1] - at[1]) < 6000 && !r.arch) near.push([r.p[0], r.p[1]]);
-    const grass = V3.land.scatSet === 'grass' && V3.land.scatGrass !== false;
+    // (the Grass set, or one of your own brushes ticked "Paint as grass": PIN2, 2026-11-01)
+    const grass = V3.land.scatSet === 'grass' ? V3.land.scatGrass !== false : !!(V3.land.scatGrassMine || {})[V3.land.scatSet];
     if (grass) for (const lst of Object.values(V3.grassData || {})) for (const g of lst) if (Math.hypot(g[1] - at[0], g[2] - at[1]) < 6000) near.push([g[1], g[2]]);
-    V3.stroke = Object.assign({cells: new Map(), scatter: true, grass, circles: [], add: [], gone: new Map(), near, last: 0, lastAt: at, erase: e.ctrlKey}, arm);
+    // (Remove, or Ctrl with Paint, clears what the brush placed; Ctrl with Remove paints)
+    const erase = !!e.ctrlKey !== !!V3.land.scatErase;
+    arm.first.ctrl = erase;
+    V3.stroke = Object.assign({cells: new Map(), scatter: true, grass, circles: [], add: [], gone: new Map(), near, last: 0, lastAt: at, erase}, arm);
     return true;
   }
   V3.stroke = Object.assign({cells: new Map(), level: v3GroundAt(at[0], at[1]), last: 0}, arm);
@@ -1314,7 +1318,7 @@ const V3_LANDTOOLS = [['raise', '▲ Raise', 'Raise the ground (Ctrl: lower)'], 
   ['smooth', '≈ Smooth', 'Even out bumps'], ['flatten', '▬ Flatten', 'Level the ground to the height where you start the stroke'],
   ['paint', '🖌 Paint', 'Paint a ground texture (Shift+click: pick the texture under the mouse)'],
   ['tint', '🎨 Tint', 'Paint the ground\'s own colour, the shading the game multiplies into its textures (Ctrl: back to plain; Shift+click: pick the colour under the mouse). Or shade it automatically, the way the game does.'],
-  ['scatter', '🌿 Scatter', 'Scatter grass, plants, rocks or trees of this region (Ctrl: clear them away)']];
+  ['scatter', '🌿 Scatter', 'Scatter grass, plants, rocks or trees of this region (Remove, or Ctrl: clear away what it scattered)']];
 // how far apart things of each kind usually grow (at thickness 5)
 const V3_SCATTER_GAP = {grass: 110, plants: 200, rocks: 380, trees: 650, logs: 700};
 // the most one stroke makes: objects in the mod, and groundcover tufts in its grass file
@@ -1463,7 +1467,8 @@ async function v3ScatterPanel(){
   const set = S_.sets.find(s => s.key === B.scatSet);
   B.scatOff = B.scatOff || {};
   B.scatThick = B.scatThick || 5;
-  box.innerHTML = `<div class="v3lrow" style="flex-wrap:wrap">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="${s.mine ? 'One of your own brushes' : 'What grows in this region'}">${s.mine ? '★ ' : ''}${esc(s.label)}</button>`).join('')}
+  box.innerHTML = `<div class="v3lrow" title="Remove clears only what this brush scattered, of the kinds ticked. Ctrl while dragging does the other one"><button class="btn sm ${B.scatErase ? '' : 'primary'}" data-se="0">🌿 Paint</button><button class="btn sm ${B.scatErase ? 'primary' : ''}" data-se="1">✕ Remove</button></div>
+    <div class="v3lrow" style="flex-wrap:wrap">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="${s.mine ? 'One of your own brushes' : 'What grows in this region'}">${s.mine ? '★ ' : ''}${esc(s.label)}</button>`).join('')}
       <button class="btn sm" id="v3lnewbr" title="A brush of your own: any objects, from mods too">+ New brush</button></div>
     <label class="v3lrow" title="How thickly things grow: 5 as the game has this kind, 10 about three times as thick, 1 under half">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>` +
     (set.mine ? '' : `<div class="faint" style="margin:4px 0;display:flex;gap:4px;align-items:center"><span style="flex:1">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</span>${brViewSel()}</div>` +
@@ -1474,14 +1479,17 @@ async function v3ScatterPanel(){
   if (!set.mine){ brViewHook(box, () => v3ScatterPanel()); v3ThumbScan(box); }
   if (set.mine) brEditor(box, set);
   $('#v3lnewbr').onclick = async () => { try { await brNew(); v3ScatterPanel(); } catch (e){ toast(e.message, true); } };
-  if (B.scatSet === 'grass'){
-    // grass can go in as OpenMW groundcover: no collision, drawn fast, swaying, kept in its own file
+  if (B.scatSet === 'grass' || set.mine){
+    // grass can go in as OpenMW groundcover: no collision, drawn fast, swaying, kept in its own file; your own
+    // brushes too, ticked "Paint as grass" (PIN2, 2026-11-01: a made brush into the vegetation layer)
     if (B.scatGrass === undefined) B.scatGrass = true;
+    B.scatGrassMine = B.scatGrassMine || {};
+    const gcOn = set.mine ? !!B.scatGrassMine[set.key] : B.scatGrass;
     const st = V3.grassStatus;
-    box.insertAdjacentHTML('beforeend', `<label class="v3lrow" style="display:flex;align-items:center;gap:6px;margin-top:6px" title="OpenMW draws groundcover fast and in great numbers, sways it in the wind and lets you walk through it. It goes into its own file next to your mod."><input type="checkbox" id="v3lgc" ${B.scatGrass ? 'checked' : ''}> As groundcover (its own grass file)</label>
-      ${B.scatGrass ? `<div class="v3lrow"><button class="btn sm" id="v3lfill" title="Grass on grassy ground, thinner on dirt, none on roads, rocks, sand or under water">🌾 Grow it over this cell</button><button class="btn sm" id="v3lfill9" title="This cell and the eight around it">…and around</button><button class="btn sm" id="v3lclear" title="Take the groundcover out of this cell">Clear cell</button></div>
+    box.insertAdjacentHTML('beforeend', `<label class="v3lrow" style="display:flex;align-items:center;gap:6px;margin-top:6px" title="OpenMW draws groundcover fast and in great numbers, sways it in the wind and lets you walk through it (no collision, nothing to pick up). It goes into its own file next to your mod.${set.mine ? ' Best for small plants and tufts.' : ''}"><input type="checkbox" id="v3lgc" ${gcOn ? 'checked' : ''}> ${set.mine ? 'Paint as grass (groundcover)' : 'As groundcover (its own grass file)'}</label>
+      ${gcOn ? `<div class="v3lrow"><button class="btn sm" id="v3lfill" title="Grass on grassy ground, thinner on dirt, none on roads, rocks, sand or under water">🌾 Grow it over this cell</button><button class="btn sm" id="v3lfill9" title="This cell and the eight around it">…and around</button><button class="btn sm" id="v3lclear" title="Take the groundcover out of this cell">Clear cell</button></div>
       <div class="faint" id="v3lgcst">${st ? (st.enabled ? `Groundcover is on in OpenMW. ${V3.grassTotal || 0} tufts in your grass file.` : 'Groundcover is off in your OpenMW settings, so the game won\'t show this grass. <button class="btn sm" id="v3lgcon">Turn it on</button>') : ''}</div>` : ''}`);
-    const gc = $('#v3lgc'); if (gc) gc.onchange = () => { B.scatGrass = gc.checked; v3LandSave(); v3ScatterPanel(); };
+    const gc = $('#v3lgc'); if (gc) gc.onchange = () => { if (set.mine) B.scatGrassMine[set.key] = gc.checked; else B.scatGrass = gc.checked; v3LandSave(); v3ScatterPanel(); };
     const fillCells = async around => {
       if (!await needProject()) return;
       const [cx, cy] = v3CamCell(), cells = [];
@@ -1504,6 +1512,7 @@ async function v3ScatterPanel(){
     };
   }
   box.querySelectorAll('[data-ss]').forEach(b => b.onclick = () => { B.scatSet = b.dataset.ss; v3LandSave(); v3ScatterPanel(); });
+  box.querySelectorAll('[data-se]').forEach(b => b.onclick = () => { B.scatErase = b.dataset.se === '1'; v3LandSave(); v3ScatterPanel(); });
   $('#v3lthick').oninput = e => { B.scatThick = +e.target.value; e.target.nextElementSibling.textContent = B.scatThick; v3LandSave(); };
   box.querySelectorAll('[data-si]').forEach(c => c.onchange = () => { const k = c.dataset.si.toLowerCase(); if (c.checked) delete B.scatOff[k]; else B.scatOff[k] = 1; v3LandSave(); const l = c.parentElement; if (l.classList.contains('br-tile')) l.classList.toggle('off', !c.checked); else l.classList.toggle('on', c.checked); });
 }
@@ -1567,8 +1576,10 @@ function v3ScatterDab(at, erase){
     v3ScatterShow(); return;
   }
   if (erase){
+    // only what the Scatter brush placed (r.sc), of the kinds ticked: never the game's own trees nor ones put by hand
+    // (PIN2 on Discord 2026-11-01, for trees round mountains)
     for (const [ck, c] of Object.entries(W.cells)) for (const r of c.refs || []){
-      if (!ids.has(r.id.toLowerCase()) || Math.hypot(r.p[0] - at[0], r.p[1] - at[1]) > R) continue;
+      if (!r.sc || !ids.has(r.id.toLowerCase()) || Math.hypot(r.p[0] - at[0], r.p[1] - at[1]) > R) continue;
       const k = ck + '|' + r.k; if (!S_.gone.has(k)){ S_.gone.set(k, {cell: ck, ref: r.k, x: r.p[0], y: r.p[1], z: r.p[2]}); }
     }
     v3ScatterShow(); return;
@@ -1661,7 +1672,7 @@ async function v3ScatterEnd(S_){
     } else {
       const cx = S_.add.reduce((a, p) => a + p.x, 0) / S_.add.length, cy = S_.add.reduce((a, p) => a + p.y, 0) / S_.add.length;
       const set = V3.scatSets.sets.find(s => s.key === V3.land.scatSet);
-      await post('/api/group/place', {cell: cellKeyAt(cx, cy), x: cx, y: cy, z: 0, yaw: 0, label: (set ? set.label : 'plants').toLowerCase(),
+      await post('/api/group/place', {cell: cellKeyAt(cx, cy), x: cx, y: cy, z: 0, yaw: 0, label: (set ? set.label : 'plants').toLowerCase(), scattered: true,
         items: S_.add.map(p => ({id: p.id, lib: p.lib, type: p.lib ? 'STAT' : undefined, dx: p.x - cx, dy: p.y - cy, dz: p.z, rx: p.rx || 0, ry: p.ry || 0, rz: p.rz, s: p.s}))});
       msg = `Scattered ${S_.add.length} ${set ? set.label.toLowerCase() : 'things'}`;
     }

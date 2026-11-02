@@ -390,14 +390,14 @@ WALLED_DENS = 2.0
 RING_MAIN = 768                # a walled town's main street at most this wide
 
 
-def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=False):
+def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=False, opts=None):
     """plan_once, and where a seed's streets left no room for a single plot (one street along a narrow island, the
     user's Imperial town of test3), the next few street layouts tried quietly; the same seed still gives the same town.
     walled: the town is to have a wall, so it stands closer. ring: the outline is the inside of its wall, and a street
-    runs round just inside it (townbuild.planned)."""
+    runs round just inside it (townbuild.planned). opts: what the user chose (see plan_once)."""
     best = None
     for k in range(6):
-        p = plan_once(db, outline, culture, seed + 7919 * k, F, ground, walled, ring)
+        p = plan_once(db, outline, culture, seed + 7919 * k, F, ground, walled, ring, opts)
         if best is None or len(p.get('plots') or ()) > len(best.get('plots') or ()):
             best = p
         if len(best.get('plots') or ()) >= 3:
@@ -405,12 +405,26 @@ def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=F
     return best
 
 
-def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=False):
+def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=False, opts=None):
     """A town for the outline (world points) in the culture's way: {'culture', 'layout', 'streets': [{'pts', 'w'}],
     'roads': [[px, py]], 'square': [x, y, r] or None, 'plots': [{'x', 'y', 'face', 'w', 'd', 'kind', 'door': [x, y]}],
-    'figures': {...}}."""
+    'figures': {...}}. opts (PIN2's asks, 2026-11-01): 'streets' '' the culture's width, 'narrow' or 'lanes'; 'roads'
+    [[x, y], ...] lines drawn as its streets, in place of its own; 'zones' [{'kind', 'pts'}] residential, business or
+    noble; 'counts' {kind: n} how many of each special building."""
     F = F or figures(db)
     fig = dict(F.get(culture) or F.get('Hlaalu') or next(iter(F.values())))
+    O = opts or {}
+    fig['_opts'] = O
+    # ("the roads tend to be a bit too big for the kind of towns I'm going for", PIN2: a street is painted in whole
+    # land texture squares, 512 across, so a lane is one square)
+    if O.get('streets') == 'narrow':
+        fig['width'] = max(float(PATCH), fig['width'] * 0.6)
+    elif O.get('streets') == 'lanes':
+        fig['width'] = float(PATCH)
+    drawn = [[(float(x), float(y)) for x, y in r] for r in O.get('roads') or () if len(r) >= 2]
+    if drawn:
+        fig['_drawn'] = drawn
+        fig['layout'] = 'streets'
     if walled:
         fig['dens'] = fig['dens'] * WALLED_DENS
         fig['dcurve'] = None                # (walled towns were measured by the plain density, doubled)
@@ -448,7 +462,7 @@ def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, r
             err = abs(_road_share(poly, {tuple(r) for r in got[1]}) - target) / max(0.02, target)
             if best is None or err < best[0]:
                 best = (err, got)
-            if err < 0.2:
+            if err < 0.2 or drawn:
                 break
         streets, roads, square, plots = best[1]
         _kinds(plots, fig, poly, square, rng)
@@ -573,7 +587,7 @@ def _quay(poly, fig):
 
 def _street_town(poly, fig, rng, spread):
     """A street town with blocks spread so far apart: (streets, roads, square, plots), finished and trimmed."""
-    streets, square = _streets(poly, fig, rng, spread)
+    streets, square = _drawn_streets(poly, fig) if fig.get('_drawn') else _streets(poly, fig, rng, spread)
     if fig.get('_ring'):
         rs = _ring_street(poly, fig)
         if rs:
@@ -604,6 +618,41 @@ def _street_town(poly, fig, rng, spread):
     streets = _trim(streets, plots)
     roads = _paint(streets, poly, fig.get('ground')) | sq
     return streets, roads, square, plots
+
+
+def _drawn_streets(poly, fig):
+    """The streets the user drew (fig['_drawn']), in place of the town's own: each cut where it leaves the outline,
+    its points every PATCH as a planned street's are; the longest is the main street, its middle the square where the
+    culture has one. (PIN2, 2026-11-01: "draw the roads in the town ... rather than the towns trying to generate its own")"""
+    w = fig['width']
+    runs = []
+    for line in fig['_drawn']:
+        run = []
+        for (ax, ay), (bx, by) in zip(line, line[1:]):
+            L = math.hypot(bx - ax, by - ay) or 1.0
+            n = max(1, int(L // PATCH))
+            for k in range(n + 1):
+                if k == 0 and run:
+                    continue
+                x, y = ax + (bx - ax) * k / n, ay + (by - ay) * k / n
+                if _inside(poly, x, y):
+                    run.append((round(x, 1), round(y, 1)))
+                elif run:
+                    runs.append(run)
+                    run = []
+        if run:
+            runs.append(run)
+    runs = [r for r in runs if len(r) >= 2]
+    length = lambda r: sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(r, r[1:]))
+    runs.sort(key=length, reverse=True)
+    fig['_planned'] = False
+    streets = [{'pts': r, 'w': w if i == 0 else max(float(PATCH), w * 0.75), 'main': i == 0, 'drawn': True}
+               for i, r in enumerate(runs)]
+    square = None
+    if runs and fig['square'] >= 0.1 and length(runs[0]) > 6000:
+        mid = runs[0][len(runs[0]) // 2]
+        square = [round(mid[0], 1), round(mid[1], 1), round(max(PATCH * 1.5, w * 0.75), 1)]
+    return streets, square
 
 
 def _streets(poly, fig, rng, spread=1.0):
@@ -1175,7 +1224,7 @@ def _trim(streets, plots):
     outline: the road out of town."""
     out = []
     for si, s in enumerate(streets):
-        if s.get('main') or s.get('ring') or s.get('court') or s.get('len'):
+        if s.get('main') or s.get('ring') or s.get('court') or s.get('len') or s.get('drawn'):
             out.append(s)                    # (a court and its lane whole: cut short, a court was left with no way in)
             continue
         ats = [p['at'] for p in plots if p.get('si') == si]
@@ -1221,6 +1270,9 @@ def nearest_culture(db, outline):
 
 
 SPECIAL = ('tavern', 'temple', 'guild', 'shop', 'manor', 'guard')
+# what goes in each zone drawn in a town (PIN2: "residential, business, noble")
+ZONE_KINDS = {'residential': (), 'business': ('shop', 'tavern', 'guild'), 'noble': ('manor', 'temple')}
+ZONE_COST = 6.0
 
 
 def _kinds(plots, fig, poly, square, rng):
@@ -1229,6 +1281,7 @@ def _kinds(plots, fig, poly, square, rng):
     kinds = {k: v for k, v in fig['kinds'].items() if k != 'other'}
     tot = float(sum(kinds.values()) or 1)
     n = len(plots)
+    O = fig.get('_opts') or {}
     want = Counter()
     for k in SPECIAL:
         share = kinds.get(k, 0) / tot
@@ -1236,6 +1289,21 @@ def _kinds(plots, fig, poly, square, rng):
         want[k] = int(c) + (1 if rng.random() < c - int(c) else 0)
     if n >= 8 and kinds.get('tavern'):
         want['tavern'] = max(1, want['tavern'])
+    counts = O.get('counts') or {}
+    for k in SPECIAL:
+        # (as many as the user asked for, where they did: PIN2's "specify if it's gonna have guildhalls, chapels ...
+        # how many shops")
+        if counts.get(k) is not None:
+            want[k] = max(0, min(n, int(counts[k])))
+    zones = [(z['kind'], [(float(x), float(y)) for x, y in z['pts']]) for z in O.get('zones') or ()
+             if z.get('kind') in ZONE_KINDS and len(z.get('pts') or ()) >= 3]
+    for p in plots:
+        p.pop('zone', None)
+        for zk, zp in zones:
+            if _inside(zp, p['x'], p['y']):
+                p['zone'] = zk
+                break
+    drawn_for = {k for zk, _zp in zones for k in ZONE_KINDS[zk]}
     # (each kind where the culture's stand, as far out from the town's middle as theirs (a guard post at the edge, a
     # tavern near the middle), and on a plot about their size: given out nearest-first, a temple could be the smallest
     # building in town)
@@ -1256,10 +1324,23 @@ def _kinds(plots, fig, poly, square, rng):
                 c = 2.0 * abs(math.hypot(p['x'] - mx, p['y'] - my) / R - kr)
                 if ks:
                     c += abs(math.log(max(1.0, p['w'] * p['d']) / ks))
+                # (zones: a kind goes in its own zone where one is drawn, and never into another's)
+                z = p.get('zone')
+                if z and k not in ZONE_KINDS[z]:
+                    c += ZONE_COST
+                elif k in drawn_for and z is None:
+                    c += ZONE_COST / 2
                 return c + rng.random() * 0.15
             best = min(free, key=cost)
             plots[best]['kind'] = k
             free.discard(best)
     for p in plots:
         p.setdefault('kind', 'house')
+        # (the rest of a noble quarter are manors, of a business quarter every other one a shop, unless how many
+        # manors or shops was set)
+        if p['kind'] == 'house':
+            if p.get('zone') == 'noble' and counts.get('manor') is None:
+                p['kind'] = 'manor'
+            elif p.get('zone') == 'business' and counts.get('shop') is None and rng.random() < 0.5:
+                p['kind'] = 'shop'
         p['rect'] = [[round(x, 1), round(y, 1)] for x, y in p['rect']]

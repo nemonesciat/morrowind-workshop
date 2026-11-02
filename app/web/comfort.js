@@ -194,6 +194,14 @@ async function cfSelectWithContents(ck, r){
   cfPickMany(list);
   toast(`Selected ${r.name || r.id} and the ${list.length - 1} things on it.`);
 }
+// (every piece of the building it belongs to: a town's by the record Make it kept, any other by what touches it;
+// the user, 2026-11-01: moving a town's building, "I seem to be unable to grab every single piece")
+async function cfSelectBuilding(ck, r){
+  let b;
+  try { b = await post('/api/group/building', {cell: ck, ref: r.k}); } catch (e){ return toast(e.message, true); }
+  cfPickMany(b.refs.map(x => [x.cell, {k: x.ref}]));
+  if (b.refs.length > 1) toast(`Selected the building: ${b.refs.length} pieces${b.how === 'joined' ? ' (those joined to this one)' : ''}. Move it with the arrows; its doors take their interiors' ways out along.`);
+}
 function cfSelectLike(r){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLowerCase() === r.id.toLowerCase() && (W.ext || ck === W.key))); }
 
 // ---------------------------------------------------------------- right-click menus
@@ -277,6 +285,7 @@ function cfMenuAt(e, hit, at, locked){
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
     items.push({label: `Select all the ${r.name || r.id} here`, act: () => cfSelectLike(r)});
+    if (r.tb || r.arch || r.type === 'DOOR') items.push({label: '▣ Select the whole building', act: () => cfSelectBuilding(ck, r)});
     // a shelf, a table, a counter, a crate: it and everything standing on it, in one go (the Workshop reads
     // the geometry, the same way it reads the game's dressed shelves)
     if (['STAT', 'ACTI', 'CONT'].includes(r.type)) items.push({label: '⊞ Select it with everything on it', act: () => cfSelectWithContents(ck, r)});

@@ -271,7 +271,7 @@ function omsDraw(){
   };
   const mineOf = r => r.changed || OMS.edits[omsKey(r)] != null;
   const rowHtml = (r, n) => `<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)">
-      <div><b>${esc(cap(r.key))}</b>${OMS.tab === 'popular' ? ` <span class="msg">${esc(r.section)}</span>` : ''}${mineOf(r) ? ' <span class="mine">changed</span>' : ''}
+      <div><b>${esc(cap(r.key))}</b>${OMS.tab === 'popular' ? ` <span class="msg">${esc(r.section)}</span>` : ''}${mineOf(r) ? ' <span class="mine">changed</span>' : ''}${r.new_in ? ` <span class="mine" style="background:var(--gold);color:#111" title="A setting OpenMW ${esc(r.new_in)} added">new in ${esc(r.new_in)}</span>` : ''}
         ${r.help ? `<div class="msg" style="font-size:11.5px;white-space:pre-line">${esc(r.help)}</div>` : ''}</div>
       <div style="display:flex;gap:6px;align-items:center">${ctl(r, n)}${val(r) !== r.default ? `<button class="btn sm" data-omsd="${n}" title="Back to OpenMW's default (${esc(r.default)})">↺</button>` : ''}</div></div>`;
   let h = '';

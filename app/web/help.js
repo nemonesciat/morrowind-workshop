@@ -31,6 +31,7 @@ const GUIDES = [
   {file: 'people-and-creatures.md', title: 'People and creatures', what: 'New people, the Characters page, Populate a place, leveled lists, teaching spells.'},
   {file: 'dialogue-and-quests.md', title: 'Dialogue and quests', what: 'How the game picks a line, conditions, the conversation builder and map, quests, testing.'},
   {file: 'items-spells-and-the-forge.md', title: 'Items, spells and the Forge', what: 'New items and books, the item editor, weapons and armour from the Forge and into the world, spells, your own magic effects.'},
+  {file: 'openmw-052.md', title: 'What OpenMW 0.52 adds', what: 'Your own skills, attributes, weathers, traps, loot rules and list additions; magic effects that burst, strike, glow and act where the bolt strikes.'},
   {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
   {file: 'scripts-and-game-rules.md', title: 'Scripts and game rules', what: 'MWScript and Lua, global variables, game settings, factions, classes, races and the rest.'},
   {file: 'playing-and-testing.md', title: 'Playing and testing', what: 'Play here, playing as your own character, test setups, the live link, the OpenMW menu.'},
@@ -86,8 +87,13 @@ async function docModal(name, at){
   let md;
   try { const r = await fetch('/web/docs/' + name, {cache: 'no-store'}); if (!r.ok) throw new Error('The paper is missing.'); md = await r.text(); }
   catch (e){ return toast(e.message, true); }
+  // (which OpenMW you play on, where the paper speaks of what a newer one adds)
+  let ver = '';
+  if (/OpenMW 0\.5[2-9]/.test(md)){
+    try { const v = await api('/api/openmw/version'); ver = `<div class="msg" style="margin-bottom:10px;font-size:12.5px">You're on OpenMW ${esc(v.openmw)}: ${v.new ? `everything here works.` : `parts marked "OpenMW ${esc(v.new_in)}" need it, the rest works.`}</div>`; } catch (e){ /* (shown without) */ }
+  }
   const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal doc" style="width:min(820px,95vw);max-height:88vh;overflow:auto">${docHtml(md, true)}
+  bg.innerHTML = `<div class="modal doc" style="width:min(820px,95vw);max-height:88vh;overflow:auto">${ver}${docHtml(md, true)}
     <div class="foot"><button class="btn" id="doc-guides">All guides…</button><button class="btn primary" id="doc-close">Close</button></div></div>`;
   document.body.appendChild(bg);
   bg.querySelector('#doc-close').onclick = () => bg.remove();
@@ -400,17 +406,26 @@ function reportModal(){
 }
 
 // ----- about & licences
+// (one at a time: opened slowly behind a big town build, a second click made a second window, and its Close was bound
+// to the first window's button, so the one in front wouldn't close by Close, Esc or anything, the user 2026-11-01)
+let AB_OPENING = false;
 async function aboutModal(){
+  if (AB_OPENING || document.getElementById('ab-modal')) return;
+  AB_OPENING = true;
   let a;
-  try { a = await api('/api/about'); } catch (e){ return toast(e.message, true); }
-  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  try { a = await api('/api/about'); } catch (e){ return toast(e.message, true); } finally { AB_OPENING = false; }
+  if (document.getElementById('ab-modal')) return;
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.id = 'ab-modal';
   // (the logo from the top left, at the window's top right)
   const logo = document.querySelector('.brand svg.logo, .brand svg');
   // (it floats in the free space right of the title and version, so the text keeps its own spacing)
   bg.innerHTML = `<div class="modal" style="width:min(680px,94vw);max-height:86vh;overflow:auto;position:relative">
-    ${logo ? `<div class="ab-logo" style="position:absolute;top:8px;right:24px;height:72px;pointer-events:none">${logo.outerHTML}</div>` : ''}
+    <div style="display:flex;gap:18px;align-items:flex-start"><div style="flex:1;min-width:0">
     <h2>Morrowind Workshop</h2>
     <div class="msg">Version <b>${esc(a.version)}</b> · OpenMW ${esc(a.openmw)} · Python ${esc(a.python)}</div>
+    <div class="msg" style="font-size:12px">${a.openmw_new ? `OpenMW ${esc(a.new_in)}'s new features are on: your own skills, attributes, weathers, traps and loot rules; spells that burst, strike, glow and act where their bolt strikes.`
+      : `Features marked "OpenMW ${esc(a.new_in)}" need it; everything else works on your OpenMW.`}</div></div>
+    ${logo ? `<div class="ab-logo" style="flex:none;height:96px;pointer-events:none">${logo.outerHTML}</div>` : ''}</div>
     ${a.credits ? `<table class="t" style="font-size:12.5px;margin-top:8px">
       <tr><td style="white-space:nowrap">Made by</td><td><b>${esc(a.credits.author)}</b>, with ${esc(a.credits.with)}</td></tr>
       <tr><td>Licence</td><td>© 2026 ${esc(a.credits.author)} · <a href="${esc(a.credits.license_url)}" target="_blank" rel="noopener">${esc(a.credits.license)}</a>: share and change it, with credit, but not for commercial purposes</td></tr>
@@ -426,40 +441,10 @@ async function aboutModal(){
     <div class="msg" style="margin-top:8px">The full notices are in THIRD_PARTY_NOTICES.txt in the Workshop's folder.</div>
     <div class="foot"><button class="btn primary" id="ab-close">Close</button></div></div>`;
   document.body.appendChild(bg);
-  const lg = bg.querySelector('.ab-logo svg'); if (lg){ lg.style.height = '100%'; lg.style.width = 'auto'; lg.style.display = 'block'; abLogoFit(bg); }
-  $('#ab-close').onclick = () => bg.remove();
-  bg.querySelectorAll('[data-lic]').forEach(l => l.onclick = () => { const pre = $('#ab-lic'); pre.textContent = a.components[+l.dataset.lic].text; pre.style.display = 'block'; pre.scrollIntoView({block: 'nearest'}); });
-}
-
-// the About logo fitted into the free space at the top right: from the title's top down through the
-// "Made by" row (empty on its right) to just above the Licence row, its drawing (not its frame) flush with
-// the table's right edge; it sits on the window's own colour, so the row lines stop at it
-function abLogoFit(bg){
-  const md = bg.querySelector('.modal'), box = bg.querySelector('.ab-logo'), svg = box && box.querySelector('svg');
-  const h2 = md.querySelector('h2'), tb = md.querySelector('table'); if (!svg || !h2 || !tb) return;
-  const M = md.getBoundingClientRect(), H = h2.getBoundingClientRect(), T = tb.getBoundingClientRect();
-  const row2 = tb.rows[1] ? tb.rows[1].getBoundingClientRect() : T, made = tb.rows[0].cells[1];
-  // (as low as the Licence row, unless "Made by" runs too far right to leave room)
-  const text = document.createRange(); text.selectNodeContents(made); const tr = text.getBoundingClientRect();
-  const deep = T.right - tr.right > 170;
-  const top = H.top - M.top + md.scrollTop, bottom = (deep ? row2.top : T.top) - M.top + md.scrollTop - 6, right = T.right - M.left;
-  const vb = svg.viewBox.baseVal, bb = svg.getBBox();
-  // (the drawing's share of its frame, across and down)
-  const fx0 = (bb.x - vb.x) / vb.width, fx1 = (bb.x + bb.width - vb.x) / vb.width;
-  const fy0 = (bb.y - vb.y) / vb.height, fy1 = (bb.y + bb.height - vb.y) / vb.height;
-  const drawnH = Math.max(20, bottom - top), frameH = drawnH / (fy1 - fy0), frameW = frameH * vb.width / vb.height;
-  box.style.height = frameH + 'px'; box.style.width = frameW + 'px';
-  box.style.top = (top - fy0 * frameH) + 'px';
-  // (across: centred in the free space between the end of the text beside it and the table's right edge)
-  const ends = [h2, h2.nextElementSibling, made].filter(Boolean).map(el => { const rg = document.createRange(); rg.selectNodeContents(el); return rg.getBoundingClientRect().right - M.left; });
-  const free = Math.max(...ends), drawnW = (fx1 - fx0) * frameW;
-  const mid = (free + right) / 2;
-  // (and a hair up and right of the measured middle, where it looks centred to the eye)
-  box.style.left = (Math.min(right - drawnW, mid - drawnW / 2 + 10) - fx0 * frameW) + 'px'; box.style.right = 'auto';
-  box.style.top = (parseFloat(box.style.top) - 6) + 'px';
-  // (a little of the window's colour round the drawing, over the row lines it crosses)
-  box.style.background = getComputedStyle(md).backgroundColor; box.style.boxShadow = '0 0 0 8px ' + getComputedStyle(md).backgroundColor;
-  box.style.zIndex = '1';
+  const lg = bg.querySelector('.ab-logo svg'); if (lg){ lg.style.height = '100%'; lg.style.width = 'auto'; lg.style.display = 'block'; }
+  bg.querySelector('#ab-close').onclick = () => bg.remove();
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  bg.querySelectorAll('[data-lic]').forEach(l => l.onclick = () => { const pre = bg.querySelector('#ab-lic'); pre.textContent = a.components[+l.dataset.lic].text; pre.style.display = 'block'; pre.scrollIntoView({block: 'nearest'}); });
 }
 
 // (a right-click on the logo, top left: About)

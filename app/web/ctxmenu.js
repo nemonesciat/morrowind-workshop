@@ -20,7 +20,7 @@ const CM_GROUPS = [
   ['Edit', '✎', [/^copy$/i, /^paste/i, /^duplicate/i, /^save as a prefab/i, /record of its own/i, /^undo my changes/i, /^bring back/i, /^delete/i]],
   ['Move and place', '⟳', [/^turn 90°$/i, /^turn 90° the other way/i, /^tilt/i, /^scale/i, /^set it down/i, /^settle (it|them|everything on it)\b/i,
     /^send a copy to the other view/i, /^move it to the other view/i]],
-  ['Replace and select', '⇄', [/^swap for/i, /^replace every/i, /^replace them/i, /^select all the/i, /^select it with everything/i,
+  ['Replace and select', '⇄', [/^swap for/i, /^replace every/i, /^replace them/i, /^select the whole building/i, /^select all the/i, /^select it with everything/i,
     /^select everything you can see/i, /^clear the selection/i]],
   ['Looks and sound', '🎨', [/^animations and text keys/i, /^model (&|and) textures/i, /^retexture/i, /^add a sound/i, /^forge a new piece/i, /^into the world/i]],
   ['Secret entrance', '🔐', [/^make (it|this) a hidden door/i, /^make this a door to/i, /^rotating panel/i, /^sliding panel/i, /^make it an activator/i,

@@ -488,7 +488,7 @@ details.pal summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:3
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line2);border-top-color:var(--gold);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 /* dialogue */
-#dialog,#chars,#scripts,#lists,#rules,#myeff{grid-template-columns:290px minmax(0,1fr)}
+#dialog,#chars,#scripts,#lists,#rules,#myeff,#myrec{grid-template-columns:290px minmax(0,1fr)}
 /* characters */
 .cwrap{max-width:1100px;margin:0 auto}
 .chead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:10px}
@@ -840,6 +840,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
   <div class="view" id="rules"><aside class="dside" id="rside"></aside><main class="dmain" id="rmain"></main></div>
   <div class="view" id="itemed"></div>
   <div class="view" id="myeff"></div>
+  <div class="view" id="myrec"></div>
   <div class="view" id="scripts"><aside class="dside" id="sside"></aside><main class="dmain" id="smain"></main></div>
   <div class="view" id="mymod"><div class="wrap" id="mymodwrap"></div></div>
   <div class="view" id="release"><div class="wrap" id="relwrap" style="max-width:980px"></div></div>
@@ -1521,6 +1522,7 @@ function showView(v){
   if (v === 'release') renderRelease();
   if (v === 'lists') renderLists();
   if (v === 'myeff') renderMyEffects();
+  if (v === 'myrec') renderMyRecords();
   if (v === 'rules') renderRules();
   if (v === 'itemed'){ renderItemEd(); document.querySelector('nav [data-view="createv"]').classList.add('on'); }
   if (v === 'release') document.querySelector('nav [data-view="mymod"]').classList.add('on');
@@ -3909,6 +3911,9 @@ async function renderCreate(){
   }
   if (!CR.opts.magic) CR.opts.magic = await api('/api/items/options');
   if (CR.kind === 'interior') CR.kind = 'build';       // (the old "New interior + door" lives inside Build from pieces now)
+  // (the OpenMW 0.52 cards open the records editor, however they were picked: a card, a tab, the command menu,
+  // the right-click Create menu. Left as a Create kind, the empty form broke binding: "Create form skill")
+  if (CR_REC[CR.kind]){ const rk = CR_REC[CR.kind]; CR.kind = null; rcOpenKind(rk); return; }
   const card = k => { const c = CR_CARDS[k]; return `<button class="ccard ${CR.kind === k ? 'on' : ''}" data-ck="${k}"><span class="ic">${c[0]}</span>${c[3] ? `<span class="kick">${c[3]}</span>` : ''}<b>${c[1]}</b><span class="msg">${c[2]}</span></button>`; };
   // (once a kind is picked it is a tool, not a menu: in a window over the view only the tool shows; on the
   // page the cards fold into a slim row of tabs over it)
@@ -3926,6 +3931,7 @@ async function renderCreate(){
   }
   wrap.innerHTML = h;
   wrap.querySelectorAll('[data-gview]').forEach(a => a.onclick = () => showView(a.dataset.gview));
+  wrap.querySelectorAll('[data-guide]').forEach(a => a.onclick = () => { if (typeof docModal === 'function') docModal(a.dataset.guide); });
   if (formErr){
     reportClientError('Create form "' + CR.kind + '": ' + (formErr.stack || formErr), 'renderCreate');
     const rb = $('#cr-reset');
@@ -3956,12 +3962,23 @@ const CR_CARDS = {
   book: ['📜', 'Note, letter or book', 'Something to read in game, in your own words, placed somewhere or given to someone.', 'A thing'],
   spell: ['✨', 'New spell', 'A spell, ability, power, disease or curse with your own effects. Give it to someone, or to the player.', 'Magic'],
   lists: ['🎲', 'Random loot or spawn list', 'A leveled list: random items or creatures matched to the player\'s level.', 'A list'],
+  skill: ['📈', 'New skill', 'A skill of your own, governed by any attribute, rising as the player uses the things you name. Can be a school of magic.', 'OpenMW 0.52'],
+  attribute: ['💪', 'New attribute', 'An attribute of your own beside Strength and the rest, to govern your skills.', 'OpenMW 0.52'],
+  weather: ['⛈', 'New weather', 'A weather of your own from one of the game\'s: its own sky, fog and light by the hour, particles and sounds, with its share of the regions you pick.', 'OpenMW 0.52'],
+  addlist: ['🎁', 'Add to the game\'s lists', 'Your items or creatures into the game\'s random loot and creature lists, leaving what other mods add there.', 'OpenMW 0.52'],
+  lootrule: ['💰', 'Loot rules', 'Loot picked in play from everything installed, other mods\' too, by kind, words, worth and the player\'s level. Glowing chests if you like.', 'OpenMW 0.52'],
+  trap: ['⚠', 'Trap', 'A spell that strikes whoever opens, takes or uses a thing: a cursed chest, a burning door, a book that drains the reader.', 'OpenMW 0.52'],
+  ingred: ['🌿', 'Ingredient effects', 'Give an ingredient any four effects, your own included, so alchemy brews them.', 'OpenMW 0.52'],
+  lookat: ['👁', 'Look-at lines', 'A line shown while the player looks at a thing: a name scratched on a skull, a note on a door.', 'OpenMW 0.52'],
   effect: ['🌀', 'New magic effect', 'An effect of your own for spells, enchantments and potions: it looks like one of the game\'s and does what you pick (OpenMW 0.50 or newer).', 'Magic'],
   itemed: ['✎', 'Edit an existing item or spell', 'Change any item, spell or enchantment already in the game: stats, effects, enchantments, looks.', 'A change'],
   givespell: ['🪄', 'Give spells to people', 'Teach spells to everyone who fits: by race, class, faction, a spell they know or a skill, in the regions or towns you pick. In their records, or by a script that leaves them untouched.', 'Magic'],
 };
+const CR_REC = {skill: 'skills', attribute: 'attributes', weather: 'weathers', addlist: 'lists', lootrule: 'loot', trap: 'traps', ingred: 'ingredients', lookat: 'looks'};
 const CR_GROUPS = [['Make something new', ['build', 'ruin', 'npc', 'container', 'item', 'forge', 'book', 'spell', 'effect', 'lists'],
                     'Creatures, and people who already exist, are under <a data-gview="chars">Characters</a>; talk under <a data-gview="dialog">Dialogue</a>.'],
+                   ['New with OpenMW 0.52', ['skill', 'attribute', 'weather', 'addlist', 'lootrule', 'trap', 'ingred', 'lookat'],
+                    'Your mod as an .omwaddon. Magic effects gain new steps too. <a data-guide="openmw-052.md">What 0.52 adds</a>'],
                    ['Change something that exists', ['itemed', 'givespell']]];
 // the rest of a form, folded away under a line
 function moreHtml(label, inner){ return `<details class="cmore"><summary>${esc(label)}</summary><div class="frow">${inner}</div></details>`; }
@@ -4144,6 +4161,7 @@ function renderItems(){
 function bindForm(){
   document.querySelectorAll('[data-ck]').forEach(b => b.onclick = () => { if (b.dataset.ck === 'lists'){ LV.id = null; LV.data = null; showView('lists'); return; }
     if (b.dataset.ck === 'effect'){ MX.form = null; showView('myeff'); return; }
+    if (CR_REC[b.dataset.ck]){ rcOpenKind(CR_REC[b.dataset.ck]); return; }
     if (b.dataset.ck === 'itemed'){ IE.id = null; IE.data = null; showView('itemed'); return; }
     if (b.dataset.ck === 'forge'){ if (typeof forgeShow === 'function') forgeShow(); return; }
     if (b.dataset.ck === 'givespell'){ if (typeof sgShow === 'function') sgShow(); return; }
@@ -4764,6 +4782,7 @@ poll();
 <script src="/web/spellgive.js"></script>
 <script src="/web/physics.js"></script>
 <script src="/web/effects.js"></script>
+<script src="/web/records.js"></script>
 <script src="/web/convo.js"></script>
 <script src="/web/convbuild.js"></script>
 <script src="/web/populate.js"></script>

@@ -55,6 +55,139 @@ def _floor_at(db, m, x, y, bottom):
     return z
 
 
+OUT_NEAR = 1500                # (the buildings round an outdoor door, for its open side)
+FRONT_SHUT = 7                 # (a door model's learnt front is taken unless it is this shut in: walls all round and a roof)
+
+
+def _local_scene(db, door):
+    """The walls, roofs and floors round an outdoor door: its cell's and OUT_NEAR round it, as a ray scene (kept until
+    the next change)."""
+    import seethrough
+    px, py = door['p'][0], door['p'][1]
+    gx, gy = math.floor(px / CELL), math.floor(py / CELL)
+    refs = []
+    x0, y0 = gx * CELL - OUT_NEAR, gy * CELL - OUT_NEAR
+    x1, y1 = (gx + 1) * CELL + OUT_NEAR, (gy + 1) * CELL + OUT_NEAR
+    for cx in (gx - 1, gx, gx + 1):
+        for cy in (gy - 1, gy, gy + 1):
+            for r in mapdata.cellmap(db, '#%d,%d' % (cx, cy)).get('refs') or ():
+                if x0 < r['p'][0] < x1 and y0 < r['p'][1] < y1 and (r.get('arch') or r['type'] == 'DOOR'):
+                    refs.append(r)
+    # (kept while the same pieces stand where they stood: a town links forty doors, a change each, and by the change
+    # count it built the scene again for every one, 1.5 s a door)
+    key = ('out', id(db.recs), gx, gy, hash(tuple((r['k'], tuple(r['p'])) for r in refs)))
+    if key in _scenes:
+        return _scenes[key]
+    if len(_scenes) > 8:
+        _scenes.clear()
+    _scenes[key] = seethrough.place_scene(db, {'refs': refs})
+    return _scenes[key]
+
+
+def outside_spot(db, door, prefer=None):
+    """Where to arrive in front of an outdoor door: a step out on its open side, on the ground or its porch, facing
+    away from it; None when neither side has room. The door's two faces are tried (prefer's first), each a step
+    and further out, and the one less shut in by walls round it and a roof over it wins: the middle of the things near
+    the door, the guess before, lay inside the house next to it, and the user and PIN2 came out of their interiors in
+    the walls or behind them (2026-11-01, "it sends me out of bounds and i have to set the locations manually")."""
+    import doorfronts
+    b = door.get('b')
+    if not b:
+        return None
+    s = door.get('s') or 1.0
+    px, py = door['p'][0], door['p'][1]
+    ux, uy = doorfronts.thin_axis(door)
+    sides = [(ux, uy), (-ux, -uy)]
+    if prefer:
+        sides.sort(key=lambda t: -(t[0] * prefer[0] + t[1] * prefer[1]))
+    # (the side the game's own doors of this model put you on, where it has room and isn't shut in: doorfronts)
+    f = doorfronts.front(db, door)
+    if f:
+        sides.sort(key=lambda t: -(t[0] * f * ux + t[1] * f * uy))
+    bottom = door['p'][2] + b[2] * s
+    sc = _local_scene(db, door)
+    best = None
+    for k, (tx, ty) in enumerate(sides):
+        for dist in (110, 160, 220, 300):
+            x, y = px + tx * dist, py + ty * dist
+            g = mapdata.terrain_z(db, x, y)
+            hit = sc.nearest_any((x, y, bottom + 90.0), (0.0, 0.0, -1.0), 260.0)
+            z = bottom + 90.0 - hit[0] if hit is not None else None
+            if g is not None and (z is None or z < g):
+                z = g
+            if z is None or abs(z - bottom) > 160:
+                continue
+            if sc.nearest_any((x, y, z + 20.0), (0.0, 0.0, 1.0), 100.0) is not None:
+                continue                                      # (in a wall or under a ledge)
+            # (something between it and the door: behind a wall, 2 of 26 in a town; but a porch post or railing too,
+            # so only a last choice: refused outright, 91% of the game's doors against 93%)
+            blocked = dist > 100 and sc.nearest_any((x, y, z + 60.0), (-tx, -ty, 0.0), dist - 60.0) is not None
+            shut = sum(1 for a in range(8) if sc.nearest_any((x, y, z + 70.0), (math.cos(a * math.pi / 4), math.sin(a * math.pi / 4), 0.0), 500.0) is not None)
+            if sc.nearest_any((x, y, z + 20.0), (0.0, 0.0, 1.0), 1200.0) is not None:
+                shut += 3                                     # (a roof over it: inside a building)
+            cand = (blocked, shut, k, x, y, z, tx, ty)
+            if blocked and dist < 300:
+                if best is None or cand[:3] < best[:3]:
+                    best = cand
+                continue                                      # (further out may see past it)
+            if f and k == 0 and shut <= FRONT_SHUT:
+                best = cand
+                break
+            if best is None or cand[:3] < best[:3]:
+                best = cand
+            break
+        if f and best and best[2] == 0 and not best[0] and best[1] <= FRONT_SHUT:
+            break
+    if best is None:
+        return None
+    _bl, _sh, _k, x, y, z, tx, ty = best
+    return [round(x, 1), round(y, 1), round(z + 12, 1), 0.0, 0.0, round(math.atan2(tx, ty) % (2 * math.pi), 4)]
+
+
+def door_spots(db, refs):
+    """Of these [(cell, ref)], the outdoor doors that lead into an interior, with where they stood: for follow."""
+    out = []
+    by = {}
+    for ck, rk in refs:
+        if not ck.startswith('#'):
+            continue
+        if ck not in by:
+            by[ck] = {r['k']: r for r in mapdata.cellmap(db, ck).get('refs') or ()}
+        r = by[ck].get(rk)
+        if r and r['type'] == 'DOOR' and (r.get('to') or {}).get('cell'):
+            out.append((ck, rk, r['p'][:2], r['to']['key']))
+    return out
+
+
+FOLLOW_NEAR = 700              # (an interior's way out this close to where its door stood leads to that door)
+
+
+def follow(db, was):
+    """Each moved door's interior way out set again in front of the door where it stands now (outside_spot): moved
+    with its building, a house's door left its interior letting you out where the house had been, the user's town,
+    2026-11-01 ("the interiors don't point to the right exits"). The number changed; committed as one step."""
+    n = 0
+    for ck, rk, old, ik in was:
+        d = next((r for r in mapdata.cellmap(db, ck).get('refs') or () if r['k'] == rk), None)
+        if d is None or math.hypot(d['p'][0] - old[0], d['p'][1] - old[1]) < 1:
+            continue
+        spot = outside_spot(db, d) or _in_front(mapdata.cellmap(db, ck), d, None)
+        im = mapdata.cellmap(db, ik)
+        for b in im.get('refs') or ():
+            to = b.get('to') if b['type'] == 'DOOR' else None
+            if not to or to.get('cell') or math.hypot(to['x'] - old[0], to['y'] - old[1]) > FOLLOW_NEAR:
+                continue
+            c, refs = editing._cell(db, ik)
+            ref = refs.get(b['k'])
+            if ref is None:
+                continue
+            editing._store(c, b['k'], ref['origin'], ref['idx'], _set_link(ref['subs'], '', spot))
+            n += 1
+    if n:
+        editing.commit(db, 'Moved the way out of %d interior%s with its door' % (n, '' if n == 1 else 's'))
+    return n
+
+
 def _in_front(m, door, db=None):
     """A spot a step away from a door, on the room side, facing away from it. With db, in a place with walls and
     floors: the side with floor to stand on, tried both ways (the middle of the things near a door was the guess, and
@@ -69,6 +202,14 @@ def _in_front(m, door, db=None):
     ux, uy = cx / d, cy / d
     bottom = door['p'][2] + ((door.get('b') or [0, 0, 0])[2]) * (door.get('s') or 1.0)
     z = bottom + 12
+    if db is not None and (not m.get('interior') or m.get('like_exterior')):
+        try:
+            spot = outside_spot(db, door, (ux, uy))
+        except Exception as e:
+            print('outside spot:', e)
+            spot = None
+        if spot:
+            return spot
     if db is not None and m.get('interior'):
         fx, fy = math.sin(door['p'][5]), math.cos(door['p'][5])
         tries = [(ux, uy), (-ux, -uy), (fx, fy), (-fx, -fy), (fy, -fx), (-fy, fx)]

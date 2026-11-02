@@ -47,9 +47,28 @@ def game_log(cfg):
     return log
 
 
+NEW_IN = (0, 52)               # (the OpenMW whose new features the Workshop offers, marked "needs OpenMW 0.52")
+
+
+def openmw_new(db):
+    """Is the OpenMW the Workshop starts new enough for the features marked as needing NEW_IN?"""
+    m = re.match(r'(\d+)\.(\d+)', openmw_version(db))
+    return bool(m and (int(m.group(1)), int(m.group(2))) >= NEW_IN)
+
+
 def openmw_version(db):
-    """From the newest openmw.log (the Workshop never starts the game just to ask)."""
+    """From the install's own resources/version (exact; the user keeps 0.51 and 0.52 side by side), else the newest
+    openmw.log (the Workshop never starts the game just to ask), else the folder's name."""
     cfg = db.config or {}
+    inst = cfg.get('install') or ''
+    for path in (os.path.join(inst, 'resources', 'version'), os.path.join(os.path.dirname(inst), 'resources', 'version')):
+        try:
+            with open(path, encoding='utf-8', errors='replace') as f:
+                m = re.match(r'\s*(\d+\.\d+(\.\d+)?)', f.readline())
+                if m:
+                    return m.group(1)
+        except OSError:
+            pass
     log = game_log(cfg)
     try:
         with open(log, encoding='utf-8', errors='replace') as f:
@@ -116,7 +135,8 @@ def about(db):
                     c['text'] = f.read()
             except OSError:
                 c['text'] = ''
-    return {'version': version(), 'python': platform.python_version(), 'openmw': openmw_version(db),
+    return {'version': version(), 'python': platform.python_version(), 'openmw': openmw_version(db), 'openmw_new': openmw_new(db),
+            'new_in': '%d.%d' % NEW_IN,
             'components': comps, 'credits': CREDITS}
 
 

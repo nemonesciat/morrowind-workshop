@@ -47,6 +47,9 @@ STATS = ('health', 'magicka', 'fatigue')
 MOVES = ('push', 'pull', 'launch', 'dash')
 WHENS = ('land', 'second', 'end')
 ONLY = ('any', 'npc', 'creature', 'undead', 'daedra', 'player', 'notplayer')
+MOONS = ('any', 'full', 'new', 'up')      # (OpenMW 0.52's moon phases: a step only at full moon, new moon, a moon in the sky)
+LANDS = ('stand', 'stagger', 'fall')      # (how a push, pull or launch ends: on their feet, reeling, or knocked down)
+EVERY_ACTS = ('hide', 'show', 'glow', 'cast')
 WEATHERS = ('clear', 'cloudy', 'foggy', 'overcast', 'rain', 'thunderstorm', 'ashstorm', 'blight', 'snow', 'blizzard')
 DOES = [
     ('health', 'Health', 'Take away or give back health, by the magnitude: each second while it lasts, or once.'),
@@ -62,9 +65,24 @@ DOES = [
     ('aura', 'Aura', 'Each second, the magnitude off (or onto) the health, magicka or fatigue of everyone within so many feet.'),
     ('leech', 'Leech', 'Each second, the magnitude taken from their health, magicka or fatigue and given to the caster.'),
     ('swap', 'Swap places', 'The caster and the one it lands on change places.'),
-    ('resurrect', 'Raise the dead', 'The dead within so many feet of the one it lands on (cast on Self: of you) stand up again, carrying '
-                  'what was left on them: what was looted stays taken. As they were, or on your side, following you.'),
-    ('cast', 'Cast a spell on them', 'Another spell (the game\'s, or one of yours) cast on them: for chains and combos.'),
+    ('resurrect', 'Raise the dead', 'Cast at a corpse (OpenMW 0.52), it stands up again; or the dead within so many feet of the one it '
+                  'lands on (cast on Self: of you). In 0.52 by the game\'s own Resurrect; before, made again with what was left '
+                  'on them. As they were, or on your side, following you.'),
+    ('knockdown', 'Knock down', 'They fall to the ground and get up again as the game\'s own knockdowns do (OpenMW 0.52; before 0.52, '
+                  'their fatigue drops below nothing, which floors them too).'),
+    ('blink', 'Blink', 'The caster appears where it lands: beside the one it hits or, cast at a target in OpenMW 0.52, where the bolt '
+              'strikes a wall or the ground.'),
+    ('stagger', 'Stagger', 'They reel as from a hard blow (OpenMW 0.52): every time, or by the game\'s own odds of a fall.'),
+    ('strike', 'Strike them', 'A blow for the magnitude (or a number of yours), with armour, difficulty and stagger as the game\'s '
+                              'weapons have them, or through armour (OpenMW 0.52; before 0.52, health taken).'),
+    ('glow', 'Glow', 'They glow in a colour of yours, as enchanted things do, for so many seconds or while it lasts. A bolt '
+                     'striking a door or chest makes that glow (OpenMW 0.52).'),
+    ('cast', 'Cast a spell on them', 'Another spell (the game\'s, or one of yours) cast on them: for chains, combos and curses. '
+                                     'With OpenMW 0.52, by the game\'s own rules, with its look and sound.'),
+    ('burst', 'Burst', 'A spell goes off where it lands, or where the bolt strikes: its area effects hit all near, as a '
+                       'fireball\'s blast (OpenMW 0.52; before 0.52, cast on the one it lands on).'),
+    ('every', 'Every one near', 'Every copy of a thing (by its ID, or a word in it) within so many feet, or in the whole place: '
+                                'hidden, shown again, made to glow, or a spell cast on each (OpenMW 0.52).'),
     ('weather', 'Change the weather', 'The region\'s weather turns to a storm, ash, blight, snow, rain or clear skies.'),
     ('quake', 'Quake', 'The ground shakes where it lands, for so many seconds: the player\'s view shakes and the game\'s rumble plays, '
               'people and creatures stagger (some fall), and small loose things on tables and shelves hop about and settle a little '
@@ -74,6 +92,8 @@ DOES = [
     ('summon', 'Summon', 'A creature or person (or one from a random creature list) appears beside the caster, follows and fights for them, '
                'and vanishes when the effect ends, when the caster dies, or when it is cast again, as the game\'s own summons do.'),
     ('spawn', 'Place something', 'Place an object or a creature beside the one it lands on, to stay.'),
+    ('mwscript', 'Run a script', 'Start one of the game\'s or your MWScripts on the one it lands on (or what the bolt hits): any '
+                 'MWScript trick, from your effects (OpenMW 0.52).'),
     ('global', 'Set a global variable', 'Set one of the game\'s global variables, so an MWScript or a dialogue line can react.'),
     ('message', 'Show a message', 'Show a line of text to the player.'),
     ('lua', 'Lua of your own', 'Your own code, run when you choose, with helpers for the steps above. The Assistant can write it from a description.'),
@@ -81,7 +101,8 @@ DOES = [
 # (kinds not yet seen working in the game: not offered as a new step, but an effect that has one keeps it)
 UNTRIED = ('quake',)
 # (where each kind is done: on the actor itself, or by the global script for what only the world can do)
-WORLD = ('teleport', 'spawn', 'summon', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
+HIT_KINDS = ('resurrect', 'quake', 'spawn', 'summon', 'blink', 'mwscript', 'burst', 'every', 'glow')     # (what a bolt does where it strikes, OpenMW 0.52)
+WORLD = ('burst', 'every', 'mwscript', 'blink', 'teleport', 'spawn', 'summon', 'global', 'message', 'scale', 'weather', 'swap', 'transmute', 'resurrect')
 FT = 22.1                     # (game units to a foot, as Tamriel Data's Blink reckons it)
 # (a quake's rumble: the first of the game's own the load order has, looped; the end game's Red Mountain rumble
 # first. Falling stones now and then, from the regions' rock sounds)
@@ -205,7 +226,8 @@ def effects(db):
 def read(db):
     return {'effects': effects_raw(db), 'templates': templates(db),
             'does': [{'kind': k, 'label': l, 'what': w, 'untried': k in UNTRIED} for k, l, w in DOES],
-            'whens': list(WHENS), 'only': list(ONLY), 'weathers': list(WEATHERS)}
+            'whens': list(WHENS), 'only': list(ONLY), 'weathers': list(WEATHERS) + sorted(_my_weathers(db)),
+            'weather_names': _my_weathers(db), 'moons': list(MOONS), 'schools': _schools(db)}
 
 
 def _slug(name):
@@ -231,17 +253,22 @@ def _step(db, d):
     # (2.3.12's steps said "per": second or once; once is "as it lands")
     when = d.get('when') or ('land' if d.get('per') == 'once' else 'second' if k in STATS + ('aura', 'leech') else 'land')
     out = {'kind': k, 'when': when if when in WHENS else 'land', 'only': d.get('only') if d.get('only') in ONLY else 'any',
+           'moon': d.get('moon') if d.get('moon') in MOONS else 'any',
            'chance': max(0.0, min(100.0, _num(d.get('chance'), label + ': the chance', 100.0)))}
     if k in STATS:
         out['sign'] = -1 if int(_num(d.get('sign'), label, -1)) < 0 else 1
     elif k in MOVES:
         out['feet'] = max(0.0, _num(d.get('feet'), label + ': the distance', 0.0))        # (0: the magnitude, in feet)
+        if k != 'dash':
+            # (2026-11-01, the user: stagger "would be good for the Push effect too": OpenMW 0.52 staggers or floors
+            # them where they land; there is no ragdoll in OpenMW, a knockdown is the nearest)
+            out['land'] = d.get('land') if d.get('land') in LANDS else ('stagger' if k == 'push' else 'stand')
     elif k == 'scale':
         out['factor'] = _num(d.get('factor'), label + ': the factor', 2.0)
         if not 0.1 <= out['factor'] <= 10:
             raise EditError('Grow or shrink: the factor is between 0.1 (a tenth the size) and 10.')
         out['when'] = 'land'
-    elif k in ('calm', 'frenzy', 'swap'):
+    elif k in ('calm', 'frenzy', 'swap', 'blink', 'knockdown'):
         out['when'] = 'land'
     elif k == 'resurrect':
         # (the game's magic doesn't land on the dead, so it raises those near the one it lands on)
@@ -256,16 +283,42 @@ def _step(db, d):
             out['sign'] = -1 if int(_num(d.get('sign'), label, -1)) < 0 else 1
             out['feet'] = max(1.0, _num(d.get('feet'), label + ': the reach', 10.0))
         out['when'] = 'second'
-    elif k == 'cast':
+    elif k in ('cast', 'burst'):
         sid = (d.get('id') or '').strip()
         ri = db.resolve_id(sid) if sid else None
         if ri is None or db.recs[ri][0] != 'SPEL':
-            raise EditError('Cast a spell on them: there is no spell called "%s".' % sid)
+            raise EditError('%s: there is no spell called "%s".' % (label, sid))
         out['id'] = db.recs[ri][1]
+    elif k == 'stagger':
+        out['how'] = 'odds' if d.get('how') == 'odds' else 'always'
+    elif k == 'strike':
+        out['amount'] = max(0.0, min(10000.0, _num(d.get('amount'), label + ': the blow', 0.0)))     # (0: the magnitude)
+        out['armor'] = d.get('armor') is not False
+        out['stagger'] = d.get('stagger') is not False
+    elif k == 'glow':
+        out['color'] = _colour(d.get('color'))
+        out['seconds'] = max(0.0, min(600.0, _num(d.get('seconds'), label + ': how long', 0.0)))   # (0: while it lasts)
+        out['when'] = 'land'
+    elif k == 'every':
+        what = re.sub(r'[^a-z0-9_ \-]', '', (d.get('what') or '').strip().lower())
+        if len(what) < 3:
+            raise EditError('Every one near: give an ID or a word in their IDs (e.g. light_com_lantern, or lantern).')
+        out['what'] = what[:64]
+        out['feet'] = max(0.0, min(2000.0, _num(d.get('feet'), label + ': the reach', 30.0)))      # (0: the whole place)
+        out['act'] = d.get('act') if d.get('act') in EVERY_ACTS else 'glow'
+        if out['act'] == 'cast':
+            sid = (d.get('id') or '').strip()
+            ri = db.resolve_id(sid) if sid else None
+            if ri is None or db.recs[ri][0] != 'SPEL':
+                raise EditError('Every one near: there is no spell called "%s".' % sid)
+            out['id'] = db.recs[ri][1]
+        if out['act'] == 'glow':
+            out['color'] = _colour(d.get('color'))
+            out['seconds'] = max(1.0, min(600.0, _num(d.get('seconds'), label + ': how long', 10.0)))
     elif k == 'weather':
         w = (d.get('weather') or '').strip().lower()
-        if w not in WEATHERS:
-            raise EditError('Change the weather: pick one of %s.' % ', '.join(WEATHERS))
+        if w not in WEATHERS and w not in _my_weathers(db):
+            raise EditError('Change the weather: pick one of %s, or one of yours.' % ', '.join(WEATHERS))
         out['weather'] = w
     elif k == 'quake':
         # (2026-10-25, the user: "don't want all the furniture and whatnot flying off the shelves": only small
@@ -310,6 +363,13 @@ def _step(db, d):
         out['list'] = db.recs[ri][0] == 'LEVC'
         out['count'] = max(1, min(5, int(_num(d.get('count'), 'Summon: how many', 1))))
         out['when'] = 'land'
+    elif k == 'mwscript':
+        import mwscript
+        sid = (d.get('id') or '').strip()
+        if not sid or mwscript._winner(db, sid) is None:
+            raise EditError('Run a script: there is no script called "%s".' % sid)
+        out['id'] = sid
+        out['when'] = d.get('when') if d.get('when') in WHENS else 'land'
     elif k == 'global':
         gname = (d.get('name') or '').strip()
         if not db.by_key.get(('GLOB', gname.lower())):
@@ -361,7 +421,47 @@ def _clean(db, e):
             'look': _look(db, e.get('look')),
             # (which of the game's effects each part was taken from, for the maker's menus: several share a part)
             'look_from': {k: int(x) for k, x in (e.get('look_from') or {}).items() if str(x).lstrip('-').isdigit()},
-            'does': does}
+            'does': does, 'school': _school(db, e.get('school'))}
+
+
+def _colour(v):
+    """[r, g, b] (0-255) from '#rrggbb' or a list; a pale gold by default."""
+    if isinstance(v, str) and re.match(r'^#?[0-9a-fA-F]{6}$', v.strip()):
+        h = v.strip().lstrip('#')
+        return [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+    if isinstance(v, (list, tuple)) and len(v) == 3:
+        try:
+            return [max(0, min(255, int(x))) for x in v]
+        except (TypeError, ValueError):
+            pass
+    return [255, 214, 120]
+
+
+def _my_weathers(db):
+    """{lower-case id: name}: the mod's own weathers (myrecords.py, OpenMW 0.52), for the weather step."""
+    try:
+        import myrecords
+        return {re.sub(r'[^a-z]', '', w['id'].lower()): w['name'] for w in myrecords.raw(db)['weathers']}
+    except Exception:
+        return {}
+
+
+def _schools(db):
+    """[{id, name}]: the mod's own skills made schools of magic (myrecords.py, OpenMW 0.52)."""
+    try:
+        import myrecords
+        return [{'id': s['id'], 'name': s['name']} for s in myrecords.raw(db)['skills'] if s.get('school')]
+    except Exception:
+        return []
+
+
+def _school(db, v):
+    v = (v or '').strip()
+    if not v:
+        return ''
+    if v.lower() not in {s['id'].lower() for s in _schools(db)}:
+        raise EditError('%s is not one of your schools of magic (a skill of yours made a school, Create > New skill).' % v)
+    return v
 
 
 def save(db, e, old_id=None):
@@ -424,7 +524,7 @@ def _lua(v):
     return json.dumps(str(v))
 
 
-EVENTS = re.compile(r'\bWS_MyEffect(World|Message|Raised|Stat|Stagger|Quake)\b')
+EVENTS = re.compile(r'\bWS_MyEffect(World|Message|Raised|Stat|Stagger|Quake|Glow)\b')
 
 
 def own_events(text, slug):
@@ -446,7 +546,8 @@ def _put(db, name, kind, text, first=False):
         s = {'name': name, 'kind': kind, 'attach': []}
         # (made before the record fixes: "td_effects" puts these effects into spells as the game loads, after this)
         if first:
-            p.lua.insert(0, s)
+            # (after the mod's own skills, attributes and weathers: an effect may be of a school of yours, myrecords.py)
+            p.lua.insert(1 if p.lua and p.lua[0].get('name') == 'my_records' else 0, s)
         else:
             p.lua.append(s)
     s['kind'], s['text'] = kind, text
@@ -473,9 +574,9 @@ def _write(db, lst):
         look = dict(e.get('look') or {})
         if look.get('particle'):
             look['particle'] = look['particle'].replace('\\', '/')
-        defs.append('  { id = %s, template = %s, name = %s, baseCost = %s, icon = %s, description = %s, hasMagnitude = %s, hasDuration = %s, look = %s },'
+        defs.append('  { id = %s, template = %s, name = %s, baseCost = %s, icon = %s, description = %s, hasMagnitude = %s, hasDuration = %s, look = %s, school = %s },'
                     % (_lua(e['id']), _lua(t['key']), _lua(e['name']), _lua(e['cost']), _lua(e['icon'].replace('\\', '/')),
-                       _lua(e['description']), _lua(e['magnitude']), _lua(e['duration']), _lua(look)))
+                       _lua(e['description']), _lua(e['magnitude']), _lua(e['duration']), _lua(look), _lua((e.get('school') or '').lower())))
     load = ('-- Made by Morrowind Workshop: your own magic effects (Create > New magic effect).\n'
             '-- Each is made as the game loads, from one of the game\'s effects for its looks; what it does is in %s.lua.\n'
             '-- Needs OpenMW 0.50 or newer.\n%s\n%s\n%s\n\n'
@@ -487,6 +588,7 @@ def _write(db, lst):
             '          local params = { template = records[e.template], name = e.name, baseCost = e.baseCost, icon = e.icon,\n'
             '                           description = e.description, hasMagnitude = e.hasMagnitude, hasDuration = e.hasDuration,\n'
             '                           allowsSpellmaking = true, allowsEnchanting = true }\n'
+            '          if e.school and e.school ~= \'\' then params.school = e.school end  -- (a school of yours, OpenMW 0.52)\n'
             '          -- its own look, part by part (the rest is the template\'s): visuals and sounds by the game\'s IDs\n'
             '          for k, v in pairs(e.look or {}) do\n'
             '            if k == \'color\' then\n'
@@ -517,8 +619,38 @@ def _write(db, lst):
             rows.append('  [%s] = {\n%s\n  },' % (_lua(e['id'].lower()), '\n'.join(steps)))
     _put(db, ACTOR, 'NPC, CREATURE, PLAYER', (ACTOR_LUA % ('\n'.join(fns), '\n'.join(rows))) if rows else None)
     quake = any(d['kind'] == 'quake' for e in lst for d in e['does'])
-    _put(db, GLOBAL, 'GLOBAL', GLOBAL_LUA.replace('local HUNG = {}', 'local HUNG = %s' % _hung(db) if quake else 'local HUNG = {}') if rows else None)
+    # (what each effect does in the world as it lands, for where its bolt strikes in OpenMW 0.52)
+    hits = []
+    for e in lst:
+        st = [_row(dict(d, n=n_) if d['kind'] == 'summon' else d) for n_, d in enumerate(e['does'])
+              if d['kind'] in HIT_KINDS and (d.get('when') or 'land') == 'land']
+        if st:
+            hits.append('  [%s] = { %s },' % (_lua(e['id'].lower()), ', '.join(st)))
+    g = GLOBAL_LUA.replace('local HUNG = {}', 'local HUNG = %s' % _hung(db) if quake else 'local HUNG = {}')
+    g = g.replace('local HITS = {}', ('local HITS = {\n%s\n}' % '\n'.join(hits)) if hits else 'local HITS = {}')
+    raise_id = _raise_script(db, any(d['kind'] == 'resurrect' for e in lst for d in e['does']))
+    g = g.replace("local RAISE_SCRIPT = ''", ('local RAISE_SCRIPT = %s' % _lua(raise_id.lower())) if raise_id else "local RAISE_SCRIPT = ''")
+    _put(db, GLOBAL, 'GLOBAL', g if rows else None)
     _put(db, PLAYER, 'PLAYER', PLAYER_LUA if (rows and (msgs or quake or any(d['kind'] in ('lua', 'transmute', 'resurrect') for e in lst for d in e['does']))) else None)
+
+
+def _raise_script(db, wanted):
+    """The mod's tiny mwscript that runs the game's own Resurrect on the corpse it is started on (OpenMW 0.52
+    starts it from Lua: world.mwscript.startGlobalScript). Made when an effect raises the dead; its ID the mod's own,
+    so two mods' scripts never meet. Left in the mod once made (an unused script costs nothing)."""
+    import mwscript
+    sid = ('WSRaise_' + re.sub(r'[^A-Za-z0-9]', '', db.project.lua_slug()))[:31]
+    have = mwscript._winner(db, sid) is not None
+    if not wanted:
+        return sid if have else None
+    if not have:
+        text = ('Begin %s' + NL + '; (Made by Morrowind Workshop: started on a corpse by your magic effects, OpenMW 0.52)' + NL +
+                'Resurrect' + NL + 'StopScript %s' + NL + 'End' + NL) % (sid, sid)
+        mwscript.save(db, sid, text, create=True, save=False)
+    return sid
+
+
+NL = chr(10)
 
 
 def _hung(db):
@@ -545,6 +677,9 @@ local util = require('openmw.util')
 
 local FT = ''' + str(FT) + '''
 local Actor = types.Actor
+local okI, I = pcall(require, 'openmw.interfaces')
+local okA, animation = pcall(require, 'openmw.animation')
+local later = {}           -- { t, how }: a push's landing, reeling or floored once they're down (OpenMW 0.52)
 
 %s
 local DOES = {
@@ -595,6 +730,22 @@ local function moveBy(dir, dist, up, time)
   world('move', { to = to - util.vector3(0, 0, 40), arc = up or 0, time = time or 0.35 })
 end
 
+-- (OpenMW 0.52's stagger and knockdown; before it, a fall is a fatigue drain as the game's own, and reeling nothing)
+local function reel(how)
+  if how == 'fall' then
+    local ok = Actor.setKnockedDown and pcall(Actor.setKnockedDown, self, true)
+    if not ok then change('fatigue', -10000) end
+  elseif how == 'stagger' and Actor.setHitRecovery then
+    pcall(Actor.setHitRecovery, self, true)
+  end
+end
+
+local function glow(c, secs)
+  if okA and animation.addGlow then
+    pcall(animation.addGlow, self, { color = util.color.rgb(c[1] / 255, c[2] / 255, c[3] / 255), duration = secs })
+  end
+end
+
 local function flatDir(a, b)
   local v = b - a
   v = util.vector3(v.x, v.y, 0)
@@ -625,8 +776,21 @@ local function ctxFor(st, dt, phase)
   return ctx
 end
 
+-- OpenMW 0.52's moons: a step only at full moon, new moon or with a moon in the sky (before 0.52, never)
+local function moonOk(d)
+  if not d.moon or d.moon == 'any' then return true end
+  local ok, moons = pcall(function() return core.weather.getCurrentMoons(self.cell) end)
+  if not ok or not moons then return false end
+  for _, m in ipairs(moons) do
+    if (d.moon == 'full' and m.phaseValue == 4 and m.alpha > 0) or (d.moon == 'new' and m.phaseValue == 0)
+       or (d.moon == 'up' and m.alpha > 0.2) then return true end
+  end
+  return false
+end
+
 local function run(d, st, dt, phase)
   if not isKind(d.only) then return end
+  if not moonOk(d) then return end
   if d.chance and d.chance < 100 and math.random() * 100 >= d.chance then return end
   local k, mag = d.kind, st.mag
   if k == 'health' or k == 'magicka' or k == 'fatigue' then
@@ -634,13 +798,37 @@ local function run(d, st, dt, phase)
   elseif k == 'push' then
     local c = st.caster and st.caster:isValid() and st.caster.position or self.position
     moveBy(flatDir(c, self.position), feet(d, mag), 40)
+    if d.land and d.land ~= 'stand' then later[#later + 1] = { t = 0.35, how = d.land } end
   elseif k == 'pull' then
     if st.caster and st.caster:isValid() then
       local d2 = math.max(0, math.min(feet(d, mag), (st.caster.position - self.position):length() - 90))
       moveBy(flatDir(self.position, st.caster.position), d2, 20)
+      if d.land and d.land ~= 'stand' then later[#later + 1] = { t = 0.35, how = d.land } end
     end
   elseif k == 'launch' then
     moveBy(util.vector3(0, 0, 1), feet(d, mag), 0, 0.3)
+    -- (up and then down: floored or reeling as they come back to the ground)
+    if d.land and d.land ~= 'stand' then later[#later + 1] = { t = 0.3 + math.sqrt(feet(d, mag) / 400), how = d.land } end
+  elseif k == 'stagger' then
+    if d.how == 'odds' and okI and I.Combat and I.Combat.applyStagger then
+      pcall(I.Combat.applyStagger, { damage = { health = mag }, attacker = st.caster or self.object, successful = true }, mag)
+    else
+      reel('stagger')
+    end
+  elseif k == 'strike' then
+    -- a blow as the game's weapons land one (OpenMW 0.52's Combat): armour, difficulty, the hit sound, blood, stagger
+    local amount = (d.amount and d.amount > 0) and d.amount or mag
+    if okI and I.Combat and I.Combat.onHit then
+      I.Combat.onHit({ damage = { health = amount }, strength = 1, successful = true, sourceType = 'melee',
+                       attacker = st.caster, hitPos = self.position + util.vector3(0, 0, 90),
+                       ignoreArmor = not d.armor, ignoreStagger = not d.stagger })
+    else
+      change('health', -amount)
+    end
+  elseif k == 'glow' then
+    glow(d.color, (d.seconds and d.seconds > 0) and d.seconds or st.left or 10)
+  elseif k == 'burst' or k == 'every' then
+    world(k, { id = d.id, what = d.what, feet = d.feet, act = d.act, color = d.color, seconds = d.seconds, caster = st.caster })
   elseif k == 'dash' then
     local yaw = self.rotation:getYaw()
     moveBy(util.vector3(math.sin(yaw), math.cos(yaw), 0), feet(d, mag), 0, 0.25)
@@ -666,6 +854,18 @@ local function run(d, st, dt, phase)
     st.scaled = true
   elseif k == 'swap' then
     if st.caster and st.caster:isValid() and st.caster ~= self.object then world('swap', { other = st.caster }) end
+  elseif k == 'mwscript' then
+    world('mwscript', { id = d.id })
+  elseif k == 'knockdown' then
+    -- (OpenMW 0.52: the game's own knockdown; before, fatigue under nothing, which floors them as the game does)
+    if Actor.setKnockedDown then
+      local ok = pcall(Actor.setKnockedDown, self, true)
+      if not ok then change('fatigue', -10000) end
+    else
+      change('fatigue', -10000)
+    end
+  elseif k == 'blink' then
+    if st.caster and st.caster:isValid() and st.caster ~= self.object then world('blink', { caster = st.caster }) end
   elseif k == 'summon' then
     -- (keyed by this actor and the spell, so a game loaded while it lasts doesn't call a second one)
     local spell = tostring(self.id) .. ':' .. st.key
@@ -706,6 +906,10 @@ return {
   engineHandlers = {
     onUpdate = function(dt)
       if dt <= 0 then return end
+      for i = #later, 1, -1 do
+        later[i].t = later[i].t - dt
+        if later[i].t <= 0 then reel(later[i].how); table.remove(later, i) end
+      end
       local now = {}
       for _, spell in pairs(Actor.activeSpells(self)) do
         for _, effect in pairs(spell.effects) do
@@ -716,7 +920,7 @@ return {
             local st = active[key]
             local mag = effect.magnitudeThisFrame or effect.magnitude or 0
             if not st then
-              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {} }
+              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {}, left = effect.durationLeft }
               active[key] = st
               each(st, 'land', dt)
             end
@@ -745,11 +949,16 @@ return {
   },
   eventHandlers = {
     WS_MyEffectStat = function(data) change(data.stat, data.amount) end,
+    WS_MyEffectGlow = function(data) glow(data.color, data.seconds or 10) end,
     -- a quake under their feet, once a second: tired out (enough of it and they fall, as from a fatigue drain)
     -- and knocked a step or two any way, stopping at walls
     WS_MyEffectStagger = function(data)
       local s = data.strength or 5
       change('fatigue', -s * 8 * (0.5 + math.random()) * (data.fade or 1))
+      -- (OpenMW 0.52: they reel as the ground goes from under them; a hard quake floors some)
+      local f = data.fade or 1
+      if s >= 7 and math.random() < 0.04 * (s - 6) * f then reel('fall')
+      elseif math.random() < (0.25 + s * 0.05) * f then reel('stagger') end
       if math.random() < 0.6 then
         local a = math.random() * 2 * math.pi
         moveBy(util.vector3(math.cos(a), math.sin(a), 0), s * (2 + math.random() * 6) * (data.fade or 1), 6, 0.25)
@@ -794,6 +1003,96 @@ local hopping = {}         -- thing id -> { obj, from, to, rot, yaw, arc, t, tim
 local quakes = {}          -- { pos, cell, reach, at }: an area spell landing on five people starts one quake
 
 local function player() return world.players[1] end
+local okI, I = pcall(require, 'openmw.interfaces')
+local FT = ''' + str(FT) + '''
+
+-- a spell on someone by the game's own rules (OpenMW 0.52: SpellCasting.inflict, each range its spell has, with the
+-- game's looks, sounds, resistances and "can't recast"); before 0.52, added straight to their spells
+local function inflictAll(id, caster, target)
+  local rec = core.magic.spells.records[id]
+  if not rec then return end
+  if okI and I.SpellCasting and I.SpellCasting.inflict then
+    local seen = {}
+    for _, e in ipairs(rec.effects) do
+      if not seen[e.range] then
+        seen[e.range] = true
+        local ok, err = pcall(I.SpellCasting.inflict, { id = id, caster = caster }, target, e.range)
+        if not ok then print('[Workshop] cast ' .. tostring(id) .. ': ' .. tostring(err)) end
+      end
+    end
+    return
+  end
+  if not types.Actor.objectIsInstance(target) then return end
+  local idx = {}
+  for i = 1, #rec.effects do idx[i] = i - 1 end
+  types.Actor.activeSpells(target):add({ id = id, effects = idx, caster = caster or target })
+end
+
+-- a spell going off at a place: its area effects on all near (OpenMW 0.52: SpellCasting.explodeSpell)
+local function burstAt(cell, pos, d, onto)
+  if okI and I.SpellCasting and I.SpellCasting.explodeSpell then
+    I.SpellCasting.explodeSpell({ id = d.id, caster = d.caster }, { position = pos })
+  elseif onto then
+    inflictAll(d.id, d.caster, onto)
+  end
+end
+
+local function rgb(c)
+  c = c or { 255, 214, 120 }
+  return util.color.rgb(c[1] / 255, c[2] / 255, c[3] / 255)
+end
+
+-- every copy of a thing near a place (or in the whole place): its ID, or a word in it (OpenMW 0.52's
+-- world.getObjectsInRange and getObjectsByRecordId; before 0.52, the cell's own lists)
+local function matches(o, what)
+  local id = tostring(o.recordId):lower()
+  return id == what or id:find(what, 1, true) ~= nil
+end
+
+local function everyAt(cell, pos, d)
+  local found, seen = {}, {}
+  local reach = (d.feet or 0) * FT
+  local function take(o)
+    if #found < 200 and o:isValid() and not seen[o.id] and not types.Player.objectIsInstance(o) and matches(o, d.what)
+       and (reach <= 0 or (o.position - pos):length() <= reach) then
+      seen[o.id] = true
+      found[#found + 1] = o
+    end
+  end
+  if d.act ~= 'show' and reach > 0 and world.getObjectsInRange then
+    for _, o in ipairs(world.getObjectsInRange(pos, reach)) do take(o) end
+  elseif d.act ~= 'show' and reach <= 0 and world.getObjectsByRecordId and not d.what:find(' ', 1, true) then
+    local ok, list = pcall(world.getObjectsByRecordId, d.what, cell.worldSpaceId, true)
+    if ok and list then for _, o in ipairs(list) do take(o) end end
+  end
+  if #found == 0 then
+    -- (a word, a thing hidden before, or before 0.52: the place's own lists; outside, every cell loaded now)
+    local cells = { cell }
+    if cell.isExterior then
+      pcall(function() local all = {}; for _, c in ipairs(world.activeCells) do all[#all + 1] = c end; if #all > 0 then cells = all end end)
+    end
+    for _, c in ipairs(cells) do
+      for _, o in ipairs(c:getAll()) do take(o) end
+    end
+  end
+  for _, o in ipairs(found) do
+    pcall(function()
+      if d.act == 'hide' then
+        o.enabled = false
+      elseif d.act == 'show' then
+        o.enabled = true
+      elseif d.act == 'cast' then
+        if types.Actor.objectIsInstance(o) and not types.Actor.isDead(o) then inflictAll(d.id, d.caster, o) end
+      elseif d.act == 'glow' then
+        if types.Actor.objectIsInstance(o) then
+          o:sendEvent('WS_MyEffectGlow', { color = d.color, seconds = d.seconds })
+        elseif types.Lockable.objectIsInstance(o) then
+          o:sendEvent('AddGlow', { color = rgb(d.color), duration = d.seconds or 10 })
+        end
+      end
+    end)
+  end
+end
 
 -- what a quake may shake loose, as Settle reckons it (settle.loose): an item, a candle or small lamp standing on
 -- something, a small container or bit of clutter; never furniture, a building piece, a plant, a door, a person,
@@ -869,6 +1168,89 @@ local function weatherRecord(name)
   return nil
 end
 
+-- the dead within reach of a place stand up again (the nearest first; the corpse a bolt struck before all): as the
+-- one it lands on (resurrect), or where a bolt struck in OpenMW 0.52 (the hit handler below)
+-- OpenMW 0.52 can start an mwscript on an object from Lua: the game's own Resurrect, run by the mod's tiny script
+-- (written by the Workshop with any effect that raises the dead), on each corpse in turn: one start a few frames
+-- apart, as a running script isn't started again for another. 0.51: made again where they lay, as before.
+local RAISE_SCRIPT = ''
+local raiseQueue = {}
+
+local function raiseNear(cell, pos, d, skip, first, tell)
+  local reach = (d.feet or 15) * FT
+  local dead = {}
+  for _, T in ipairs({ types.NPC, types.Creature }) do
+    for _, c in ipairs(cell:getAll(T)) do
+      if c ~= skip and c.count > 0 and not types.Player.objectIsInstance(c) and types.Actor.isDead(c) then
+        local dist = (c == first) and -1 or (c.position - pos):length()
+        if dist <= reach then dead[#dead + 1] = { c = c, dist = dist } end
+      end
+    end
+  end
+  table.sort(dead, function(x, y) return x.dist < y.dist end)
+  if #dead == 0 then
+    if tell then tell:sendEvent('WS_MyEffectMessage', { text = 'No one lies dead near enough.' }) end
+    return
+  end
+  if RAISE_SCRIPT ~= '' and world.mwscript and world.mwscript.startGlobalScript then
+    for i, e in ipairs(dead) do
+      if d.which ~= 'all' and i > 1 then break end
+      raiseQueue[#raiseQueue + 1] = { c = e.c, health = d.health, side = d.side, caster = d.caster, step = 0 }
+    end
+    return
+  end
+  for i, e in ipairs(dead) do
+    if d.which ~= 'all' and i > 1 then break end
+    local c = e.c
+    local cinv = types.Actor.inventory(c)
+    pcall(function() cinv:resolve() end)
+    local equip = {}
+    local okE, eq = pcall(types.Actor.getEquipment, c)
+    if okE and eq then for slot, item in pairs(eq) do equip[slot] = item.recordId end end
+    local n = world.createObject(c.recordId, 1)
+    n:teleport(c.cell, c.position, c.rotation)
+    -- (what their record gives them taken away first: only the corpse's things come back with them)
+    local ninv = types.Actor.inventory(n)
+    pcall(function() ninv:resolve() end)
+    for _, item in ipairs(ninv:getAll()) do item:remove() end
+    for _, item in ipairs(cinv:getAll()) do item:moveInto(ninv) end
+    c:remove()
+    n:sendEvent('WS_MyEffectRaised', { equip = equip, health = d.health, side = d.side, caster = d.caster })
+  end
+
+end
+
+-- a quake at a place: as it lands, or where a bolt struck
+local function quakeAt(cell, pos, d)
+  local now = core.getSimulationTime()
+  local reach = (d.feet or 30) * FT
+  for i = #quakes, 1, -1 do
+    local q = quakes[i]
+    if now - q.at > 2 then table.remove(quakes, i)
+    elseif q.cell == cell and (q.pos - pos):length() < q.reach then return end
+  end
+  quakes[#quakes + 1] = { pos = pos, cell = cell, reach = reach, at = now }
+  local cells = { cell }
+  if cell.isExterior then
+    pcall(function() local all = {}; for _, c in ipairs(world.activeCells) do all[#all + 1] = c end; if #all > 0 then cells = all end end)
+  end
+  local near = {}
+  for _, c in ipairs(cells) do
+    for _, T in ipairs(LOOSE_TYPES) do
+      for _, o in ipairs(c:getAll(T)) do
+        local dist = (o.position - pos):length()
+        if dist <= reach and looseThing(o, T) then near[#near + 1] = { o = o, dist = dist } end
+      end
+    end
+  end
+  table.sort(near, function(x, y) return x.dist < y.dist end)
+  local things = {}
+  for i = 1, math.min(MAX_LOOSE, #near) do things[i] = near[i].o end
+  player():sendEvent('WS_MyEffectQuake', { pos = pos, ext = cell.isExterior, cellName = cell.name, reach = reach,
+                                           strength = d.strength or 5, seconds = d.seconds or 10, sound = d.sound, rocks = d.rocks,
+                                           things = things, caster = d.caster })
+end
+
 local DO = {
   move = function(a, d) moving[a.id] = { actor = a, from = a.position, to = d.to, arc = d.arc or 0, t = 0, time = d.time or 0.35 } end,
   teleport = function(a, d) a:teleport(d.cell, util.vector3(d.x, d.y, d.z)) end,
@@ -891,16 +1273,17 @@ local DO = {
         rid = ok and r or nil
       end
       if rid and rid ~= '' then
-        -- (in front of the caster, side by side when there are several)
+        -- (in front of the caster, side by side when there are several; or where a bolt struck)
         local yaw = c.rotation:getYaw() + (i - 1 - (n - 1) / 2) * 0.6
         local pos = c.position + util.vector3(math.sin(yaw) * 110, math.cos(yaw) * 110, 0)
+        if d.at then pos = d.at + util.vector3(math.sin(yaw) * 60 * (i - 1), math.cos(yaw) * 60 * (i - 1), 8) end
         local o = world.createObject(rid, 1)
-        o:teleport(c.cell, pos, c.rotation)
+        o:teleport(d.atCell or c.cell, pos, c.rotation)
         flash('VFX_Summon_Start', pos)
         objs[#objs + 1] = o
       end
     end
-    summoned[d.key] = { caster = c, eff = d.eff, spell = d.spell, objects = objs, told = false }
+    summoned[d.key] = { caster = c, eff = d.eff, spell = d.spell, objects = objs, told = false, untilT = d.untilT }
   end,
   unsummon = function(a, d)
     for key, s in pairs(summoned) do
@@ -942,89 +1325,130 @@ local DO = {
   -- raise the dead near the one it landed on. The engine's own Resurrect isn't open to Lua, so the same
   -- character is made again where the corpse lies, the corpse's own things moved onto them (what was
   -- looted stays taken, what they still wore is put back on) and the corpse taken away
-  resurrect = function(a, d)
-    local reach = (d.feet or 15) * ''' + str(FT) + '''
-    local dead = {}
-    for _, T in ipairs({ types.NPC, types.Creature }) do
-      for _, c in ipairs(a.cell:getAll(T)) do
-        if c ~= a and c.count > 0 and not types.Player.objectIsInstance(c) and types.Actor.isDead(c) then
-          local dist = (c.position - a.position):length()
-          if dist <= reach then dead[#dead + 1] = { c = c, dist = dist } end
-        end
-      end
-    end
-    table.sort(dead, function(x, y) return x.dist < y.dist end)
-    if #dead == 0 then
-      if types.Player.objectIsInstance(a) then a:sendEvent('WS_MyEffectMessage', { text = 'No one lies dead near enough.' }) end
-      return
-    end
-    for i, e in ipairs(dead) do
-      if d.which ~= 'all' and i > 1 then break end
-      local c = e.c
-      local cinv = types.Actor.inventory(c)
-      pcall(function() cinv:resolve() end)
-      local equip = {}
-      local okE, eq = pcall(types.Actor.getEquipment, c)
-      if okE and eq then for slot, item in pairs(eq) do equip[slot] = item.recordId end end
-      local n = world.createObject(c.recordId, 1)
-      n:teleport(c.cell, c.position, c.rotation)
-      -- (what their record gives them taken away first: only the corpse's things come back with them)
-      local ninv = types.Actor.inventory(n)
-      pcall(function() ninv:resolve() end)
-      for _, item in ipairs(ninv:getAll()) do item:remove() end
-      for _, item in ipairs(cinv:getAll()) do item:moveInto(ninv) end
-      c:remove()
-      n:sendEvent('WS_MyEffectRaised', { equip = equip, health = d.health, side = d.side, caster = d.caster })
-    end
-  end,
+  resurrect = function(a, d) raiseNear(a.cell, a.position, d, a, nil, types.Player.objectIsInstance(a) and a or nil) end,
   -- a quake where it landed: the loose things within reach (the nearest MAX_LOOSE) handed to the player's
   -- script, which shakes the view, plays the rumble, staggers people and hops the things (it can cast rays)
-  quake = function(a, d)
-    local now = core.getSimulationTime()
-    local reach = (d.feet or 30) * ''' + str(FT) + '''
-    for i = #quakes, 1, -1 do
-      local q = quakes[i]
-      if now - q.at > 2 then table.remove(quakes, i)
-      elseif q.cell == a.cell and (q.pos - a.position):length() < q.reach then return end
+  quake = function(a, d) quakeAt(a.cell, a.position, d) end,
+  burst = function(a, d) burstAt(a.cell, a.position, d, a) end,
+  every = function(a, d) everyAt(a.cell, a.position, d) end,
+  -- an MWScript started on the one it landed on (OpenMW 0.52: world.mwscript.startGlobalScript)
+  mwscript = function(a, d)
+    if world.mwscript and world.mwscript.startGlobalScript then
+      world.mwscript.startGlobalScript(tostring(d.id):lower(), a)
+    else
+      print('[Workshop] Run a script (' .. tostring(d.id) .. ') needs OpenMW 0.52')
     end
-    quakes[#quakes + 1] = { pos = a.position, cell = a.cell, reach = reach, at = now }
-    local cells = { a.cell }
-    if a.cell.isExterior then
-      pcall(function() local all = {}; for _, c in ipairs(world.activeCells) do all[#all + 1] = c end; if #all > 0 then cells = all end end)
-    end
-    local near = {}
-    for _, c in ipairs(cells) do
-      for _, T in ipairs(LOOSE_TYPES) do
-        for _, o in ipairs(c:getAll(T)) do
-          local dist = (o.position - a.position):length()
-          if dist <= reach and looseThing(o, T) then near[#near + 1] = { o = o, dist = dist } end
-        end
-      end
-    end
-    table.sort(near, function(x, y) return x.dist < y.dist end)
-    local things = {}
-    for i = 1, math.min(MAX_LOOSE, #near) do things[i] = near[i].o end
-    player():sendEvent('WS_MyEffectQuake', { pos = a.position, ext = a.cell.isExterior, cellName = a.cell.name, reach = reach,
-                                             strength = d.strength or 5, seconds = d.seconds or 10, sound = d.sound, rocks = d.rocks,
-                                             things = things, caster = d.caster })
   end,
+  -- the caster beside the one it landed on, a step back towards where they stood
+  blink = function(a, d)
+    local c = d.caster
+    if not (c and c:isValid()) or c == a then return end
+    local back = c.position - a.position
+    back = util.vector3(back.x, back.y, 0)
+    local len = back:length()
+    local off = len > 1 and back * (90 / len) or util.vector3(0, 90, 0)
+    c:teleport(a.cell, a.position + off, c.rotation)
+  end,
+
   -- one of a quake's loose things hops a few units and lands where the player's script found a surface
   hop = function(a, d)
     if a.cell == nil then return end
     hopping[a.id] = { obj = a, from = a.position, to = d.to, rot = a.rotation, yaw = d.yaw or 0, arc = d.arc or 0, t = 0, time = d.time or 0.12 }
   end,
-  cast = function(a, d)
-    local rec = core.magic.spells.records[d.id]
-    if not rec then return end
-    local idx = {}
-    for i = 1, #rec.effects do idx[i] = i - 1 end
-    types.Actor.activeSpells(a):add({ id = d.id, effects = idx, caster = d.caster or a })
-  end,
+  cast = function(a, d) inflictAll(d.id, d.caster or a, a) end,
 }
+
+-- OpenMW 0.52: where a spell's bolt strikes. Your effects cast on Target that do something in the world as they land
+-- (raise the dead, a quake, spawn, summon) do it there, also when the bolt hits a corpse, a wall or the ground: in
+-- 0.51 a bolt that hit no living one did nothing, and a corpse could only be raised by casting on Self near it. A
+-- living one hit has it land on them as before (the actor script), so nothing happens twice.
+local HITS = {}
+local function moonOkAt(cell, d)
+  if not d.moon or d.moon == 'any' then return true end
+  local ok, moons = pcall(function() return core.weather.getCurrentMoons(cell) end)
+  if not ok or not moons then return false end
+  for _, m in ipairs(moons) do
+    if (d.moon == 'full' and m.phaseValue == 4 and m.alpha > 0) or (d.moon == 'new' and m.phaseValue == 0)
+       or (d.moon == 'up' and m.alpha > 0.2) then return true end
+  end
+  return false
+end
+if okI and I.Projectiles and I.Projectiles.addOnProjectileHitHandler and next(HITS) then
+  I.Projectiles.addOnProjectileHitHandler(I.Projectiles.TYPES.Magic, function(p, hit)
+    local ok, err = pcall(function()
+      if not (hit and hit.hitPos) then return end
+      local o = hit.hitObject
+      local valid = o and o:isValid()
+      local isActor = valid and types.Actor.objectIsInstance(o)
+      if isActor and not types.Actor.isDead(o) then return end
+      local info = p.userData or {}
+      local caster = info.caster
+      local cell = (valid and o.cell) or (caster and caster:isValid() and caster.cell)
+      if not cell then return end
+      local rec = info.id and (core.magic.spells.records[info.id] or core.magic.enchantments.records[info.id])
+      if not rec and info.item then
+        local okR, r = pcall(function() return info.item.type.record(info.item) end)
+        if okR and r and r.enchant then rec = core.magic.enchantments.records[r.enchant] end
+      end
+      if not rec then return end
+      for n, e in ipairs(rec.effects) do
+        local steps = HITS[tostring(e.id):lower()]
+        if steps and e.range == core.magic.RANGE.Target then
+          for k, d in ipairs(steps) do
+            if moonOkAt(cell, d) and not (d.chance and d.chance < 100 and math.random() * 100 >= d.chance) then
+              local dd = {}
+              for key, v in pairs(d) do dd[key] = v end
+              dd.caster = caster
+              if d.kind == 'resurrect' then
+                raiseNear(cell, hit.hitPos, dd, nil, isActor and o or nil, nil)
+              elseif d.kind == 'quake' then
+                quakeAt(cell, hit.hitPos, dd)
+              elseif d.kind == 'mwscript' and world.mwscript and world.mwscript.startGlobalScript then
+                world.mwscript.startGlobalScript(tostring(d.id):lower(), valid and o or nil)
+              elseif d.kind == 'blink' and caster and caster:isValid() then
+                local nrm = hit.hitNormal or util.vector3(0, 0, 1)
+                caster:teleport(cell, hit.hitPos + nrm * 50, caster.rotation)
+              elseif d.kind == 'spawn' then
+                world.createObject(d.id, 1):teleport(cell, hit.hitPos + util.vector3(0, 0, 8))
+              elseif d.kind == 'burst' then
+                burstAt(cell, hit.hitPos, dd, nil)
+              elseif d.kind == 'every' then
+                everyAt(cell, hit.hitPos, dd)
+              elseif d.kind == 'glow' and valid and not isActor and types.Lockable.objectIsInstance(o) then
+                o:sendEvent('AddGlow', { color = rgb(d.color), duration = (d.seconds and d.seconds > 0) and d.seconds or 10 })
+              elseif d.kind == 'summon' and caster and caster:isValid() then
+                local key = 'hit:' .. tostring(caster.id) .. ':' .. tostring(e.id) .. ':' .. tostring(core.getSimulationTime()) .. ':' .. k
+                dd.key, dd.eff, dd.spell, dd.at, dd.atCell = key, tostring(e.id):lower(), key, hit.hitPos, cell
+                dd.untilT = core.getSimulationTime() + math.max(1, e.duration or 30)
+                DO.summon(caster, dd)
+              end
+            end
+          end
+        end
+      end
+    end)
+    if not ok then print('[Workshop] magic effect where a bolt struck: ' .. tostring(err)) end
+  end)
+end
 
 return {
   engineHandlers = {
     onUpdate = function(dt)
+      local r = raiseQueue[1]
+      if r then
+        if not r.c:isValid() then
+          table.remove(raiseQueue, 1)
+        elseif r.step == 0 then
+          local ok, err = pcall(world.mwscript.startGlobalScript, RAISE_SCRIPT, r.c)
+          if not ok then print('[Workshop] Resurrect: ' .. tostring(err)) end
+          r.step = 1
+        elseif r.step < 4 then
+          r.step = r.step + 1
+        else
+          r.c:sendEvent('WS_MyEffectRaised', { health = r.health, side = r.side, caster = r.caster })
+          table.remove(raiseQueue, 1)
+        end
+      end
       for id, m in pairs(moving) do
         if not m.actor:isValid() then
           moving[id] = nil
@@ -1050,6 +1474,8 @@ return {
       for key, s in pairs(summoned) do
         if not (s.caster and s.caster:isValid()) or types.Actor.isDead(s.caster) then
           dismiss(key)          -- (the caster died: their summons go with them)
+        elseif s.untilT and core.getSimulationTime() >= s.untilT then
+          dismiss(key)          -- (called where a bolt struck: gone when the spell's time is up)
         else
           for _, o in ipairs(s.objects or {}) do
             -- (killed: gone at once in the game's flash, as the game's own summons are, not left lying till the time ran out)
