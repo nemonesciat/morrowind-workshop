@@ -271,8 +271,8 @@ more and some **Tilt**.
 - **Grow:** *The region's own*, or one of your **★ scatter brushes**: its things, as often and at the sizes the brush
   sets, in clusters at the brush's own spacing.
 - **Amount:** 1 is the game's own thickness (or the brush's spacing).
-- **Only part of a cell:** draw a **▢ Dress area** with the shapes (it changes no ground), then Dress… and pick it
-  under **Where**: only the land inside is dressed. A region for each part: mark or draw it, Dress with that region, then the next.
+- **Only part of the land:** draw a **▢ Dress area** with the shapes (it changes no ground), then Dress… and pick it
+  under **Where**: only the land inside is dressed. No cells need marking for it. A region for each part: mark or draw it, Dress with that region, then the next.
 - Not where something stands already, and not under water. One Undo takes it all back.
 
 To place rocks, cliffs, trees and plants by hand, open the **🎨 Style palette** and pick a region under **Regions**.
@@ -288,11 +288,16 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
   the land round it), and the wall sunk deep enough that no foot shows. Where it must change height, Hlaalu and
   Velothi walls climb on their own step pieces; Imperial walls step at a tower. Gates stand on the low side, where
-  the town's streets go out, and the streets run on through them. Stairs inside lead up to the wall walk.
+  the town's streets go out, and the streets run on through them, never out onto the sea or over a cliff. Stairs inside lead up to the wall walk.
   A Nord village gets a **palisade**: post sections following the land round it, with a gatehouse on the way in.
 - **Dressed:** sets out what the culture's own towns set out. Before doors: benches, signs, lanterns, crates, a
   smith's forge and anvil. Along the streets: carts, stools, barrels. In the square: a well or a shrine. And the
-  culture's own scenes, such as Telvanni slave pods or a gallows, as often as its towns have them.
+  culture's own scenes, such as Telvanni slave pods or a gallows, as often as its towns have them. Its trade too:
+  market stalls (the square first), crates and barrels stacked by side and back walls, shop signs and awnings,
+  each as often a building as the culture's towns have them.
+- **Density:** how many buildings, against the culture's own towns of that size (1). Raise it for a city on a big
+  outline (the game's towns gather round their middle and leave open ground); lower it for a hamlet. A walled town
+  fills its wall at 1 and over.
 - **Streets:** as its towns' (wide), **narrower**, or **lanes**, one ground square (512) across.
 - **Draw 〰 Street / ▧ Zone / 🧱 Wall:** shapes of the town's own, drawn inside it.
   - **Streets** you draw are its streets, in place of the ones it would plan.
@@ -305,14 +310,16 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   culture it names.
 - **Name:** the town's name. Its interiors are called after it ("Varnhold, …"). Left blank, it takes the name shown,
   made from the culture's own town names.
-- **Inside:** what goes behind every door. **Furnished:** the rooms and doors of that very building's own interior
-  (walls, floors, stairs, every door linked both ways), furnished by the Workshop room by room, never with the
-  original's things. **Empty shells:** the same rooms and doors, empty but lit, the same for the same building every
-  time, for you to furnish. **None:** outsides only. A home is named after the person who heads it ("Nala Niabhe's
+- **Inside:** what goes behind every door. **Furnished:** an interior of the Workshop's own, planned from the
+  building's footprint in its style (rooms, stairs and storeys that fit it, every door linked both ways; no game
+  interior is copied), furnished by the Workshop room by room. **Empty shells:** the same rooms and doors, empty but
+  lit, for you to furnish. **None:** outsides only. A home is named after the person who heads it ("Nala Niabhe's
   Lodge"), a shop after its keeper and trade ("Gilas Mundrethi: Clothier"); temples, guilds and towers keep what
   they are.
-- **People** (with Furnished): a household in each, cast as the game's places of that kind have them, owning its beds and chests.
-  This takes a minute or two for a town.
+- **People:** outdoors, guards of the culture's own at the gates, the great doors and on the streets, sellers at their
+  stalls (they barter; their wares and stock are theirs), and townsfolk about the streets and doors, as many a
+  building as its towns have. With Furnished, a household in each too, owning its beds and chests. This takes a minute
+  or two for a town.
 - **The wall's keep and towers** (with Furnished or Empty shells): each has a door at the ground on the town side and an arched
   door on the wall walk where the wall runs into it, set only where the way out of it is clear. Behind them is a
   spiral-stair room joining the two, so you can climb from the street to the walk inside. The towers' rooms share one
@@ -331,14 +338,20 @@ Draw a **🏰 Castle** shape round where it should stand. The map shows its wall
 anything is built.
 
 - **Like:** whose forts it is built like.
-  - **Imperial fort:** a curtain wall with its gate on the side the land falls away to. Round towers stand at the
-    corners and beside the gate, each with an arched door where the wall walk runs in and a trap door to its roof.
-    A Legion keep stands at the back, its door facing the gate.
+  - **Imperial fort:** a curtain wall, closed all round, with its gate on the side the land falls away to. The gate
+    is a Legion gatehouse: the wall arch, the gate passage with its door, and a guard tower either side. The corners
+    are the wall's own corner pieces (a large fort has round towers at its back corners), the yard inside is one level.
+    The keep stands square in the wall line at the back, rising over the wall, its door facing the gate; where the
+    wall walk runs into a keep with an upper room, an arched door on the walk leads in. A large fort has a second hall
+    in the side wall.
   - **Dunmer stronghold:** the old Chimer keep on its stepped platform, with its ways in to the upper and lower
     levels, the dome and the propylon chamber. **Small** is a keep without the platform.
   - **Redoran stronghold:** a house stronghold of manor, tower, services and a house, inside a Redoran wall and gate.
 - **Size:** small, medium or large, against the game's own forts of that kind; **As drawn** fills your outline.
   A large Imperial fort has a second hall beside the keep (a chapel or an armoury).
+- **Gate:** **By itself**, the gate goes on the low side that's dry land, never out onto the sea or over a cliff.
+  Or pick **North**, **East**, **South** or **West**, or click an arrow inside a side of the castle on the map. The keep's
+  door turns to face it. **🎲 Another** keeps it.
 - **Name:** its rooms are called after it ("Fort Estmoth, Keep"). Left blank, it takes the name shown.
 - **Rooms:** **None**; **Empty shells** (walls, stairs and doors only, for you to furnish); or **Furnished** (the same
   shells, furnished by the Workshop, each room as what it is: barracks, armoury, shrine, hall).

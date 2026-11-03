@@ -914,6 +914,19 @@ local function finish(st)
   if st.summoned then world('unsummon', { spell = tostring(self.id) .. ':' .. st.key }) end
 end
 
+-- a spell cast on a corpse by touch (OpenMW 0.52): the game's own handler drops effects given to the dead, so a
+-- Raise the dead cast at a body did nothing. Caught here first, before the game's handler, and done in the world
+-- as a bolt striking the corpse is (the hit handler in my_effects_global). Bolts aren't taken: their hits are.
+if okI and I.SpellCasting and I.SpellCasting.addApplyMagicEffectsHandler then
+  I.SpellCasting.addApplyMagicEffectsHandler(function(options)
+    if not (options and options.id and Actor.isDead(self)) then return end
+    local ok, err = pcall(function()
+      world('hitdead', { id = options.id, item = options.item, caster = options.caster, effects = options.effects })
+    end)
+    if not ok then print('[Workshop] magic effect on a corpse: ' .. tostring(err)) end
+  end)
+end
+
 return {
   engineHandlers = {
     onUpdate = function(dt)
@@ -1464,66 +1477,87 @@ local function moonOkAt(cell, d)
   end
   return false
 end
+-- the spell or enchantment a cast names: by its own ID, by the enchanted thing cast from, or by the thing's ID
+-- (an enchanted thing's cast names the thing itself, as the game's own hit handler reads it)
+local function recordOf(id, item)
+  local rec = id and (core.magic.spells.records[id] or core.magic.enchantments.records[id])
+  if not rec and item then
+    local okR, r = pcall(function() return item.type.record(item) end)
+    if okR and r and r.enchant then rec = core.magic.enchantments.records[r.enchant] end
+  end
+  if not rec and id then
+    for _, T in ipairs({ types.Armor, types.Weapon, types.Clothing, types.Book }) do
+      local okR, r = pcall(function() return T.records[id] end)
+      if okR and r and r.enchant and r.enchant ~= '' then rec = core.magic.enchantments.records[r.enchant]; break end
+    end
+  end
+  return rec
+end
+
+-- what a cast does where it lands when no living one took it: a bolt striking a corpse, a wall or the ground
+-- (range Target), or a touch on a corpse (range Touch). o: what was struck, if anything; only: effect indexes (from 0)
+local function landAt(cell, pos, nrm, caster, rec, o, range, only)
+  local valid = o and o:isValid()
+  local isActor = valid and types.Actor.objectIsInstance(o)
+  local wanted = nil
+  if only then wanted = {}; for _, i in ipairs(only) do wanted[i] = true end end
+  for n, e in ipairs(rec.effects) do
+    local steps = HITS[tostring(e.id):lower()]
+    if steps and e.range == range and (not wanted or wanted[e.index or (n - 1)]) then
+      for k, d in ipairs(steps) do
+        if moonOkAt(cell, d) and not (d.chance and d.chance < 100 and math.random() * 100 >= d.chance) then
+          local dd = {}
+          for key, v in pairs(d) do dd[key] = v end
+          dd.caster = caster
+          if d.kind == 'resurrect' then
+            raiseNear(cell, pos, dd, nil, isActor and o or nil, nil)
+          elseif d.kind == 'quake' then
+            quakeAt(cell, pos, dd)
+          elseif d.kind == 'mwscript' and world.mwscript and world.mwscript.startGlobalScript then
+            world.mwscript.startGlobalScript(tostring(d.id):lower(), valid and o or nil)
+          elseif d.kind == 'blink' and caster and caster:isValid() then
+            caster:teleport(cell, pos + (nrm or util.vector3(0, 0, 1)) * 50, caster.rotation)
+          elseif d.kind == 'spawn' then
+            world.createObject(d.id, 1):teleport(cell, pos + util.vector3(0, 0, 8))
+          elseif d.kind == 'burst' then
+            burstAt(cell, pos, dd, nil)
+          elseif d.kind == 'every' then
+            everyAt(cell, pos, dd)
+          elseif d.kind == 'glow' and valid and not isActor and types.Lockable.objectIsInstance(o) then
+            o:sendEvent('AddGlow', { color = rgb(d.color), duration = (d.seconds and d.seconds > 0) and d.seconds or 10 })
+          elseif d.kind == 'summon' and caster and caster:isValid() then
+            local key = 'hit:' .. tostring(caster.id) .. ':' .. tostring(e.id) .. ':' .. tostring(core.getSimulationTime()) .. ':' .. k
+            dd.key, dd.eff, dd.spell, dd.at, dd.atCell = key, tostring(e.id):lower(), key, pos, cell
+            dd.untilT = core.getSimulationTime() + math.max(1, e.duration or 30)
+            DO.summon(caster, dd)
+          end
+        end
+      end
+    end
+  end
+end
+
+-- a touch on a corpse (the corpse's own actor script caught it: the game drops effects given to the dead)
+DO.hitdead = function(a, d)
+  if not next(HITS) then return end
+  if not types.Actor.isDead(a) then return end
+  local rec = recordOf(d.id, d.item)
+  if rec then landAt(a.cell, a.position, nil, d.caster, rec, a, core.magic.RANGE.Touch, d.effects) end
+end
+
 if okI and I.Projectiles and I.Projectiles.addOnProjectileHitHandler and next(HITS) then
   I.Projectiles.addOnProjectileHitHandler(I.Projectiles.TYPES.Magic, function(p, hit)
     local ok, err = pcall(function()
       if not (hit and hit.hitPos) then return end
       local o = hit.hitObject
       local valid = o and o:isValid()
-      local isActor = valid and types.Actor.objectIsInstance(o)
-      if isActor and not types.Actor.isDead(o) then return end
+      if valid and types.Actor.objectIsInstance(o) and not types.Actor.isDead(o) then return end
       local info = p.userData or {}
       local caster = info.caster
       local cell = (valid and o.cell) or (caster and caster:isValid() and caster.cell)
       if not cell then return end
-      local rec = info.id and (core.magic.spells.records[info.id] or core.magic.enchantments.records[info.id])
-      if not rec and info.item then
-        local okR, r = pcall(function() return info.item.type.record(info.item) end)
-        if okR and r and r.enchant then rec = core.magic.enchantments.records[r.enchant] end
-      end
-      if not rec and info.id then
-        -- (an enchanted thing's bolt names the thing itself, as the game's own hit handler reads it)
-        for _, T in ipairs({ types.Armor, types.Weapon, types.Clothing, types.Book }) do
-          local okR, r = pcall(function() return T.records[info.id] end)
-          if okR and r and r.enchant and r.enchant ~= '' then rec = core.magic.enchantments.records[r.enchant]; break end
-        end
-      end
-      if not rec then return end
-      for n, e in ipairs(rec.effects) do
-        local steps = HITS[tostring(e.id):lower()]
-        if steps and e.range == core.magic.RANGE.Target then
-          for k, d in ipairs(steps) do
-            if moonOkAt(cell, d) and not (d.chance and d.chance < 100 and math.random() * 100 >= d.chance) then
-              local dd = {}
-              for key, v in pairs(d) do dd[key] = v end
-              dd.caster = caster
-              if d.kind == 'resurrect' then
-                raiseNear(cell, hit.hitPos, dd, nil, isActor and o or nil, nil)
-              elseif d.kind == 'quake' then
-                quakeAt(cell, hit.hitPos, dd)
-              elseif d.kind == 'mwscript' and world.mwscript and world.mwscript.startGlobalScript then
-                world.mwscript.startGlobalScript(tostring(d.id):lower(), valid and o or nil)
-              elseif d.kind == 'blink' and caster and caster:isValid() then
-                local nrm = hit.hitNormal or util.vector3(0, 0, 1)
-                caster:teleport(cell, hit.hitPos + nrm * 50, caster.rotation)
-              elseif d.kind == 'spawn' then
-                world.createObject(d.id, 1):teleport(cell, hit.hitPos + util.vector3(0, 0, 8))
-              elseif d.kind == 'burst' then
-                burstAt(cell, hit.hitPos, dd, nil)
-              elseif d.kind == 'every' then
-                everyAt(cell, hit.hitPos, dd)
-              elseif d.kind == 'glow' and valid and not isActor and types.Lockable.objectIsInstance(o) then
-                o:sendEvent('AddGlow', { color = rgb(d.color), duration = (d.seconds and d.seconds > 0) and d.seconds or 10 })
-              elseif d.kind == 'summon' and caster and caster:isValid() then
-                local key = 'hit:' .. tostring(caster.id) .. ':' .. tostring(e.id) .. ':' .. tostring(core.getSimulationTime()) .. ':' .. k
-                dd.key, dd.eff, dd.spell, dd.at, dd.atCell = key, tostring(e.id):lower(), key, hit.hitPos, cell
-                dd.untilT = core.getSimulationTime() + math.max(1, e.duration or 30)
-                DO.summon(caster, dd)
-              end
-            end
-          end
-        end
-      end
+      local rec = recordOf(info.id, info.item)
+      if rec then landAt(cell, hit.hitPos, hit.hitNormal, caster, rec, o, core.magic.RANGE.Target, nil) end
     end)
     if not ok then print('[Workshop] magic effect where a bolt struck: ' .. tostring(err)) end
   end)

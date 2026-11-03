@@ -41,6 +41,16 @@ TRADES = (('smith', ('smith', 'armorer')), ('armor', ('smith', 'armorer')), ('we
           ('enchant', ('enchanter',)), ('mage', ('enchanter', 'mage')), ('trader', ('trader',)), ('general', ('trader',)),
           ('merchant', ('trader',)), ('supplies', ('trader',)), ('goods', ('trader',)))
 NOT_HEADS = ('slave', 'servant', 'guard', 'ordinator', 'sharpshooter')
+# the barter services (AIDT bits 0..13: weapons, armor, clothing, books, ingredients, picks, probes, lights, apparatus,
+# repair, misc, spells, magic items, potions) a shop of each trade sells
+SELL_BITS = (1 << 14) - 1
+TRADE_BITS = {'smith': 1 | 2 | 1 << 9, 'armorer': 1 | 2 | 1 << 9, 'clothier': 1 << 2 | 1 << 10, 'apothecary': 1 << 4 | 1 << 8 | 1 << 13,
+              'alchemist': 1 << 4 | 1 << 8 | 1 << 13, 'bookseller': 1 << 3, 'pawnbroker': SELL_BITS & ~(1 << 11), 'enchanter': 1 << 12 | 1 << 11 | 1 << 4,
+              'mage': 1 << 11 | 1 << 12, 'trader': 1 << 2 | 1 << 4 | 1 << 7 | 1 << 10 | 1 << 13}
+
+
+def _sells(B):
+    return any(int(bit) < 14 and share >= 0.5 for bit, share in B['services'].items())
 
 
 # ---------------------------------------------------------------- picking
@@ -511,9 +521,12 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
     elif not keep and setting == 'shop':
         # a shop's keeper is of its trade, as its name says (an outfitter's a clothier or a trader, a
         # smithy's a smith); the rest of its people as the game's shops have them
-        low = info['name'].lower()
+        low = (params.get('name') or info['name']).lower()
         words = next((ws for k, ws in TRADES if k in low), ('trader',))
         tc = [[c, B['n']] for c, B in S['classes'].items() if any(w in c.lower() for w in words) and B['n'] >= 3]
+        # (of its trade's classes, one that sells: the game's "Alchemist" class sells in 7 of 100, its sellers are
+        # "Alchemist Service"; an Alchemist and a Bonesmith of a made town sold nothing, the in-game walk 2026-11-03)
+        tc = [[c, n] for c, n in tc if _sells(S['classes'][c])] or tc
         cls = _w(rng, tc)
         if cls:
             want.append(cls)
@@ -612,6 +625,14 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
         else:
             notes.append('No clear spot for %s: they are left for you to place.' % p['name'])
         people.append(p)
+    # (a shop keeps a seller: when none of its people sells, its keeper sells its trade's wares)
+    if setting == 'shop' and people and not any(p.get('services', 0) & SELL_BITS for p in people):
+        low = (params.get('name') or info['name']).lower()
+        words = next((ws for k, ws in TRADES if k in low), ('trader',))
+        kp = next((p for p in people if any(w in p['cls'].lower() for w in words)), None) or \
+            next((p for p in people if p.get('relation') in ('head', 'leader')), people[0])
+        kp['services'] |= TRADE_BITS.get(words[0], TRADE_BITS['trader'])
+        kp['gold'] = max(kp.get('gold') or 0, rng.randint(150, 600))
     # their own words (poplines.py): made afresh with the cast, as its people refer to each other; lines
     # someone changed by hand are kept
     if params.get('lines', True) is not False:

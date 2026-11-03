@@ -486,7 +486,7 @@ def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=F
 def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=False, opts=None):
     """A town for the outline (world points) in the culture's way: {'culture', 'layout', 'streets': [{'pts', 'w'}],
     'roads': [[px, py]], 'square': [x, y, r] or None, 'plots': [{'x', 'y', 'face', 'w', 'd', 'kind', 'door': [x, y]}],
-    'figures': {...}}. opts (PIN2's asks, 2026-11-01): 'streets' '' the culture's width, 'narrow' or 'lanes'; 'roads'
+    'figures': {...}}. opts (PIN2's asks, 2026-11-01): 'density' the share of the culture's buildings (1); 'streets' '' the culture's width, 'narrow' or 'lanes'; 'roads'
     [[x, y], ...] lines drawn as its streets, in place of its own; 'zones' [{'kind', 'pts'}] residential, business or
     noble; 'counts' {kind: n} how many of each special building."""
     F = F or figures(db)
@@ -1281,9 +1281,14 @@ def _how_many(plots, poly, fig, square, rng):
     """As many buildings as the culture's towns stand on so much ground (its buildings a cell), the ones nearest the
     middle (the square, else the outline's middle) and on the main street first: the game's towns gather round their
     middle and leave open ground, and a plan filling the whole outline had three times Dreynim's buildings."""
-    want = max(3, int(round(_want(fig, poly) * rng.uniform(0.85, 1.15))))
+    # (Density: the user's own share of the culture's figure, 0.3 to 4; a big Dunmer outline drawn as a city stood a
+    # village's cluster in open country, the user 2026-11-03)
+    dens = max(0.3, min(4.0, float((fig.get('_opts') or {}).get('density') or 1.0)))
+    want = max(3, int(round(_want(fig, poly) * dens * rng.uniform(0.85, 1.15))))
     if fig.get('_ring'):
-        return list(plots)                  # (a walled town fills its wall: every plot its streets have room for)
+        if dens >= 1.0:
+            return list(plots)              # (a walled town fills its wall: every plot its streets have room for)
+        want = max(3, int(round(len(plots) * dens)))   # (thinner than its wall's room: the nearest the middle)
     if fig['layout'] != 'streets':
         # (an open town or a camp spreads over its ground: nearest the middle first crowded Sadrith Mora's towers into
         # a ring round its centre)

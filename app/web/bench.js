@@ -85,6 +85,7 @@ async function benchOpen(){
           <span title="The selected pieces' size (×0.5 to ×2)">× <input id="bn-size" type="number" step="0.05" min="0.5" max="2" style="width:58px"></span>
           <span title="Where the selected piece stands: type to move it (the others selected come too)">X <input id="bn-px" type="number" step="1" style="width:68px"> Y <input id="bn-py" type="number" step="1" style="width:68px"> Z <input id="bn-pz" type="number" step="1" style="width:58px"></span>
           <span id="bn-dims" class="msg" title="How big the selection is: across, deep and high, in the game's units (a cell is 8192, a floor tile mostly 256 or 512)"></span></label>
+        <button class="btn sm" id="bn-align" title="Line the selected pieces up on the one the handles sit on: middles, sides, tops, or spaced evenly, along the handles' axes">⇹ Align</button>
         <button class="btn sm" id="bn-undo" title="Undo on the bench (Ctrl+Z)">↶</button><button class="btn sm" id="bn-redo" title="Redo (Ctrl+Y)">↷</button>
         <button class="btn sm" id="bn-clear" title="Take everything off the bench">Clear</button>
         <button class="btn sm" id="bn-save" title="Keep it in the Library's prefabs too">💾 Save…</button>
@@ -131,6 +132,7 @@ async function benchOpen(){
     benchTurnAll(d * Math.PI / 180 - (p.p[5] || 0));     // (the others selected turn with it)
   };
   $('#bn-deg').onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); };
+  $('#bn-align').onclick = () => benchAlignMenu($('#bn-align'));
   $('#bn-undo').onclick = benchUndo; $('#bn-redo').onclick = benchRedo;
   $('#bn-clear').onclick = () => { if (!BN.pieces.length || confirm('Take everything off the bench?')){ benchPush(); BN.pieces = []; benchSync(); benchChanged(); } };
   $('#bn-save').onclick = benchSavePrefab;
@@ -383,6 +385,22 @@ function benchNudge(d){
   const ps = benchSelected(); if (!ps.length) return;
   benchPush();
   for (const q of ps){ q.p = q.p.slice(); for (let i = 0; i < 3; i++) q.p[i] = +((q.p[i] || 0) + d[i]).toFixed(2); }
+  benchSync(); benchChanged(); benchTurnBox();
+}
+// the selected pieces lined up on the handles' piece (v3AlignMoves), along the handles' axes
+function benchAlignMenu(at){
+  const ps = benchSelected();
+  if (ps.length < 2) return benchNote('Select two or more pieces to line up (Shift+click, or drag a box)');
+  pnlMenu(at, v3AlignItems(ps.length, ps[0].id, benchAlign));
+}
+function benchAlign(how, a){
+  const its = benchSelected().map(q => ({q, o: BN.objs.get(q.k)})).filter(x => x.o).map(x => ({q: x.q, o: x.o, g: x.o.g}));
+  if (its.length < 2) return;
+  its.forEach(x => x.g.updateMatrixWorld(true));
+  const ds = v3AlignMoves(its, its[0], how, a, benchSpace() === 'local');
+  if (ds.every(d => d.lengthSq() < 1e-4)) return benchNote('Already lined up');
+  benchPush();
+  its.forEach((x, i) => { const q = x.q; q.p = q.p.slice(); ['x', 'y', 'z'].forEach((v, j) => { q.p[j] = +((q.p[j] || 0) + ds[i][v]).toFixed(2); }); });
   benchSync(); benchChanged(); benchTurnBox();
 }
 function benchGrid(){
@@ -950,7 +968,8 @@ function benchMenu(e){
       {label: '⤢ Size…', act: () => { const s = $('#bn-size'); if (s){ s.focus(); s.select(); } }},
       {label: '↺ Size ×1', act: () => benchSizeAll(1)},
       {label: '⊥ Straighten', disabled: !ps.some(q => q.p[3] || q.p[4]), act: benchStraighten},
-      {label: '⤓ Set down', act: benchSetDown}, '-',
+      {label: '⤓ Set down', act: benchSetDown},
+      {label: '⇹ Align…', disabled: n < 2, act: () => benchAlignMenu(pt)}, '-',
       {label: '⧉ Copy (Ctrl+C)', act: benchCopy},
       {label: '⧉ Duplicate beside (Ctrl+D)', act: () => benchDupBeside(1)},
       {label: '⧉ Duplicate, then click', act: () => { benchCopy(); benchPasteStart(); }},
@@ -1029,6 +1048,7 @@ function benchSnap(){
   if (BN.mode !== 'translate'){ BN.selBox.setFromObject(g); benchTurnBox(benchPoseOf(g)); benchRide(D); return; }
   if (D.at && g.position.distanceTo(D.at) > 800) D.fetching = benchSnapsFetch(D);
   const ms = BN.keys && BN.keys.alt ? 'free' : benchMoveSnap();
+  v3Guides(null);
   let best = null;
   for (const s of ms === 'free' ? [] : D.snaps || []){
     const dx = s.p[0] - g.position.x, dy = s.p[1] - g.position.y, dz = s.p[2] - g.position.z;
@@ -1051,7 +1071,8 @@ function benchSnap(){
       benchNote(`On the ${st} grid`);
     } else if (ms === 'all'){
       const n = v3SnapFlush(D, g);
-      benchNote(n ? `Flush with ${n.r.id}` : '');
+      benchNote(n ? `Flush with ${n.r.id}${D.flushNote ? ' · ' + D.flushNote : ''}` : '');
+      v3Guides(n && g.parent, D.guides);
     } else benchNote(ms === 'free' ? 'Free' : '');
   }
   g.updateMatrixWorld(true);
@@ -1069,7 +1090,7 @@ function benchRide(D){
 }
 function benchDragEnd(){
   const D = BN.drag; BN.drag = null;
-  benchNote('');
+  benchNote(''); v3Guides(null);
   if (!D) return;
   const p = BN.pieces.find(q => q.k === D.o.k); if (!p) return;
   const np = benchPoseOf(D.o.g), ns = +D.o.g.scale.x.toFixed(3);

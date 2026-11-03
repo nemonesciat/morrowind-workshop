@@ -29,7 +29,7 @@ from collections import Counter, defaultdict
 
 import mapdata
 
-VERSION = 1
+VERSION = 2
 CELL = 8192
 # the game's forts by the look they are built in: the names their interiors start with (and Tamriel Rebuilt's, when
 # loaded: a name not in the load order is passed over)
@@ -326,7 +326,10 @@ def _fort(db, style, group, wallish):
                 tp = [round(ox, 1), round(oy, 1), round(tp[2] - A[2], 1), round((tp[3] - A[5]) % (2 * math.pi), 4)]
             mdoors.append({'id': d['id'], 'p': [round(lx, 1), round(ly, 1), round(d['p'][2] - A[2], 1), round((d['p'][5] - A[5]) % (2 * math.pi), 4)],
                            's': d.get('s') or 1.0, 'to': to, 'arrive': d['to'] and [d['to']['x'], d['to']['y'], d['to']['z'], d['to']['rz']],
-                           'back': bk, 'out': tp})
+                           'back': bk, 'out': tp,
+                           # (its sill over the ground at its own foot: a keep's pad is set by its door, not its main piece,
+                           # whose ground lies 248 lower across Moonmoth's slope, lab c03)
+                           'over': round(d['p'][2] - (mapdata.terrain_z(db, d['p'][0], d['p'][1]) if mapdata.terrain_z(db, d['p'][0], d['p'][1]) is not None else d['p'][2]))})
         bs = list(boxes.values())
         lb = [local(A, x, y) for b in bs for x in (b[0], b[3]) for y in (b[1], b[4])]
         out.append({'fort': group, 'style': style, 'main': main['id'].lower(), 'over': round(A[2] - g0) if g0 is not None else 0,

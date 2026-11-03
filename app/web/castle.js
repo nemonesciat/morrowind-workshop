@@ -29,11 +29,44 @@ function csHtml(sel){
     <label title="Whose forts it is built like: their walls, towers and keep, and the rooms behind their doors">Like <select class="inp" id="cs-style">${(st.length ? st : [{id: 'Imperial', label: 'Imperial fort'}]).map(s => `<option value="${esc(s.id)}" ${(p.style || 'Imperial') === s.id ? 'selected' : ''} title="${esc((s.examples || []).join(', '))}">${esc(s.label)}</option>`).join('')}</select></label>
     <label title="How big its walls are, against the game's own of its kind. As drawn: the outline you drew">Size <select class="inp" id="cs-size">${CS_SIZES.map(([v, t]) => `<option value="${v}" ${(p.size || 'medium') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <label title="Its name: its rooms are called after it. Blank: the one shown">Name <input class="inp" id="cs-name" value="${esc(p.name || '')}" placeholder="${esc((C && C.plan && C.plan.name) || '')}" maxlength="40"></label>
+    <label title="Which way its gate opens. By itself: the low side that's dry land and not a cliff. Or click an arrow on the map">Gate <select class="inp" id="cs-gate">${csGateOpts(p.gate)}</select></label>
     <label title="What lies behind its doors. Shells: the rooms' walls, stairs and doors only, to furnish yourself. Furnished: the same, furnished by the Workshop">Rooms <select class="inp" id="cs-rooms">${CS_ROOMS.map(([v, t]) => `<option value="${v}" ${(p.rooms || 'furnished') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <label title="Its people, cast as the game's own rooms of its kind have them (furnished rooms only)"><input type="checkbox" id="cs-ppl" ${(p.rooms || 'furnished') !== 'furnished' ? 'disabled' : ''} ${p.nopeople || (p.rooms || 'furnished') !== 'furnished' ? '' : 'checked'}> People</label>
     <div class="actions"><button class="btn sm" id="cs-reroll" title="Another layout of the same castle">🎲 Another</button>
       <button class="btn sm" id="cs-remove" title="Take away what Make it built here, rooms and all. What you added later and the ground stay. One Undo">✕ Remove</button>
       <button class="btn sm primary" id="cs-make" ${C && C.plan ? '' : 'disabled'} title="Build it as shown, its rooms behind its doors. One Undo takes it back">🏰 Make it</button></div>${info}`;
+}
+
+// the gate's way: by itself (null), a compass way, or the side clicked on the map (an angle, east 0, north π/2)
+const CS_WAYS = [['n', 'North', Math.PI / 2], ['e', 'East', 0], ['s', 'South', -Math.PI / 2], ['w', 'West', Math.PI]];
+const csAngDiff = (a, b) => Math.abs(((a - b + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI);
+function csGateOpts(g){
+  const on = g == null ? '' : (CS_WAYS.find(w => csAngDiff(w[2], g) < 0.02) || ['map'])[0];
+  return `<option value="" ${on === '' ? 'selected' : ''}>By itself</option>` + CS_WAYS.map(([v, t]) => `<option value="${v}" ${on === v ? 'selected' : ''}>${t}</option>`).join('')
+    + (on === 'map' ? '<option value="map" selected>As clicked</option>' : '');
+}
+// (an arrow inside each side of the planned outline, for the picked castle: the gate's side green)
+function csGateArrows(L){
+  const C = LM.castles && LM.castles[L.id], pv = C && C.plan && C.plan.preview, ol = pv && pv.outline;
+  if (!ol || ol.length < 3) return [];
+  const cx = ol.reduce((a, p) => a + p[0], 0) / ol.length, cy = ol.reduce((a, p) => a + p[1], 0) / ol.length;
+  const [csx, csy] = toScreen(cx, cy), out = [];
+  for (let i = 0; i < ol.length; i++){
+    const a = ol[i], b = ol[(i + 1) % ol.length], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    const [sx, sy] = toScreen(mx, my), [ax, ay] = toScreen(a[0], a[1]), [bx, by] = toScreen(b[0], b[1]);
+    if (Math.hypot(bx - ax, by - ay) < 60) continue;
+    const ang = Math.atan2(my - cy, mx - cx), dl = Math.hypot(sx - csx, sy - csy) || 1, ux = (sx - csx) / dl, uy = (sy - csy) / dl;
+    out.push({ang, x: sx - ux * 30, y: sy - uy * 30, ux, uy, on: C.plan.gate != null && csAngDiff(ang, C.plan.gate) < Math.PI / 4});
+  }
+  return out;
+}
+function csGateAt(L, x, y){
+  if (!L || L.kind !== 'castle') return null;
+  return csGateArrows(L).find(A => Math.hypot(A.x - x, A.y - y) <= 13) || null;
+}
+function csGatePick(L, ang){
+  L.p.gate = ang == null ? null : Math.round(ang * 1000) / 1000;
+  lsChanged(true);
 }
 
 function csSummaryHtml(pl){
@@ -55,6 +88,7 @@ function csBind(){
   const nm = $('#cs-name'); if (nm) nm.onchange = () => { sel.p.name = nm.value.trim(); lsChanged(true); };
   const rm_ = $('#cs-rooms'); if (rm_) rm_.onchange = () => { sel.p.rooms = rm_.value; lsChanged(true); };
   const pp = $('#cs-ppl'); if (pp) pp.onchange = () => { sel.p.nopeople = !pp.checked; lsChanged(false); };
+  const gt = $('#cs-gate'); if (gt) gt.onchange = () => { const w = CS_WAYS.find(w => w[0] === gt.value); if (gt.value !== 'map') csGatePick(sel, w ? w[2] : null); };
   const sm = document.querySelector('.cs-sum'); if (sm) sm.ontoggle = () => { LM.csOpen = sm.open; };
   const r = $('#cs-reroll'); if (r) r.onclick = () => { sel.p.seed = ((sel.p.seed || 1) % 100000) + 1 + Math.floor(Math.random() * 1000); lsChanged(true); };
   const rm = $('#cs-remove'); if (rm) rm.onclick = async () => {
@@ -73,7 +107,7 @@ function csBind(){
   if (!C || C.key !== csKey(sel)) csSoon();
 }
 
-function csKey(L){ return JSON.stringify([L.pts, L.p.style || 'Imperial', L.p.size || 'medium', L.p.seed || 1, L.p.name || '']); }
+function csKey(L){ return JSON.stringify([L.pts, L.p.style || 'Imperial', L.p.size || 'medium', L.p.seed || 1, L.p.name || '', L.p.gate ?? null]); }
 function csSoon(){ clearTimeout(LM.csT); LM.csT = setTimeout(csPlans, 350); }
 async function csPlans(){
   if (LM.csBusy){ LM.csAgain = true; return; }
@@ -89,7 +123,7 @@ async function csPlans(){
       try {
         let plan;
         for (;;){
-          plan = await post('/api/castle/plan', {outline: L.pts, style: L.p.style || 'Imperial', size: L.p.size || 'medium', seed: L.p.seed || 1, name: L.p.name || ''});
+          plan = await post('/api/castle/plan', {outline: L.pts, style: L.p.style || 'Imperial', size: L.p.size || 'medium', seed: L.p.seed || 1, name: L.p.name || '', gate: L.p.gate ?? null});
           if (!plan.learning || LM.castles[L.id].key !== key) break;
           LM.castles[L.id].learning = plan.learning;
           if (P.layers[LM.sel] === L && PNL.isShown('world', 'land')) renderWside();
@@ -117,6 +151,12 @@ function csDraw(g, P){
     }
     if (z > 0.02) for (const d of pv.doors){
       const [dx, dy] = toScreen(d[0], d[1]); g.fillStyle = '#ff3c3c'; g.beginPath(); g.arc(dx, dy, Math.max(1.5, Math.min(4, 40 * z)), 0, Math.PI * 2); g.fill();
+    }
+    if (L === P.layers[LM.sel]) for (const A of csGateArrows(L)){
+      // (a triangle pointing out through its side)
+      const px = -A.uy, py = A.ux;
+      g.beginPath(); g.moveTo(A.x + A.ux * 9, A.y + A.uy * 9); g.lineTo(A.x - A.ux * 6 + px * 8, A.y - A.uy * 6 + py * 8); g.lineTo(A.x - A.ux * 6 - px * 8, A.y - A.uy * 6 - py * 8); g.closePath();
+      g.fillStyle = A.on ? '#4caf50' : 'rgba(255,240,210,0.55)'; g.fill(); g.strokeStyle = 'rgba(0,0,0,0.6)'; g.lineWidth = 1; g.stroke();
     }
     if (z > 0.04 && C.plan.name){
       const xs = pv.outline.length ? pv.outline : L.pts, cx = xs.reduce((a, p) => a + p[0], 0) / xs.length, cy = xs.reduce((a, p) => a + p[1], 0) / xs.length;
@@ -150,7 +190,7 @@ async function csMake(sel){
     let r;
     try {
       r = await post('/api/castle/make', {outline: sel.pts, style: sel.p.style || 'Imperial', size: sel.p.size || 'medium', seed: sel.p.seed || 1,
-        name: sel.p.name || '', people: !sel.p.nopeople, rooms: sel.p.rooms || 'furnished'});
+        name: sel.p.name || '', people: !sel.p.nopeople, rooms: sel.p.rooms || 'furnished', gate: sel.p.gate ?? null});
     } finally { clearInterval(poll); }
     if (r.learning) throw new Error('Still learning ' + r.learning.join(', ') + ': try again in a minute.');
     toast(`Built ${esc(r.name)}: ${r.pieces} pieces outside, ${r.interiors} rooms${r.people ? `, ${r.people} people` : ''}. One Undo takes it back.`);

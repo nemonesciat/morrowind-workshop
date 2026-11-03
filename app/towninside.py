@@ -16,6 +16,7 @@ import random
 import re
 import zlib
 
+import math
 import mapdata
 import townsurvey
 from editing import EditError
@@ -146,7 +147,14 @@ def interior_name(db, town, tmpl_name, kind, head, family, culture, rng):
             elif kind not in ('temple', 'guild', 'guard', 'tavern') and head:
                 w = DWELLING.findall(tail)
                 tail = '%s %s' % (_possessive(head), w[-1] if w else 'House')
+    # (a game fort's "Interior" or "Entrance" names nothing: "Fibonheart, Interior" and "Interior: Prison Towers", lab i01)
+    if GENERIC.match(tail):
+        tail = GENERIC_KIND.get(kind) or ('%s House' % _possessive(head) if head else 'Hall')
     return '%s, %s' % (town, tail)
+
+
+GENERIC = re.compile(r'^(interior|entrance|main|ground floor|upper floor|lower floor|hall|building)$', re.I)
+GENERIC_KIND = {'guard': 'Garrison', 'temple': 'Chapel', 'guild': 'Guild Hall', 'tavern': 'Tavern', 'manor': 'Manor', 'shop': 'Shop'}
 
 
 def _unique(db, name, taken):
@@ -325,6 +333,20 @@ def _carry(to, gp, xp):
     return [xp[0] + wx, xp[1] + wy, xp[2] + (to['z'] - gp[2]), 0.0, 0.0, (to['rz'] - gp[5] + xp[5]) % (2 * math.pi)]
 
 
+OWN_LAYOUTS = True              # (town interiors planned from their buildings, never a game interior copied)
+
+
+def _own_building(db, dr, name, seed, n):
+    """The plot's building given an interior of the Workshop's own (frombuilding.build): planned from its footprint
+    in its own style, its doors linked both ways. {'key', 'name'}, or None when the builder has no plan for it."""
+    import frombuilding
+    import zlib
+    out = frombuilding.build(db, dr[0], dr[1], name, door_key=dr[1], seed=zlib.crc32(('%s|%s|%d' % (seed, name, n)).encode()) % 100000)
+    if not out or not out.get('key'):
+        return None
+    return {'key': out['key'], 'name': name, 'own_layout': True}
+
+
 def copy_building(db, q, t, name, taken):
     """The game's interior t copied for the plot's building with the places its doors lead on to, and every door
     linked as the game's led: the building's outside doors to the copies of the inside doors the game paired them
@@ -398,6 +420,9 @@ def copy_building(db, q, t, name, taken):
         if ref is not None:
             editing._store(c_, rk, ref['origin'], ref['idx'], doors._set_link(ref['subs'], dest, on_floor(db, dest, pos, floors)))
     editing.commit(db, 'Linked the doors of %s as the game\'s led' % name)
+    # (then every arrival at the face of the door it pairs with, once for the whole town when it is done, townbuild:
+    # the game's own copied arrivals put the user upstairs behind a locked door, 236 over the entry door's floor,
+    # 2026-11-02)
     editing.fold(db, len(getattr(db.project, 'undo_stack', [])) - n0, 'Copied %s for the building, its doors linked as the game\'s' % name)
     linked = {rk for ck, rk, dest, pos in links}
     return {'key': keys[t], 'name': name, 'parts': [names[c] for c in cells[1:]], 'linked': len(links), 'dead': dead,
@@ -459,7 +484,105 @@ def _plain_light(db):
     return _PLAIN[k]
 
 
-def make_own(db, key, src, rooms='furnished', seed=1):
+# (the user, 2026-11-02, on the first towns furnished anew: "they look very bland now ... the interiors should still be
+# worth exploring, should still tell a story of the new town". A house's rooms were kinds read off the game's room: an
+# armoury for a house that had two weapons on its wall, six racks and no bed. Now a home's rooms are a home's, by storey
+# and size; a shop's its trade's, from the head's class; a tavern's a tavern's; the furnishing to the household's wealth
+# (the head's class, wealthsurvey.trade); and the lived-in layer after, as any place can have it)
+HOME_KINDS = {'armoury': 'living', 'barracks': 'bedroom', 'mess': 'living', 'guardroom': 'storage', 'shrine': 'study',
+              'hall': 'living', 'training': 'living'}
+TRADE_KIND = (('smith|armorer|armourer|weaponsmith', 'smithy'), ('alchem|apothec', 'alchemist'), ('enchant', 'enchanter'),
+              ('bookseller|scribe', 'bookseller'), ('clothier|tailor|outfitter', 'clothier'), ('pawn', 'pawnbroker'),
+              ('publican|innkeeper|barkeep', 'tavern'), ('priest|monk|healer', 'shrine'))
+STOREY = 200                    # (a room's floor this far over the front door's is an upper storey: bedrooms)
+
+
+def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
+    """A function (room, kind read off the source, counts) -> the kind to furnish it as, for a town building of the
+    plot kind with a head of that class; or None to keep the source's reading."""
+    import re as _re
+    m = mapdata.cellmap(db, key)
+    fronts = [r for r in m.get('refs') or () if r['type'] == 'DOOR' and r.get('to') and not r['to'].get('cell')]
+    z0 = min((r['p'][2] for r in fronts), default=None)
+    trade = None
+    for rx, k in TRADE_KIND:
+        if head_cls and _re.search(rx, head_cls, _re.I):
+            trade = k
+            break
+    state = {'shop': False, 'living': False, 'bed': 0, 'seen': 0}
+    # (how many rooms the place has: a household gets a bedroom by its last room at the latest. The Workshop's own
+    # layouts read no kind off the game's rooms, and a two-room house came out living + kitchen with no bed, lab own)
+    try:
+        import furnish
+        n_rooms = n_rooms_hint or len(furnish.rooms(db, key, trace=False)['rooms'])
+    except Exception:
+        n_rooms = n_rooms_hint or 0
+
+    def kinds(rm, k, cnt):
+        state['seen'] += 1
+        out = kinds0(rm, k, cnt)
+        if out == 'bedroom':
+            state['bed'] += 1
+        elif kind in ('house', 'manor', 'farm', 'shack') and state['bed'] == 0 and n_rooms and state['seen'] >= n_rooms:
+            out = 'bedroom'                  # (the last room of a bedless household sleeps its people)
+            state['bed'] += 1
+        return out
+
+    def kinds0(rm, k, cnt):
+        fl = rm.get('floor')
+        tl = rm.get('_tiles') or ()
+        upper = z0 is not None and fl is not None and fl > z0 + STOREY
+        cellar = z0 is not None and fl is not None and fl < z0 - STOREY
+        big = len(tl) >= 6
+        if kind == 'tavern' or trade == 'tavern':
+            if not upper and big and not state['shop']:
+                state['shop'] = True
+                return 'tavern'
+            return 'bedroom' if upper else ('storage' if cellar else 'kitchen')
+        if kind == 'temple' or trade == 'shrine':
+            if not upper and big and not state['shop']:
+                state['shop'] = True
+                return 'shrine'
+            return 'bedroom' if upper else 'study'
+        if kind in ('shop', 'guild') or trade:
+            if not upper and not cellar and big and not state['shop']:
+                state['shop'] = True
+                return trade if trade and trade not in ('tavern', 'shrine') else 'shop'
+            if cellar:
+                return 'storage'
+            if upper:
+                state['bed'] += 1
+                return 'bedroom' if state['bed'] <= 2 else 'living'
+            return 'storage' if not big else 'living'
+        if kind == 'guard':
+            return {'hall': 'guardroom'}.get(k, k if k in ('barracks', 'armoury', 'mess', 'guardroom', 'training') else 'barracks' if upper else 'guardroom')
+        # a home, a manor
+        if cellar:
+            return 'storage'
+        if upper:
+            state['bed'] += 1
+            return 'bedroom' if state['bed'] <= 2 else 'study'
+        if big and not state['living']:
+            state['living'] = True
+            return 'dining' if kind == 'manor' else 'living'
+        if k in ('kitchen', 'study', 'bedroom', 'storage', 'living', 'dining', 'entry', 'corridor', 'landing', 'bath'):
+            return k
+        return HOME_KINDS.get(k) or ('kitchen' if big else 'bedroom' if state['bed'] == 0 else 'storage')
+    return kinds
+
+
+def household_level(db, head_cls):
+    """Auto-furnish's wealth choice for a household headed by that class: by trade when the survey knows it."""
+    if not head_cls:
+        return None
+    try:
+        import wealthsurvey
+        return 'trade:%s' % head_cls if wealthsurvey.trade(db, head_cls) else None
+    except Exception:
+        return None
+
+
+def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None):
     """A copied place made the Workshop's own: everything but its architecture, doors and built-in lights taken out;
     then furnished by the Workshop's own furnisher (rooms 'furnished'), or left empty with a plain light in every room
     that has none ('shells'). One step of its own. {'taken', 'placed', 'lights'}"""
@@ -477,7 +600,17 @@ def make_own(db, key, src, rooms='furnished', seed=1):
     for rk in gone:
         c['refs'].pop(rk, None)
     db.sync_project()
-    placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), seed) if rooms == 'furnished' else 0
+    placed = 0
+    if rooms == 'furnished':
+        kinds = household_kinds(db, key, kind or 'house', head_cls) if (kind or head_cls) else None
+        placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), seed, kinds=kinds, level=household_level(db, head_cls))
+        if placed:
+            try:
+                import livedin
+                db.sync_project()
+                livedin.apply(db, key, '', 1.0, seed, None, None, commit=False, camps=False, stories=False)
+            except Exception as e:
+                print('lived in:', key, e)
     lit = _light_rooms(db, key) if rooms == 'shells' else 0
     editing.commit(db, '%s %s' % ('Furnished' if rooms == 'furnished' else 'Emptied', (mapdata.cell_info(db, key) or {}).get('name') or key))
     return {'taken': len(gone), 'placed': placed, 'lights': lit}
@@ -511,6 +644,66 @@ def _light_rooms(db, key):
     if ops:
         fixit.apply(db, key, ops, commit=False)
     return len(ops)
+
+
+TOWN_FIGHT = 30                 # (a town's people fight no more readily than this)
+STAND_REACH = 200               # (a person with no floor this far under their feet is moved onto a room's floor)
+
+
+def stand_people(db, key):
+    """Every person placed in the place stood on a floor the place has: where nothing of its architecture lies within
+    STAND_REACH under their feet (14 of 63 in a lab town stood over nothing and fell 230–2,070 in the game, the in-game
+    harness, 2026-11-02), they are moved to the nearest room tile that has floor under it. The number moved."""
+    import seethrough
+    import furnish
+    import editing
+    from project import set_ref_pos
+    m = mapdata.cellmap(db, key)
+    ppl = [r for r in m.get('refs') or () if r['type'] == 'NPC_' and r.get('new')]
+    if not ppl:
+        return 0
+    arch = [r for r in m['refs'] if r.get('arch') and r['type'] in ('STAT', 'ACTI')]
+    sc = seethrough.place_scene(db, {'refs': arch})
+
+    def under(x, y, z, reach=STAND_REACH):
+        h = sc.nearest_any((x, y, z + 60.0), (0.0, 0.0, -1.0), reach + 60.0)
+        return None if h is None else z + 60.0 - h[0]
+    tiles = None
+    moved = 0
+    for p in ppl:
+        x, y, z = p['p'][0], p['p'][1], p['p'][2]
+        fz = under(x, y, z)
+        if fz is not None:
+            continue
+        if tiles is None:
+            try:
+                info = furnish.rooms(db, key)
+                tiles = [(t['x'], t['y'], t.get('floor', rm.get('floor')) if t.get('floor') is not None else rm.get('floor')) for rm in info.get('rooms') or () for t in rm.get('_tiles') or ()]
+            except Exception:
+                tiles = []
+        best = None
+        for tx, ty, tz in tiles:
+            if tz is None:
+                continue
+            d = math.hypot(tx - x, ty - y) + abs(tz - z) * 0.5
+            if best is not None and d >= best[0]:
+                continue
+            got = under(tx, ty, tz + 8.0, 120)
+            if got is None:
+                continue
+            best = (d, tx, ty, got)
+        if best is None:
+            continue
+        _d, tx, ty, tz = best
+        c_, refs = editing._cell(db, key)
+        ref = refs.get(p['k'])
+        if ref is None:
+            continue
+        editing._store(c_, p['k'], ref['origin'], ref['idx'], set_ref_pos(ref['subs'], (tx, ty, tz + 4.0, p['p'][3], p['p'][4], p['p'][5]), p.get('s') or 1.0))
+        moved += 1
+    if moved:
+        db.sync_project()
+    return moved
 
 
 # ---------------------------------------------------------------- rooms in the wall
@@ -603,6 +796,14 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
             gz = mapdata.terrain_z(db, out[0], out[1])
             if gz is None or abs(out[2] - 12 - gz) > DOOR_GROUND + 60:
                 continue                    # (its sill in the air or in the ground here)
+            try:
+                import castle
+                d_ = math.hypot(out[0] - dp[0], out[1] - dp[1]) or 1.0
+                n_ = ((out[0] - dp[0]) / d_, (out[1] - dp[1]) / d_)
+                if not castle._way_clear(castle._scene_near(db, [(dp[0], dp[1])], 900), dp[0] + n_[0] * 30, dp[1] + n_[1] * 30, gz, n_, castle.GROUND_CLEAR):
+                    continue                # (something stands in its way out: a yard wall, a house)
+            except Exception as e_:
+                print('wall room way out:', e_)
             ri = db.resolve_id(e['door'])
             if ri is None:
                 continue
@@ -673,24 +874,45 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         used[t] = used.get(t, 0) + 1
         tname = _name_of(db, t)
         cast_ = None
-        head = family = None
+        head = family = head_cls = None
         if S is not None:
             import populate
             import castsurvey
             try:
                 # (the plot in the seed: by the template alone, six copies of one shack had one Drathyn Sarothril, lab jtint2)
-                cast_ = populate.cast(db, t, {}, seed=zlib.crc32(('%s|%s|%s|%d' % (seed, town, t, made + skipped)).encode()))
+                # (cast for what the plot is, named as the building will be: a template read as a house by its name cast
+                # no keeper for a Bonesmith, the in-game walk 2026-11-03)
+                ask = {'setting': kind} if kind in ('shop', 'tavern', 'temple', 'guild', 'manor') else {}
+                if tname:
+                    ask['name'] = tname
+                cast_ = populate.cast(db, t, ask, seed=zlib.crc32(('%s|%s|%s|%d' % (seed, town, t, made + skipped)).encode()))
             except Exception as e:
                 print('town cast:', t, e)
                 cast_ = None
             ppl = (cast_ or {}).get('people') or []
             if ppl:
                 h = next((p for p in ppl if p.get('relation') in ('head', 'leader')), ppl[0])
+                if h.get('relation') not in ('head', 'leader') and kind in ('house', 'manor', 'farm', 'shack'):
+                    # (a household cast with nobody who may head it, a manor's lone guard: the one the place is named
+                    # after heads it and owns its beds and chests, else they stood free for anyone, lab own 2026-11-03)
+                    h['relation'] = 'head'
                 head = h['name']
+                head_cls = h.get('cls')
                 family = castsurvey._split_name(h['name'], h.get('race') or '')[1] or None
         name = _unique(db, interior_name(db, town, tname, townsurvey.kind_of(tname), head, family, culture, rng), taken)
         try:
-            out = copy_building(db, q, t, name, taken)
+            out = None
+            if OWN_LAYOUTS:
+                # (the Workshop's own layout from the building's footprint, frombuilding.build: the user, 2026-11-03,
+                # "to see a perfect copy of some interior in Balmora or Ebonheart on a brand new continent would feel
+                # jarring"; rooms, shelves and decor may resemble the game's, the plan is its own. The game's copy is
+                # the fallback when the building can't be planned)
+                try:
+                    out = _own_building(db, dr, name, seed, made + skipped)
+                except Exception as e:
+                    print('town own layout:', name, e)
+            if out is None:
+                out = copy_building(db, q, t, name, taken)
             if out is None:
                 out = frombuilding.copy_game_interior(db, dr[0], dr[1], t, name, 'furnished', door_key=dr[1], b=_building(db, q, dr))
         except EditError as e:
@@ -701,7 +923,7 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         names.append(out['name'])
         for k_, src_ in out.get('from') or [(out['key'], t)]:
             try:
-                make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()))
+                make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()), kind, head_cls)
             except EditError as e:
                 print('town interior made its own:', name, e)
         q['inside_kind'] = kind
@@ -711,10 +933,37 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         ppl = (cast_ or {}).get('people') or [] if people and rooms == 'furnished' else []
         if ppl:
             import populate
+            # (a householder never fights on sight: a jailor and a trader cast with fight 90 attacked the player at
+            # the door, the in-game harness, 2026-11-02; the game's townsfolk stand at 30)
+            for p_ in ppl:
+                if p_.get('fight') is not None and p_['fight'] > TOWN_FIGHT:
+                    p_['fight'] = TOWN_FIGHT
             try:
+                if out.get('own_layout'):
+                    # (cast on the game's template for their names and trades, they stand where its furniture was: in a
+                    # layout of the Workshop's own those spots are nowhere, nobody was placed, and with no head placed
+                    # nothing was owned (1,005 free containers in Hlervuld, the in-game walk 2026-11-03). Spotted again
+                    # in the new place)
+                    import random as _random
+                    info_ = populate.place_info(db, out['key'])
+                    rng_ = _random.Random('%s|%s|spots' % (seed, out['key']))
+                    taken_, used_ = [], set()
+                    for p_ in ppl:
+                        sp_ = populate.spot(db, info_, p_, rng_, taken_, used_)
+                        p_['spot'] = sp_[:4] if sp_ else None
+                        p_['spot_by'] = (sp_[4] or '') if sp_ and len(sp_) > 4 else ''
+                        if sp_:
+                            taken_.append((sp_[0], sp_[1]))
+                            if len(sp_) > 4 and sp_[4]:
+                                used_.add(sp_[4])
                 pl = populate.place(db, out['key'], ppl, own=True, lines=False)
                 said += pl['people']
                 folks += len(ppl)
+                for k_ in {out['key']} | {k2 for k2, _s in out.get('from') or ()}:
+                    try:
+                        stand_people(db, k_)
+                    except Exception as e_:
+                        print('town people on the floor:', k_, e_)
             except EditError as e:
                 print('town people:', name, e)
     if said:

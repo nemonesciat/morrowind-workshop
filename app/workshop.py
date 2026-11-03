@@ -74,7 +74,7 @@ class _EditLock:
 # (what Undo, Redo or another mod would pull from under a town being made while it lets other clicks in)
 WHOLE_MOD = ('/api/undo', '/api/redo', '/api/undo_group', '/api/undo_entry', '/api/revert', '/api/backups/restore',
              '/api/project/open', '/api/project/new', '/api/project/adopt', '/api/project/merge', '/api/project/saveas',
-             '/api/project/enable', '/api/adopt/pick')
+             '/api/project/enable', '/api/adopt/pick', '/api/group')
 
 
 def code_stamp():
@@ -1896,6 +1896,9 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path in WHOLE_MOD and editing.busy_with():
                     return self._json({'error': '%s: %s waits until it is done. Everything else works meanwhile.' % (
                         editing.busy_with(), 'Undo' if 'undo' in u.path or 'revert' in u.path else 'Redo' if 'redo' in u.path else 'switching mods')}, 409)
+                if u.path == '/api/doors/face':
+                    # (Health check's "Set them at their doors": every made door's arrival at its partner's face)
+                    return self._json({'set': doors.face_arrivals(db), 'summary': db.summary()})
                 if u.path == '/api/doors/pair':
                     # (two doors picked in two windows lead to each other: web/twowin.js)
                     return self._json(doors.link_pair(db, body['cell_a'], body['ref_a'], body['cell_b'], body['ref_b']))
@@ -2140,6 +2143,7 @@ class Handler(BaseHTTPRequestHandler):
                     import landshade
                     return self._json(landshade.shade(db, body.get('cells') or [], body.get('mode') or 'seams', body.get('strength', 1.0)))
                 if u.path == '/api/land/edit':
+                    editing.run_key('ground')          # (strokes in a row are one Undo step: editing._grouped)
                     return self._json(landscape.edit(db, body.get('cells') or [], body.get('keep_objects', True)))
                 if u.path == '/api/group/move':
                     return self._json(groups.move(db, body.get('moves') or []))
@@ -2475,7 +2479,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path in ('/api/town/plan', '/api/town/make'):
                     # (towns wait for their surveys, learnt in the survey process: the page shows what and asks again)
                     import learning
-                    lp = learning.town_pending(db, u.path == '/api/town/make' and body.get('interiors') not in (False, 'none', 'shells') and bool(body.get('people', True)))
+                    lp = learning.town_pending(db, u.path == '/api/town/make' and bool(body.get('people', True)))
                     if lp:
                         return self._json({'learning': lp})
                 if u.path == '/api/town/plan':
@@ -2508,7 +2512,7 @@ class Handler(BaseHTTPRequestHandler):
                     inside = False if iv in (False, 'none') else 'shells' if iv == 'shells' else True
                     with editing.operation('town'):
                         return self._json(townbuild.make(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '',
-                                                         body.get('dress') is not False, inside, inside and body.get('people') is not False,
+                                                         body.get('dress') is not False, inside, body.get('people') is not False,
                                                          (body.get('name') or '').strip()[:40], opts_))
                 if u.path in ('/api/castle/plan', '/api/castle/make'):
                     # a keep or castle in a culture's way (castle.py): planned for the map, or built as one change
@@ -2522,11 +2526,13 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({'error': "Draw the castle's outline first."}, 400)
                     args = (db, out, body.get('style') or 'Imperial', body.get('size') or 'medium', int(body.get('seed') or 1),
                             (body.get('name') or '').strip()[:40])
+                    gate = body.get('gate')
+                    gate = float(gate) if isinstance(gate, (int, float)) else None
                     if u.path == '/api/castle/plan':
-                        pl = castle.plan(*args)
-                        return self._json({k: pl[k] for k in ('style', 'size', 'seed', 'name', 'preview', 'rooms', 'fig', 'game', 'faults')})
+                        pl = castle.plan(*args, gate=gate)
+                        return self._json({k: pl[k] for k in ('style', 'size', 'seed', 'name', 'preview', 'rooms', 'fig', 'game', 'faults', 'gate')})
                     with editing.operation('castle'):
-                        return self._json(castle.make(*args, people=body.get('people') is not False, rooms=body.get('rooms') or 'furnished'))
+                        return self._json(castle.make(*args, people=body.get('people') is not False, rooms=body.get('rooms') or 'furnished', gate=gate))
                 if u.path == '/api/castle/remove':
                     # what a castle's Make it built, taken away, rooms and all (castle.remove)
                     import castle
@@ -2597,6 +2603,12 @@ class Handler(BaseHTTPRequestHandler):
                     # with everything built on it, unless asked to take back just this one
                     e = (editing.undo_entry if body.get('only') else editing.undo_branch)(db, int(body['id']))
                     return self._json({'ok': True, 'text': e['text'] if e else ''})
+                if u.path == '/api/group':
+                    # the toolbar's Group: open, or close into one Undo step (editing.group_open/close)
+                    if body.get('on'):
+                        return self._json({'ok': True, 'group': editing.group_open(db, body.get('name') or '')})
+                    e = editing.group_close(db, body.get('name'))
+                    return self._json({'ok': True, 'group': None, 'note': e['text'] if e else None})
                 if u.path == '/api/fold':
                     # the last n changes become one named Undo step (the object window's Save: the record,
                     # the spot and the ownership go through their own routes, then fold into one)
@@ -2678,6 +2690,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/revert':
                     return self._json({'i': editing.revert_record(db, int(body['i']))})
                 if u.path == '/api/ref/move':
+                    editing.run_key('move|%s|%s' % (body['cell'], body['ref']))
                     editing.move_ref(db, body['cell'], body['ref'], [float(v) for v in body['p']], body.get('s'))
                     return self._json(mapdata.cellmap(db, body['cell']))
                 if u.path == '/api/ref/delete':

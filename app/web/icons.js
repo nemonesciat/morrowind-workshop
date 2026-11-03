@@ -37,6 +37,7 @@ const ICONS = {
   settle: '<path d="M12 3.5v10M8 9.5l4 4 4-4M4 19.5h16"/>',
   chair: '<path d="M7 3.5v17M7 12h10v8.5M17 12V7M7 7h10"/>',
   house: '<path d="M4 11 12 4.5 20 11"/><path d="M6 9.5v10h12v-10M10 19.5v-5h4v5"/>',
+  castle: '<path d="M4 20V8.5h2.5V11h2V8.5h2V11h3V8.5h2V11h2V8.5H20V20z"/><path d="M10 20v-3.5a2 2 0 0 1 4 0V20"/>',
   temple: '<path d="M3.5 9 12 4l8.5 5zM5 20h14M4 9.5h16M6.5 10v8M10 10v8M14 10v8M17.5 10v8"/>',
   search: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>',
   wave: '<path d="M7.5 12V6.5a1.3 1.3 0 0 1 2.6 0V11M10.1 10V5a1.3 1.3 0 0 1 2.6 0v5M12.7 10V6a1.3 1.3 0 0 1 2.6 0v5.5M15.3 11V8.5a1.3 1.3 0 0 1 2.6 0V14a6 6 0 0 1-6 6h-.6a6 6 0 0 1-4.8-2.4L4 14.5a1.4 1.4 0 0 1 2.2-1.7L7.5 14"/>',
@@ -98,18 +99,18 @@ const EMO_ICON = {
   '👥': 'people', '🎨': 'palette', '🖌': 'brush', '💧': 'dropper', '🪨': 'rock', '📍': 'pin', '📌': 'pin', '📜': 'scroll', '📝': 'page', '🗒': 'page', '📄': 'page', '📋': 'page', '📘': 'books',
   '⚠': 'warn', '🔊': 'sound', '📦': 'box', '🧊': 'box', '🎁': 'gift', '📈': 'chart', '💪': 'hand', '💾': 'save', '🪄': 'wand', '✨': 'sparkle', '⚡': 'wand', '🎣': 'wave', '🪕': 'music', '🙏': 'temple', '🌌': 'sparkle', '🌫': 'wave', '🌀': 'swirl', '👁': 'eye',
   '🚪': 'door', '⚙': 'gear', '🐾': 'paw', '🔧': 'wrench', '🧰': 'chest', '⚒': 'hammer', '🩺': 'pulse', '🧩': 'puzzle', '🧱': 'brick', '🏗': 'brick', '🏘': 'house',
-  '📂': 'folder', '📁': 'folder', '🗂': 'folder', '🫳': 'settle', '🪑': 'chair', '🏠': 'house', '🏝': 'map', '🏛': 'temple', '🔎': 'search', '🔍': 'search',
+  '📂': 'folder', '📁': 'folder', '🗂': 'folder', '🫳': 'settle', '🪑': 'chair', '🏠': 'house', '🏰': 'castle', '🏝': 'map', '🏛': 'temple', '🔎': 'search', '🔍': 'search',
   '🎞': 'film', '💡': 'bulb', '🧭': 'compass', '🗺': 'map', '🎮': 'play', '🔗': 'link', '🔒': 'lock', '🔐': 'lock', '🔓': 'unlock',
   '🌿': 'leaf', '🌾': 'leaf', '🌳': 'tree', '📚': 'books', '🗡': 'sword', '🛡': 'shield', '🖼': 'picture', '🧹': 'broom', '🧪': 'flask', '🌙': 'moon',
   '🎓': 'cap', '🌐': 'globe', '🎒': 'bag', '🗝': 'key', '🧲': 'magnet', '✏': 'pencil', '🌄': 'sunrise', '🦴': 'bone', '🫧': 'bubbles', '🪧': 'sign',
-  '🪟': 'window', '✂': 'scissors', '📊': 'chart', '🪙': 'coin', '💰': 'coin', '🗑': 'trash', '🕯': 'candle', '🕘': 'clock',
+  '🪟': 'window', '✂': 'scissors', '📊': 'chart', '🪙': 'coin', '💰': 'coin', '🗑': 'trash', '🕯': 'candle', '🕘': 'clock', '⏳': 'clock',
   '☀': 'sun', '🌦': 'cloudsun', '⛅': 'cloudsun', '☁': 'cloud', '🌫': 'fog', '🌧': 'rain', '⛈': 'storm', '🌋': 'ash', '☣': 'blight', '🌨': 'snow', '❄': 'snow',
   '🥚': 'egg', '✋': 'hand', '🖐': 'hand', '➕': 'plus', '⭐': 'star',
 };
 
 // (the colour pictographs, and the few older signs browsers draw in colour too; not the plain marks the pages
 // use as text, ✕ ✓ ✦ ▶ ↶ ▾, which take the text's colour already)
-const EMO_RE = /(?:[\u{1F300}-\u{1FAFF}]|[☀☁☣⚒⚙⚠⛅⛈✂✋✏✨❄➕⭐])️?/gu;
+const EMO_RE = /(?:[\u{1F300}-\u{1FAFF}]|[☀☁☣⚒⚙⚠⚡⛅⏳⛈✂✋✏✨❄➕⭐])️?/gu;
 const ICON_SVG = name => `<svg class="wi" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 // (in these an emoji is only taken out: a list box can't hold a drawing, and code there is code)
 const ICON_SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE', 'svg', 'SVG', 'CANVAS', 'TITLE']);

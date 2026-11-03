@@ -54,6 +54,29 @@ TOWER = {'top': 'ex_imp_towers_top_01', 'light': 'ex_imp_towers_light_01', 'med'
          'door_in': (13.0, 0.0, 74.0), 'trap_at': (-59.0, 6.0, 154.0, 90.0)}
 TOWER_EVERY = 6                # a tower along a side every so many lengths besides those at the corners and the gate
 TOWER_CLEAR = 300              # (a wall_tower_01 this near a round tower goes: two towers in one spot)
+# a Legion gatehouse (Tamriel Data), as Firewatch's gates stand (five of them, lab g8): the wall arch in the wall line at
+# the wall's level, the gate passage on its outer side with its door on the ground, a square guard tower either side.
+# In the arch's frame (+y out of the castle): the passage 65 out turned about, the door in the passage's frame, the
+# towers at +-565 and 44 out, a quarter turned as the game's (doorways along the walk), 1.12 big: the tower's body is
+# solid only 200 out (its 303 box is its crown), so the arch's edge and the wall's end both stand 20 inside it, lab tprof
+GATEHOUSE = {'arch': 't_imp_legionmw_x_wallarch_04', 'dent': 't_imp_legionmw_x_gatedent_01', 'door': 't_imp_legion_gatedoor_01',
+             'tower': 'ex_imp_guardtower_02', 'dent_at': (0.0, 65.0), 'door_at': (-138.0, -23.0, -326.0),
+             'tower_at': (565.0, 44.0), 'tower_s': 1.12, 'tower_dz': -80.0, 'dent_over': 330.0, 'tower_foot': 436.0}
+WALL_FOOT, WALL_TOP = 488.0, 409.0  # (ex_imp_wall_01's foot under and top over its origin, the foot a little in the ground)
+KEEP_COVER_Z = (150.0, 350.0, 550.0, 750.0, 850.0)  # (heights over the keep's ground its walls must stand at to be the wall)
+KEEP_OVER_WALL = 200.0         # (a keep in the wall line rises this far over the wall's top at least)
+TOWER_KEEP_CLEAR = 700.0       # (a round tower's middle this far from a keep's box at least)
+KEEP_NOT = re.compile(r'guardtower', re.I)  # (pieces of a game keep that stood on its fort's wall, not the keep)
+DOOR_ON = 50.0                 # (a keep's front door this near its own walls; the game's 7-28, Ancylis' 117)
+PAD_SHOW = 300.0               # (a walled-in keep's pad this far under the wall's top at most)
+TOWER_UNDER = 260              # (a corner piece or length with its middle this near a round tower's is inside it)
+TOWER_BESIDE = 800             # (a buttressed length this near one is a plain length)
+KEEP_CUT = 60                  # (a wall length this deep in the keep's footprint is left out: the keep is the wall there)
+INNER_LANE = 2                 # (a large castle's inner ward: this many lengths of lane between its wall and the outer)
+INNER_FRONT = 1000             # (and this much yard before the keep inside it)
+INNER_RUN = 100                # (its runs numbered from here, so the grounding levels them as runs of their own)
+KEEP_UP = 64                   # the keep's origin this far over the wall's beside it (the game's 0 to 128)
+CASTLE_LEVEL_TOL = 384         # (the ground under a castle's wall is moved further than a town's: fewer levels)
 PAD_R = 256                    # the ground under a keep is evened out this far round it
 PAD_BLEND = 512
 PAD_CUT = 1024
@@ -74,6 +97,37 @@ def choices(db):
     return out
 
 
+_DB = [None]
+_ATT = {}
+
+
+def _door_attached(db, m):
+    """Whether a module's front door stands on its own walls (a wall within DOOR_ON of it, round it at its height)."""
+    k = (m['fort'], m['main'])
+    if k not in _ATT:
+        import seethrough
+        sc = seethrough.Scene()
+        memo = {}
+        for pc in m['pieces']:
+            ri = db.resolve_id(pc[0])
+            model = db.recs[ri][5] if ri is not None else None
+            if not model:
+                continue
+            if model not in memo:
+                memo[model] = seethrough.model_tris(db, model)
+            sc.add_model(memo[model], (pc[1], pc[2], pc[3], pc[5], pc[6], pc[4]), pc[7])
+        x, y, z = _front_door(m)['p'][:3]
+        best = None
+        for i in range(16):
+            a = i * math.pi / 8
+            for dz in (-60.0, 20.0, 100.0):
+                h = sc.nearest_any((x, y, z + dz), (math.cos(a), math.sin(a), 0.0), 600.0)
+                if h is not None and (best is None or h[0] < best):
+                    best = h[0]
+        _ATT[k] = best is not None and best <= DOOR_ON
+    return _ATT[k]
+
+
 def _modules(S, style, which='keep'):
     d = STYLES[style]
     rx = re.compile(d['keep'] if which == 'keep' else d.get('more') or '$^', re.I)
@@ -83,7 +137,16 @@ def _modules(S, style, which='keep'):
         out = [m for m in out if 'keep' in m['roles'] or which != 'keep']
     # (a keep whose doors all lead into rooms the castle won't have is no use: a doorless shell)
     # (and one with a door on every side, Pelagiad's thirteen, is a fort's whole yard, not a keep)
-    return [m for m in out if any(not re.search(r'trap|hatch', dd['id'], re.I) for dd in m['doors']) and len(m['doors']) <= 6]
+    out = [m for m in out if any(not re.search(r'trap|hatch', dd['id'], re.I) for dd in m['doors']) and len(m['doors']) <= 6]
+    # (the game fort's own wall-walk pieces left out: Moonmoth's keep carries the two sentry towers that stand on
+    # Moonmoth's wall beside it, and without that wall they hung off the keep's side, the user 2026-11-03)
+    out = [dict(m, pieces=[pc for pc in m['pieces'] if not KEEP_NOT.search(pc[0])]) if any(KEEP_NOT.search(pc[0]) for pc in m['pieces']) else m
+           for m in out]
+    # (its front door on its own walls: Ancylis' keep's door is a round tower's, 117 out from the plain keep it came
+    # with, and it stood loose before it, the user 2026-11-03 "the same detached door flaw")
+    if _DB[0] is not None:
+        out = [m for m in out if _door_attached(_DB[0], m)] or out
+    return out
 
 
 def _kit(db, fam):
@@ -140,7 +203,7 @@ def _ground(db, x, y):
 
 
 # ------------------------------------------------------------------------------------------------ planning
-def plan(db, outline, style='Imperial', size='medium', seed=1, name=''):
+def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=None):
     """The castle laid out (nothing placed): {'style', 'name', 'frame', 'outline', 'W' (the wall), 'towers', 'modules',
     'preview', 'rooms', 'fig', 'faults'}. The same outline, style, size and seed give the same castle."""
     if style not in STYLES:
@@ -149,6 +212,7 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name=''):
     if len(pts) < 3:
         raise EditError("Draw the castle's outline first.")
     S = cs.survey(db)
+    _DB[0] = db
     d = STYLES[style]
     rng = random.Random('%s|%s|%s|castle' % (style, size, seed))
     F = {'x': sum(p[0] for p in pts) / len(pts), 'y': sum(p[1] for p in pts) / len(pts), 'a': _axis(pts)}
@@ -175,15 +239,27 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name=''):
         ty = sum(c[1] for q in town for c in q[0]) / (4.0 * len(town))
         if math.hypot(tx - F['x'], ty - F['y']) < 600:
             tx = ty = None                   # (the castle in the very middle of its town: by the ground, as alone)
+    # (never out onto the sea or over a cliff: a castle on an island or a headland had its gate at the water, the lowest
+    # ground, and the user had to steer every one, 2026-11-03. gate: the way the user picked, an angle, kept to)
+    half = 0.5 * (max(_extent(pts, F)) if size == 'drawn' else max(_typical(S, style)) * SIZES.get(size, 1.0))
+    z0 = mapdata.terrain_z(db, F['x'], F['y'])
     best = None
     for k in range(4):
         a = F['a'] + k * math.pi / 2
         G = dict(F, a=a)
-        gx, gy = _to_world(G, 0, -2500)
-        z = _ground(db, gx, gy) if tx is None else math.hypot(gx - tx, gy - ty)
-        if best is None or z < best[0] - 32:
-            best = (z, a)
+        if gate is not None:
+            d_ = abs((a - math.pi / 2 - gate + math.pi) % (2 * math.pi) - math.pi)
+            key = (d_,)
+        else:
+            ox, oy = _to_world(G, 0, -1.0)
+            wet, steep = tw.gate_blocked(db, F['x'], F['y'], ox - F['x'], oy - F['y'], z0, half)
+            gx, gy = _to_world(G, 0, -2500)
+            z = _ground(db, gx, gy) if tx is None else math.hypot(gx - tx, gy - ty)
+            key = (wet, steep, z)
+        if best is None or key[:-1] < best[0][:-1] or (key[:-1] == best[0][:-1] and key[-1] < best[0][-1] - (0 if gate is not None else 32)):
+            best = (key, a)
     F['a'] = best[1]
+    out['gate'] = F['a'] - math.pi / 2
     if style == 'Stronghold':
         out['modules'].append(_set_module(km, F, 0.0, 0.0))
     else:
@@ -205,6 +281,10 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name=''):
             g_side, g_back, g_front = d.get('gaps') or (SIDE_GAP, MARGIN, 1200)
             fits.append((eu + 2 * g_side <= Wd * 1.1 and ev + g_back + g_front <= Dp * 1.1, -(eu * ev), m))
         ok = [t[2] for t in fits if t[0]]
+        # (a keep in the wall line stands as high as the wall: Umbermoth's keep is 450 high, the wall 900, and in the
+        # wall line it left a low gap the wall could not fill, the user 2026-11-03)
+        if not d.get('keep_apart'):
+            ok = [m for m in ok if _mesh_tall(db, m)] or ok
         km = rng.choice(ok) if ok else max(fits, key=lambda t: t[1])[2]
         eu, ev = _turned_extent(km, F)
         g_side, g_back, g_front = d.get('gaps') or (SIDE_GAP, MARGIN, 1200)
@@ -214,6 +294,15 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name=''):
         n_w, n_d = max(4, int(math.ceil(Wd / L - 0.1))), max(4, int(math.ceil(Dp / L - 0.1)))
         if n_w % 2:
             n_w += 1                     # (an even count: the gate stands in the middle of its side)
+        inner = size == 'large' and bool(d.get('towers')) and not d.get('keep_apart')
+        if inner:
+            # (the inner ward round the keep: whole lengths, a lane of INNER_LANE lengths between the two walls)
+            n_w2 = max(4, int(math.ceil((eu + 2 * g_side) / L - 0.1)))
+            if n_w2 % 2:
+                n_w2 += 1
+            n_d2 = max(3, int(math.ceil((ev + INNER_FRONT) / L - 0.1)))
+            n_w = max(n_w, n_w2 + 2 * INNER_LANE)
+            n_d = max(n_d, n_d2 + 2 * INNER_LANE + 2)
         Wd, Dp = n_w * L, n_d * L
         poly = [_to_world(F, -Wd / 2, -Dp / 2), _to_world(F, Wd / 2, -Dp / 2), _to_world(F, Wd / 2, Dp / 2), _to_world(F, -Wd / 2, Dp / 2)]
         # (the way in: out, through the front, out again, so the gate is asked for there alone)
@@ -221,31 +310,225 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name=''):
         W = _lay(db, d['wall'], kit, {'plots': [], 'streets': [{'pts': way}], 'wall_outline': poly})
         faults += W.get('faults') or []
         W['pieces'] = [p for p in W['pieces'] if p.get('kind') not in ('bigtower', 'keep')]
+        _outlines(db, W)
+        if style == 'Imperial':
+            _gatehouse_plan(db, W, F, L)
         out['W'] = W
         out['size_wd'] = [Wd, Dp]
-        # the keep at the back, its door to the gate
-        out['modules'].append(_set_module(km, F, 0.0, Dp / 2 - (d.get('gaps') or (0, MARGIN))[1], back=True))
+        W2 = None
+        if inner:
+            vb = Dp / 2 - INNER_LANE * L
+            vf = vb - n_d2 * L
+            poly2 = [_to_world(F, -n_w2 * L / 2, vf), _to_world(F, n_w2 * L / 2, vf), _to_world(F, n_w2 * L / 2, vb), _to_world(F, -n_w2 * L / 2, vb)]
+            way2 = [list(_to_world(F, -16, vf - 1500)), list(_to_world(F, 0, vf + 200)), list(_to_world(F, 16, vf - 1500))]
+            W2 = _lay(db, d['wall'], kit, {'plots': [], 'streets': [{'pts': way2}], 'wall_outline': poly2})
+            W2['pieces'] = [p for p in W2['pieces'] if p.get('kind') not in ('bigtower', 'keep')]
+            _outlines(db, W2)
+            if style == 'Imperial':
+                _gatehouse_plan(db, W2, F, L)
+            out['inner'] = poly2
+        # the keep at the back, its door to the gate: in the wall line, as the game's keeps stand (Old Ebonheart's,
+        # Moonmoth's, Ebonheart's: their wall lengths run into the keep's sides, lab r01; the user, 2026-11-02: "the keep
+        # should actually attach to the walls"). Its back face at the wall's outer face; the lengths it covers go
+        # (a big keep with its own platform and stairs too: its doors came out 248 under the pad until the pad was set
+        # by its door, _rise; the user, 2026-11-03: the keep still stood apart)
+        if d.get('keep_apart'):
+            out['modules'].append(_set_module(km, F, 0.0, Dp / 2 - (d.get('gaps') or (0, MARGIN))[1], back=True))
+        else:
+            Wk = W2 if W2 is not None else W
+            v_back = (Dp / 2 - INNER_LANE * L) if W2 is not None else Dp / 2
+            v_out = v_back
+            for p in Wk['pieces']:
+                if p.get('kind') == 'wall' and p.get('corners'):
+                    for cx_, cy_ in p['corners']:
+                        v_ = -(cx_ - F['x']) * math.sin(F['a']) + (cy_ - F['y']) * math.cos(F['a'])
+                        if v_ > v_back - L and v_ > v_out:
+                            v_out = v_
+            M = _set_module(km, F, 0.0, v_out, back=True)
+            # (its walls' back at the wall's outer face, not its box's: Ancylis' keep's box reaches past its walls, and set
+            # by the box it stood short of the wall line with the lengths behind it gone, the user 2026-11-03)
+            vx, vy = -math.sin(F['a']), math.cos(F['a'])
+            kb_ = km['box']
+            box_reach = max(_place((0.0, 0.0, 0.0, M['rz']), lx, ly)[0] * vx + _place((0.0, 0.0, 0.0, M['rz']), lx, ly)[1] * vy
+                            for lx in (kb_[0], kb_[2]) for ly in (kb_[1], kb_[3]))
+            mr = _mesh_reach(db, km, M['rz'], vx, vy)
+            if mr is not None:
+                M['x'] += vx * (box_reach - mr)
+                M['y'] += vy * (box_reach - mr)
+            M['in_wall'] = True
+            out['modules'].append(M)
+            kb = km['box']
+            Pz = (M['x'], M['y'], 0.0, M['rz'])
+            kpts = [_place(Pz, lx, ly) for lx, ly in ((kb[0], kb[1]), (kb[2], kb[1]), (kb[2], kb[3]), (kb[0], kb[3]))]
+            Wk['pieces'] = _cut_by_module(db, Wk, M, kpts)
         if size == 'large' and style == 'Imperial':
             # (a second hall, a chapel or an armoury, as Frostmoth's and Umbermoth's)
             sec = [m for m in keeps if m is not km and set(m['roles']) & {'chapel', 'armoury', 'barracks'}]
             if sec:
                 m = rng.choice(sorted(sec, key=lambda m: m['fort']))
-                hw = max(m['box'][2] - m['box'][0], m['box'][3] - m['box'][1]) / 2.0
-                out['modules'].append(_set_module(m, F, -Wd / 2 + SIDE_GAP + hw, 0.0, face=(0.0, 0.0)))
+                # (in the side wall's line, its back the wall there and its door to the yard, as the keep stands in the
+                # back wall: set free in the yard and turned to the gate it stood askew and apart, the user 2026-11-03)
+                Mh = _in_side_wall(db, m, F, W, Wd, Dp, L, poly2 if W2 is not None else None)
+                if Mh is not None:
+                    out['modules'].append(Mh)
         if d.get('towers'):
-            out['towers'] = _towers(W, kit, F)
+            out['towers'] = _towers(W, kit, F, corners=size == 'large')
+            if W2 is not None:
+                out['towers'] += _towers(W2, kit, F, corners=True)
+            # (no round tower against a keep or hall: one stood on the length by a keep's side, half in the keep and
+            # hanging off it, the user 2026-11-03 "a floating tower dangling on the side")
+            out['towers'] = [t for t in out['towers'] if not any(_near_module(M, t['x'], t['y'], TOWER_KEEP_CLEAR) for M in out['modules'])]
+        if W2 is not None:
+            # (one wall for the rest of the making: the inner runs numbered on from the outer's)
+            for p in W2['pieces']:
+                for k_ in ('run', 'corner'):
+                    if p.get(k_) is not None:
+                        p[k_] += INNER_RUN
+            W['pieces'] += W2['pieces']
+            W['extra_preview'] = (W.get('extra_preview') or []) + (W2.get('extra_preview') or [])
+            faults += W2.get('faults') or []
         # (stairs up to the walk from the bailey, as the game's forts have theirs; clear of the towers and the keep)
         away = [(t['x'], t['y']) for t in out['towers']]
         for M in out['modules']:
             kb = M['m']['box']
             away += [_place((M['x'], M['y'], 0.0, M['rz']), lx, ly) for lx in (kb[0], kb[2]) for ly in (kb[1], kb[3])]
-        W['pieces'] += tw.wall_stairs(W, avoid=away, most=2, db=db)
+        W['pieces'] += tw.wall_stairs(W, avoid=away, most=3 if W2 is not None else 2, db=db)
     out['name'] = (name or '').strip() or castle_name(db, style, seed)
     out['preview'] = _preview(db, out)
     out['rooms'] = _rooms(db, S, out)
     out['fig'] = _figures(out)
     out['game'] = _game_figures(S, style)
     return out
+
+
+def _outlines(db, W):
+    """Each length's corners on the ground, for the keeps set in the wall line: the wall's own are only worked out when
+    it is grounded, after the plan, so the lengths a keep stands in were never left out and the keep was set by the
+    wall's middle line, not its outer face (lab k2, 2026-11-03)."""
+    memo = {}
+    for p in W['pieces']:
+        if not p.get('corners'):
+            cs_ = tw._box(db, p['id'], p['pose'], memo)[0]
+            if cs_:
+                p['corners'] = cs_
+
+
+def _gatehouse_ok(db):
+    return all(db.resolve_id(GATEHOUSE[k]) is not None for k in ('arch', 'dent', 'door', 'tower'))
+
+
+def _gatehouse_plan(db, W, F, L):
+    """The wall's gate made a Legion gatehouse: the gate arch and the length after it out, the gatehouse's wall arch in
+    the middle of the gap, marked for make() to stand its passage, door and towers by. Its towers and passage go in the
+    plan's preview too, at no height yet."""
+    if not _gatehouse_ok(db):
+        return
+    memo = {}
+
+    def mid(p):
+        cs_ = tw._box(db, p['id'], p['pose'], memo)[0]
+        return (sum(q[0] for q in cs_) / 4.0, sum(q[1] for q in cs_) / 4.0) if cs_ else None
+    for g in [p for p in W['pieces'] if p.get('kind') == 'gate']:
+        c = mid(g)
+        if not c:
+            continue
+        dx, dy = math.cos(g['pose'].rz), -math.sin(g['pose'].rz)
+        # (three lengths in a row with the gate among them, the gate in the middle where it can be: the gap three
+        # lengths, the two towers meeting the lengths beyond. A gate by a corner takes the two after it)
+        at = {}
+        for p in W['pieces']:
+            if p.get('kind') not in ('wall', 'tower') or p.get('run') != g.get('run'):
+                continue
+            m = mid(p)
+            if not m or abs((m[0] - c[0]) * dy - (m[1] - c[1]) * dx) > L / 4:
+                continue
+            k = round(((m[0] - c[0]) * dx + (m[1] - c[1]) * dy) / L)
+            if k and abs((m[0] - c[0]) * dx + (m[1] - c[1]) * dy - k * L) < L / 4:
+                at[k] = p
+        side = None
+        for ks, off in (((-1, 1), 0), ((1, 2), 1), ((-2, -1), -1)):
+            if all(k in at for k in ks):
+                side, shift = [at[k] for k in ks], off
+                break
+        if side is None:
+            continue
+        gx, gy = c[0] + dx * shift * L, c[1] + dy * shift * L
+        nx, ny = -dy, dx
+        if nx * (gx - F['x']) + ny * (gy - F['y']) < 0:
+            nx, ny = -nx, -ny
+        rz = math.atan2(nx, ny)                  # (its +y out of the castle: the passage stands outside the wall line)
+        A = tw.Pose(gx, gy, g['pose'].z, rz, GATEHOUSE['arch'])
+        W['pieces'] = [p for p in W['pieces'] if p is not g and not any(p is q for q in side)]
+        W['pieces'].append({'id': GATEHOUSE['arch'], 'pose': A, 'kind': 'gate', 'run': g.get('run'), 'gatehouse': True})
+        for sx in (-1, 1):
+            tx, ty = A.dir((sx * GATEHOUSE['tower_at'][0], GATEHOUSE['tower_at'][1]))
+            W.setdefault('extra_preview', []).append((GATEHOUSE['tower'], tw.Pose(gx + tx, gy + ty, 0.0, rz + math.pi / 2, GATEHOUSE['tower'])))
+        ox, oy = A.dir(GATEHOUSE['dent_at'])
+        W.setdefault('extra_preview', []).append((GATEHOUSE['dent'], tw.Pose(gx + ox, gy + oy, 0.0, rz + math.pi, GATEHOUSE['dent'])))
+
+
+def _gatehouse_make(db, W):
+    """[(id, (x, y, z, rx, ry, rz))] for each gatehouse arch now on the ground: its passage with the door's foot on the
+    ground before it, the gate door, and the two guard towers, their feet in the ground."""
+    out = []
+    for p in W['pieces']:
+        if not p.get('gatehouse'):
+            continue
+        A = p['pose']
+        ox, oy = A.dir(GATEHOUSE['dent_at'])
+        D = tw.Pose(A.x + ox, A.y + oy, 0.0, A.rz + math.pi)
+        fx, fy = D.dir(GATEHOUSE['door_at'][:2])
+        D.z = _ground(db, D.x + fx, D.y + fy) + GATEHOUSE['dent_over']
+        out.append((GATEHOUSE['dent'], (D.x, D.y, D.z, 0.0, 0.0, D.rz), 1.0))
+        out.append((GATEHOUSE['door'], (D.x + fx, D.y + fy, D.z + GATEHOUSE['door_at'][2], 0.0, 0.0, D.rz), 1.0))
+        for sx in (-1, 1):
+            tx, ty = A.dir((sx * GATEHOUSE['tower_at'][0], GATEHOUSE['tower_at'][1]))
+            x, y = A.x + tx, A.y + ty
+            # (its foot under the ground there too, on a slope)
+            z = min(D.z + GATEHOUSE['tower_dz'], _ground(db, x, y) + GATEHOUSE['tower_foot'] - 40)
+            out.append((GATEHOUSE['tower'], (x, y, z, 0.0, 0.0, A.rz + math.pi / 2), GATEHOUSE['tower_s']))
+    return out
+
+
+def _cut_by_module(db, W, M, kpts):
+    """W's pieces with the lengths a keep stands in left out: only a length the keep's own walls cover from end to end
+    as high as the wall (rays across the wall line at its two ends and its middle meet the keep at every height up to
+    the wall's top: Ancylis' keep is a platform 450 high, and the wall over it went, the user 2026-11-03). Left out by the
+    keep's box alone, a length
+    went where the box reached but the keep's walls did not, and the wall stopped short of the keep, a slot 96-128
+    wide either side (lab gaps, 2026-11-03)."""
+    import seethrough
+    sc = seethrough.Scene()
+    memo = {}
+    rise = _rise(M['m'])
+    Pz = (M['x'], M['y'], 0.0, M['rz'])
+    for pc in M['m']['pieces']:
+        ri = db.resolve_id(pc[0])
+        model = db.recs[ri][5] if ri is not None else None
+        if not model:
+            continue
+        if model not in memo:
+            memo[model] = seethrough.model_tris(db, model)
+        x, y = _place(Pz, pc[1], pc[2])
+        sc.add_model(memo[model], (x, y, pc[3], pc[5], pc[6], M['rz'] + pc[4]), pc[7])
+    keep = []
+    for p in W['pieces']:
+        if p.get('kind') != 'wall' or not p.get('corners') or _sat_depth(kpts, p['corners']) <= KEEP_CUT:
+            keep.append(p)
+            continue
+        q = p['pose']
+        ax, ay = q.dir((1.0, 0.0))
+        nx, ny = -ay, ax
+        cx, cy = sum(c[0] for c in p['corners']) / 4.0, sum(c[1] for c in p['corners']) / 4.0
+        covered = True
+        for t in (-0.45 * 512, 0.0, 0.45 * 512):
+            x, y = cx + ax * t, cy + ay * t
+            if not all(sc.nearest_any((x - nx * 600, y - ny * 600, -rise + z), (nx, ny, 0.0), 1200) is not None for z in KEEP_COVER_Z):
+                covered = False
+                break
+        if not covered:
+            keep.append(p)
+    return keep
 
 
 def _lay(db, fam, kit, plan_):
@@ -275,15 +558,130 @@ def _turned_extent(m, F):
     return max(us) - min(us), max(vs) - min(vs)
 
 
+def _front_door(m):
+    """The module's way in: its lowest ordinary door (never a trap door: Buckmoth's keep, whose door stands 310 up
+    its own piece, was faced and grounded by its roof hatch, the door 213 under the pad, lab c11)."""
+    plain = [dd for dd in m['doors'] if not re.search(r'trap|hatch', dd['id'], re.I)]
+    return min(plain, key=lambda dd: dd['p'][2]) if plain else m['doors'][0]
+
+
+DOOR_OVER = (100, 160)         # a keep's front door (its middle) this far over the pad: at the yard, up its own step
+
+
+def _rise(m):
+    """How far the module's origin stands over its pad: so that its front door stands a step over the pad, as the
+    game's keep doors stand over their own ground (Moonmoth's 137), wherever the game's keep had its ground (the main
+    piece's lay 248 lower across Moonmoth's slope, and the doors came out that far under the pad, lab c03; Umbermoth's
+    door is 764 over the ground, on its wall, and carried so it was dropped as a way out into the air, lab c07). The
+    survey's older figure when the door's height isn't known."""
+    dd = _front_door(m)
+    if dd.get('over') is None:
+        return m['over']
+    return max(DOOR_OVER[0], min(DOOR_OVER[1], dd['over'])) - dd['p'][2]
+
+
+def _front_axis(m):
+    """The way out of the keep's front face, in its own frame (0, 90, 180 or 270 degrees): the side of its box its front
+    door stands nearest, as a share of the box's half-widths."""
+    front = _front_door(m)
+    kb = m['box']
+    cx, cy = (kb[0] + kb[2]) / 2.0, (kb[1] + kb[3]) / 2.0
+    hx, hy = max(1.0, (kb[2] - kb[0]) / 2.0), max(1.0, (kb[3] - kb[1]) / 2.0)
+    dx, dy = (front['p'][0] - cx) / hx, (front['p'][1] - cy) / hy
+    if abs(dx) >= abs(dy):
+        return 0.0 if dx >= 0 else math.pi
+    return math.pi / 2 if dy >= 0 else -math.pi / 2
+
+
+_TALL = {}
+
+
+def _mesh_tall(db, m):
+    """Whether a keep's own walls rise over a curtain wall's top (KEEP_COVER_Z's top) by KEEP_OVER_WALL: the game's keeps
+    stand 1100-1800 over their pads, the wall 890 (the user, 2026-11-03: "usually keeps rise above the walls")."""
+    k = (m['fort'], m['main'])
+    if k not in _TALL:
+        import seethrough
+        sc = seethrough.Scene()
+        memo = {}
+        for pc in m['pieces']:
+            ri = db.resolve_id(pc[0])
+            model = db.recs[ri][5] if ri is not None else None
+            if not model:
+                continue
+            if model not in memo:
+                memo[model] = seethrough.model_tris(db, model)
+            sc.add_model(memo[model], (pc[1], pc[2], pc[3], pc[5], pc[6], pc[4]), pc[7])
+        kb = m['box']
+        z = -_rise(m) + KEEP_COVER_Z[-1] + KEEP_OVER_WALL
+        hits = 0
+        for ly in range(int(kb[1]), int(kb[3]) + 1, 64):
+            if sc.nearest_any((kb[0] - 500.0, float(ly), z), (1.0, 0.0, 0.0), kb[2] - kb[0] + 1000.0) is not None:
+                hits += 1
+        _TALL[k] = hits >= 3
+    return _TALL[k]
+
+
+def _near_module(M, x, y, clear):
+    """Whether (x, y) lies within clear of a placed module's box."""
+    kb = M['m']['box']
+    c, s_ = math.cos(M['rz']), math.sin(M['rz'])
+    dx, dy = x - M['x'], y - M['y']
+    lx, ly = dx * c - dy * s_, dx * s_ + dy * c
+    return kb[0] - clear <= lx <= kb[2] + clear and kb[1] - clear <= ly <= kb[3] + clear
+
+
+def _mesh_reach(db, m, rz, dx, dy):
+    """How far a module's own walls reach along (dx, dy) from its origin, turned rz: rays at its body's heights from far
+    out back towards it, across its width. None when its pieces have no meshes."""
+    import seethrough
+    sc = seethrough.Scene()
+    memo = {}
+    rise = _rise(m)
+    Pz = (0.0, 0.0, 0.0, rz)
+    n = 0
+    for pc in m['pieces']:
+        ri = db.resolve_id(pc[0])
+        model = db.recs[ri][5] if ri is not None else None
+        if not model:
+            continue
+        if model not in memo:
+            memo[model] = seethrough.model_tris(db, model)
+        x, y = _place(Pz, pc[1], pc[2])
+        sc.add_model(memo[model], (x, y, pc[3], pc[5], pc[6], rz + pc[4]), pc[7])
+        n += 1
+    if not n:
+        return None
+    kb = m['box']
+    span = max(kb[2] - kb[0], kb[3] - kb[1])
+    px, py = -dy, dx
+    R = 4000.0
+    best = None
+    t = -span
+    while t <= span:
+        for z in (150.0, 300.0, 450.0):
+            o = (px * t + dx * R, py * t + dy * R, -rise + z)
+            h = sc.nearest_any(o, (-dx, -dy, 0.0), 2 * R)
+            if h is not None:
+                v = R - h[0]
+                if best is None or v > best:
+                    best = v
+        t += 48.0
+    return best
+
+
 def _set_module(m, F, u, v, back=False, face=None):
     """A module placed in the castle frame at (u, v): turned so its way in faces the gate (or face: the point in the
     castle frame it faces), its back edge at v when back."""
-    front = next((dd for dd in m['doors'] if not re.search(r'trap|hatch', dd['id'], re.I) and dd['p'][2] < 200), None) or m['doors'][0]
-    phi = math.atan2(front['p'][1], front['p'][0])
+    phi = _front_axis(m)
     tu, tv = (face if face is not None else (u, v - 1.0))
     tx, ty = _to_world(F, tu, tv)
     x, y = _to_world(F, u, v)
     target = math.atan2(ty - y, tx - x) if face is not None else F['a'] - math.pi / 2
+    # (square to the walls: the keep's own sides along the castle's. Turned so the line from its main piece to its door
+    # pointed at the gate, a door off the middle of its face set the whole keep askew of the walls and its back corner
+    # clear of the wall line, Fort Estmoth's two keeps 30° out, the user 2026-11-03)
+    target = F['a'] + round((target - F['a']) / (math.pi / 2)) * (math.pi / 2)
     rz = (phi - target) % (2 * math.pi)
     if back:
         # (its far edge at v: how far the module reaches behind its origin, turned; and its middle across at u, not its
@@ -303,7 +701,54 @@ def _set_module(m, F, u, v, back=False, face=None):
     return {'m': m, 'x': x, 'y': y, 'rz': rz}
 
 
-def _towers(W, kit, F):
+def _in_side_wall(db, m, F, W, Wd, Dp, L, inner=None):
+    """A second hall standing in the left side wall's line, facing across the yard; the lengths it covers left out.
+    In the outer ward's front half when there is an inner ward, clear of it; None when it can't fit."""
+    M = _set_module(m, F, 0.0, 0.0, face=(1.0e6, 0.0))
+    kb = m['box']
+    Pz = (0.0, 0.0, 0.0, M['rz'])
+    c, s_ = math.cos(F['a']), math.sin(F['a'])
+    rel = [_place(Pz, lx, ly) for lx in (kb[0], kb[2]) for ly in (kb[1], kb[3])]
+    us = [x * c + y * s_ for x, y in rel]
+    vs = [-x * s_ + y * c for x, y in rel]
+    # (the left wall's outer face: the farthest out its lengths reach on that side)
+    u_out = -Wd / 2
+    for p in W['pieces']:
+        if p.get('kind') == 'wall' and p.get('corners'):
+            for cx_, cy_ in p['corners']:
+                u_ = (cx_ - F['x']) * c + (cy_ - F['y']) * s_
+                if u_ < -Wd / 2 + L and u_ < u_out:
+                    u_out = u_
+    if not _mesh_tall(db, m):
+        # (a hall lower than the wall stands against the wall's inner face, the wall whole behind it)
+        u_out = max([(cx_ - F['x']) * c + (cy_ - F['y']) * s_ for p in W['pieces'] if p.get('kind') == 'wall' and p.get('corners')
+                     for cx_, cy_ in p['corners'] if (cx_ - F['x']) * c + (cy_ - F['y']) * s_ < -Wd / 2 + L / 2] or [u_out])
+    mr = _mesh_reach(db, m, M['rz'], -c, -s_)
+    u0 = u_out - (min(us) if mr is None else -mr)
+    half_v = (max(vs) - min(vs)) / 2.0
+    mid_v = (max(vs) + min(vs)) / 2.0
+    # (its middle along the wall: the front half, a length clear of the front corner; nearer the middle while clear of
+    # the inner ward)
+    lo, hi = -Dp / 2 + L + half_v, Dp / 2 - L - half_v
+    if lo > hi:
+        return None
+    vc = max(lo, min(hi, -Dp / 4 if inner is not None else 0.0))
+    for _ in range(40):
+        x, y = _to_world(F, u0, vc - mid_v)
+        Pw = (x, y, 0.0, M['rz'])
+        pts = [_place(Pw, lx, ly) for lx, ly in ((kb[0], kb[1]), (kb[2], kb[1]), (kb[2], kb[3]), (kb[0], kb[3]))]
+        if inner is None or _sat_depth(pts, [tuple(q) for q in inner]) <= 0:
+            break
+        vc -= L / 4
+        if vc < lo:
+            return None
+    M.update(x=x, y=y)
+    M['in_wall'] = True
+    W['pieces'] = _cut_by_module(db, W, M, pts)
+    return M
+
+
+def _towers(W, kit, F, corners=False):
     """Where the round towers stand: each corner of the wall, the lengths either side of the gate, and a length every
     TOWER_EVERY along longer sides. [{'x', 'y', 'rz', 'dirs': [(dx, dy) the ways the wall runs out of it], 'kind'}]."""
     poly = W['outline']
@@ -313,6 +758,10 @@ def _towers(W, kit, F):
         a, b, c_ = poly[k - 1], poly[k], poly[(k + 1) % n]
         din = tw._unit(a[0] - b[0], a[1] - b[1])
         dout = tw._unit(c_[0] - b[0], c_[1] - b[1])
+        # (the game's fort corners are its corner piece alone, 26 of 30; a round tower at a corner, as Pelagiad's and
+        # Windmoth's, only at a large castle's back corners)
+        if not corners or -(b[0] - F['x']) * math.sin(F['a']) + (b[1] - F['y']) * math.cos(F['a']) <= 0:
+            continue
         out.append({'x': b[0], 'y': b[1], 'rz': tw._rz_for(kit, (-din[0], -din[1])), 'dirs': [din, dout], 'kind': 'corner', 'run': k})
     gates = [p for p in W['pieces'] if p.get('kind') in ('gate', 'end')]
     for k in range(n):
@@ -322,7 +771,9 @@ def _towers(W, kit, F):
                       key=lambda p: (p['pose'].x - a[0]) * d[0] + (p['pose'].y - a[1]) * d[1])
         picks = []
         g = [q for q in gates if q.get('run') == k]
-        if g:
+        if g and g[0].get('gatehouse'):
+            pass                                 # (the gatehouse has its own towers)
+        elif g:
             G = g[0]['pose']
             ga = (G.x - a[0]) * d[0] + (G.y - a[1]) * d[1]
             # (the lengths nearest the gate on either side of it: a tower flanking the gate each side)
@@ -343,6 +794,18 @@ def _towers(W, kit, F):
             out.append({'x': q.x, 'y': q.y, 'rz': q.rz, 'dirs': [d, (-d[0], -d[1])], 'kind': 'gate' if g else 'side', 'run': k, 'on': id(p)})
     # (a wall_tower_01 in the round tower's place goes)
     W['pieces'] = [p for p in W['pieces'] if not (p.get('kind') == 'tower' and any(math.hypot(p['pose'].x - t['x'], p['pose'].y - t['y']) < TOWER_CLEAR for t in out))]
+    # (the round tower is the corner and the length it stands on: the wall's own corner piece and the length were left
+    # in it, and the buttressed lengths of the game's corner beside it stood as a second tower at every corner, the user
+    # 2026-11-03. A buttressed length beside a round tower is a plain one; it has the same ends)
+    keep = []
+    for p in W['pieces']:
+        dd = min((math.hypot(p['pose'].x - t['x'], p['pose'].y - t['y']) for t in out), default=1e9)
+        if p.get('kind') in ('corner', 'tower') and dd < TOWER_BESIDE and kit.get('straight') and 'tower' in p['id'].lower():
+            q = p['pose']
+            p = dict(p, id=kit['straight'], kind='wall', pose=tw.Pose(q.x, q.y, q.z, q.rz, kit['straight']))
+            p.pop('corners', None)
+        keep.append(p)
+    W['pieces'] = keep
     return out
 
 
@@ -412,6 +875,10 @@ def _preview(db, P):
         cs_, _b = tw._box(db, p['id'], p['pose'], memo)
         if cs_:
             out.append([p['kind'], [[round(x), round(y)] for x, y in cs_]])
+    for rid, q in (P.get('W') or {}).get('extra_preview') or ():
+        cs_, _b = tw._box(db, rid, q, memo)
+        if cs_:
+            out.append(['gate', [[round(x), round(y)] for x, y in cs_]])
     for t in P['towers']:
         r = 180
         out.append(['bigtower', [[round(t['x'] + r * math.cos(k * math.pi / 2 + math.pi / 4) * 1.41), round(t['y'] + r * math.sin(k * math.pi / 2 + math.pi / 4) * 1.41)] for k in range(4)]])
@@ -444,11 +911,11 @@ def progress():
     return dict(PROGRESS)
 
 
-def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=True, rooms='furnished'):
+def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=True, rooms='furnished', gate=None):
     """The castle built (plan() laid out), its rooms as ROOMS says. One Undo."""
     PROGRESS.update(on=True, what='Planning', frac=0.0)
     try:
-        return _make(db, outline, style, size, seed, name, people, rooms if rooms in ROOMS else 'furnished')
+        return _make(db, outline, style, size, seed, name, people, rooms if rooms in ROOMS else 'furnished', gate)
     finally:
         PROGRESS.update(on=False, what='', frac=0.0)
 
@@ -509,12 +976,12 @@ def _facing(dx, dy):
     return math.atan2(dx, dy) % (2 * math.pi)
 
 
-def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
+def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=None):
     import editing
     import create
     import doors
     editing._require_project(db)
-    P = plan(db, outline, style, size, seed, name)
+    P = plan(db, outline, style, size, seed, name, gate)
     name = P['name']
     S = cs.survey(db)
     stack = getattr(db.project, 'undo_stack', [])
@@ -547,12 +1014,24 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
         _clear_town(db, site)
     except Exception as e:
         print('castle in a town:', e)
+    # (the yard one level, the walls and keeps set on it: the ground inside rose to a hall in a mound, the user
+    # 2026-11-03 "usually the inside of the keep is pretty flat")
+    yard = None
+    if W is not None and W.get('outline') and style != 'Stronghold':
+        yard = _yard_level(db, W['outline'])
+        try:
+            _pad(db, [(W['outline'], yard)])
+        except Exception as e:
+            print('castle yard:', e)
     skip = set()
     if W is not None:
         try:
-            tw.level_ground(db, W, skip)
+            tw.level_ground(db, W, skip, tol=CASTLE_LEVEL_TOL)
         except Exception as e:
             print('castle wall ground:', e)
+        # (the wall's levels known before the keep's pad: a keep in the wall line stands at the wall's level)
+        db.sync_project()
+        W = tw.grounded(db, W)
     pads = []
     for M in P['modules']:
         kb = M['m']['box']
@@ -560,6 +1039,16 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
         corners = [_place(Pz, lx, ly) for lx, ly in ((kb[0], kb[1]), (kb[2], kb[1]), (kb[2], kb[3]), (kb[0], kb[3]))]
         zs_ = sorted(_ground(db, *_place(Pz, (kb[0] + kb[2]) * f / 2, (kb[1] + kb[3]) * g / 2)) for f in (0, 1, 2) for g in (0, 1, 2))
         M['ground'] = zs_[len(zs_) // 2] if style != 'Stronghold' else zs_[len(zs_) // 3]
+        if M.get('in_wall') and W is not None:
+            near = sorted((p for p in W['pieces'] if p.get('kind') in ('wall', 'corner')), key=lambda p: math.hypot(p['pose'].x - M['x'], p['pose'].y - M['y']))[:2]
+            if near:
+                M['ground'] = max(p['pose'].z for p in near) + KEEP_UP - _rise(M['m'])
+                # (its pad never over the wall's top nor under its foot: Umbermoth's hall (its rise -220) set its pad over
+                # the wall's top, the ground round it buried the lengths either side, a slot in the wall line, lab gaps)
+                wz = min(p['pose'].z for p in near)
+                M['ground'] = max(wz - WALL_FOOT, min(wz + WALL_TOP - PAD_SHOW, M['ground']))
+        if yard is not None:
+            M['ground'] = yard
         pads.append((corners, M['ground']))
     for t in P['towers']:
         pass                                     # (towers stand on the wall's evened line)
@@ -579,12 +1068,13 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
     wr = _Writer(db)
     if W is not None:
         db.sync_project()
-        W = tw.grounded(db, W)
         _cut_town_wall(db, W['outline'])
         tw.drop_doubled(db, W)               # (where a town's wall already stands, it is the castle's too)
         for p in W['pieces']:
             q = p['pose']
             wr.put(p['id'], (q.x, q.y, q.z, 0.0, 0.0, q.rz))
+        for rid, pos, s_ in _gatehouse_make(db, W):
+            wr.put(rid, pos, s_)
     tdoors = []                                  # [(tower index, kind, (cell, rk, pos), arrive outside)]
     if P['towers'] and W is not None:
         _say('Raising the towers', 0.3)
@@ -594,10 +1084,11 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
             wz = max(q[2] for q in near) if near else _ground(db, t['x'], t['y']) - 200
             tdoors += _tower(db, wr, t, wz, i)
     mdoors = []                                  # [(module index, door entry, (cell, rk, pos))]
+    walk_cand = {}                               # {module index: [its upper doors that open onto no walk of ours]}
     _say('Raising the keep', 0.4)
     for mi, M in enumerate(P['modules']):
         m = M['m']
-        Z = M['ground'] + m['over']
+        Z = M['ground'] + _rise(m)
         Pz = (M['x'], M['y'], Z, M['rz'])
         M['pose'] = Pz
         for pc in m['pieces']:
@@ -605,7 +1096,9 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
             wr.put(pc[0], (x, y, Z + pc[3], pc[5], pc[6], M['rz'] + pc[4]), pc[7])
         for dd in m['doors']:
             x, y = _place(Pz, dd['p'][0], dd['p'][1])
-            if not _stood_on(db, M, Pz, dd):
+            if not _stood_on(db, M, Pz, dd, W):
+                if dd.get('back') and dd.get('to') in m['network'] and not re.search(r'trap|hatch', dd['id'], re.I):
+                    walk_cand.setdefault(mi, []).append(dd)
                 continue                         # (a door out onto the game fort's walk or bridge, not here: its room
                                                  # leads out by the keep's front door instead)
             if rooms != 'none' and dd.get('to') and (dd['to'] not in m['network'] or not db.by_key.get(('CELL', dd['to']))):
@@ -614,6 +1107,8 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
             got = wr.put(dd['id'], (x, y, Z + dd['p'][2], 0.0, 0.0, M['rz'] + dd['p'][3]), dd.get('s') or 1.0)
             if got:
                 mdoors.append((mi, dd, got))
+    if W is not None:
+        mdoors += _walk_doors(db, wr, P, W, walk_cand)
     if W is not None:
         _say('Setting out the bailey', 0.45)
         try:
@@ -666,7 +1161,7 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
                     ext = next((got for dd, got in mine if dd['to'] == g and dd.get('back') == r['k']), None)
                     dd = next((dd for dd, got in mine if dd['to'] == g and dd.get('back') == r['k']), None)
                     if ext is not None:
-                        links.append(here + ('', _out_of(db, M['pose'], dd, ext)))
+                        links.append(here + ('', dd['walk_out'] if dd.get('walk_out') else _out_of(db, M['pose'], dd, ext, M)))
                     else:
                         loose.append(here + (g,))
         for dd, got in mine:
@@ -679,7 +1174,7 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
         ext = [(dd, got) for j, dd, got in mdoors if j == mi and dd['to'] == g] or [(dd, got) for j, dd, got in mdoors if j == mi]
         if ext:
             dd, got = ext[0]
-            links.append((ck, rk, '', _out_of(db, P['modules'][mi]['pose'], dd, got)))
+            links.append((ck, rk, '', _out_of(db, P['modules'][mi]['pose'], dd, got, P['modules'][mi])))
     # ---- the towers: a spiral-stair room for each, in one place
     tower_key = None
     if P['towers'] and tdoors and rooms != 'none':
@@ -696,6 +1191,11 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished'):
         if pos:
             _link(db, ck, rk, dest, pos)
     editing.commit(db, 'Linked the doors of %s' % name)
+    try:
+        import doors as doors_
+        doors_.face_arrivals(db, sorted(wr.cells))      # (every arrival at the face of the door it pairs with)
+    except Exception as e:
+        print('door arrivals:', e)
     # ---- furnished by the Workshop's own furnisher, each room by its kind
     placed = 0
     if rooms == 'furnished':
@@ -908,6 +1408,21 @@ def _bailey(db, P, W, rng):
     return out
 
 
+def _sat_depth(A, B):
+    # (how deep two convex footprints cut into each other; negative: apart by that much)
+    best = 1e9
+    for P in (A, B):
+        n = len(P)
+        for i in range(n):
+            ex, ey = P[(i + 1) % n][0] - P[i][0], P[(i + 1) % n][1] - P[i][1]
+            h = math.hypot(ex, ey) or 1.0
+            nx, ny = -ey / h, ex / h
+            pa = [x * nx + y * ny for x, y in A]
+            pb = [x * nx + y * ny for x, y in B]
+            best = min(best, min(max(pa), max(pb)) - max(min(pa), min(pb)))
+    return best
+
+
 def _in_quad(q, x, y, pad):
     """Whether (x, y) lies within pad of a convex quad."""
     inside = True
@@ -1010,10 +1525,83 @@ def _cut_town_wall(db, poly):
     return n
 
 
-AIR = 150                      # (a door's way out this far over the ground needs something of the keep's under it)
+WALK_REACH = 600.0             # (a length's end this near a keep's box: its walk may run on into the keep's face)
+WALK_DOOR_OUT = 8.0            # (a walk door this far out of the keep's face)
+WALK_DROP = 120                # (a keep door's way out this far over a wall walk at most: it opens onto the walk)
+AIR = 200                      # (a door's way out this far over the ground needs something of the keep's under it)
 
 
-def _stood_on(db, M, Pz, dd):
+def _keep_scene(db, M):
+    import seethrough
+    if 'scene' not in M:
+        Pz = M['pose']
+        sc = seethrough.Scene()
+        memo = {}
+        for pc in M['m']['pieces']:
+            ri = db.resolve_id(pc[0])
+            model = db.recs[ri][5] if ri is not None else None
+            if not model:
+                continue
+            if model not in memo:
+                memo[model] = seethrough.model_tris(db, model)
+            px, py = _place(Pz, pc[1], pc[2])
+            sc.add_model(memo[model], (px, py, Pz[2] + pc[3], pc[5], pc[6], Pz[3] + pc[4]), pc[7])
+        M['scene'] = sc
+    return M['scene']
+
+
+def _walk_doors(db, wr, P, W, cand):
+    """Where the wall walk runs into a keep: an arch and a door in the keep's face at the walk, as the round towers have
+    theirs, leading into the room the keep's own upper door led to (the game's keep doors opened onto its fort's walk on
+    other sides; the user 2026-11-03: "the wall tops have doors leading into towers and keeps"). [(module index, door
+    entry with walk_out, (cell, rk, pos))]."""
+    T = TOWER
+    out = []
+    for mi, M in enumerate(P['modules']):
+        if not M.get('in_wall') or 'pose' not in M:
+            continue
+        # (only into the room its own upper door led to, on the walk's floor: never a door that doesn't match its
+        # inside, the user 2026-11-03)
+        into = list(cand.get(mi) or [])
+        if not into:
+            continue
+        sc = _keep_scene(db, M)
+        joints = []
+        for p in W['pieces']:
+            if p.get('kind') not in ('wall', 'corner'):
+                continue
+            q = p['pose']
+            if _near_module(M, q.x, q.y, 0.0):
+                continue
+            ax, ay = q.dir((1.0, 0.0))
+            for sg in (1, -1):
+                ex, ey = q.x + sg * ax * 256, q.y + sg * ay * 256
+                if not _near_module(M, ex, ey, WALK_REACH):
+                    continue
+                # (along the walk from this length's middle until the keep's own face, at the walk's height)
+                d = (sg * ax, sg * ay)
+                az = q.z + T['over_wall'] + T['arch_dz']
+                h = sc.nearest_any((q.x, q.y, az + 100), (d[0], d[1], 0.0), 256 + 2 * WALK_REACH)
+                if h is None:
+                    continue
+                fx, fy = q.x + d[0] * h[0], q.y + d[1] * h[0]
+                if any(math.hypot(fx - j[0], fy - j[1]) < 300 for j in joints):
+                    continue
+                joints.append((fx, fy, az, d))
+        for (fx, fy, az, d), dd in zip(joints, into):
+            arz = math.atan2(-d[1], d[0])
+            wr.put(T['arch'], (fx, fy, az, 0.0, 0.0, arz))
+            # (a flat door at the keep's face, just out of it: set 13 in, as in a tower's shell, it stood in the masonry)
+            lz = T['door_in'][2]
+            dx_, dy_ = fx - d[0] * WALK_DOOR_OUT, fy - d[1] * WALK_DOOR_OUT
+            got = wr.put(T['door'], (dx_, dy_, az + lz, 0.0, 0.0, arz + math.pi / 2))
+            if got:
+                walk_out = [dx_ - d[0] * 110, dy_ - d[1] * 110, az + lz - 88, 0.0, 0.0, _facing(-d[0], -d[1])]
+                out.append((mi, dict(dd, walk_out=walk_out), got))
+    return out
+
+
+def _stood_on(db, M, Pz, dd, W=None):
     """Whether the game's way out of a keep's door lands on the ground or on the keep's own pieces here. A Legion keep's
     upper doors led out onto the fort's wall walk or a bridge, which the keep alone hasn't: copied, they opened 530-760
     up in the air (2 in each made Imperial fort, lab c01)."""
@@ -1040,16 +1628,46 @@ def _stood_on(db, M, Pz, dd):
             sc.add_model(memo[model], (px, py, Pz[2] + pc[3], pc[5], pc[6], Pz[3] + pc[4]), pc[7])
         M['scene'] = sc
     hit = M['scene'].nearest_any((x, y, z + 80), (0.0, 0.0, -1.0), 80 + AIR)
-    return hit is not None
+    if hit is not None:
+        return True
+    # (or onto the castle's own wall walk: a keep in the wall line keeps its doors out onto the walk, as the game's keeps
+    # have them, the user 2026-11-03 "the wall tops have doors leading into towers and keeps")
+    if W is not None:
+        if 'walkscene' not in W:
+            sc = seethrough.Scene()
+            memo = {}
+            for p in W['pieces']:
+                if p.get('kind') not in ('wall', 'corner', 'tower', 'gate'):
+                    continue
+                ri = db.resolve_id(p['id'])
+                model = db.recs[ri][5] if ri is not None else None
+                if not model:
+                    continue
+                if model not in memo:
+                    memo[model] = seethrough.model_tris(db, model)
+                q = p['pose']
+                sc.add_model(memo[model], (q.x, q.y, q.z, 0.0, 0.0, q.rz), 1.0)
+            W['walkscene'] = sc
+        h = W['walkscene'].nearest_any((x, y, z + 80), (0.0, 0.0, -1.0), 80 + WALK_DROP)
+        if h is not None:
+            return True
+    return False
 
 
-def _out_of(db, Pz, dd, got):
-    """Where an inside door out of a keep sets you down: where the game's did, in front of its door, carried to ours."""
+def _out_of(db, Pz, dd, got, M=None):
+    """Where an inside door out of a keep sets you down: where the game's did, in front of its door, carried to ours;
+    a step out of our door at the ground when that spot is off the pad with nothing of the keep's under it (the pad
+    is set by the door now, _rise: Moonmoth's spot came out 169 up in the air and Buckmoth's 231 under, lab c08)."""
     o = dd.get('out')
     if o:
         x, y = _place(Pz, o[0], o[1])
         z = Pz[2] + o[2]
         g = mapdata.terrain_z(db, x, y)
+        if g is not None and abs(z - g) > 48:
+            sc = (M or {}).get('scene')
+            under = sc.nearest_any((x, y, z + 80), (0.0, 0.0, -1.0), 80 + 48) if sc is not None else None
+            if under is None:
+                return lambda: _front_spot(db, got)
         if g is not None and z < g + 4:
             z = g + 8
         return [x, y, z, 0.0, 0.0, (Pz[3] + o[3]) % (2 * math.pi)]
@@ -1249,6 +1867,21 @@ def _in_front(db, cell, rk):
     return doors._in_front(m, d, db)
 
 
+def _yard_level(db, poly):
+    """The height a castle's yard is evened to: the middle of the ground inside its wall."""
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    zs = []
+    for gx in range(int(min(xs)), int(max(xs)) + 1, 256):
+        for gy in range(int(min(ys)), int(max(ys)) + 1, 256):
+            if tw._inside(poly, (gx, gy)):
+                z = mapdata.terrain_z(db, gx, gy)
+                if z is not None:
+                    zs.append(z)
+    zs.sort()
+    return zs[len(zs) // 2] if zs else 0.0
+
+
 def _pad(db, pads):
     """The ground under each keep evened to its height: full within PAD_R of its outline, fading out over PAD_BLEND,
     cut or raised PAD_CUT at most. What stands on the ground follows it."""
@@ -1401,9 +2034,11 @@ def remove(db, outline, look=False):
 # theirs (TOWER: the arch 72 under the walk's crown height, the door 13 in and 74 up); behind them one of the game's
 # spiral-stair tower rooms, its lowest door to the ground and its upper doors to the walk, so the stair joins them.
 WALL_KEEP = {'ex_imp_keep_02': ('Keep', 464.0), 'ex_imp_guardtower_02': ('Guard Tower', 303.0)}
-# (the piece's face at the walk, where its walk doors stand: guardtower_02 narrows to 230 there, the game's own door 231
-# from its middle; set at its foot's 303 they stood out in the air, lab w02)
-WALK_FACE = {'ex_imp_keep_02': 464.0, 'ex_imp_guardtower_02': 233.0}
+# (the piece's face at the walk, where its walk doors stand: guardtower_02's shell is 223-226 from its middle there
+# and the game's own door stands 231 out; set at its foot's 303 they stood out in the air, lab w02. The door is
+# TOWER['door_in'] (13) in from the arch, so the arch stands at this less 3: at 233 the door came 217 from the middle,
+# inside the shell — "towers still get empty doorways", the user's Nargorewatch, 2026-11-03)
+WALK_FACE = {'ex_imp_keep_02': 464.0, 'ex_imp_guardtower_02': 247.0}
 GROUND = {'frame': 'ex_imp_kdoorframe_01', 'door': 'ex_imp_loaddoor_03', 'in': 64.0}
 WALK_OVER = 384                # (the walk's crown height over a wall length's origin: TOWER['over_wall'])
 WALL_KEEPS = 8                 # a town's wall gets ways into this many of its keeps and towers at most
@@ -1793,7 +2428,7 @@ def _kind_of(counts, n_tiles):
     return 'hall' if n_tiles >= 4 else None
 
 
-def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1):
+def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, level=None):
     """A shell furnished by the Workshop's own furnisher, each room as the kind its source room was (counted from the
     source's things within the room's floor, shift carrying the source's spots to ours), never their spots. The
     number of things placed (0 when the place has no rooms the furnisher can read)."""
@@ -1820,11 +2455,13 @@ def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1):
                     cnt[k] += 1
                     break
         kind = _kind_of(cnt, len(tl))
+        if kinds:
+            kind = kinds(rm, kind, cnt) or kind
         plan.append({'id': rm['id'], 'purpose': kind or rm.get('purpose')})
     if not plan:
         return 0
     try:
-        out = furnish.furnish(db, key, plan, seed=seed, commit=False)
+        out = furnish.furnish(db, key, plan, seed=seed, commit=False, level=level)
     except Exception as e:
         print('castle furnish', key, e)
         return 0

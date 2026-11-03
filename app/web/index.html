@@ -59,7 +59,7 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 #jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
 #jumpme svg{flex:none;display:block}
 @container (max-width:720px){#togetherbtn .tl{display:none}}
-@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl,#redobtn .tl{display:none}}
+@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
 @container (max-width:500px){#aibtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
@@ -800,7 +800,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -1679,6 +1679,7 @@ function renderHealth(){
 function verifyHtml(v){
   const n = v.counts, sevName = {error: 'Needs fixing', warning: 'Worth a look', info: 'Good to know'};
   let h = `<div class="actions" style="margin-bottom:8px"><button class="btn sm" id="verify-go">↻ Check again</button>
+    ${v.findings.some(f => f.doorface) ? `<button class="btn sm" id="verify-doorface" title="Every door that leads somewhere puts you at the face of the door it pairs with, facing away from it">Set arrivals at their doors</button>` : ''}
     <span class="msg">${v.findings.length ? `${n.error} to fix, ${n.warning} worth a look, ${n.info} good to know` : ''}</span></div>`;
   if (!v.findings.length) return h + `<div class="card"><span class="sev-ok">✓</span> Every record in your mod passes. (Missing files, broken links and scripts are checked under My mod → Get ready to share.)</div>`;
   h += `<table class="t">` + v.findings.map(f => `<tr class="vrow"><td class="ty sev-${f.sev}" style="white-space:nowrap">${sevName[f.sev]}</td>
@@ -1693,6 +1694,7 @@ async function runVerify(){
 }
 $('#healthwrap').addEventListener('click', e => {
   if (e.target.closest('#verify-go')){ runVerify(); return; }
+  if (e.target.closest('#verify-doorface')){ api('/api/doors/face', {method: 'POST', body: '{}'}).then(r => { toast(`${r.set} door arrival${r.set === 1 ? '' : 's'} set at their doors`); runVerify(); }).catch(err => toast(err.message)); return; }
   const vg = e.target.closest('[data-vgo]'); if (vg){ showView('browse'); openRecord(+vg.dataset.vgo, true); return; }
   const vc = e.target.closest('[data-vcell]'); if (vc){ showView('world'); worldOpen(vc.dataset.vcell); return; }
   const vm = e.target.closest('[data-vmyrec]'); if (vm && typeof rcOpenOne === 'function'){ const [k, id] = vm.dataset.vmyrec.split('|'); rcOpenOne(k, id); return; }
@@ -1721,6 +1723,14 @@ function renderProjectPill(){
   const rb = $('#redobtn');
   rb.disabled = !(p && p.redo_depth);
   rb.title = p && p.redo_depth ? 'Redo: ' + p.redo_note + ' (Ctrl+Y)' : 'Nothing to redo';
+  const gb = $('#groupbtn'), G = p && p.group;
+  if (gb){
+    gb.disabled = !p; gb.classList.toggle('primary', !!G);
+    gb.innerHTML = G ? `⧉<span class="tl"> Group · ${G.changes}</span>` : '⧉<span class="tl"> Group</span>';
+    gb.title = G ? `Grouping since ${G.since}: ${G.changes} change${G.changes === 1 ? '' : 's'}. Click to close it into one Undo step`
+                 : 'Group what you do next into one Undo step (strokes and moves in a row group by themselves)';
+    if (typeof iconsIn === 'function') iconsIn(gb);
+  }
   if (!p){ el.className = 'proj none'; el.innerHTML = '＋ Start a mod'; el.title = 'Create a plugin to save your edits into'; }
   else { el.className = 'proj'; el.innerHTML = `✎ <b>${esc(p.plugin)}</b> · ${fmtN(p.changes)} change${p.changes === 1 ? '' : 's'}`; el.title = 'Open "My mod"'; }
 }
@@ -2180,7 +2190,11 @@ async function renderMyMod(){
       return out;
     };
     const shownRoots = roots.slice(0, S.logAll ? 400 : 40);
+    const G = p.group;
     h += `<h3 style="margin:26px 0 6px;color:var(--muted);font-weight:500">Recent activity</h3>
+      <div class="msg" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px" title="While it is on, every change goes into one Undo step, so the big changes before it stay within Undo's reach. Strokes of the ground brush and moves of one thing in a row group by themselves">
+        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mm-group" ${G ? 'checked' : ''}> Group changes into one step</label>
+        ${G ? `<span>since ${esc(G.since)}, ${G.changes} so far</span><input class="inp" id="mm-groupname" placeholder="Name it (optional)" value="${esc(G.name || '')}" style="max-width:200px">` : ''}</div>
       <p class="msg" style="margin:0 0 8px">A town's or castle's steps, and changes built on another (furniture in a house you built, lines in your topic), sit inside it: click ▸ to see them.
         Undoing a change takes back what's built on it too, in one step.</p>
       ${nHistory ? `<label class="msg" style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="mm-undone" ${S.showUndone ? 'checked' : ''}> Show undone changes and undo history (${nHistory}), to redo something</label>` : ''}
@@ -2205,6 +2219,8 @@ async function renderMyMod(){
   $('#mm-release').onclick = () => showView('release');
   const la = $('#mm-logall'); if (la) la.onclick = () => { S.logAll = true; renderMyMod(); };
   const su = $('#mm-undone'); if (su) su.onchange = () => { S.showUndone = su.checked; renderMyMod(); };
+  const mg = $('#mm-group'); if (mg) mg.onchange = async () => { await setGroup(mg.checked, (($('#mm-groupname') || {}).value || '').trim()); renderMyMod(); };
+  const mgn = $('#mm-groupname'); if (mgn) mgn.onchange = () => post('/api/group', {on: true, name: mgn.value.trim()}).catch(() => {});
 }
 // the picked ground rows and the bar over them, drawn in place (the list stays where it is scrolled)
 function landSelPaint(){
@@ -4832,6 +4848,14 @@ async function createGo(){
 }
 
 // ---------- undo ----------
+// the toolbar's Group and My mod's switch: changes from now on go into one Undo step (editing.group_open/close)
+async function setGroup(on, name){
+  try {
+    const r = await post('/api/group', {on, name: name || ''});
+    toast(on ? 'Grouping: what you do now becomes one Undo step. Click Group again to close it.' : r.note ? 'One Undo step: ' + r.note : 'Group closed (nothing in it).');
+    await refreshAfterEdits();
+  } catch (err){ toast(err.message, true); }
+}
 async function doUndo(to){
   const p = S.summary && S.summary.project;
   if (!p || !p.undo_depth) return;
@@ -4842,6 +4866,7 @@ async function doUndo(to){
   } catch (err){ toast(err.message, true); }
 }
 $('#undobtn').onclick = () => doUndo();
+$('#groupbtn').onclick = () => { const p = S.summary && S.summary.project; if (p) setGroup(!p.group); };
 async function doRedo(){
   const p = S.summary && S.summary.project;
   if (!p || !p.redo_depth) return;

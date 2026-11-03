@@ -4,6 +4,7 @@ Only your mod's own records and placed objects are checked (the game's own files
 nothing can be done about them here). Each finding says what is wrong and opens the record. Things
 that point to IDs that don't exist, scripts that won't compile and missing files are checked by
 release.py already; this adds what the CS verifier looks at inside each record."""
+import math
 import re
 import struct
 
@@ -247,6 +248,16 @@ def findings(db):
                 x, y = struct.unpack_from('<2f', s['DODT'])
                 if abs(x) > 8192 * 100 or abs(y) > 8192 * 100:
                     add('warning', 'CELL', ck, 'A door in %s leads outdoors to a spot far outside the world.' % where, cell=ck)
+    # doors that don't put you at the face of the door they pair with (doors.misplaced_arrivals): one row each
+    try:
+        import doors
+        for ck, rk, rid, dest, now, want in doors.misplaced_arrivals(db):
+            info = mapdata.cell_info(db, ck)
+            add('warning', 'CELL', ck, '"%s" in %s puts you %d units from the door that leads back.' % (
+                rid, (info['name'] or info['region'] or ck) if info else ck, round(math.dist(now[:3], want[:3]))), cell=ck)
+            out[-1]['doorface'] = True
+    except Exception as e:                  # (a check must never stop the list)
+        print('door arrivals check:', e)
     # weapons and armour: a new piece nobody hands out, a list level far from the game's for its worth, half a
     # pair in a set (gearcheck.py)
     try:

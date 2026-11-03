@@ -826,13 +826,36 @@ def _lone_doors(db, m, memo, tri=None):
         # (nothing along its wall, a little out of it or in; and nothing straight in front of it or behind it: a door in
         # a curved or set-back wall has its building there. 14 of 923 game buildings, 5 doors of the user's town. A wall
         # met inside the door's own width cuts through it: the end of the house it stood off, at the corner)
-        hit = lambda o_, d_, L_: (sc.nearest_any(o_, d_, L_) or (0.0,))[0] >= DOOR_EDGE * hl
-        beside = any(hit((ox + n[0] * off, oy + n[1] * off, z_), (t[0] * d, t[1] * d, 0.0), hl + DOOR_SIDE)
-                     for z_ in zs_ for d in (1, -1) for off in DOOR_OFFS)
+        # (a wall along the door's plane is met at different distances a little out of and into the plane, or not at
+        # all from inside it; a wall END across the door, the house's corner the user's door stood off, is met at one
+        # distance from all three, just past the door's edge: that is not the door's wall, Tessellated Shores, 2026-11-02)
+        # (a recessed door, a Hlaalu one, meets a wall end on BOTH sides: that is its own entrance. Only a wall end on
+        # one side with nothing at all on the other is the corner case)
+        def beside_at(z_, d):
+            hs = [(sc.nearest_any((ox + n[0] * off, oy + n[1] * off, z_), (t[0] * d, t[1] * d, 0.0), hl + DOOR_SIDE) or (None,))[0] for off in DOOR_OFFS]
+            got = [h for h in hs if h is not None and h >= DOOR_EDGE * hl]
+            if not got:
+                return 'none'
+            if len(got) == len(hs) and max(got) - min(got) < DOOR_END_FLAT and min(got) < hl + DOOR_END:
+                return 'end'
+            return 'wall'
+        beside = False
+        for z_ in zs_:
+            a_, b_ = beside_at(z_, 1), beside_at(z_, -1)
+            if 'wall' in (a_, b_) or (a_ == 'end' and b_ == 'end'):
+                beside = True
+                break
+        # (rays from the door's two edges instead of its middle were tried and taken back: a door in a curved wall, a
+        # Velothi temple's or a Telvanni tunnel's, met it at two distances and was called lone, 90 modules for 14)
         if not beside and not any(sc.nearest_any((ox, oy, z_), (n[0] * d, n[1] * d, 0.0), DOOR_BEHIND) is not None
                                   for z_ in zs_ for d in (1, -1)):
             out.append(p)
     return out
+
+
+DOOR_END = 60                  # (a face met across the door's plane within this of its edge, at one distance from every offset, is a wall end)
+DOOR_END_FLAT = 6
+DOOR_BEHIND_FLAT = 80          # (and must meet a wall at distances this alike: one flat wall, not a roof's inside)
 
 
 _LONE = {'sig': None, 'd': {}, 'dirty': False}      # (lone doors found, by the module's pieces: on disk, cache/lonedoors_*)
@@ -857,7 +880,7 @@ def _lone_memo(db):
 def _lone_path(sig):
     folder = os.path.join(os.environ.get('WORKSHOP_HOME') or os.path.dirname(os.path.abspath(__file__)), 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'lonedoors_%s_v1.json' % sig)
+    return os.path.join(folder, 'lonedoors_%s_v5.json' % sig)
 
 
 def _lone_save():
@@ -988,6 +1011,9 @@ def fit(db, plan, seed=1):
     import townplan
     placed = [[tuple(p_) for p_ in r] for r in plan.get('obstacles') or ()]
     roads = {tuple(r) for r in plan.get('roads') or ()}
+    # (and the streets' own middle lines, every 64: a building whose corners missed the road squares still stood
+    # across a street, the in-game walk 2026-11-03)
+    street_pts = _street_points(plan)
     keep = []
     keeps = []
     ways = []                            # (the ground straight out of each fitted building's door, kept clear)
@@ -1038,6 +1064,9 @@ def fit(db, plan, seed=1):
                 if (nx_ or ny_) and any((int(x_ // townplan.PATCH), int(y_ // townplan.PATCH)) in roads for x_, y_ in rect[2:4] + [
                         ((rect[0][0] + rect[2][0]) / 2, (rect[0][1] + rect[2][1]) / 2)]):
                     continue                             # (nudged onto a street: its far corners and middle stay off them)
+                if _over_street(rect, street_pts):
+                    continue                             # (never over a street's middle line: five buildings stood on
+                                                         # street points, the in-game walk 2026-11-03)
                 b = cand
                 break
             if b is not None:
@@ -1057,7 +1086,9 @@ def fit(db, plan, seed=1):
         q['rect'] = [[round(v, 1) for v in _world(dx, dy, c, sn, fx, fy)] for fx, fy in ((fp[0], fp[1]), (fp[2], fp[1]), (fp[2], fp[3]), (fp[0], fp[3]))]
         q['way'] = [[round(v, 1) for v in p_] for p_ in way]
     plan['plots'] = [q for q in plan['plots'] if q in keep]
+    _off_streets(plan, street_pts, 'fitted')
     _close_rows(plan, rng)
+    _off_streets(plan, street_pts, 'closed up')
     _lone_forts(plan, by_uid(C))
     _shut_doors(plan)
     for q in plan['plots']:
@@ -1126,6 +1157,37 @@ DOOR_CLEAR = 320               # the ground straight out of a door kept free of 
 DOOR_WAY = 224                 # and this wide
 
 
+def _off_streets(plan, street_pts, when):
+    """Buildings standing over a street's middle line left out (none should: a last guard, said when it fires)."""
+    import townplan
+    gone = [q for q in plan['plots'] if q.get('b') and q.get('rect') and _over_street(q['rect'], street_pts)]
+    if gone:
+        print('town: %d building(s) over a street after %s: %s' % (len(gone), when, [(q['b']['key'], round(q['x']), round(q['y'])) for q in gone]))
+        plan['plots'] = [q for q in plan['plots'] if q not in gone]
+
+
+STREET_KEEP = 96               # a building's faces stay this far off a street's middle line (half a lane, less its own setback)
+
+
+def _over_street(rect, street_pts):
+    """Whether a street's middle line comes within STREET_KEEP of this rect (a ring lane ran along a house's back wall,
+    half of it under the house)."""
+    import townplan
+    grown = _shrink_rect(rect, -STREET_KEEP)
+    return any(townplan._inside(grown, x, y) for x, y in street_pts)
+
+
+def _street_points(plan):
+    """The streets' middle lines, a point every 64: nothing is fitted or slid over them."""
+    out = []
+    for st in plan.get('streets') or ():
+        P = st.get('pts') or []
+        for a, b in zip(P, P[1:]):
+            n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) // 64))
+            out += [(a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n) for i in range(n + 1)]
+    return out
+
+
 def _doorway(dx, dy, c, sn):
     """The way out of a door at (dx, dy) in its plot's frame (c, sn): the strip of ground in front of it, as world points.
     (One in seven doors of the walled towns opened straight onto another building's wall within 256, lab jdoor0. The
@@ -1168,9 +1230,14 @@ def _close_rows(plan, rng):
     if j <= 0:
         return
     built = [q for q in plan['plots'] if q.get('b') and q.get('rect')]
+    street_pts = _street_points(plan)
 
     def clear(rect, me, way=None):
         sh = _shrink_rect(rect, 8)
+        # (never slid over a street's middle line: a guard tower and a farmhouse stood on street points, the in-game
+        # walk 2026-11-03)
+        if _over_street(sh, street_pts):
+            return False
         return not any(o is not me and (townplan._overlap(sh, _shrink_rect(o['rect'], 8))
                                          or (o.get('way') and townplan._overlap(sh, o['way']))
                                          or (way and townplan._overlap(way, _shrink_rect(o['rect'], 8)))) for o in built)
@@ -1332,6 +1399,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         _terrace(db, plan, W, new_refs)
     except Exception as e:
         print('terraces:', e)
+    try:
+        _smooth_hull(db, plan, W, new_refs)
+    except Exception as e:
+        print('smoothing:', e)
     plan.pop('_street_ground', None)
     _say('Clearing the ground', 0.74)
     try:
@@ -1459,6 +1530,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         plan['paint_extra'] = sorted([list(r) for r in gate])
     dressed = 0
     dress_refs = set()
+    stall_refs = {}
+    life_refs = []
     if dress and made:
         _say('Dressing yards and streets', 0.89)
         import towndress
@@ -1483,6 +1556,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             cells.add(key)
             new_refs.add(rk)
             dress_refs.add(rk)
+            if t.get('stall') is not None:
+                stall_refs.setdefault(t['stall'], []).append((key, rk))
+            if t.get('role') in ('stall', 'storage', 'sign', 'awning'):
+                life_refs.append((key, rk, t['role'], t.get('stall')))
     fitted = painted = 0
     inside = {}
     import towninside
@@ -1492,6 +1569,13 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         db.sync_project()
         # (the dressing follows the ground fitted round the buildings: left, it stood sunk in the raised ground)
         fitted = _fit_ground(db, doors, new_refs - dress_refs, [(tuple(q['door_ref']), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect')])
+        if life_refs:
+            # (the stalls and storage set down again on the fitted ground: townlife.settle)
+            try:
+                import townlife
+                townlife.settle(db, life_refs)
+            except Exception as e:
+                print('town life settle:', e)
         _say('Paving the roads', 0.96)
         painted = _paint_roads(db, plan)
         try:
@@ -1505,11 +1589,21 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 walks = _lay_paths(db, plan, cells, outline)
             except Exception as e:
                 print('paths:', e)
+        # (its people outdoors: sellers at the stalls, guards, townsfolk, as many a building as the culture's game towns:
+        # townlife.py. The user, 2026-11-03: "Guards and npcs are also noticeably lacking")
+        life = {}
+        if people and dress and made:
+            _say('Bringing the streets to life', 0.975)
+            try:
+                import townlife
+                life = townlife.people(db, plan, culture, seed, cells, new_refs, W, stall_refs)
+            except Exception as e:
+                print('town life:', e)
         _say('Saving', 0.98)
         editing.commit(db, 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s%s' % (
             culture, made, pieces, len(cells), ((', a wall of %d pieces' % wall) if wall else '') + ((', %d things set out' % dressed) if dressed else ''),
             (', the ground fitted to %d' % fitted) if fitted else '', (', %d road patches' % painted) if painted else '',
-            (', %d path points' % walks) if walks else ''))
+            ((', %d path points' % walks) if walks else '') + ((', %d people outdoors' % life['people']) if life.get('people') else '')))
         if interiors and made:
             # (each interior copied and linked, its people placed: steps of their own, folded with the town into one.
             # interiors 'shells': the game building's architecture and doors only, for you to furnish; else furnished by
@@ -1537,23 +1631,34 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                     inside['wall_rooms'] = len(wroom) + len(keeps)
                 except Exception as e:
                     print('wall rooms:', e)
+            try:
+                import doors as doors_
+                doors_.face_arrivals(db, sorted(cells))      # (keeps, towers and every interior: arrivals at their doors' faces)
+            except Exception as e:
+                print('door arrivals:', e)
+            if PATHS and wall_refs and inside.get('wall_rooms'):
+                # (the paths again, now with the keep and tower doors: they were laid before those doors were set)
+                try:
+                    _lay_paths(db, plan, cells, outline, _wall_ways(db, plan, cells))
+                except Exception as e:
+                    print('paths to the wall doors:', e)
             if len(stack) > n0:
                 editing.fold(db, len(stack) - n0 + 1, 'Built %s, a %s town: %d buildings, %d interiors%s%s' % (
                     name, culture, made, inside['interiors'], (', %d people' % inside['people']) if inside['people'] else '',
                     (', a wall of %d pieces' % wall) if wall else ''))
     return {'buildings': made, 'pieces': pieces, 'cells': sorted(cells), 'fitted': fitted, 'road': painted, 'wall': wall,
-            'dressed': dressed, 'interiors': inside.get('interiors', 0), 'wall_rooms': inside.get('wall_rooms', 0), 'people': inside.get('people', 0), 'name': name}
+            'dressed': dressed, 'interiors': inside.get('interiors', 0), 'wall_rooms': inside.get('wall_rooms', 0), 'people': inside.get('people', 0) + (life.get('people', 0) if pieces else 0), 'outdoors': life if pieces else {}, 'name': name}
 
 
 PATHS = True                   # (the town's walking paths outdoors: townpaths)
 
 
-def _lay_paths(db, plan, cells, outline):
-    """The town's walking paths into its cells' path grids (townpaths), out of every built plot's front door. No Undo
-    step. The points laid."""
+def _lay_paths(db, plan, cells, outline, extra=()):
+    """The town's walking paths into its cells' path grids (townpaths), out of every built plot's front door (and
+    extra: more (door x, y, out x, out y) ways, the wall's keep and tower doors). No Undo step. The points laid."""
     import townpaths
     db.sync_project()
-    ways = []
+    ways = list(extra)
     for q in plan['plots']:
         if not q.get('b') or not q.get('door_ref') or not q.get('door'):
             continue
@@ -1564,6 +1669,24 @@ def _lay_paths(db, plan, cells, outline):
     keys = sorted(set(cells) | {'#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0)) for x, y in outline})
     P, L, _D = townpaths.lay(db, plan, keys, ways)
     return sum(townpaths.write(db, P, L, [tuple(v) for v in outline]).values())
+
+
+def _wall_ways(db, plan, cells):
+    """The ways out of the doors the wall's keeps and towers got after the paths were laid (castle.wall_keeps,
+    towninside.wall_rooms): (door x, y, out x, out y) each, the way out being the arrival the room's door back sets."""
+    import doors as doors_
+    own = {tuple(q['door_ref']) for q in plan['plots'] if q.get('door_ref')}
+    out = []
+    for ck in cells:
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if r['type'] != 'DOOR' or not r.get('new') or not (r.get('to') or {}).get('cell') or (ck, r['k']) in own:
+                continue
+            pr = doors_.partner(db, ck, r)
+            if pr is None or not pr[1].get('to'):
+                continue
+            to = pr[1]['to']
+            out.append((r['p'][0], r['p'][1], to['x'] - r['p'][0], to['y'] - r['p'][1]))
+    return out
 
 
 REMOVE_PAD = 1600              # (a town's wall and dressing stand this far outside its outline at most)
@@ -1598,12 +1721,20 @@ def remove(db, outline, look=False):
                     fronts[to['key']] = min(fronts.get(to['key'], 1 << 30), idx(r['k']))
     # (its interiors: the places its doors lead into, named "<town>, ...")
     pre = Counter(k.split(', ', 1)[0] for k in fronts if ', ' in k).most_common(1)
-    if not pre:
-        raise EditError('No town built here: none of the doors inside it leads into an interior a town made.')
-    town = pre[0][0]
-    inside = [k for k in p.cells if k.startswith(town + ', ')]
-    hi = max([idx(rk) for k in inside for rk in (p.cells[k].get('refs') or {})] + [max(fronts.values())])
-    lo = min(v for k, v in fronts.items() if k.startswith(town + ', ')) - REMOVE_BEFORE
+    if pre:
+        town = pre[0][0]
+        inside = [k for k in p.cells if k.startswith(town + ', ')]
+        hi = max([idx(rk) for k in inside for rk in (p.cells[k].get('refs') or {})] + [max(fronts.values())])
+        lo = min(v for k, v in fronts.items() if k.startswith(town + ', ')) - REMOVE_BEFORE
+    else:
+        # (a town made with Inside: None has no interiors to find it by: its own building pieces (town_parts) and the
+        # run of things made round them, the user 2026-11-03, "I just wanted to see the town plan from the outside")
+        parts = [idx(r['k']) for _ck, r in made if r['k'] in p.town_parts]
+        if not parts:
+            raise EditError('No town built here: none of the doors inside it leads into an interior a town made.')
+        town = 'Town'
+        inside = []
+        lo, hi = min(parts) - REMOVE_BEFORE, max(parts)
     out = [(ck, r['k']) for ck, r in made if lo <= idx(r['k']) <= hi]
     # (an interior a door left standing still leads into stays: another town of the same name, or one you linked)
     gone = {rk for _ck, rk in out}
@@ -1847,6 +1978,116 @@ def _terrace(db, plan, W, skip=()):
     if new_h:
         db.sync_project()
     return len(new_h)
+
+
+SMOOTH_R = 2                   # the ground inside a town is evened over this many land vertices either way (256)
+SMOOTH_PASSES = 2
+SMOOTH_BLEND = 384             # (and fades back into the land this far outside the town)
+
+
+def _smooth_hull(db, plan, W, skip=()):
+    """The ground between a town's houses evened out: every land vertex inside the town (the wall's outline, else
+    the hull of its plots and streets) drawn to the mean of the ground round it, the levelled streets and the plots'
+    terraces left as they are so the land flows between them; fading back into the land outside. (The streets and
+    plots were level but the ground between kept the raised land's every bump: "the terrain is still rather lumpy
+    ... the end result still looks messy", the user's Nargorewatch, 2026-11-03.) What stands there follows the
+    ground. Cells changed."""
+    import landscape
+    import townplan
+    G, N = landscape.CELL, landscape.N
+    step = G / (N - 1.0)
+    hull = list((W or {}).get('outline') or ())
+    if len(hull) < 3:
+        pts = [tuple(p_) for q in plan['plots'] if q.get('b') and q.get('rect') for p_ in q['rect']]
+        pts += [tuple(p_) for st in plan.get('streets') or () for p_ in st.get('pts') or ()]
+        hull = townplan._hull(pts) if len(pts) >= 3 else []
+    if len(hull) < 3:
+        return 0
+    keep = set(plan.get('_street_ground') or ())
+    rects = [[tuple(p_) for p_ in q['rect']] for q in plan['plots'] if q.get('b') and q.get('rect')]
+
+    def edge_d(px, py):
+        best = 1e18
+        for i in range(len(hull)):
+            (ax, ay), (bx, by) = hull[i], hull[(i + 1) % len(hull)]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t = 0.0 if not L2 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+            best = min(best, math.hypot(px - (ax + dx * t), py - (ay + dy * t)))
+        return best
+    xs = [p_[0] for p_ in hull]
+    ys = [p_[1] for p_ in hull]
+    cells = [(gx, gy) for gx in range(int(math.floor((min(xs) - SMOOTH_BLEND) / G)), int(math.floor((max(xs) + SMOOTH_BLEND) / G)) + 1)
+             for gy in range(int(math.floor((min(ys) - SMOOTH_BLEND) / G)), int(math.floor((max(ys) + SMOOTH_BLEND) / G)) + 1)]
+    H = {}
+    for gx, gy in cells:
+        L = mapdata.land(db, gx, gy)
+        if L and L.get('h'):
+            H[(gx, gy)] = list(L['h'])
+    if not H:
+        return 0
+    before = {k: list(v) for k, v in H.items()}
+
+    def at(gx, gy, i, j):
+        # (the vertex i, j of cell gx, gy, carried into the neighbour when off the edge; None off the known land)
+        while i < 0:
+            gx -= 1; i += N - 1
+        while i > N - 1:
+            gx += 1; i -= N - 1
+        while j < 0:
+            gy -= 1; j += N - 1
+        while j > N - 1:
+            gy += 1; j -= N - 1
+        h = H.get((gx, gy))
+        return None if h is None else h[j * N + i]
+    R = SMOOTH_R
+    wts = {(di, dj): 1.0 / (1.0 + math.hypot(di, dj)) for di in range(-R, R + 1) for dj in range(-R, R + 1)}
+    changed = set()
+    for _pass in range(SMOOTH_PASSES):
+        new = {}
+        for (gx, gy), h in H.items():
+            out = list(h)
+            touched = False
+            for j in range(N):
+                for i in range(N):
+                    x, y = gx * G + i * step, gy * G + j * step
+                    z0 = h[j * N + i]
+                    if z0 < 0 or (x, y) in keep:
+                        continue
+                    inside = townplan._inside(hull, x, y)
+                    if not inside:
+                        d = edge_d(x, y)
+                        if d >= SMOOTH_BLEND:
+                            continue
+                        share = 0.5 + 0.5 * math.cos(math.pi * d / SMOOTH_BLEND)
+                    else:
+                        share = 1.0
+                    if any(townplan._inside(r, x, y) for r in rects):
+                        continue              # (a plot's own terrace)
+                    tot = wsum = 0.0
+                    for (di, dj), w in wts.items():
+                        v = at(gx, gy, i + di, j + dj)
+                        if v is None or v < 0:
+                            continue
+                        tot += w * v
+                        wsum += w
+                    if not wsum:
+                        continue
+                    nz = z0 + share * (tot / wsum - z0)
+                    if abs(nz - z0) >= 1:
+                        out[j * N + i] = nz
+                        touched = True
+            if touched:
+                new[(gx, gy)] = out
+                changed.add((gx, gy))
+        for k, v in new.items():
+            H[k] = v
+    for gx, gy in sorted(changed):
+        after = landscape.write(db, gx, gy, H[(gx, gy)], None, None, around=landscape.around_of(db, gx, gy, {k: H[k] for k in changed}))
+        landscape._follow_ground(db, gx, gy, before[(gx, gy)], after, skip)
+    if changed:
+        db.sync_project()
+    return len(changed)
 
 
 STREET_TOL = 256               # a street's ground moves at most this from the land's

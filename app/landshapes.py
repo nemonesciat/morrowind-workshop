@@ -43,10 +43,10 @@ KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'sprin
 NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle')
 DEFAULTS = {
     'area': {},
-    'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'noinside': False, 'nopeople': False,
-             'streets': '', 'counts': {}, 'skip': []},
+    'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'inside': '', 'noinside': False, 'nopeople': False,
+             'streets': '', 'density': 1.0, 'counts': {}, 'skip': []},
     'street': {}, 'zone': {'zone': 'residential'}, 'wall': {},
-    'castle': {'style': 'Imperial', 'size': 'medium', 'seed': 1, 'name': '', 'nopeople': False, 'rooms': 'furnished'},
+    'castle': {'style': 'Imperial', 'size': 'medium', 'seed': 1, 'name': '', 'nopeople': False, 'rooms': 'furnished', 'gate': None},
     'coast': {'height': 600, 'width': 6144, 'wander': 1.0, 'sea': 0},
     'plateau': {'height': 2000, 'width': 768, 'terraces': 0},
     # (width 3072, was 8192: that wide, the flanks covered the whole island and a ridge read as a swelling)
@@ -54,7 +54,7 @@ DEFAULTS = {
     'river': {'depth': 256, 'width': 256, 'banks': 2048, 'canyon': 0},
     'valley': {'depth': 900, 'width': 4096, 'round': 0.6},
     'lake': {'depth': 400, 'width': 1536},
-    'stamp': {'shape': 'volcano', 'radius': 8192, 'height': 4000, 'turn': 0, 'src': None},
+    'stamp': {'shape': 'volcano', 'radius': 8192, 'height': 4000, 'turn': 0, 'stretch': 1.0, 'src': None},
     'spring': {'depth': 256, 'width': 256, 'banks': 2048, 'canyon': 0, 'wander': 1.0, 'rise': 800},
 }
 SHAPES = ('cone', 'volcano', 'caldera', 'crater', 'dome', 'mesa', 'game')
@@ -444,22 +444,31 @@ def _stamp(F, L, seed, db):
     P = L['p']
     (cx, cy), R, H, turn = L['pts'][0], max(512.0, float(P['radius'])), float(P['height']), math.radians(float(P['turn'] or 0))
     shape = P['shape'] if P['shape'] in SHAPES else 'cone'
+    # (stretched: an oval, so many times longer along one way, which Turn points; 1 is round. Turn is the game's
+    # land's own turn too)
+    stretch = max(1.0, min(4.0, float(P.get('stretch') or 1.0)))
+    c, s_ = math.cos(turn), math.sin(turn)
+    RX = R * stretch
+
+    def local(dx, dy):
+        """The point in the stamp's own frame: turned back and the long way shrunk to the radius; r = 0..1."""
+        lx, ly = dx * c + dy * s_, -dx * s_ + dy * c
+        return lx / stretch, ly
     if shape == 'game':
         if not P.get('src'):
             raise EditError('Pick the game\'s cells this stamp copies.')
         S, sw, sh = _game_stamp(db, P['src'])
         top = max(abs(v) for v in S) or 1.0
         k = H / top if H else 1.0
-        c, s_ = math.cos(turn), math.sin(turn)
         half = max(sw, sh) / 2.0
-        for i in F.near(cx - R, cy - R, cx + R, cy + R):
+        for i in F.near(cx - RX, cy - RX, cx + RX, cy + RX):
             x, y = F.world(i)
-            dx, dy = x - cx, y - cy
-            r = math.hypot(dx, dy) / R
+            lx0, ly0 = local(x - cx, y - cy)
+            r = math.hypot(lx0, ly0) / R
             if r >= 1:
                 continue
             # (into the stamp's own points: turned back, scaled so its wider side spans the radius)
-            lx, ly = (dx * c + dy * s_) / R * half + (sw - 1) / 2.0, (-dx * s_ + dy * c) / R * half + (sh - 1) / 2.0
+            lx, ly = lx0 / R * half + (sw - 1) / 2.0, ly0 / R * half + (sh - 1) / 2.0
             if not (0 <= lx <= sw - 1 and 0 <= ly <= sh - 1):
                 continue
             ix, iy = min(sw - 2, int(lx)), min(sh - 2, int(ly))
@@ -468,11 +477,10 @@ def _stamp(F, L, seed, db):
                  + (S[(iy + 1) * sw + ix] * (1 - fx) + S[(iy + 1) * sw + ix + 1] * fx) * fy)
             F.z[i] += v * k * (1 - _smooth((r - 0.8) / 0.2))
         return
-    for i in F.near(cx - R, cy - R, cx + R, cy + R):
+    for i in F.near(cx - RX, cy - RX, cx + RX, cy + RX):
         x, y = F.world(i)
-        dx, dy = x - cx, y - cy
-        # (an oval when turned would need a stretch; the parametric ones are round)
-        F.z[i] += H * _stamp_shape(shape, math.hypot(dx, dy) / R)
+        lx, ly = local(x - cx, y - cy)
+        F.z[i] += H * _stamp_shape(shape, math.hypot(lx, ly) / R)
 
 
 # ---------- the whole plan ----------

@@ -93,6 +93,127 @@ _req = threading.local()
 
 def request_started():
     _req.t = time.time()
+    _run.key = None
+
+
+# Many changes as one Undo step, so the big ones stay within reach (Undo keeps about 100 steps, and an evening of
+# ground strokes pushed the town made before them out: the user, 2026-11-02):
+# - a group the user opens and closes (the toolbar's Group, My mod's switch): every change meanwhile goes into it;
+#   the last one stays a step of its own, so Undo still takes back just that, and the rest are folded into one;
+# - strokes of the ground brush, or moves of one thing, in a row (no group open): folded as they come, until
+#   something else is done or RUN_GAP seconds go by.
+# Not recording changes at all was the first idea: Undo goes back to the mod as it was, so a change it didn't know
+# of would have been taken away with the step before it.
+RUN_GAP = 180
+_run = threading.local()
+
+
+def run_key(key):
+    """The kind of change this request makes, for folding a run of them ('ground', 'move|cell|ref')."""
+    _run.key = key
+
+
+def group_open(db, name=''):
+    p = db.project
+    _require_project(db)
+    if getattr(p, '_grp', None) and p._grp.get('manual'):
+        if name:
+            p._grp['name'] = name.strip()[:80]          # (named while open, on My mod)
+        return group_state(db)
+    p._grp = {'manual': True, 'start': len(getattr(p, 'undo_stack', [])), 'since': time.time(), 'total': 0,
+              'name': (name or '').strip()[:80]}
+    return group_state(db)
+
+
+def group_close(db, name=None):
+    """Close the open group: what it holds becomes one step named after it."""
+    p = db.project
+    g = getattr(p, '_grp', None)
+    if not (g and g.get('manual')):
+        return None
+    p._grp = None
+    stack = getattr(p, 'undo_stack', [])
+    n = len(stack) - g['start']
+    if n <= 0:
+        return None
+    if name is not None:
+        g['name'] = (name or '').strip()[:80]
+    return _merge(db, len(stack) - n, len(stack), _group_label(g))
+
+
+def group_state(db):
+    p = db.project
+    g = getattr(p, '_grp', None) if p else None
+    if not (g and g.get('manual')):
+        return None
+    return {'on': True, 'name': g['name'], 'since': time.strftime('%H:%M', time.localtime(g['since'])), 'changes': g['total']}
+
+
+def _group_label(g):
+    t0 = time.strftime('%H:%M', time.localtime(g['since']))
+    head = g['name'] or 'Group'
+    return '%s: %d change%s, %s–%s' % (head, g['total'], '' if g['total'] == 1 else 's', t0, time.strftime('%H:%M'))
+
+
+def _merge(db, i, j, note):
+    """Undo steps i to j (stack positions) become one, named note; its log entry stands where the first one stood."""
+    p = db.project
+    stack = p.undo_stack
+    items = stack[i:j]
+    if not items:
+        return None
+    before = items[0][0]
+    after = stack[j][0] if j < len(stack) else p.last_state
+    ids = {it[2] for it in items if len(it) > 2 and it[2]}
+    pos = next((k for k, e in enumerate(p.log) if e.get('id') in ids), None)
+    op = next((e.get('op') for e in p.log if e.get('id') in ids and e.get('op')), None)
+    p.log[:] = [e for e in p.log if e.get('id') not in ids]
+    entry = p.note(note, state_diff(before, after))
+    if op:
+        entry['op'] = op
+    if pos is not None:
+        p.log.remove(entry)
+        p.log.insert(pos, entry)
+    stack[i:j] = [(before, note, entry['id'])]
+    _write_soon(db)
+    _notify(db, entry)
+    return entry
+
+
+def _run_ends(p, undoing=False):
+    g = getattr(p, '_grp', None)
+    if g and not g.get('manual'):
+        p._grp = None
+    elif g and undoing:
+        stack = getattr(p, 'undo_stack', None) or []
+        if len(stack) > g['start']:
+            g['total'] = max(0, g['total'] - 1)        # (a step of the group taken back)
+        g['start'] = min(g['start'], max(0, len(stack) - 1))
+    elif g:
+        g['total'] += 1
+
+
+def _grouped(db, entry, note, trimmed):
+    """After a commit: into the open group, or onto the run of strokes or moves it continues."""
+    p = db.project
+    stack = p.undo_stack
+    key, _run.key = getattr(_run, 'key', None), None
+    g = getattr(p, '_grp', None)
+    if g and g.get('manual'):
+        g['start'] = max(0, g['start'] - trimmed)
+        g['total'] += 1
+        n = len(stack) - g['start']
+        if n >= 3:
+            _merge(db, g['start'], len(stack) - 1, _group_label(g))     # (all but the last one)
+        return
+    now = time.time()
+    if key and g and g.get('key') == key and now - g['t'] < RUN_GAP and g['depth'] == len(stack) - 1:
+        g['total'] += 1
+        g['t'] = now
+        _merge(db, len(stack) - 2, len(stack), '%s (%d in a row)' % (g['note'], g['total']))
+        g['depth'] = len(stack)
+        return
+    p._grp = {'key': key, 't': now, 'depth': len(stack), 'total': 1, 'note': note or 'change'} if key and note else None
 
 
 def breathe():
@@ -139,8 +260,10 @@ def commit(db, note=None, reverts=None):
             entry['reverts'] = reverts
         if _cur_op():
             entry['op'] = _cur_op()
+    trimmed = 0
     if before is not None:
         stack = p.__dict__.setdefault('undo_stack', [])
+        was = len(stack)
         stack.append((before, note or 'change', entry['id'] if entry else None))
         del stack[:-100]
         p.redo_stack = []                   # (a new change after an Undo: what was undone can't come back)
@@ -150,6 +273,7 @@ def commit(db, note=None, reverts=None):
         total = sum(_step_size(s[0]) for s in stack)
         while len(stack) > 5 and total > 300_000_000:
             total -= _step_size(stack.pop(0)[0])
+        trimmed = was + 1 - len(stack)
     p.last_state = after
     db.sync_project(texts=after.c)
     _write_soon(db)
@@ -160,6 +284,8 @@ def commit(db, note=None, reverts=None):
             together.on_commit(db, state_text(before), state_text(after), note)       # (building together: to everyone else)
     except Exception as e:                  # sharing must never break editing
         print('building together:', e)
+    if before is not None:
+        _grouped(db, entry, note, trimmed)
     breathe()
     return entry
 
@@ -367,6 +493,7 @@ def undo(db, to_depth=None):
     stack = getattr(p, 'undo_stack', [])
     if not stack:
         raise EditError('Nothing to undo.')
+    _run_ends(p, undoing=True)
     target = len(stack) - 1 if to_depth is None else max(0, int(to_depth))
     undone, ids, redo = [], [], []
     before = p.last_state
@@ -418,6 +545,7 @@ def redo(db):
     redo_stack = getattr(p, 'redo_stack', [])
     if not redo_stack:
         raise EditError('Nothing to redo.')
+    _run_ends(p)
     state, note, orig, undid = redo_stack.pop()
     before = p.last_state
     stack = p.__dict__.setdefault('undo_stack', [])

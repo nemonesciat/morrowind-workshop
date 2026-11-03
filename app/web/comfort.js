@@ -249,6 +249,7 @@ function cfMenuAt(e, hit, at, locked){
     items.push({label: '⧉ Copy', act: () => groupDo('copy')}, {label: 'Duplicate', act: () => groupDo('dup')},
       {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⟲ Turn 90° the other way', act: () => groupDo('turnback')},
       {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⤡ Tilt them…', act: () => cfRun('tilt')},
+      ...(typeof v3AlignItems === 'function' && V3.on ? [{label: '⇹ Align them…', act: () => { const r = W.sel && findRef(W.sel.cell, W.sel.k); pnlMenu(pt, v3AlignItems(W.multi.size, r ? r.id : 'the last picked', v3Align)); }}] : []),
       {label: '🫳 Settle them', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0]}, `${W.multi.size} objects`)},
       {label: '🫳 Settle them, tipping over what can\'t stand', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0], tip: true}, `${W.multi.size} objects`)},
       {label: '⇄ Replace them with…', act: () => cfRun('replace')},

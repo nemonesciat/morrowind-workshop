@@ -891,6 +891,13 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
         if q.get('door') and q.get('b'):
             space.take(_door_clear(q['door'][0], q['door'][1], q['face']))
             space.kind[id(space.polys[-1])] = 'door way'
+    # (and the paved streets themselves: a street lamp stood in the middle of the road, the user's Tessellated Shores,
+    # 2026-11-02. A street group was laid at the edge of the street's 512 squares, and its things spread onto the
+    # pavement)
+    streets = _street_polys(plan, STREET_BLOCK_SHARE)
+    for p_ in streets:
+        space.take(p_)
+        space.kind[id(space.polys[-1])] = 'street'
     memo = {}
     out = []
     smith_share = L.get('smith', {}).get(cult, 0.2)
@@ -974,6 +981,7 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
                 cx = p[0] * 512 + 256 + i * 330 + rng.uniform(-120, 120) * (j != 0)
                 cy = p[1] * 512 + 256 + j * 330 + rng.uniform(-120, 120) * (i != 0)
                 ang = math.atan2(i, j)               # (-y toward the road: local (0,-1) -> world (-i, -j))
+                cx, cy, ang = _off_street(plan, cx, cy, ang)
                 grp = rng.choice(St[0][1]['groups'])
                 got = _lay(db, grp, cx, cy, ang, space, memo)
                 _count('offered street', len(grp['things']))
@@ -1018,10 +1026,69 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
                     g['role'] = 'square'
                 out.extend(got)
                 break
+    # the town's life: its market stalls with their sellers' spots, its storage by the walls (townlife.py)
+    try:
+        import townlife
+        out.extend(townlife.dress(db, plan, rng, space, memo, out, amount))
+    except Exception as e:
+        print('town life:', e)
     out = _square_signs(db, _spaced_wells(_no_doubles(out, also), also), memo)
     for o in out:
         o.pop('pts', None)
     return out
+
+
+STREET_MARGIN = 90             # a street group's middle stands this far out from the pavement's edge
+STREET_BLOCK_SHARE = 0.75      # (and nothing stands within this share of the pavement's half width of the street's line: the
+                               # whole width refused a seventh of a town's dressing, most of it yards' things at the kerb, lab a01)
+
+
+def _street_polys(plan, share=1.0):
+    """The paved streets of a plan as polygons (each straight run a rectangle), as wide as townbuild paints them."""
+    try:
+        from townbuild import PAINT_SHARE, PAINT_MIN
+    except Exception:
+        PAINT_SHARE, PAINT_MIN = 0.7, 256
+    out = []
+    for st in plan.get('streets') or ():
+        r = max(PAINT_MIN, (st.get('w') or 0) / 2.0 * PAINT_SHARE) * share
+        pts = st.get('pts') or []
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            L_ = math.hypot(bx - ax, by - ay)
+            if L_ < 1:
+                continue
+            nx, ny = -(by - ay) / L_ * r, (bx - ax) / L_ * r
+            out.append([(ax + nx, ay + ny), (bx + nx, by + ny), (bx - nx, by - ny), (ax - nx, ay - ny)])
+    return out
+
+
+def _off_street(plan, cx, cy, ang):
+    """A street group's middle pushed out of the pavement to STREET_MARGIN beyond its edge, facing the street."""
+    try:
+        from townbuild import PAINT_SHARE, PAINT_MIN
+    except Exception:
+        PAINT_SHARE, PAINT_MIN = 0.7, 256
+    best = None
+    for st in plan.get('streets') or ():
+        r = max(PAINT_MIN, (st.get('w') or 0) / 2.0 * PAINT_SHARE)
+        pts = st.get('pts') or []
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            L_ = math.hypot(bx - ax, by - ay)
+            if L_ < 1:
+                continue
+            t = max(0.0, min(1.0, ((cx - ax) * (bx - ax) + (cy - ay) * (by - ay)) / (L_ * L_)))
+            qx, qy = ax + (bx - ax) * t, ay + (by - ay) * t
+            d = math.hypot(cx - qx, cy - qy)
+            if best is None or d - r < best[0] - best[1]:
+                best = (d, r, qx, qy)
+    if best is None:
+        return cx, cy, ang
+    d, r, qx, qy = best
+    if d >= r + STREET_MARGIN or d < 1:
+        return cx, cy, ang
+    ux, uy = (cx - qx) / d, (cy - qy) / d
+    cx, cy = qx + ux * (r + STREET_MARGIN), qy + uy * (r + STREET_MARGIN)
+    return cx, cy, math.atan2(ux, uy)                # (-y toward the street: local (0,-1) -> world (-ux, -uy))
 
 
 def _near_cultures(L, cult):

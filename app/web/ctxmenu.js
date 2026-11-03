@@ -18,7 +18,7 @@ const CM_GROUPS = [
   ['Dress it', '🪄', [/^dress (this|again)/i, /^fill with books/i, /^add one thing/i]],
   ['Look and open', '👁', [/^look at/i, /^open its window/i, /^open its record/i, /^edit it in /i, /^pin it/i, /^where it.s used/i]],
   ['Edit', '✎', [/^copy$/i, /^paste/i, /^duplicate/i, /^save as a prefab/i, /record of its own/i, /^undo my changes/i, /^bring back/i, /^delete/i]],
-  ['Move and place', '⟳', [/^turn 90°$/i, /^turn 90° the other way/i, /^tilt/i, /^scale/i, /^set it down/i, /^settle (it|them|everything on it)\b/i,
+  ['Move and place', '⟳', [/^turn 90°$/i, /^turn 90° the other way/i, /^tilt/i, /^scale/i, /^align/i, /^set it down/i, /^settle (it|them|everything on it)\b/i,
     /^send a copy to the other view/i, /^move it to the other view/i]],
   ['Replace and select', '⇄', [/^swap for/i, /^replace every/i, /^replace them/i, /^select the whole building/i, /^select all the/i, /^select it with everything/i,
     /^select everything you can see/i, /^clear the selection/i]],

@@ -1,6 +1,7 @@
 """Where doors lead: read, change or remove a door's destination, pick a sensible place to
 arrive, and optionally point the door at the other end back here."""
 import math
+import re
 import struct
 
 import editing
@@ -134,6 +135,18 @@ def _local_scene(db, door):
     return _scenes[key]
 
 
+def middle(door):
+    """A door's middle on the ground plan (x, y): many door models stand on their hinge edge (in_c_door_wood_square's
+    box runs 0 to 132 across), and a step out from the origin put you beside the door, not in front of it."""
+    b = door.get('b')
+    if not b:
+        return door['p'][0], door['p'][1]
+    s = door.get('s') or 1.0
+    mx, my = (b[0] + b[3]) / 2 * s, (b[1] + b[4]) / 2 * s
+    c, sn = math.cos(door['p'][5]), math.sin(door['p'][5])
+    return door['p'][0] + mx * c + my * sn, door['p'][1] - mx * sn + my * c
+
+
 def outside_spot(db, door, prefer=None):
     """Where to arrive in front of an outdoor door: a step out on its open side, on the ground or its porch, facing
     away from it; None when neither side has room. The door's two faces are tried (prefer's first), each a step
@@ -145,7 +158,7 @@ def outside_spot(db, door, prefer=None):
     if not b:
         return None
     s = door.get('s') or 1.0
-    px, py = door['p'][0], door['p'][1]
+    px, py = middle(door)
     ux, uy = doorfronts.thin_axis(door)
     sides = [(ux, uy), (-ux, -uy)]
     if prefer:
@@ -169,6 +182,10 @@ def outside_spot(db, door, prefer=None):
                 continue
             if sc.nearest_any((x, y, z + 20.0), (0.0, 0.0, 1.0), 100.0) is not None:
                 continue                                      # (in a wall or under a ledge)
+            # (a floor, not a railing's or a post's top: the ground round it is at its height; an arrival stood 383 over
+            # the ground, the in-game walk 2026-11-03)
+            if not _floor_about(sc, g, x, y, z):
+                continue
             # (something between it and the door: behind a wall, 2 of 26 in a town; but a porch post or railing too,
             # so only a last choice: refused outright, 91% of the game's doors against 93%)
             blocked = dist > 100 and sc.nearest_any((x, y, z + 60.0), (-tx, -ty, 0.0), dist - 60.0) is not None
@@ -192,6 +209,19 @@ def outside_spot(db, door, prefer=None):
         return None
     _bl, _sh, _k, x, y, z, tx, ty = best
     return [round(x, 1), round(y, 1), round(z + 12, 1), 0.0, 0.0, round(math.atan2(tx, ty) % (2 * math.pi), 4)]
+
+
+def _floor_about(sc, g, x, y, z):
+    """Whether the floor at (x, y, z) goes on round it: three of its four neighbours 40 out stand within 60 of z."""
+    ok = 0
+    for dx, dy in ((40.0, 0.0), (-40.0, 0.0), (0.0, 40.0), (0.0, -40.0)):
+        hit = sc.nearest_any((x + dx, y + dy, z + 90.0), (0.0, 0.0, -1.0), 260.0)
+        f = z + 90.0 - hit[0] if hit is not None else None
+        if g is not None and (f is None or f < g):
+            f = g
+        if f is not None and abs(f - z) <= 60:
+            ok += 1
+    return ok >= 3
 
 
 def door_spots(db, refs):
@@ -242,7 +272,7 @@ def _in_front(m, door, db=None):
     """A spot a step away from a door, on the room side, facing away from it. With db, in a place with walls and
     floors: the side with floor to stand on, tried both ways (the middle of the things near a door was the guess, and
     in a cave or ruin it lay behind the door: you arrived outside the walls, in the void, the user 2026-10-30)."""
-    px, py = door['p'][0], door['p'][1]
+    px, py = middle(door)
     near = [r['p'] for r in m['refs'] if r is not door and 60 < math.hypot(r['p'][0] - px, r['p'][1] - py) < 900]
     if near:
         cx, cy = sum(p[0] for p in near) / len(near) - px, sum(p[1] for p in near) / len(near) - py
@@ -262,7 +292,16 @@ def _in_front(m, door, db=None):
             return spot
     if db is not None and m.get('interior'):
         fx, fy = math.sin(door['p'][5]), math.cos(door['p'][5])
-        tries = [(ux, uy), (-ux, -uy), (fx, fy), (-fx, -fy), (fy, -fx), (-fy, fx)]
+        # (straight out of the door's face first, on the side of the things near it: the things' middle alone put
+        # you off to one side of the door, at a slant, 2026-11-02)
+        try:
+            import doorfronts
+            nx, ny = doorfronts.thin_axis(door) if door.get('b') else (fx, fy)
+        except Exception:
+            nx, ny = fx, fy
+        if nx * ux + ny * uy < 0:
+            nx, ny = -nx, -ny
+        tries = [(nx, ny), (-nx, -ny), (ux, uy), (-ux, -uy), (fy, -fx), (-fy, fx)]
         # (the first side with floor, the middle of the things near it first: tried against 150 of the game's door
         # pairs, its spots fell on the wrong side of the door 6% of the time, the guess alone 10%; choosing the side
         # with more room when both had floor made it 12%)
@@ -364,6 +403,104 @@ def _set_link(subs, dest_name, pos):
     if not put:
         out += extra
     return out
+
+
+# (the user, 2026-11-02, after a town door landed them upstairs behind a locked door, "ive requested this many times":
+# a door puts you right at the face of the door it pairs with, and that one puts you at the face of this one; never
+# a spot the game's copied house had, never the middle of a place)
+FACE_OFF = 128                 # (an arrival further than this from the face of the door that leads back is not at it)
+FACE_DROP = 64                 # (or this far over or under it: another storey)
+NOT_FACED = re.compile(r'trap|ladder|hatch|grate', re.I)    # (joined storey to storey as the game joins them)
+
+
+def partner(db, ck, door):
+    """The door at the other end of a door's link: the one in the place it leads to that leads back here, nearest to
+    where this door stands. (cell key, ref) or None."""
+    to = door.get('to')
+    if not to:
+        return None
+    if to.get('cell'):
+        keys = [to['key']]
+    else:
+        gx, gy = math.floor(to['x'] / CELL), math.floor(to['y'] / CELL)
+        keys = ['#%d,%d' % (gx + i, gy + j) for i in (-1, 0, 1) for j in (-1, 0, 1)]
+    best = None
+    for k in keys:
+        try:
+            refs = mapdata.cellmap(db, k).get('refs') or ()
+        except Exception:
+            continue
+        for r in refs:
+            if r['type'] != 'DOOR' or r is door or not _leads_to(db, r.get('to'), ck):
+                continue
+            # (both ways: its arrival by this door and this one's by it; two doors of one tower room out onto the walk
+            # took each other's partner by the first alone)
+            d = math.hypot(r['to']['x'] - door['p'][0], r['to']['y'] - door['p'][1])
+            d2 = math.hypot(to['x'] - r['p'][0], to['y'] - r['p'][1]) + abs(to['z'] - r['p'][2]) * 0.5
+            if d < 800 and (best is None or d + d2 < best[0]):
+                d += d2
+                best = (d, k, r)
+    return (best[1], best[2]) if best else None
+
+
+def misplaced_arrivals(db, cells=None, made_only=True):
+    """The doors (the mod's own, in these cells or all) whose arrival isn't at the face of the door that leads back:
+    [(cell key, ref key, door id, destination name, arrival now, arrival at the face)]."""
+    out = []
+    for ck in (cells if cells is not None else list(db.project.cells)):
+        try:
+            refs = mapdata.cellmap(db, ck).get('refs') or ()
+        except Exception:
+            continue
+        for r in refs:
+            if r['type'] != 'DOOR' or not r.get('to') or (made_only and not r.get('new')) or NOT_FACED.search(r['id']):
+                continue
+            if r['to']['key'] == ck:
+                continue                     # (a door into its own place: storeys joined as the game joined them)
+            pr = partner(db, ck, r)
+            if pr is None or NOT_FACED.search(pr[1]['id']):
+                continue
+            pk, pd = pr
+            back = partner(db, pk, pd)
+            if back is None or back[1]['k'] != r['k'] or back[0] != ck:
+                continue                     # (not each other's: two doors onto one spot, left for a person to pick)
+            want = _in_front(mapdata.cellmap(db, pk), pd, db)
+            to = r['to']
+            if math.hypot(want[0] - to['x'], want[1] - to['y']) > FACE_OFF or abs(want[2] - to['z']) > FACE_DROP:
+                out.append((ck, r['k'], r['id'], to.get('cell') or '', [to['x'], to['y'], to['z'], 0.0, 0.0, to['rz']], want))
+    return out
+
+
+def face_arrivals(db, cells=None, commit=True, follow=True):
+    """Every misplaced arrival (misplaced_arrivals) set at the face of its door's partner, facing away from it. With
+    follow, the places these cells' doors lead into are gone through too (a town's interiors and the rooms past
+    them). The number set."""
+    if cells is not None and follow:
+        seen, todo = set(), list(cells)
+        while todo:
+            ck = todo.pop()
+            if ck in seen:
+                continue
+            seen.add(ck)
+            try:
+                refs = mapdata.cellmap(db, ck).get('refs') or ()
+            except Exception:
+                continue
+            for r in refs:
+                if r['type'] == 'DOOR' and r.get('new') and (r.get('to') or {}).get('cell') and len(seen) < 400:
+                    todo.append(r['to']['key'])
+        cells = sorted(seen)
+    fix = misplaced_arrivals(db, cells)
+    for ck, rk, _id, dest, _now, want in fix:
+        c_, refs = editing._cell(db, ck)
+        ref = refs.get(rk)
+        if ref is not None:
+            editing._store(c_, rk, ref['origin'], ref['idx'], _set_link(ref['subs'], dest, want))
+    if fix and commit:
+        editing.commit(db, 'Set %d door arrivals at the face of their doors' % len(fix))
+    elif fix:
+        db.sync_project()
+    return len(fix)
 
 
 def link_pair(db, cell_a, ref_a, cell_b, ref_b):

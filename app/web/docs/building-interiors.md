@@ -116,6 +116,13 @@ empty space with a floor grid and its own camera.
 - **Moving** (toolbar): **Joins & flush**, **Joins only** or **Free**; hold **Alt** while dragging to move freely
   once. For fine moves: the **arrow keys** (1 unit, Shift 16), **Page Up / Down**, or type **X Y Z**. **Turn 15°** /
   **Turn free** sets the turn ring's steps.
+- **Lining up while you drag:** besides meeting faces, a piece **centres** on the piece it's against, lines its
+  sides up with the other pieces round it standing the same way, or comes to the **middle of a gap** between two
+  (a door between two walls). A pink line shows what it lined up with. The same works in the 3D view.
+- **⇹ Align** (toolbar, or right-click with several selected): lines the selection up on the piece the handles sit
+  on: **centre** it along red, green or in height, **line up** a side, the bottoms or the tops, or **space evenly**
+  (three or more). It goes along the handles' axes, so with **⟀ Own axes** it follows a turned piece. In the 3D view,
+  select several and right-click **⇹ Align them…**: they line up on the last one picked, as one Undo.
 - It's **checked as it grows**, with marks on what's wrong.
 - Fly with **W A S D** (Q / E down and up, Shift faster); right-drag looks, middle-drag pans. Left-drag on empty
   space selects several. **[ ]** turn by 15° (Shift: 1°); the **Turn**, **Tilt** and **Size** boxes are exact;

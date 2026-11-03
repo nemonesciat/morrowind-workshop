@@ -1097,7 +1097,8 @@ def wall_decor(db, cell_key):
 
 DECOR_PER_PURPOSE = {'storage': 0.15, 'kitchen': 0.25, 'hall': 0.3, 'camp': 0.1, 'corridor': 0.3, 'entry': 0.3, 'landing': 0.3,
                      'bath': 0.3, 'armoury': 0.2, 'training': 0.2}       # share of free wall spots used (default 0.4)
-DECOR_KINDS = {'shrine': ('banner', 'tapestry', 'sconce'), 'storage': ('rack', 'herbs', 'decor', 'sconce'),
+# (no weapon racks on a storeroom's walls: a town's cellars and pantries hung six of them, lab i01, 2026-11-02)
+DECOR_KINDS = {'shrine': ('banner', 'tapestry', 'sconce'), 'storage': ('herbs', 'decor', 'sconce'),
                'kitchen': ('herbs', 'decor', 'sconce', 'tapestry'), 'camp': ('herbs', 'sconce', 'light')}
 SURVEY_KIND = {'hall': 'empty', 'corridor': 'empty', 'entry': 'empty', 'landing': 'empty', 'bath': 'living', 'barracks': 'bedroom', 'dining': 'living',
                'mess': 'living', 'guardroom': 'living', 'armoury': 'storage', 'training': 'storage',

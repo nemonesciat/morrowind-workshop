@@ -331,8 +331,17 @@ def outline(plan, cell=1024.0, db=None, step=1.0):
     # run long straight sides, and 12 to 14 corners round a town was the user's "fever dream" again)
     if len(on) >= FILL * nx * ny or len(_trace(on)) > MAX_CORNERS:
         on = {(i, j) for i in range(nx) for j in range(ny)}
+    # (the game's own buildings and doors inside the drawn outline: their squares are left out at the edge, so the wall
+    # skirts a settlement it is drawn over; what stands in the middle of the town is enclosed and said so. A cold-start
+    # town over Dren Plantation walled in 140 of the game's objects, the in-game harness, 2026-11-02)
+    blocked = set()
+    for ob in plan.get('obstacles') or ():
+        ox = sum(p[0] for p in ob) / len(ob)
+        oy = sum(p[1] for p in ob) / len(ob)
+        u, v = ox * c + oy * s, -ox * s + oy * c
+        blocked.add((int((u - x0) // cu), int((v - y0) // cv)))
     if db is not None:
-        on = _on_land(db, on, x0, y0, (cu, cv), c, s, plots_on)
+        on = _on_land(db, on, x0, y0, (cu, cv), c, s, plots_on, blocked)
     poly = _trace(on)
     out = []
     for i, j in poly:
@@ -341,13 +350,15 @@ def outline(plan, cell=1024.0, db=None, step=1.0):
     return out, th
 
 
-def _on_land(db, on, x0, y0, cell, c, s, plots_on=()):
+def _on_land(db, on, x0, y0, cell, c, s, plots_on=(), blocked=()):
     """(cell: the squares' size each way.) The wall's squares kept to dry, walkable ground: a square over the water, or across a cliff's edge, is left out,
     so the wall follows the land inside its shore and above its cliffs instead of running a straight box out over the sea
     (the user's island town, test3: sides off the land, hanging over the drop). Then the piece with the most of the town
     in it, its holes filled (a wall closes round them)."""
     def ok(i, j):
         steep_ok = (i, j) in plots_on         # (a plot's square stays in, steep or not: the wall never cuts a building)
+        if (i, j) in blocked and not steep_ok:
+            return False                      # (one of the game's own buildings stands there)
         zs = []
         for fu in (0.0, 0.5, 1.0):
             for fv in (0.0, 0.5, 1.0):
@@ -494,6 +505,9 @@ def lay(db, plan, family=None, cell=None):
         if any(need[t] not in kit['corners'] for t in turns):
             return {'family': fam, 'pieces': [], 'outline': poly, 'gates': 0, 'faults': ['This wall turns only one way']}
     pieces, faults = [], []
+    inside_ = sum(1 for ob in plan.get('obstacles') or () if _inside(poly, (sum(p[0] for p in ob) / len(ob), sum(p[1] for p in ob) / len(ob))))
+    if inside_:
+        faults.append("%d of the game's own buildings stand inside the wall" % inside_)
     # every corner: S0 (in), its chain, S1 (out)
     units = []
     for k in range(n):
@@ -971,6 +985,26 @@ GATE_HIGH = 0.67               # (a gate on ground higher than this share of the
 GATE_RISE = 192                # (and this much over the lowest gate's ground) is left out, while another gate remains
 
 
+GATE_WATER = 16                # (ground under this, by the water line, is no way in: the sea or the shore)
+GATE_SLOPE = 0.7               # (a rise or drop steeper than this, about 35 degrees, before a gate: a cliff, not a way)
+
+
+def gate_blocked(db, x, y, nx, ny, z0=None, near=0.0):
+    """(wet, steep) for a way out at x, y going nx, ny: water or no land within 2.5k of it, or a cliff on the way."""
+    zp = mapdata.terrain_z(db, x, y) if z0 is None else z0
+    if zp is None:
+        return True, False
+    dp, steep = 0.0, False
+    for dist in (near + 500, near + 1500, near + 2500):
+        zz = mapdata.terrain_z(db, x + nx * dist, y + ny * dist)
+        if zz is None or zz < GATE_WATER:
+            return True, steep
+        if abs(zp - zz) > GATE_SLOPE * (dist - dp):
+            steep = True
+        zp, dp = zz, dist
+    return False, steep
+
+
 def _downhill_gates(db, poly, streets, roads):
     n = len(poly)
     ring = []
@@ -992,11 +1026,25 @@ def _downhill_gates(db, poly, streets, roads):
     gs = [g for g in gs if g[0] is not None]
     if len(gs) < 2 or not ring:
         return streets, roads
-    low = min(g[0] for g in gs)
+    # (a gate out onto the sea or over a cliff goes first, whatever its height: a coast town's lowest gate faced the
+    # water, the user, 2026-11-03; never the last gate, and of gates all blocked the least blocked stays)
+    cx, cy = sum(p[0] for p in poly) / n, sum(p[1] for p in poly) / n
+    blocked = {}
+    for g in gs:
+        a, b = poly[g[1]], poly[(g[1] + 1) % n]
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        nx, ny = -d[1], d[0]
+        if nx * (g[3][0] - cx) + ny * (g[3][1] - cy) < 0:
+            nx, ny = -nx, -ny
+        blocked[id(g)] = gate_blocked(db, g[3][0], g[3][1], nx, ny, g[0])
+    low = min(g[0] for g in gs if not blocked[id(g)][0]) if any(not blocked[id(g)][0] for g in gs) else min(g[0] for g in gs)
     drop = []
-    for g in sorted(gs, key=lambda g: -g[0]):
+    for g in sorted(gs, key=lambda g: (-blocked[id(g)][0], -blocked[id(g)][1], -g[0])):
         if len(gs) - len(drop) <= 1:
             break
+        if blocked[id(g)][0] or blocked[id(g)][1]:
+            drop.append(g)
+            continue
         rank = sum(1 for z in ring if z < g[0] - 32) / float(len(ring))
         if rank > GATE_HIGH and g[0] > low + GATE_RISE:
             drop.append(g)
@@ -1343,8 +1391,9 @@ def grounded(db, W):
     for i in starts:
         towered(i)
     # (round the loop: where the last stretch meets the first at another level, a tower there too)
-    if order and starts and abs(order[-1]['pose'].z - order[0]['pose'].z) > 48:
-        towered(0)
+    if order and starts and abs(order[-1]['pose'].z - order[0]['pose'].z) > 48 and \
+            abs((order[-1].get('run') if order[-1].get('run') is not None else order[-1].get('corner', 0)) - (order[0].get('run') if order[0].get('run') is not None else order[0].get('corner', 0))) < 100:
+        towered(0)                                   # (not where a castle's inner wall follows its outer in the order)
     # (the towers and the keep at the level of the wall running into them, the highest where two levels meet so the
     # step hides in the tower; sunk further where the ground under them lies lower)
     hosts = {id(p['pose']) for p in keep}
@@ -1375,6 +1424,13 @@ def grounded(db, W):
 # length whose one end stands 128 higher (its neighbour at -x 128 up), Velothi's wall_05 (at +x 128 up); laid without
 # them, a Hlaalu or Velothi run stepped with its end standing bare over the next; Redoran's wu_01 the same way
 STEP_PIECES = {'ex_hlaalu': {'id': 'ex_hlaalu_wall_up_01', 'rise': 128.0, 'up': -1},
+               # (the Imperial stair length: a 512 length turned 90° to the straight that climbs 256 along its own y,
+               # stairs_02 toward +y, stairs_01 the other hand; Old Ebonheart joins its wall's many levels with them, the
+               # user's "master class", 2026-11-02. The other hand is its own piece, never the first turned about: the
+               # buttress side would come inside)
+               # (and a stretch's level may give up to 'give' to land on a whole rise: the game's Imperial walls step by
+               # 256 and nothing else, their ground made to fit)
+               'ex_imp': {'id': 'ex_imp_wall_stairs_02', 'alt': 'ex_imp_wall_stairs_01', 'rise': 256.0, 'up': 1, 'turn': math.pi / 2, 'give': 200},
                't_de_setveloth': {'id': 't_de_setveloth_x_wall_05', 'rise': 128.0, 'up': 1},
                # (a Redoran house's fort wall, Indarys's wu_01: the castle maker's Redoran stronghold on a slope)
                'ex_r_pcfort': {'id': 'ex_r_pcfort_wu_01', 'rise': 128.0, 'up': -1}}
@@ -1394,7 +1450,8 @@ def _stepped(db, A, B, St, straight, span, memo):
     rise = St['rise']
     # (a stretch's level may give a little, its foot or top a hand's breadth off: else a whole number of rises seldom
     # fitted, the ground allowing a stretch 10 to 60 units of play, and no step piece was ever laid, lab r26)
-    ks = [k for k in range(-STEP_MOST, STEP_MOST + 1) if lo - STEP_GIVE <= za + k * rise <= hi + STEP_GIVE]
+    give = St.get('give', STEP_GIVE)
+    ks = [k for k in range(-STEP_MOST, STEP_MOST + 1) if lo - give <= za + k * rise <= hi + give]
     if not ks:
         return False
     k = min(ks, key=lambda k: (abs(k), abs(za + k * rise - zb)))
@@ -1413,9 +1470,15 @@ def _stepped(db, A, B, St, straight, span, memo):
         q = p['pose']
         lx = (math.cos(q.rz), -math.sin(q.rz))
         climb = St['up'] * (1 if lx[0] * fwd[0] + lx[1] * fwd[1] > 0 else -1)
+        pid = St['id']
         if (climb > 0) != (k > 0):
-            q.rz = (q.rz + math.pi) % (2 * math.pi)
-        p['id'] = q.id = St['id']
+            if St.get('alt'):
+                pid = St['alt']
+            else:
+                q.rz = (q.rz + math.pi) % (2 * math.pi)
+        if St.get('turn'):
+            q.rz = (q.rz + St['turn']) % (2 * math.pi)
+        p['id'] = q.id = pid
         p['kind'] = 'step'
         # (its low end at the level it climbs from)
         q.z = za + (j * rise if k > 0 else -(j + 1) * rise)

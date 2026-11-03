@@ -87,7 +87,7 @@ def ruin_pending(db, kind='dwemer'):
 # the surveys a town goes by: the game's towns, how it puts its buildings together (the buildings and the walls), how
 # it dresses its towns. A first town on a fresh install planned in the request itself took 7 minutes behind a spinner
 # and came out with no buildings at all, the cold start of 2.5.9-test3
-_TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('towndress', 'ready')]
+_TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('towndress', 'ready'), ('townlife', 'ready')]
 
 
 def town_pending(db, people=False):

@@ -2180,7 +2180,7 @@ function v3GroupSnap(D){
     for (const nb of D.near) for (const a of ['x', 'y', 'z']){
       const others = ['x', 'y', 'z'].filter(v => v !== a);
       if (!others.every(v => box.min[v] < nb.max[v] + thr && box.max[v] > nb.min[v] - thr)) continue;
-      for (const d of [nb.min[a] - box.max[a], nb.max[a] - box.min[a], nb.min[a] - box.min[a], nb.max[a] - box.max[a]])
+      for (const d of [nb.min[a] - box.max[a], nb.max[a] - box.min[a], nb.min[a] - box.min[a], nb.max[a] - box.max[a], (nb.min[a] + nb.max[a] - box.min[a] - box.max[a]) / 2])
         if (Math.abs(d) < thr && (best[a] === null || Math.abs(d) < Math.abs(best[a]))) best[a] = d;
     }
     const v = new T.Vector3(best.x || 0, best.y || 0, best.z || 0);
@@ -2203,10 +2203,10 @@ function v3GroupSnap(D){
   // (else flush faces: the member lined up on the most sides, then the smallest nudge)
   for (const m of D.members){
     const g = m.o.g, proxy = {position: g.position.clone(), quaternion: g.quaternion.clone()};
-    const n = v3SnapFlush({o: m.o, nearObjs: D.nearObjs}, proxy);
+    const dd = {o: m.o, nearObjs: D.nearObjs}, n = v3SnapFlush(dd, proxy);
     if (!n) continue;
     const v = proxy.position.sub(g.position), sides = ['x', 'y', 'z'].filter(a => Math.abs(v[a]) > 0.01).length;
-    if (!best || sides > best.sides || (sides === best.sides && v.length() < best.v.length())) best = {v, sides, note: `${m.o.r.id} flush with ${n.r.id}`};
+    if (!best || sides > best.sides || (sides === best.sides && v.length() < best.v.length())) best = {v, sides, guides: dd.guides, note: `${m.o.r.id} flush with ${n.r.id}${dd.flushNote ? ' · ' + dd.flushNote : ''}`};
   }
   return best;
 }
@@ -2240,39 +2240,162 @@ function v3SnapGame(D, g){
 }
 
 // 2) flush faces in the neighbour's own frame: beside a piece turned the same way (to a quarter turn), faces meet,
-// edges line up and heights match within 18 units, and a turn within 6 degrees of the neighbour's quarter turns is
-// made exact. (The old snapping lined boxes up on the world's axes only: nothing beside a building turned 30 degrees.)
+// edges line up, middles meet and heights match within 18 units, and a turn within 6 degrees of the neighbour's quarter
+// turns is made exact. (The old snapping lined boxes up on the world's axes only: nothing beside a building turned 30
+// degrees.) A side the neighbour leaves free lines up with the other pieces round it standing the same way, or comes
+// to the middle of the gap between two (the user 2026-11-03: a wall flush with the keep, but nothing to centre it or
+// line it up with the wall the other side). D.guides: the lines to draw for what lined up; D.flushNote: in words.
 function v3SnapFlush(D, g){
-  const T = THREE, thr = 18, Ld = v3LocalBox(D.o);
+  const T = THREE, thr = 18, AX = ['x', 'y', 'z'];
+  const mid = (b, a) => (b.min[a] + b.max[a]) / 2, beside = (A, B, a) => A.min[a] < B.max[a] + thr && A.max[a] > B.min[a] - thr;
+  D.guides = []; D.flushNote = '';
   let best = null;
   for (const n of D.nearObjs){
     const qn = n.g.quaternion, qi = qn.clone().invert();
-    const rel = qi.clone().multiply(g.quaternion);
-    const e = new T.Euler().setFromQuaternion(rel, 'ZYX');
-    if (Math.abs(e.x) > 0.02 || Math.abs(e.y) > 0.02) continue;          // (tilted against it: no faces to meet)
-    const quarter = Math.round(e.z / (Math.PI / 2)), off = e.z - quarter * Math.PI / 2;
-    if (Math.abs(off) > 6 * Math.PI / 180) continue;
-    const qq = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), quarter * Math.PI / 2);
-    // (the dragged box in the neighbour's frame, at the exact quarter turn)
-    const pn = g.position.clone().sub(n.g.position).applyQuaternion(qi);
-    const pts = [];
-    for (const x of [Ld.min.x, Ld.max.x]) for (const y of [Ld.min.y, Ld.max.y]) for (const z of [Ld.min.z, Ld.max.z]) pts.push(new T.Vector3(x, y, z).applyQuaternion(qq).add(pn));
-    const B = new T.Box3().setFromPoints(pts), N = v3LocalBox(n);
-    const dv = new T.Vector3(); let snapped = 0, cost = 0;
-    for (const a of ['x', 'y', 'z']){
-      const others = ['x', 'y', 'z'].filter(v => v !== a);
-      if (!others.every(v => B.min[v] < N.max[v] + thr && B.max[v] > N.min[v] - thr)) continue;
+    const r = v3BoxIn(D.o, qi, n.g.position, g.quaternion, g.position); if (!r) continue;
+    const B = r.B, N = v3LocalBox(n), dv = new T.Vector3(), how = {};
+    let snapped = 0, cost = 0;
+    for (const a of AX){
+      if (!AX.filter(v => v !== a).every(v => beside(B, N, v))) continue;
       let pick = null;
-      for (const d of [N.min[a] - B.max[a], N.max[a] - B.min[a], N.min[a] - B.min[a], N.max[a] - B.max[a]]) if (Math.abs(d) < thr && (pick === null || Math.abs(d) < Math.abs(pick))) pick = d;
-      if (pick !== null){ dv[a] = pick; snapped++; cost += Math.abs(pick); }
+      // (faces first, then edges, then middles, when two are as near)
+      for (const [d, k, c] of [[N.min[a] - B.max[a], 'face'], [N.max[a] - B.min[a], 'face'], [N.min[a] - B.min[a], 'edge', N.min[a]],
+                               [N.max[a] - B.max[a], 'edge', N.max[a]], [mid(N, a) - mid(B, a), 'mid', mid(N, a)]])
+        if (Math.abs(d) < thr && (!pick || Math.abs(d) < Math.abs(pick.d) - 0.5)) pick = {d, k, c, M: N, m: n};
+      if (pick){ dv[a] = pick.d; how[a] = pick; snapped++; cost += Math.abs(pick.d); }
     }
     if (!snapped) continue;
-    if (!best || snapped > best.snapped || (snapped === best.snapped && cost + Math.abs(off) * 100 < best.cost)) best = {n, dv, qq, qn, snapped, cost: cost + Math.abs(off) * 100};
+    cost += Math.abs(r.off) * 100;
+    if (!best || snapped > best.snapped || (snapped === best.snapped && cost < best.cost)) best = {n, dv, qq: r.qq, qn, qi, snapped, cost, how, N};
   }
-  if (!best) return null;
+  if (!best){
+    // (beside nothing: lined up with the pieces round it, in the frame of the nearest standing the same way)
+    let nd = 2500;
+    for (const n of D.nearObjs){
+      const dist = n.g.position.distanceTo(g.position); if (dist >= nd) continue;
+      const qn = n.g.quaternion, qi = qn.clone().invert(), r = v3BoxIn(D.o, qi, n.g.position, g.quaternion, g.position);
+      if (r){ nd = dist; best = {n, dv: new T.Vector3(), qq: r.qq, qn, qi, how: {}, N: v3LocalBox(n), free: true}; }
+    }
+    if (!best) return null;
+  }
+  const B = v3BoxIn(D.o, best.qi, best.n.g.position, best.qn.clone().multiply(best.qq), g.position).B.translate(best.dv);
+  const all = [{m: best.n, M: best.N}];
+  for (const m of D.nearObjs){
+    if (m === best.n || m.g.position.distanceTo(best.n.g.position) > 2500) continue;
+    const r = v3BoxIn(m, best.qi, best.n.g.position, m.g.quaternion, m.g.position);
+    if (r && Math.abs(r.off) < 0.01) all.push({m, M: r.B});
+  }
+  for (const a of AX){
+    if (best.how[a]) continue;
+    const ot = AX.filter(v => v !== a);
+    let pick = null;
+    const tryD = (d, k, c, x, bias, R) => { const s = Math.abs(d) - (bias || 0); if (Math.abs(d) < thr && (!pick || s < pick.s - 0.5)) pick = {d, k, c, M: x.M, m: x.m, s, R}; };
+    // (in the middle of the gap between two beside it, one each side: before an edge or a middle as near)
+    const side = all.filter(x => ot.every(v => beside(B, x.M, v)));
+    for (const L of side) if (L.M.max[a] <= B.min[a] + thr) for (const R of side) if (R.M.min[a] >= B.max[a] - thr && R !== L){
+      const d = (L.M.max[a] + R.M.min[a]) / 2 - mid(B, a);
+      tryD(d, 'between', 0, L, 4, R.M);
+    }
+    for (const x of all){ tryD(x.M.min[a] - B.min[a], 'edge', x.M.min[a], x); tryD(x.M.max[a] - B.max[a], 'edge', x.M.max[a], x); tryD(mid(x.M, a) - mid(B, a), 'mid', mid(x.M, a), x); }
+    if (!pick) continue;
+    best.dv[a] += pick.d; const t = new T.Vector3(); t[a] = pick.d; B.translate(t);
+    best.how[a] = pick;
+  }
+  if (best.free && !Object.keys(best.how).length) return null;
+  // the guides, from the piece to what it lines up with, at the shared line (between two: across the gap)
+  const cB = B.getCenter(new T.Vector3()), toWorld = v => v.applyQuaternion(best.qn).add(best.n.g.position), words = new Set();
+  for (const a of AX){
+    const h = best.how[a]; if (!h || h.k === 'face') continue;
+    if (h.k === 'between'){
+      const p = cB.clone(), q = cB.clone(); p[a] = h.M.max[a]; q[a] = h.R ? h.R.min[a] : B.max[a];
+      D.guides.push([toWorld(p), toWorld(q)]); words.add('centred between two'); continue;
+    }
+    const p = cB.clone(), q = h.M.getCenter(new T.Vector3()); p[a] = h.c; q[a] = h.c;
+    D.guides.push([toWorld(p), toWorld(q)]);
+    if (h.m !== best.n || best.free) words.add('lined up with ' + h.m.r.id);
+    else if (h.k === 'mid') words.add('centred on it');
+  }
+  D.flushNote = [...words].slice(0, 2).join(' · ');
   g.quaternion.copy(best.qn.clone().multiply(best.qq));
   g.position.add(best.dv.clone().applyQuaternion(best.qn));
   return best.n;
+}
+
+// o's box in another's frame (qi: that frame's turn inverted, at: its origin), stood at pos turned q: when it stands a
+// whole quarter turn from that frame, untilted (off: how far from the quarter turn, qq: the quarter turn)
+function v3BoxIn(o, qi, at, q, pos){
+  const T = THREE, e = new T.Euler().setFromQuaternion(qi.clone().multiply(q), 'ZYX');
+  if (Math.abs(e.x) > 0.02 || Math.abs(e.y) > 0.02) return null;          // (tilted against it: no faces to meet)
+  const quarter = Math.round(e.z / (Math.PI / 2)), off = e.z - quarter * Math.PI / 2;
+  if (Math.abs(off) > 6 * Math.PI / 180) return null;
+  const qq = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), quarter * Math.PI / 2);
+  const pn = pos.clone().sub(at).applyQuaternion(qi), L = v3LocalBox(o), pts = [];
+  for (const x of [L.min.x, L.max.x]) for (const y of [L.min.y, L.max.y]) for (const z of [L.min.z, L.max.z]) pts.push(new T.Vector3(x, y, z).applyQuaternion(qq).add(pn));
+  return {B: new T.Box3().setFromPoints(pts), qq, off};
+}
+
+// the snapping's guide lines (pairs of points in parent's frame), drawn over everything; none: hidden
+function v3Guides(parent, segs){
+  const T = THREE;
+  if (!V3.guide){
+    V3.guide = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({color: 0xff4fd8, depthTest: false, transparent: true}));
+    V3.guide.renderOrder = 999; V3.guide.frustumCulled = false;
+  }
+  const L = V3.guide;
+  if (!parent || !segs || !segs.length){ L.visible = false; return; }
+  if (L.parent !== parent) parent.add(L);
+  const a = []; for (const [p, q] of segs) a.push(p.x, p.y, p.z, q.x, q.y, q.z);
+  L.geometry.setAttribute('position', new T.Float32BufferAttribute(a, 3));
+  L.visible = true;
+}
+
+// Align: several things lined up on the key one (the one the handles sit on), along the handles' axes: the world's,
+// or the key's own as it is turned (tilts left out). its: [{o, g}]; how 'min' | 'max' | 'mid' on a ('x' | 'y' | 'z'),
+// or 'even' along a (the first and last stay, equal gaps between). Returns each one's move, in g's parent frame.
+function v3AlignMoves(its, key, how, a, own){
+  const T = THREE, yaw = own ? new T.Euler().setFromQuaternion(key.g.quaternion, 'ZYX').z : 0;
+  const qk = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), yaw), qi = qk.clone().invert();
+  const boxes = its.map(x => {
+    const L = v3LocalBox(x.o), pts = [];
+    for (const px of [L.min.x, L.max.x]) for (const py of [L.min.y, L.max.y]) for (const pz of [L.min.z, L.max.z])
+      pts.push(new T.Vector3(px, py, pz).applyQuaternion(x.g.quaternion).add(x.g.position).applyQuaternion(qi));
+    return new T.Box3().setFromPoints(pts);
+  });
+  const d = its.map(() => 0), mid = b => (b.min[a] + b.max[a]) / 2;
+  if (how === 'even'){
+    const order = its.map((x, i) => i).sort((i, j) => mid(boxes[i]) - mid(boxes[j]));
+    const first = boxes[order[0]], last = boxes[order[order.length - 1]];
+    const used = order.reduce((t, i) => t + boxes[i].max[a] - boxes[i].min[a], 0);
+    const gap = (last.max[a] - first.min[a] - used) / Math.max(1, order.length - 1);
+    let at = first.min[a];
+    for (const i of order){ d[i] = at - boxes[i].min[a]; at += boxes[i].max[a] - boxes[i].min[a] + gap; }
+  } else {
+    const K = boxes[its.indexOf(key)], want = how === 'mid' ? mid(K) : K[how][a];
+    its.forEach((x, i) => { d[i] = want - (how === 'mid' ? mid(boxes[i]) : boxes[i][how][a]); });
+  }
+  return d.map(v => { const t = new T.Vector3(); t[a] = Math.abs(v) < 0.01 ? 0 : v; return t.applyQuaternion(qk); });
+}
+// the Align menu's entries (n: how many selected, name: the key one's), run(how, a)
+function v3AlignItems(n, name, run){
+  return [{label: `Align on ${name}`, head: true, disabled: true},
+    {label: 'Centre along red', act: () => run('mid', 'x')}, {label: 'Centre along green', act: () => run('mid', 'y')}, {label: 'Centre in height', act: () => run('mid', 'z')}, '-',
+    {label: 'Line up red − sides', act: () => run('min', 'x')}, {label: 'Line up red + sides', act: () => run('max', 'x')},
+    {label: 'Line up green − sides', act: () => run('min', 'y')}, {label: 'Line up green + sides', act: () => run('max', 'y')},
+    {label: 'Line up bottoms', act: () => run('min', 'z')}, {label: 'Line up tops', act: () => run('max', 'z')}, '-',
+    {label: 'Space evenly along red', disabled: n < 3, act: () => run('even', 'x')}, {label: 'Space evenly along green', disabled: n < 3, act: () => run('even', 'y')}];
+}
+// in the world (3D view): the selection lined up on W.sel, one Undo
+async function v3Align(how, a){
+  if (!V3.on) return toast('Align works in the 3D view.');
+  const its = [...W.multi.values()].map(m => ({m, o: V3.objs.get(m.cell + '|' + m.k)})).filter(x => x.o && x.o.r).map(x => ({m: x.m, o: x.o, g: x.o.g}));
+  if (its.length < 2) return toast('Select two or more things first.');
+  const key = its.find(x => W.sel && x.m.cell === W.sel.cell && x.m.k === W.sel.k) || its[its.length - 1];
+  const ds = v3AlignMoves(its, key, how, a, v3Space() === 'local');
+  const moves = its.map((x, i) => { const p = x.o.r.p.slice(); p[0] += ds[i].x; p[1] += ds[i].y; p[2] += ds[i].z; return {cell: x.m.cell, ref: x.m.k, p, d: ds[i]}; })
+    .filter(m => m.d.lengthSq() > 1e-4).map(({cell, ref, p}) => ({cell, ref, p}));
+  if (!moves.length) return toast('Already lined up.');
+  if (!await needProject()) return;
+  await groupAction('/api/group/move', {moves}, `Aligned ${moves.length} object${moves.length > 1 ? 's' : ''}`);
 }
 
 function v3SnapNote(text){
@@ -2310,6 +2433,7 @@ function v3Snap(){
       const fix = v3GroupSnap(D);
       if (fix) for (const m of D.members){ m.o.g.position.add(fix.v); m.o.g.updateMatrixWorld(true); }
       v3SnapNote(fix ? fix.note : '');
+      v3Guides(fix && fix.guides && V3.root, fix && fix.guides);
     }
     for (const bh of V3.multiBoxes || []) bh.update();
     return;
@@ -2323,10 +2447,11 @@ function v3Snap(){
     if (D.snapsAt && g.position.distanceTo(D.snapsAt) > 800) v3SnapsFetch(D);
     const s = v3SnapGame(D, g);
     D.snapped = s;
-    if (s){ v3SnapNote(`Joined to ${s.to} the way the game does it (${s.n}×)`); V3.selBox.setFromObject(g); return; }
+    if (s){ v3Guides(null); v3SnapNote(`Joined to ${s.to} the way the game does it (${s.n}×)`); V3.selBox.setFromObject(g); return; }
     if (D.startQ) g.quaternion.copy(D.startQ);         // (off the game's spots: its own turn back)
     const n = v3SnapFlush(D, g);
-    v3SnapNote(n ? `Flush with ${n.r.id}` : '');
+    v3SnapNote(n ? `Flush with ${n.r.id}${D.flushNote ? ' · ' + D.flushNote : ''}` : '');
+    v3Guides(n && g.parent, D.guides);
     V3.selBox.setFromObject(g);
     return;
   }
@@ -2337,7 +2462,7 @@ function v3Snap(){
       const others = ['x', 'y', 'z'].filter(v => v !== a);
       // only pieces beside this one (overlapping, or nearly, on the other two axes)
       if (!others.every(v => box.min[v] < nb.max[v] + thr && box.max[v] > nb.min[v] - thr)) continue;
-      for (const d of [nb.min[a] - box.max[a], nb.max[a] - box.min[a], nb.min[a] - box.min[a], nb.max[a] - box.max[a]]){
+      for (const d of [nb.min[a] - box.max[a], nb.max[a] - box.min[a], nb.min[a] - box.min[a], nb.max[a] - box.max[a], (nb.min[a] + nb.max[a] - box.min[a] - box.max[a]) / 2]){
         if (Math.abs(d) < thr && (best[a] === null || Math.abs(d) < Math.abs(best[a]))) best[a] = d;
       }
     }
@@ -2349,6 +2474,7 @@ function v3Snap(){
 async function v3DragEnd(){
   const D = V3.drag; V3.drag = null;
   if (typeof v3SnapNote === 'function') v3SnapNote('');
+  v3Guides(null);
   if (!D) return;
   // (physics on: let go, it falls and rests; nothing is saved until Keep; physics.js)
   if (typeof phDragEnd === 'function' && phDragEnd(D)) return;

@@ -13,6 +13,14 @@ The **My mod** page (or click the mod's name at the top) shows:
   and below it the history of what you did. Click ground rows to pick several (**Shift**+click a run, **Ctrl**+click
   one more or one less), then **↶ Undo** puts the ground in all of them back at once.
 
+**Keeping Undo for the big changes.** Undo keeps about a hundred steps. So that a long run of small edits doesn't push
+a town or a big shape out of reach:
+- **Strokes of the ground brush in a row, and moves of one thing in a row,** become one step by themselves. A run
+  ends when you do something else, or after three minutes without one.
+- **⧉ Group** (beside Undo and Redo, or **Group changes into one step** on this page) puts everything you do next
+  into one step, until you click it again. Its last change stays a step of its own, so Undo still takes back just that.
+  Name the group on this page if you like. Undo and switching mods wait while a town is being made, and so does Group.
+
 | Button | What it does |
 |---|---|
 | 📦 Get ready to share | Check, describe, test and pack the mod (below). |
