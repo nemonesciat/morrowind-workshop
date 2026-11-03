@@ -49,6 +49,32 @@ OS_WORDS = {'linux': not osplat.WINDOWS, 'exe': osplat.program_name(), 'bin': os
             'files': 'Explorer' if osplat.WINDOWS else 'the file manager'}
 db = Database()
 edit_lock = threading.RLock()        # (re-entrant: a request that holds it may flush pending writes, which take it too)
+import project as _projmod
+_projmod.SAVE_LOCK = edit_lock        # (marks and shapes save a moment later, Project.save_soon, waiting for edits)
+_waiting_lock = threading.Lock()
+
+
+class _EditLock:
+    """edit_lock, counting the requests that wait for it: long work lets them in between its steps (editing.breathe)."""
+    def __enter__(self):
+        import editing
+        with _waiting_lock:
+            editing.WAITING[0] += 1
+        try:
+            edit_lock.acquire()
+        finally:
+            with _waiting_lock:
+                editing.WAITING[0] -= 1
+        return self
+
+    def __exit__(self, *_a):
+        edit_lock.release()
+
+
+# (what Undo, Redo or another mod would pull from under a town being made while it lets other clicks in)
+WHOLE_MOD = ('/api/undo', '/api/redo', '/api/undo_group', '/api/undo_entry', '/api/revert', '/api/backups/restore',
+             '/api/project/open', '/api/project/new', '/api/project/adopt', '/api/project/merge', '/api/project/saveas',
+             '/api/project/enable', '/api/adopt/pick')
 
 
 def code_stamp():
@@ -530,6 +556,7 @@ def open_project_file(path):
     s = load_settings()
     s['project'] = os.path.relpath(path, APP_DIR)
     save_settings(s)
+    _projmod.save_pending()
     db.project = Project(path)
     import background
     background.project_path[0] = path
@@ -658,7 +685,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
             elif u.path.startswith('/web/vendor/') and '..' not in u.path:
-                # libraries and fonts shipped with the Workshop (so it works offline); they never change
+                # libraries and fonts shipped with the Workshop (so it works offline). Asked again on each load and sent
+                # only when changed: kept a day unasked, a fixed loader (24-bit .dds icons) never reached the window
+                # after an update, 2026-11-02
                 fp = os.path.join(WEB, 'vendor', os.path.basename(u.path))
                 kind = {'.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
                         '.woff2': 'font/woff2', '.ico': 'image/x-icon',
@@ -666,12 +695,20 @@ class Handler(BaseHTTPRequestHandler):
                         '.png': 'image/png', '.svg': 'image/svg+xml'}.get(os.path.splitext(fp)[1])
                 if not kind or not os.path.isfile(fp):
                     return self._json({'error': 'not found'}, 404)
+                st = os.stat(fp)
+                tag = '"%x-%x"' % (st.st_size, int(st.st_mtime))
+                if self.headers.get('If-None-Match') == tag:
+                    self.send_response(304)
+                    self.send_header('ETag', tag)
+                    self.end_headers()
+                    return
                 with open(fp, 'rb') as f:
                     body = f.read()
                 self.send_response(200)
                 self.send_header('Content-Type', kind)
                 self.send_header('Content-Length', str(len(body)))
-                self.send_header('Cache-Control', 'max-age=86400')
+                self.send_header('Cache-Control', 'no-cache')
+                self.send_header('ETag', tag)
                 self.end_headers()
                 self.wfile.write(body)
             elif u.path.startswith('/web/docs/') and u.path.endswith('.md') and '..' not in u.path:
@@ -720,7 +757,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'mods': modfiles.mods(db)})
             elif u.path == '/api/busy':
                 # what is holding things up (the dialogs ask when an answer is slow in coming)
-                self._json({'busy': busy()})
+                self._json({'busy': busy(), 'making': editing.busy_with()})
             elif u.path == '/api/launch':
                 self._json(launch_settings())
             elif u.path == '/api/openmw':
@@ -1510,6 +1547,7 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         n = int(self.headers.get('Content-Length') or 0)
         editing.ORIGIN.window = self.headers.get('X-Workshop-Window')       # (whose change this is: editing.CHANGES)
+        editing.request_started()
         if u.path == '/api/library/upload':
             # a file dropped into the Library, as it is (not JSON): kept with the others of the same drop
             import library
@@ -1643,8 +1681,11 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/backups/restore':
                 if not db.project:
                     return self._json({'error': 'No mod is open.'}, 400)
-                with edit_lock:
+                with _EditLock():
+                    if editing.busy_with():
+                        return self._json({'error': '%s: putting a backup back waits until it is done.' % editing.busy_with()}, 409)
                     try:
+                        _projmod.SOON.discard(db.project)      # (a mark saved later must not undo the restore)
                         backups.restore(db.project, body.get('file', ''))
                     except ValueError as e:
                         return self._json({'error': str(e)}, 400)
@@ -1851,7 +1892,10 @@ class Handler(BaseHTTPRequestHandler):
                 import landshapes
                 return self._json(landshapes.stop_previews())
             import contextlib
-            with contextlib.nullcontext() if u.path in ('/api/land/plan/preview', '/api/town/plan', '/api/castle/plan') else edit_lock:
+            with contextlib.nullcontext() if u.path in ('/api/land/plan/preview', '/api/town/plan', '/api/castle/plan') else _EditLock():
+                if u.path in WHOLE_MOD and editing.busy_with():
+                    return self._json({'error': '%s: %s waits until it is done. Everything else works meanwhile.' % (
+                        editing.busy_with(), 'Undo' if 'undo' in u.path or 'revert' in u.path else 'Redo' if 'redo' in u.path else 'switching mods')}, 409)
                 if u.path == '/api/doors/pair':
                     # (two doors picked in two windows lead to each other: web/twowin.js)
                     return self._json(doors.link_pair(db, body['cell_a'], body['ref_a'], body['cell_b'], body['ref_b']))
@@ -2606,6 +2650,7 @@ class Handler(BaseHTTPRequestHandler):
                     s = load_settings()
                     s['project'] = os.path.relpath(path, APP_DIR)
                     save_settings(s)
+                    _projmod.save_pending()
                     db.project = Project(path)
                     db.state = 'loading'
                     db.load_async()
@@ -2960,6 +3005,9 @@ def quit_soon():
 def main():
     global SERVER
     port = free_port()
+    # (a page loads some sixty files at once; the standard queue of five waiting connections refused the rest while the
+    # Workshop was busy, and the page came up without its panels: "REG is not defined", 2026-11-02)
+    ThreadingHTTPServer.request_queue_size = 256
     server = SERVER = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     threading.Thread(target=_stall_watch, name='stall-watch', daemon=True).start()
     url = 'http://127.0.0.1:%d/' % port
@@ -2970,6 +3018,7 @@ def main():
         import atexit
         atexit.register(_forget_running)
         atexit.register(lambda: editing.flush(db))      # (nothing left unwritten when the Workshop closes)
+        atexit.register(_projmod.save_pending)
     except OSError:
         pass
     print('=' * 60)

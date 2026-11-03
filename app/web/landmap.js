@@ -155,10 +155,20 @@ async function lmUp(){
   const cells = D.cells.filter(k => D.add !== D.before.has(k));
   if (!cells.length) return;
   if (!await needProject()){ await lmLoad(true); drawMap(); return; }
-  try {
-    lmMarksAre((await post('/api/land/marks', D.add ? {add: cells} : {remove: cells})).marks);
-  } catch (err){ toast(err.message, true); await lmLoad(true, true); }
+  // (only the newest answer counts: marked one after another while the Workshop was busy, an older answer came back
+  // after a newer click and unmarked its cells until the next one came, "my cell keeps getting deselected" 2026-11-02)
+  try { await lmMarksPost(D.add ? {add: cells} : {remove: cells}); }
+  catch (err){ toast(err.message, true); await lmLoad(true, true); }
   drawMap(); if (PNL.isShown('world', 'land')) renderWside();
+}
+// marks sent to the server: only the newest answer counts. Marked one after another while the Workshop was busy,
+// an older answer came back after a newer click and unmarked its cells until the next one came, "my cell keeps
+// getting deselected" (2026-11-02)
+async function lmMarksPost(body){
+  const seq = LM.markSeq = (LM.markSeq || 0) + 1;
+  const r = await post('/api/land/marks', body);
+  if (seq === LM.markSeq) lmMarksAre(r.marks);
+  return r;
 }
 // the marks as the server now has them, and the plan's preview over them asked for again
 function lmMarksAre(marks){
@@ -357,7 +367,7 @@ async function lmViewBind(i){
   const mk = $('#lm-mark'); if (mk) mk.onclick = async () => { if (V3.on) await v3Enable(false); lmMark(); };
   const cl = $('#lm-clear'); if (cl) cl.onclick = async () => {
     if (!await needProject()) return;
-    lmMarksAre((await post('/api/land/marks', {clear: true})).marks); drawMap(); renderWside();
+    await lmMarksPost({clear: true}); drawMap(); renderWside();
   };
   const rv = $('#lm-revert'); if (rv) rv.onclick = async () => {
     if (!await needProject()) return;
@@ -445,7 +455,7 @@ async function lsPreset(kind){
   if (!keys.length){
     const gx = Math.floor(W.cam.x / C), gy = Math.floor(W.cam.y / C);
     for (let x = gx - 2; x < gx + 2; x++) for (let y = gy - 2; y < gy + 2; y++){ const c = lmCell(x + ',' + y); if (!(c && c[0] === 'settled')) keys.push(x + ',' + y); }
-    try { lmMarksAre((await post('/api/land/marks', {add: keys})).marks); } catch (e){ toast(e.message, true); return; }
+    try { await lmMarksPost({add: keys}); } catch (e){ toast(e.message, true); return; }
   }
   const xs = keys.map(k => +k.split(',')[0]), ys = keys.map(k => +k.split(',')[1]);
   const x0 = Math.min(...xs) * C, x1 = (Math.max(...xs) + 1) * C, y0 = Math.min(...ys) * C, y1 = (Math.max(...ys) + 1) * C;
@@ -776,7 +786,7 @@ function lsBind(){
     const town = all.filter(k => { const c = lmCell(k); return c && c[0] === 'settled'; });
     const add = e.shiftKey ? all : all.filter(k => !town.includes(k));
     try {
-      lmMarksAre((await post('/api/land/marks', {add})).marks);
+      await lmMarksPost({add});
       toast(`Marked ${add.length} cell${add.length === 1 ? '' : 's'}${town.length && !e.shiftKey ? `; ${town.length} settled left out (Shift+click to mark them too)` : ''}.`);
     } catch (err){ toast(err.message, true); }
     renderWside(); lsPreviewSoon(); drawMap();
@@ -1107,7 +1117,7 @@ async function lsAutoMark(){
   const add = [...want].filter(k => !LM.data.marked.has(k) && !(lmCell(k) && lmCell(k)[0] === 'settled'));
   if (!add.length) return;
   try {
-    lmMarksAre((await post('/api/land/marks', {add})).marks);
+    await lmMarksPost({add});
     toast(`Marked ${add.length} more cell${add.length === 1 ? '' : 's'} the shapes reach.`);
     renderWside(); drawMap();
   } catch (e){ toast(e.message, true); }

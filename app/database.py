@@ -238,6 +238,38 @@ def _file_stamp(path):
     return st.st_size, int(st.st_mtime)
 
 
+def _forget_memos(old_recs):
+    """What the surveys and tools remembered for the game data read last time, let go. Nearly every module keeps a
+    module dict keyed by id(db.recs) (or holding db.recs itself), and nothing cleared them: each mod switch or reload
+    read 140 MB of surveys into new entries beside the old, and a session with a few switches sat at 3 GB (2026-11-02
+    audit). Entries keyed by (or holding) the old game data are dropped here, before it is let go."""
+    if not old_recs:
+        return
+    import sys
+    old = id(old_recs)
+    here = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
+
+    def stale(k, v):
+        if k == old or (isinstance(k, tuple) and any(x == old for x in k if isinstance(x, int) and not isinstance(x, bool))):
+            return True
+        if isinstance(v, tuple) and v and v[0] is old_recs:
+            return True
+        return False
+    for m in list(sys.modules.values()):
+        f = getattr(m, '__file__', None)
+        if not f or os.path.normcase(os.path.dirname(os.path.abspath(f))) != here:
+            continue
+        for name, d in list(vars(m).items()):
+            if not isinstance(d, dict) or not d or name.startswith('__'):
+                continue
+            try:
+                gone = [k for k, v in list(d.items()) if stale(k, v)]
+                for k in gone:
+                    del d[k]
+            except Exception:
+                pass
+
+
 class Database:
     def __init__(self):
         self.project = None
@@ -256,6 +288,9 @@ class Database:
         for f in getattr(self, 'files', []):
             if f:
                 f.close()
+        _forget_memos(getattr(self, 'recs', None))
+        self._split_memo = None             # (places read from the files closed now: cell_split)
+        self._split_size = 0
         self.config = {}
         self.plugins = []          # dicts: name, path, header, counts, missing
         self.files = []            # PluginFile objects (index matches plugins)
@@ -711,7 +746,8 @@ class Database:
         start = len(self.recs)
         content = [c for c in names if os.path.splitext(c)[1].lower() in PLUGIN_EXTS]
         before = [p['name'] for p in self.plugins if not p.get('lua_only') and not p.get('project')]
-        # new list objects: whatever keyed a cache on this load's lists starts afresh
+        # new list objects: whatever keyed a cache on this load's lists starts afresh (and is let go: _forget_memos)
+        _forget_memos(self.recs)
         self.recs = list(self.recs)
         self.search_text = list(self.search_text)
         first = len(self.plugins)
@@ -760,11 +796,11 @@ class Database:
                 return n
         return None
 
-    def compute_masters(self):
+    def compute_masters(self, texts=None):
         # only the files the mod really uses (see release.lean_masters); the broad list below is the fallback
         try:
             import release
-            return release.lean_masters(self)
+            return release.lean_masters(self, texts=texts)
         except Exception as e:
             print('Could not work out the lean master list (%s); using the full one.' % e)
             return self._compute_masters_full()
@@ -810,19 +846,34 @@ class Database:
             out.append((pl['name'], pl['size'] or (os.path.getsize(pl['path']) if pl['path'] else 0)))
         return out
 
-    def sync_project(self):
+    def sync_project(self, texts=None):
+        """The mod's records into what the Workshop reads. texts: {place key: its JSON text} when they were just made
+        (editing.commit's Snap); else each place's text is made here, to tell which places changed."""
+        import json
         from project import unb64
         p = self.project
-        masters = self.compute_masters()
+        if texts is None:
+            texts = {ck: json.dumps(c) for ck, c in p.cells.items()}
+        masters = self.compute_masters(texts)
         self.proj_masters = masters
         self.plugins[self.proj_pidx]['header']['masters'] = [m for m, _s in masters]
         lower = [m.lower() for m, _s in masters]
+        # (what didn't change since the last time is taken from then: every change re-encoded the whole mod, 1.7 s
+        # on a 32 MB one, and a town makes hundreds of changes, 2026-11-02)
+        old = getattr(self, '_sync_memo', None)
+        if not old:
+            old = {'data': {}}
+        memo = {'data': {}}
         wanted = {}
         for r in p.records.values():
-            wanted[(r['tag'], r['key'])] = (r['flags'], unb64(r['data']))
+            d = r['data']
+            b = old['data'].get(d)
+            memo['data'][d] = b = b if b is not None else unb64(d)
+            wanted[(r['tag'], r['key'])] = (r['flags'], b)
         for ck, c in p.cells.items():
             if c['refs'] or c.get('props'):      # (props: the place's own settings were changed, e.g. lighting)
-                wanted[('CELL', ck)] = (c.get('flags', 0), p.cell_bytes(c, lower))
+                wanted[('CELL', ck)] = (c.get('flags', 0), p.cell_bytes_of(ck, c, lower, texts.get(ck)))
+        self._sync_memo = memo
         for k in list(self.overlay):
             if k not in wanted:
                 self._overlay_remove(k)
@@ -835,6 +886,11 @@ class Database:
     def _overlay_put(self, k, flags, data):
         tag, key = k
         vf = self.files[self.proj_pidx]
+        ri = self.overlay.get(k)
+        if ri is not None:
+            was = vf.slots.get(ri)
+            if was is not None and was[1] == flags and was[2] == data:
+                return                                   # (the same as it is: nothing to do)
         if tag == 'CELL':
             rid, name, extra, _key = self._cell_info(data)
         elif tag == 'INFO':
@@ -911,9 +967,43 @@ class Database:
             return masters[upper - 1].lower()
         return self.plugins[pidx]['name'].lower()
 
+    SPLIT_KEEP = 48_000_000         # (bytes of game places kept read, cell_split)
+
+    def cell_split(self, v):
+        """split_cell of record v (a CELL), each part a fresh list. A game file's place is kept read: it never changes,
+        and a town's make read the same places 120,000 times, 3 minutes of it on a big mod (2026-11-02 audit)."""
+        from project import split_cell
+        r = self.recs[v]
+        f = self.files[r[3]]
+        if r[3] == self.proj_pidx:
+            return split_cell(f.record_at(r[4])[2])
+        import collections
+        lock = self.__dict__.get('_split_lock')
+        if lock is None:
+            lock = self.__dict__.setdefault('_split_lock', threading.Lock())
+        with lock:
+            memo = self.__dict__.get('_split_memo')
+            if memo is None:
+                memo = self._split_memo = collections.OrderedDict()
+            k = (r[3], r[4])
+            got = memo.get(k)
+            if got is not None and got[0] is f:
+                memo.move_to_end(k)
+            else:
+                got = None
+        if got is None:
+            data = f.record_at(r[4])[2]
+            hdr, lst = split_cell(data)
+            got = (f, hdr, lst, len(data))
+            with lock:
+                memo[k] = got
+                self._split_size = getattr(self, '_split_size', 0) + got[3]
+                while self._split_size > self.SPLIT_KEEP and len(memo) > 1:
+                    self._split_size -= memo.popitem(last=False)[1][3]
+        return list(got[1]), [{'frmr': x['frmr'], 'subs': list(x['subs'])} for x in got[2]]
+
     def cell_refs(self, cell_key, without_project=False):
         """All references in a cell merged across plugins: refkey -> {origin, idx, subs, pidx}."""
-        from project import split_cell
         refs = {}
         header = None
         for v in self.by_key.get(('CELL', cell_key), []):
@@ -922,8 +1012,7 @@ class Database:
             r = self.recs[v]
             if without_project and r[3] == self.proj_pidx:
                 continue
-            _t, _f, data = self.files[r[3]].record_at(r[4])
-            hdr, lst = split_cell(data)
+            hdr, lst = self.cell_split(v)
             if r[3] != self.proj_pidx:
                 header = (hdr, r[6])
             for ref in lst:

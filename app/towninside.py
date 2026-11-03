@@ -519,6 +519,7 @@ def _light_rooms(db, key):
 # Imperial forts' and Firewatch's, Old Ebonheart's; a made town's towers stood doorless, the user's walk of 2026-11-01)
 WALL_ROOM = re.compile(r'keep|guardtower|wall_tower', re.I)
 WALL_ROOMS = 6                     # a town's wall holds at most this many rooms
+WALL_ROOM_WAYS = 4                 # (and copies only a game room with at most this many ways out)
 DOOR_GROUND = 64                   # (a wall door's sill this near the ground in front of it, or it is not used there)
 _WALLX = {}
 
@@ -555,6 +556,14 @@ def _wall_examples(db):
     return out
 
 
+def _ways_out(db, key):
+    """How many of a place's doors lead somewhere."""
+    try:
+        return sum(1 for r in mapdata.cellmap(db, key)['refs'] if r['type'] == 'DOOR' and r.get('to'))
+    except Exception:
+        return 0
+
+
 def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
     """Doors into the wall's own towers and keep, each with the game's interior for that piece behind it: the door where
     the game sets it on the piece, kept only where it opens into the town at the ground; linked both ways as the game's
@@ -574,7 +583,10 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
     for ck, rk, wid, pose in cand:
         if len(names) >= WALL_ROOMS:
             break
-        exs = sorted(X[wid.lower()], key=lambda e: (_dead_doors(db, e['t']) > 0, e['t'] in used, rng.random()))
+        # (a tower's own room, never a whole curtain wall's place with a dozen ways out: copied for one tower, its other
+        # doors all led out by that tower's, the way out behind the wall there counted once for each, lab w02)
+        exs = sorted([e for e in X[wid.lower()] if _ways_out(db, e['t']) <= WALL_ROOM_WAYS],
+                     key=lambda e: (_dead_doors(db, e['t']) > 0, e['t'] in used, rng.random()))
         for e in exs:
             lx, ly, dz, drz = e['off']
             wx, wy = create._rot2(lx, ly, pose[5])
@@ -610,6 +622,16 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
             c2, refs2 = editing._cell(db, key)
             r2 = refs2[cb['k']]
             editing._store(c2, cb['k'], r2['origin'], r2['idx'], doors._set_link(r2['subs'], '', on_floor(db, '', out)))
+            # (the game place's other ways out, to its fort and along its wall, out by this door too: a curtain wall's
+            # place copied for one tower kept its eleven other doors leading nowhere, 48 in a walled hill town, lab b01)
+            for r in tm['refs']:
+                if r['type'] != 'DOOR' or not r.get('to') or r['k'] == ib['k']:
+                    continue
+                o = min((c_ for c_ in cm['refs'] if c_['type'] == 'DOOR' and c_['k'] != cb['k']), key=lambda c_: math.dist(c_['p'][:3], r['p'][:3]), default=None)
+                if o is None or math.dist(o['p'][:3], r['p'][:3]) > 2 or o['k'] not in refs2:
+                    continue
+                r3 = refs2[o['k']]
+                editing._store(c2, o['k'], r3['origin'], r3['idx'], doors._set_link(r3['subs'], '', on_floor(db, '', out)))
             editing.commit(db, 'A room in the wall of %s: %s' % (town, name))
             try:
                 make_own(db, key, e['t'], rooms, rng.randrange(1, 1 << 30))

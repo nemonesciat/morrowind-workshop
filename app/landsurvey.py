@@ -151,7 +151,7 @@ def set_marks(db, add=(), remove=(), clear=False):
     gone = {'%d,%d' % tuple(int(v) for v in str(k).split(',')) for k in remove}
     cur = [k for k in cur if k not in gone]
     p.land = dict(p.land or {}, marks=cur)
-    p.save()
+    p.save_soon()
     return {'marks': cur}
 
 

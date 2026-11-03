@@ -8,6 +8,7 @@ interiors it serves) and its footprint (its pieces' boxes, turned, in its door's
 town's culture and the plot's kind about its size, set down with its middle on the plot's and its door facing the
 plot's way."""
 import json
+import os
 import math
 import random
 import re
@@ -314,6 +315,75 @@ def _game_over_ground(db, low):
     return out
 
 
+DOOR_TO_WALL = 220             # (a building's other door this near the town wall, looking at it, keeps the building unbuilt)
+
+
+def _door_to_wall(db, m, q, dx, dy, c, sn, wall_boxes, rmemo):
+    """Whether one of the building's doors other than its front would open against the town wall: the way out of it,
+    from the building's middle through the door, meets a wall piece within DOOR_TO_WALL."""
+    import townplan
+    rect = q.get('rect')
+    if not rect:
+        return False
+    mx, my = sum(p_[0] for p_ in rect) / len(rect), sum(p_[1] for p_ in rect) / len(rect)
+    front = min((p_ for p_ in m['fpieces'] if p_.get('door')), key=lambda p_: p_['x'] ** 2 + p_['y'] ** 2 + (p_['z'] * 3) ** 2, default=None)
+    for p_ in m['fpieces']:
+        if p_ is front or not (p_.get('door') or re.search(r'door', p_['id'], re.I)) or re.search(r'trap|hatch|marker|frame', p_['id'], re.I):
+            continue
+        low = p_['id'].lower()
+        if low not in rmemo:
+            rmemo[low] = db.resolve_id(p_['id'])
+        ri = rmemo[low]
+        if ri is None or db.recs[ri][0] != 'DOOR':
+            continue
+        wx, wy = _world(dx, dy, c, sn, p_['x'], p_['y'])
+        ux, uy = wx - mx, wy - my
+        h = math.hypot(ux, uy)
+        if h < 1:
+            continue
+        px, py = wx + ux / h * DOOR_TO_WALL, wy + uy / h * DOOR_TO_WALL
+        probe = [(px - 24, py - 24), (px + 24, py - 24), (px + 24, py + 24), (px - 24, py + 24)]
+        if any(townplan._overlap(probe, w_) for w_ in wall_boxes):
+            return True
+    return False
+
+
+# the roots a Telvanni pod hangs lanterns from dangle in the air under it (ex_t_root_hook: 448 of 452 of the game's with
+# their foot off the ground, median 803 up; lab r04); set where the pod stands lower than the game's, their feet went into
+# the ground, lanterns and all (the user, 2026-11-02)
+HUNG = re.compile(r'root_hook|^ex_t_hook$', re.I)
+HUNG_CLEAR = 40                # (a hanging piece's foot at least this far over the ground, or it is left out)
+
+
+def _hung_into_ground(db, m, dx, dy, c, sn, z0, rmemo):
+    """{id(piece)}: the module's hanging pieces that would reach the ground here, and the lights they hold."""
+    out, held = set(), []
+    for p_ in m['fpieces']:
+        if not HUNG.search(p_['id']):
+            continue
+        low = p_['id'].lower()
+        if low not in rmemo:
+            rmemo[low] = db.resolve_id(p_['id'])
+        ri = rmemo[low]
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if not b:
+            continue
+        wx, wy = _world(dx, dy, c, sn, p_['x'], p_['y'])
+        g = mapdata.terrain_z(db, wx, wy)
+        s = p_.get('s') or 1.0
+        foot = z0 + p_['z'] + b[2] * s
+        if g is not None and foot < g + HUNG_CLEAR:
+            out.add(id(p_))
+            held.append((p_['x'], p_['y'], p_['z'] + b[2] * s - 64, p_['z'] + b[5] * s + 64, max(b[3] - b[0], b[4] - b[1]) * s / 2 + 48))
+    if held:
+        for p_ in m['fpieces']:
+            if id(p_) in out or not re.search(r'^light_|lantern', p_['id'], re.I):
+                continue
+            if any(math.hypot(p_['x'] - x, p_['y'] - y) <= r and z_lo <= p_['z'] <= z_hi for x, y, z_lo, z_hi, r in held):
+                out.add(id(p_))
+    return out
+
+
 def _fground(db, m, rmemo):
     """The ground under a building's door, from its door (frame z 0). The survey keeps the game's own only for a door
     up to 400 over its ground, else -40; a Telvanni pod's door is up its stalk or spiral stair, so every pod house
@@ -579,6 +649,7 @@ def game_catalog(db):
             c['uid'] += '#%d' % len(seen)
         seen.add(c['uid'])
     _cat[key] = (out, st)
+    _lone_save()
     return out
 
 
@@ -764,9 +835,59 @@ def _lone_doors(db, m, memo, tri=None):
     return out
 
 
+_LONE = {'sig': None, 'd': {}, 'dirty': False}      # (lone doors found, by the module's pieces: on disk, cache/lonedoors_*)
+
+
+def _lone_memo(db):
+    """The lone doors found before, keyed by a module's pieces: finding them casts rays through every game building's
+    model, 80 s of each town plan on the audit machine (and twice a session, once the strays arrive), while the answer
+    depends on the pieces alone. Kept on disk by the game's signature."""
+    import taste
+    sig = taste.sig(db)
+    if _LONE['sig'] != sig:
+        _LONE.update(sig=sig, d={}, dirty=False)
+        try:
+            with open(_lone_path(sig), encoding='utf-8') as f:
+                _LONE['d'] = json.load(f)
+        except (OSError, ValueError):
+            pass
+    return _LONE['d']
+
+
+def _lone_path(sig):
+    folder = os.path.join(os.environ.get('WORKSHOP_HOME') or os.path.dirname(os.path.abspath(__file__)), 'cache')
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, 'lonedoors_%s_v1.json' % sig)
+
+
+def _lone_save():
+    if not _LONE['dirty'] or not _LONE['sig']:
+        return
+    try:
+        path = _lone_path(_LONE['sig'])
+        tmp = '%s.%d.tmp' % (path, os.getpid())
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(_LONE['d']))
+        os.replace(tmp, path)
+        _LONE['dirty'] = False
+    except OSError:
+        pass
+
+
 def _without_lone_doors(db, m, memo, tri=None):
     """The module without its lone doors and their steps, frames and signs; None when its way in is one of them."""
-    lone = _lone_doors(db, m, memo, tri)
+    import hashlib
+    pieces = [(p['id'].lower(), round(p['x'], 1), round(p['y'], 1), round(p['z'], 1), round(p.get('rx', 0.0), 3),
+               round(p.get('ry', 0.0), 3), round(p['rz'], 3), round(p.get('s') or 1.0, 3), bool(p.get('door'))) for p in m['fpieces']]
+    key = hashlib.sha1(json.dumps(sorted(pieces)).encode()).hexdigest()[:20]
+    known = _lone_memo(db)
+    if key in known:
+        at = set(known[key])
+        lone = [p for n, p in enumerate(m['fpieces']) if n in at]
+    else:
+        lone = _lone_doors(db, m, memo, tri)
+        known[key] = [n for n, p in enumerate(m['fpieces']) if any(p is q for q in lone)]
+        _LONE['dirty'] = True
     if not lone:
         return m
     front = min((p for p in m['fpieces'] if p.get('door')), key=lambda p: p['x'] ** 2 + p['y'] ** 2 + (p['z'] * 3) ** 2, default=None)
@@ -1179,6 +1300,24 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         import townwalls
         _say('Laying the wall', 0.66)
         W = townwalls.lay(db, plan, None if walls == 'auto' else walls)
+        # (stairs up to the walk inside, where no house is to stand: the game's walled towns climb to theirs)
+        # (on ground no house stands on first; failing that, in the place of one house, its plot left empty)
+        memo_s = {}
+
+        def on_plots(st):
+            cs_, _b = townwalls._box(db, st['id'], st['pose'], memo_s)
+            if not cs_:
+                return None
+            cs_ = _shrink_rect(cs_, -48)
+            return [q for q in plan['plots'] if q.get('b') and any(r_ and townplan._overlap(cs_, r_) for r_ in (q.get('rect'), q.get('way')))]
+        stairs = townwalls.wall_stairs(W, free=lambda st: on_plots(st) == [], db=db)
+        if not stairs:
+            stairs = townwalls.wall_stairs(W, most=2, db=db, free=lambda st: len(on_plots(st) or [None, None]) <= 1 and not any(
+                q.get('kind') in SPECIAL for q in on_plots(st) or ()))
+        for st in stairs:
+            for q in on_plots(st) or ():
+                q['b'] = None
+            W['pieces'].append(st)
         try:
             townwalls.level_ground(db, W, new_refs)
         except Exception as e:
@@ -1234,6 +1373,9 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         m = b['m']
         c, sn, yaw = _frame(q['face'])
         dx, dy = q['door']
+        if wall_boxes and _door_to_wall(db, m, q, dx, dy, c, sn, wall_boxes, rmemo):
+            q['b'] = None                # (a back door of its against the wall: it led nowhere, or out of the town
+            continue                     # through the wall, 3 Hlaalu houses backing a wall in one town, lab w03)
         # (the ground in front of the door: the building stands on it as the game's stood on its own, fground)
         fx, fy = _world(dx, dy, c, sn, 0.0, -120.0)
         gz = mapdata.terrain_z(db, fx, fy)
@@ -1248,7 +1390,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             q['b'] = None
             continue
         gid = None                           # (its pieces kept as one building: Select the whole building, groups.building)
+        hung_out = _hung_into_ground(db, m, dx, dy, c, sn, z0, rmemo)
         for p_ in m['fpieces']:
+            if id(p_) in hung_out:
+                continue
             low = p_['id'].lower()
             if low not in rmemo:
                 rmemo[low] = db.resolve_id(p_['id'])
@@ -1286,6 +1431,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         _say('Setting the wall on the ground', 0.87)
         db.sync_project()
         W = townwalls.grounded(db, W)
+        townwalls.drop_doubled(db, W, new_refs)     # (where a castle's or another town's wall already stands)
         # (no wall-walk arches: the game stands ex_imp_wallent_02 along its walks, but set there without a building they
         # read as doorways to nowhere, the user's Chillmorrow, test4: "don't add them unless they go on a building")
         for p_ in W['pieces']:

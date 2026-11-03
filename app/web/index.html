@@ -214,6 +214,7 @@ table.t td.ty{color:var(--gold2);font-size:11px;text-transform:uppercase;white-s
 .proj:hover{border-color:var(--gold)}
 .busychip{flex:0 0 auto;border:1px solid var(--gold);border-radius:20px;padding:3px 10px;margin-left:8px;color:var(--text-b);font-size:12px;white-space:nowrap;cursor:help;display:inline-flex;align-items:center;gap:6px}
 .busychip .btn.sm{padding:0 6px;font-size:11px;line-height:16px}
+body.wsbusy #world canvas{cursor:progress!important}
 .proj b{color:var(--gold2);font-weight:600}
 .proj.none{border-style:dashed}
 .btn.primary{background:var(--btn-primary);border-color:var(--goldline);color:var(--gold2)}
@@ -467,6 +468,12 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .linkbox kbd{font:11px var(--mono);border:1px solid var(--line2);border-radius:4px;padding:0 4px;color:var(--gold2)}
 .mv{height:250px;background:radial-gradient(circle at 50% 40%,#2a241b,#0d0c0a);border:1px solid var(--line);border-radius:9px;overflow:hidden;position:relative}
 .mv canvas{display:block}
+details.mmfold{margin:14px 0 4px}
+details.mmfold>summary{cursor:pointer;list-style:none;padding:4px 0;user-select:none}
+details.mmfold>summary::-webkit-details-marker{display:none}
+details.mmfold>summary .mmcaret::before{content:'▸';display:inline-block;width:14px;color:var(--faint)}
+details.mmfold[open]>summary .mmcaret::before{content:'▾'}
+details.mmfold details.mmfold{margin:4px 0 4px 18px}
 details.pal{margin-bottom:4px}
 details.pal summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:3px 0}
 .chips{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 6px}
@@ -894,7 +901,14 @@ const api = async (p, opt) => {
       if (read && n < 4){ await new Promise(res => setTimeout(res, 1500)); continue; }
       const e = new Error('The Workshop isn\'t answering'); e.offline = true; throw e;
     }
-    const j = await r.json();
+    // (an answer cut short or not JSON, a server mid-restart or overloaded: a read asks again, an action says so plainly,
+    // not "SyntaxError: Unexpected end of JSON input")
+    let j;
+    try { j = await r.json(); }
+    catch (x){
+      if (read && n < 4){ await new Promise(res => setTimeout(res, 1500)); continue; }
+      const e = new Error(r.ok ? "The Workshop's answer came back cut short. Try again." : 'The Workshop had a problem (' + r.status + '). Try again.'); e.offline = true; throw e;
+    }
     if (r.status === 503 && read && n < 80){ await new Promise(res => setTimeout(res, 1500)); continue; }
     if (!r.ok){ const e = new Error(j.error || r.status); if (r.status === 503) e.loading = true; throw e; }
     return j;
@@ -919,7 +933,7 @@ async function busyPoll(){
     try {
       const ctl = new AbortController(); setTimeout(() => ctl.abort(), 2500);
       const r = await (await fetch('/api/busy', {signal: ctl.signal})).json();
-      busyShow(r.busy && r.busy.length ? r.busy : null);
+      busyShow(r.busy && r.busy.length ? r.busy : null, r.making);
     } catch (e){ busyShow([{what: '', seconds: Math.round((now - first) / 1000)}]); }
   }
   setTimeout(busyPoll, 1500);
@@ -928,13 +942,18 @@ function busyName(w){
   const m = BUSY_WHAT.find(([re]) => re.test(w));
   return m ? m[1][0].toUpperCase() + m[1].slice(1) : 'Working';
 }
-function busyShow(list){
+function busyShow(list, making){
   const el = $('#busychip'); if (!el) return;
+  // (the busy cursor over the map and 3D view too: the chip alone, up in the corner, went unseen, 2026-11-02)
+  document.body.classList.toggle('wsbusy', !!list);
   if (!list){ el.style.display = 'none'; return; }
   const top = list[0], prev = list.some(b => /\/api\/land\/plan\/preview$/.test(b.what));
   el.style.display = '';
-  el.innerHTML = `⏳ ${esc(busyName(top.what))} · ${top.seconds} s${prev ? ' <button class="btn sm" id="busystop" title="Stop the land preview. It runs again when you change a shape">✕</button>' : ''}`;
-  el.title = 'The Workshop is busy. Your clicks are in and happen as soon as it is free.' + (list.length > 1 ? ' Waiting: ' + [...new Set(list.slice(1).map(b => busyName(b.what)))].join(', ') : '');
+  const goOn = making || (top.seconds > 5 && /\/api\/(town|castle)\/make|\/api\/land\/plan\/apply/.test(top.what));
+  el.innerHTML = `⏳ ${esc(busyName(top.what))} · ${top.seconds} s${goOn ? ' · keep working' : ''}${prev ? ' <button class="btn sm" id="busystop" title="Stop the land preview. It runs again when you change a shape">✕</button>' : ''}`;
+  el.title = (goOn
+    ? 'Keep working: the rest of the Workshop goes on between its steps. Undo and switching mods wait until it is done.'
+    : 'The Workshop is busy. Your clicks are in and happen as soon as it is free.') + (list.length > 1 ? ' Waiting: ' + [...new Set(list.slice(1).map(b => busyName(b.what)))].join(', ') : '');
   const st = el.querySelector('#busystop');
   if (st) st.onclick = async e => { e.stopPropagation(); st.disabled = true; try { await fetch('/api/land/plan/preview/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); } catch (x){} };
 }
@@ -2074,11 +2093,28 @@ async function renderMyMod(){
   S.landSel = S.landSel || new Set();
   S.landIds = (byType.LAND || []).map(c => c.id);
   for (const id of [...S.landSel]) if (!S.landIds.includes(id)) S.landSel.delete(id);
-  for (const [t, list] of Object.entries(byType)){
-    h += `<h3 style="margin:20px 0 6px;color:var(--muted);font-weight:500">${esc(S.typeLabels[t] || t)} <span class="msg">${list.length}</span>` +
-      (t === 'LAND' ? ` <span id="landselbar" style="font-weight:400;margin-left:10px"></span>` : '') + `</h3><table class="t">` +
-      list.map((c, ix) => `<tr${t === 'LAND' ? ` data-landrow="${ix}" class="landrow${S.landSel.has(c.id) ? ' picked' : ''}"` : ''}><td><span class="lnk" data-open="${c.i}">${esc(c.name || c.id)}</span> <span class="msg">${esc(c.name ? c.id : '')}</span></td><td class="msg" style="width:260px">${esc(c.desc)}</td><td style="width:${t === 'LAND' ? 220 : 150}px;text-align:right">${t === 'CELL' ? `<button class="btn sm" data-mapcell="${c.i}">Open on map</button>`
-        : t === 'LAND' ? `<button class="btn sm" data-mapland="${esc(c.id)}">Open on map</button> <button class="btn sm" data-landundo="${c.i}" title="Back to the ground as the game and your other mods have it">Undo</button>` : ''}</td></tr>`).join('') + `</table>`;
+  // each kind folds up (hundreds of places and lines made a list that took an age to scroll, the user 2026-11-02);
+  // small kinds start open, big ones shut, and places of one town nest under its name
+  S.mmOpen = S.mmOpen || {};
+  const row = (t, c, ix) => `<tr${t === 'LAND' ? ` data-landrow="${ix}" class="landrow${S.landSel.has(c.id) ? ' picked' : ''}"` : ''}><td><span class="lnk" data-open="${c.i}">${esc(c.name || c.id)}</span> <span class="msg">${esc(c.name ? c.id : '')}</span></td><td class="msg" style="width:260px">${esc(c.desc)}</td><td style="width:${t === 'LAND' ? 220 : 150}px;text-align:right">${t === 'CELL' ? `<button class="btn sm" data-mapcell="${c.i}">Open on map</button>`
+        : t === 'LAND' ? `<button class="btn sm" data-mapland="${esc(c.id)}">Open on map</button> <button class="btn sm" data-landundo="${c.i}" title="Back to the ground as the game and your other mods have it">Undo</button>` : ''}</td></tr>`;
+  const isOpen = (k, n) => k in S.mmOpen ? S.mmOpen[k] : n <= 12;
+  const fold = (k, label, n, extra, body) => `<details class="mmfold" data-mmfold="${esc(k)}"${isOpen(k, n) ? ' open' : ''}><summary><span class="mmcaret"></span>${label} <span class="msg">${n}</span>${extra || ''}</summary>${body}</details>`;
+  const kinds = Object.entries(byType);
+  if (kinds.length) h += `<div class="msg" style="margin-top:18px"><span class="lnk" data-mmall="1">Open all</span> · <span class="lnk" data-mmall="0">Close all</span></div>`;
+  for (const [t, list] of kinds){
+    let body;
+    if (t === 'CELL' && list.length > 12){
+      // (places by the town or house they belong to: "Uvidrith, Velis Felder's House" under Uvidrith)
+      const by = {}; list.forEach((c, ix) => { const nm = c.name || c.id || '', m = /^(.+?)\s\(-?\d+,\s*-?\d+\)$/.exec(nm) || /^([^,]+?),\s/.exec(nm); (by[m ? m[1] : ''] = by[m ? m[1] : ''] || []).push(ix); });
+      const loose = [];
+      body = Object.entries(by).sort((x, y) => x[0].localeCompare(y[0])).map(([pre, ixs]) => {
+        if (!pre || ixs.length < 3){ loose.push(...ixs); return ''; }
+        return fold('CELL:' + pre, `<b style="font-weight:500">${esc(pre)}</b>`, ixs.length, '', `<table class="t">${ixs.map(ix => row(t, list[ix], ix)).join('')}</table>`);
+      }).join('') + (loose.length ? `<table class="t">${loose.sort((a, b) => a - b).map(ix => row(t, list[ix], ix)).join('')}</table>` : '');
+    } else body = `<table class="t">${list.map((c, ix) => row(t, c, ix)).join('')}</table>`;
+    h += fold(t, `<span style="font-size:17px;color:var(--muted);font-weight:500">${esc(S.typeLabels[t] || t)}</span>`, list.length,
+              t === 'LAND' ? ` <span id="landselbar" style="font-weight:400;margin-left:10px"></span>` : '', body);
   }
   if (P.log.length){
     // changes nest under the change they build on (things placed in a place you built, lines in a quest you made...)
@@ -2177,7 +2213,10 @@ function landSelPaint(){
   bar.innerHTML = n ? `<span class="msg">${n} picked</span> <button class="btn sm" data-landundosel title="Put the ground in the picked cells back as the game and your other mods have it, in one step">↶ Undo ${n}</button> <button class="btn sm" data-landselnone>Clear</button>`
     : '<span class="msg">Click rows to pick them (Shift: a run, Ctrl: one more)</span>';
 }
+$('#mymodwrap').addEventListener('toggle', e => { const d = e.target; if (d.matches && d.matches('details.mmfold')) (S.mmOpen = S.mmOpen || {})[d.dataset.mmfold] = d.open; }, true);
 $('#mymodwrap').addEventListener('click', async e => {
+  const all = e.target.closest('[data-mmall]');
+  if (all){ const on = all.dataset.mmall === '1'; document.querySelectorAll('#mymodwrap details.mmfold').forEach(d => { d.open = on; S.mmOpen[d.dataset.mmfold] = on; }); return; }
   const tg = e.target.closest('[data-atog]');
   if (tg){ const id = /^g/.test(tg.dataset.atog) ? tg.dataset.atog : +tg.dataset.atog; S.actOpen.has(id) ? S.actOpen.delete(id) : S.actOpen.add(id); renderMyMod(); return; }
   const ug = e.target.closest('[data-undogroup]');
@@ -2256,6 +2295,15 @@ let W = {key:null, info:null, ext:false, cells:{}, lands:{}, cam:{x:0, y:0, z:0.
          placeName:'', hidden:new Set(), god:false, drag:null, hover:null, loading:new Set(), dpr:1, filter:'',
          lockArch:true, cut:null, palette:null, paletteKey:null, hide:new Set(), onlyMine:false, marks:true};
 try { W.marks = localStorage.getItem('ws-marks') !== 'off'; } catch (e) {}
+// (the map's ground pictures emptied after a change stay drawn until each cell's new one comes: emptied at once,
+// the land vanished for as long as a busy Workshop took to send it again, 2026-11-02)
+{
+  let lands = W.lands;
+  Object.defineProperty(W, 'lands', {configurable: true, enumerable: true, get: () => lands, set: v => {
+    if (v && !Object.keys(v).length && Object.keys(lands || {}).length) W.landsPrev = Object.assign(W.landsPrev || {}, lands);
+    lands = v;
+  }});
+}
 function setMarks(on){ W.marks = on; try { localStorage.setItem('ws-marks', on ? 'on' : 'off'); } catch (e) {} }
 // marks only where they tell you something: not in a place your mod made, where everything is new
 function marksIn(ck){ const c = W.cells[ck]; return W.marks && !(c && c.own); }
@@ -2446,6 +2494,8 @@ async function loadAround(){
         (!in3d && (c.gx < x0 - 3 || c.gx > x1 + 3 || c.gy < y0 - 3 || c.gy > y1 + 3)))) delete W.cells[k];
   }
   if (!in3d) for (const k of Object.keys(W.lands)){ const [x, y] = k.split(',').map(Number); if (x < x0 - 8 || x > x1 + 8 || y < y0 - 8 || y > y1 + 8) delete W.lands[k]; }
+  // (in 3D too, the ground well past the view distance: a long flight kept every cell's heights and picture)
+  else for (const k of Object.keys(W.lands)){ const [x, y] = k.split(',').map(Number); if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) > d3 + 8) delete W.lands[k]; }
   await Promise.all(jobs);
 }
 const STOPS = [[-1, [112,108,72]], [250, [98,100,64]], [1200, [104,94,68]], [2600, [124,118,104]], [4500, [176,172,164]]];
@@ -2541,7 +2591,12 @@ function drawMap(){
   const z = W.cam.z;
   if (W.ext){
     g.imageSmoothingEnabled = true;
-    for (const [k, L] of Object.entries(W.lands)){
+    const prev = W.landsPrev ? Object.entries(W.landsPrev).filter(([k]) => {
+      const L = W.lands[k];
+      if (L && (L.img || L.none)){ delete W.landsPrev[k]; return false; }
+      return true;
+    }) : [];
+    for (const [k, L] of prev.concat(Object.entries(W.lands))){
       if (!L.img) continue;
       const [gx, gy] = k.split(',').map(Number);
       const [sx, sy] = toScreen(gx * CELL, (gy + 1) * CELL), size = (CELL + CELL / ((L.n || 65) - 1)) * z;
@@ -2673,6 +2728,7 @@ function drawMap(){
     }
     g.restore();
   }
+  if (typeof arDraw === 'function') arDraw(g);   // a door's arrival being picked
   // the spot typed into Go to a place (gotoSpot): a ring and a cross for a few seconds
   if (W.mark){
     const [sx, sy] = toScreen(W.mark.x, W.mark.y);
@@ -2770,7 +2826,7 @@ function setMode(m, data){
   else if (m === 'play') setBanner(LINK.connected ? 'Click where you want to teleport to in game. Esc to cancel.' : 'Click where you want to start playing. Esc to cancel.', 'play');
   else if (m === 'group') groupHint();
   else if (m === 'paths') peBanner();
-  else if (m === 'arrive') setBanner(`Click where the player should arrive through <b>${esc((W.arriving || {}).name || 'the door')}</b>${V3.on ? ' (on the floor or ground), or click a door to link the two doors to each other' : ''}. Esc to cancel.`, 'arrive');
+  else if (m === 'arrive') arBanner();
   else setBanner('');
   if (m !== 'place'){ W.placeId = null; renderPlacing(); renderLinkBits(); }
 }
@@ -2789,6 +2845,7 @@ cv.addEventListener('mousedown', e => {
   if (W.mode === 'landshape'){ lsDown(e); return; }
   if (typeof lmHandleDown === 'function' && lmHandleDown(e)) return;     // a point of the picked land shape
   if (typeof extendMapClick === 'function' && extendMapClick(e)) return;      // Extend mode: a strip picked
+  if (typeof arDown === 'function' && arDown(e)) return;      // a door's arrival: press where you land, drag the way you face (arrive.js)
   const hit = W.mode ? null : hitTest(e.offsetX, e.offsetY);
   if (hit && e.shiftKey){ toggleMulti(hit[0], hit[1].k); return; }
   if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)){
@@ -2815,6 +2872,7 @@ cv.addEventListener('mousemove', e => {
   if (W.mode === 'landshape'){ $('#maptip').style.display = 'none'; lsMoveMouse(e); return; }
   if (typeof LM !== 'undefined' && LM.hdrag){ $('#maptip').style.display = 'none'; lmHandleMove(e); return; }
   if (typeof LM !== 'undefined' && !W.drag) lmHandleMove(e);       // (the pointer over a land shape's point or line)
+  if (typeof arMove === 'function' && arMove(e)) return;
   const D = W.drag;
   if (D){
     const dx = e.offsetX - D.sx, dy = e.offsetY - D.sy;
@@ -2841,6 +2899,7 @@ window.addEventListener('mouseup', async e => {
   if (REG.drag){ regUp(); return; }
   if (typeof LM !== 'undefined' && LM.drag){ lmUp(); return; }
   if (typeof LM !== 'undefined' && LM.hdrag){ lmHandleUp(); return; }
+  if (typeof AR !== 'undefined' && AR.press && !AR.press.three){ arUp(); return; }
   const D = W.drag; W.drag = null; cv.classList.remove('dragging');
   if (!D) return;
   if (D.kind === 'obj' && D.moved && D.to){
@@ -3306,12 +3365,11 @@ function renderWside(){
       <div id="w-props" style="margin-top:8px"></div>
       ${sel.type === 'DOOR' ? `<h3>Leads to</h3>
         ${sel.to ? `<div style="font-size:13.5px">→ <span class="lnk" data-sa="gotodest">${esc(sel.to.cell || sel.to.label || 'outdoors (' + sel.to.key.slice(1) + ')')}</span></div>
-          <div class="msg">You arrive at ${Math.round(sel.to.x)}, ${Math.round(sel.to.y)}, facing ${Math.round(((sel.to.rz * 180 / Math.PI) % 360 + 360) % 360)}°.</div>`
+          <div class="xyz" style="margin-top:4px;grid-template-columns:repeat(4,1fr)" title="Where the player arrives, exactly: Set keeps it as typed"><div><label>Arrive X</label><input class="inp" id="a-x" value="${Math.round(sel.to.x)}"></div><div><label>Y</label><input class="inp" id="a-y" value="${Math.round(sel.to.y)}"></div><div><label>Height</label><input class="inp" id="a-z" value="${Math.round(sel.to.z)}"></div><div><label title="0 north, 90 east">Facing °</label><input class="inp" id="a-r" value="${Math.round(deg(sel.to.rz || 0))}"></div></div>`
           : '<div class="msg">Nowhere: an ordinary door that just opens and closes.</div>'}
         <div class="dd" style="margin-top:8px"><input class="inp" id="w-relink" placeholder="${sel.to ? 'Lead somewhere else…' : 'Make it lead to a place…'} (search a place)" autocomplete="off"><div class="ddlist" id="w-relink-l"></div></div>
         <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="w-relink-both" ${W.relinkBoth !== false ? 'checked' : ''}> Make the door at the other end lead back here</label>
-        <div class="actions" style="margin-top:6px">${sel.to ? '<button class="btn sm" data-sa="arrive" title="Open the place it leads to and click exactly where the player should arrive">📍 Pick arrival spot…</button><button class="btn sm" data-sa="unlink">Remove link</button>' : ''}</div>
-        <div class="msg" style="font-size:11.5px">The arrival spot is chosen for you: in front of the door that leads back here, or in front of the place's way in. Use "Pick arrival spot" to set it exactly.</div>` : ''}
+        <div class="actions" style="margin-top:6px">${sel.to ? '<button class="btn sm" data-sa="arrset" title="Arrive exactly at the X, Y, height and facing typed above">Set</button><button class="btn sm" data-sa="arrive" title="Open the place it leads to: click the floor there (press and drag to set the way they face), click a door to arrive in front of it, or 📷 arrive where the 3D camera is">📍 Pick…</button>' : ''}${LINK.connected && LINK.player ? '<button class="btn sm" data-sa="arrme" title="Lead here and arrive exactly where your character stands in game, facing the way they face">🧍 Where I stand</button>' : ''}${sel.to ? '<button class="btn sm" data-sa="unlink">Remove link</button>' : ''}</div>` : ''}
       <div class="msg" style="margin-top:8px;font-size:11.5px">${V3.on ? 'Drag the arrows in the view to move it, or press R and drag the ring to turn it. End sets it down on what\'s below.' : 'Drag it on the map to move it. Height follows the ground outdoors.'} Swapping keeps the spot, the turn and where a door leads.</div>`;
   } else h += `<div class="msg" style="padding:10px 0">Click something on the map to select it. Its position, turn and size show up here.</div>`;
   h += `</div>`;
@@ -3532,7 +3590,8 @@ async function relinkDoor(cell, ref, target, at, label){
     W.cells[cell] = prepCell(m); if (cell === W.key) W.info = m;
     await afterChange();
     const r = m.relink || {};
-    toast(`The door now leads to ${label || target}${r.back ? ', and ' + r.back + ' there leads back' : ''}.` + (LINK.connected ? ' Already live in game.' : ''));
+    const face = at && r.arrive && typeof arFacing === 'function' ? ` You arrive facing ${arFacing(r.arrive[5])}${r.moved ? ', a step off the wall' : ''}.` : '';
+    toast(`The door now leads to ${label || target}${r.back ? ', and ' + r.back + ' there leads back' : ''}.` + face + (LINK.connected ? ' Already live in game.' : ''));
     return true;
   } catch (e){ toast(e.message, true); return false; }
 }
@@ -3545,7 +3604,7 @@ function doorWithinPlace(cell, ref){
 async function arriveAt(x, y, z, rz){
   const A = W.arriving; if (!A) return;
   setMode(null);
-  const ok = await relinkDoor(A.cell, A.ref, A.target, [x, y, z, rz || 0], null);
+  const ok = await relinkDoor(A.cell, A.ref, A.target, [x, y, z, rz == null ? null : rz], W.key === A.target && W.info ? W.info.name : null);   // (no facing: away from the nearest door)
   W.arriving = null;
   await worldOpen(A.cell);
   if (ok) selectRef(A.cell, A.ref);
@@ -3901,6 +3960,22 @@ async function selAction(a){
     await refAction('/api/ref/relink', {cell: W.sel.cell, ref: sel.k, target: null}, W.sel.cell, sel.k, 'The door no longer leads anywhere');
     return;
   }
+  if (a === 'arrset' && sel.to){
+    const v = ['#a-x', '#a-y', '#a-z', '#a-r'].map(q => parseFloat(($(q) || {}).value));
+    if (v.some(x => !isFinite(x))) return toast('Type numbers for X, Y, height and facing.', true);
+    if (!await needProject()) return;
+    await relinkDoor(W.sel.cell, sel.k, sel.to.key, [v[0], v[1], v[2], v[3] * Math.PI / 180, 1], sel.to.cell || null);
+    await worldReloadCell(W.sel.cell); selectRef(W.sel.cell, sel.k);
+    return;
+  }
+  if (a === 'arrme'){
+    const pl = LINK.player; if (!pl) return toast('Walk a step in game, then try again.', true);
+    if (!await needProject()) return;
+    const key = pl.kind === 'ext' ? extKey(Math.floor(pl.x / CELL), Math.floor(pl.y / CELL)) : pl.cell;
+    await relinkDoor(W.sel.cell, sel.k, key, [pl.x, pl.y, pl.z, pl.yaw, 1], null);
+    await worldReloadCell(W.sel.cell); selectRef(W.sel.cell, sel.k);
+    return;
+  }
   if (a === 'arrive' && sel.to){
     W.arriving = {cell: W.sel.cell, ref: sel.k, target: sel.to.key, name: sel.name || sel.id};
     await worldOpen(sel.to.key);
@@ -3941,7 +4016,7 @@ let threeReady = null;
 function loadScript(src){ return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); }); }
 function ensureThree(){
   if (!threeReady) threeReady = loadScript('/web/vendor/three.min.js')
-    .then(() => Promise.all([loadScript('/web/vendor/DDSLoader.js'), loadScript('/web/vendor/TGALoader.js')]));
+    .then(() => Promise.all([loadScript('/web/vendor/DDSLoader.js?v=24bit'), loadScript('/web/vendor/TGALoader.js')]));
   return threeReady;
 }
 const texCache = {};
@@ -4946,8 +5021,22 @@ poll();
 <script src="/web/prefabplan.js"></script>
 <script src="/web/bench.js"></script>
 <script src="/web/twowin.js"></script>
+<script src="/web/arrive.js"></script>
 <script src="/web/opentool.js"></script>
 <script src="/web/coach.js"></script>
 <script src="/web/icons.js"></script>
+<script>
+// (a part of the page that didn't come, the Workshop too busy to send it: loaded again, once, instead of a page that
+// half works and throws "REG is not defined")
+(() => {
+  const parts = ['REG', 'PNL', 'LM', 'V3', 'IC', 'AR'];
+  const missing = parts.filter(n => { try { return eval('typeof ' + n) === 'undefined'; } catch (e){ return true; } });
+  let tried = 0; try { tried = +sessionStorage.getItem('ws-reloaded') || 0; } catch (e){}
+  if (missing.length && Date.now() - tried > 60000){
+    try { sessionStorage.setItem('ws-reloaded', Date.now()); } catch (e){}
+    setTimeout(() => location.reload(), 1500);
+  } else if (missing.length) toast('Part of the page did not load (the Workshop was busy). Press ↻ to load it again.', true);
+})();
+</script>
 </body>
 </html>

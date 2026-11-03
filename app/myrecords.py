@@ -806,7 +806,8 @@ def _lua(v):
         return '{ %s }' % ', '.join(_lua(x) for x in v)
     if isinstance(v, dict):
         return '{ %s }' % ', '.join('[%s] = %s' % (_lua(str(k)), _lua(x)) for k, x in v.items())
-    return json.dumps(str(v), ensure_ascii=False)          # (Lua has no \u escapes)
+    import myeffects
+    return myeffects.lua_str(v)          # (Lua has no \u escapes: control characters as \ddd too)
 
 
 def _put(db, name, kind, text, first=False):
@@ -1311,9 +1312,17 @@ local glowing = {}
 for _, r in ipairs(data.loot or {}) do
   if r.glow then for _, c in ipairs(r.containers or {}) do glowing[c:lower()] = util.color.rgb(r.glow[1] / 255, r.glow[2] / 255, r.glow[3] / 255) end end
 end
+-- (round the player: OpenMW has no world.activeCells, so the containers of the player's cell, and outside those
+-- within reach across cell borders)
 local function glowTick()
-  for _, cell in ipairs(world.activeCells or {}) do
-    for _, o in ipairs(cell:getAll(types.Container)) do
+  local player = world.players[1]
+  if not (player and player.cell) then return end
+  local list = nil
+  if player.cell.isExterior and world.getObjectsInRange then
+    pcall(function() list = world.getObjectsInRange(player.position, 6000) end)
+  end
+  for _, o in ipairs(list or player.cell:getAll(types.Container)) do
+    if types.Container.objectIsInstance(o) then
       local c = glowing[tostring(o.recordId):lower()]
       if c and not given[o.id] then pcall(function() o:sendEvent('AddGlow', { color = c, duration = 2.2 }) end) end
     end

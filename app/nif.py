@@ -5,6 +5,7 @@ import os
 import re
 import struct
 import threading
+import time
 
 HEADER = b'NetImmerse File Format, Version 4.0.0.2\n'
 TYPE_START = re.compile(rb'[\x04-\x30]\x00\x00\x00(?=Ni|RootCollisionNode|AvoidNode|BS)')
@@ -299,6 +300,9 @@ class MeshIndex:
         self.cache_path = cache_path
         self.lock = threading.Lock()
         self.dirty = False
+        self.saved_at = 0.0
+        import atexit
+        atexit.register(lambda: self.save(force=True))     # (what the last few seconds found, kept on closing)
         self.cache = {}
         try:
             with open(cache_path, encoding='utf-8') as f:
@@ -351,9 +355,14 @@ class MeshIndex:
             self.dirty = True
         return b
 
-    def save(self):
-        if not self.dirty:
+    SAVE_EVERY = 20.0
+
+    def save(self, force=False):
+        # (at most every SAVE_EVERY seconds: every look at a place saved the whole file, read and written with the slow
+        # encoder, 10,740 times and 465 s of a town's make on a big mod, 2026-11-02 audit)
+        if not self.dirty or (not force and time.time() - self.saved_at < self.SAVE_EVERY):
             return
+        self.saved_at = time.time()
         with self.lock:
             # (the survey processes and the Workshop itself share this file: each writes its own
             # temporary file, keeps what another process put on disk meanwhile, and a write that loses
@@ -371,8 +380,9 @@ class MeshIndex:
                 except (OSError, ValueError, KeyError, AttributeError):
                     pass
                 tmp = '%s.%d.tmp' % (self.cache_path, os.getpid())
+                text = json.dumps({'v': CACHE_VERSION, 'bounds': self.cache})
                 with open(tmp, 'w', encoding='utf-8') as f:
-                    json.dump({'v': CACHE_VERSION, 'bounds': self.cache}, f)
+                    f.write(text)
                 os.replace(tmp, self.cache_path)
                 self.dirty = False
             except OSError:

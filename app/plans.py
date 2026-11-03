@@ -75,9 +75,9 @@ def save_plan(name, plan, style=None, options=None):
         raise EditError('There is nothing to save: the plan has no rooms.')
     keep = {k: plan[k] for k in KEEP if k in plan}
     os.makedirs(PLAN_DIR, exist_ok=True)
-    with open(_path(name), 'w', encoding='utf-8') as f:
-        json.dump({'name': name, 'plan': keep, 'style': style or '', 'options': options or {},
-                   'saved': time.strftime('%Y-%m-%d %H:%M')}, f, indent=1)
+    from project import write_json
+    write_json(_path(name), {'name': name, 'plan': keep, 'style': style or '', 'options': options or {},
+                             'saved': time.strftime('%Y-%m-%d %H:%M')}, indent=1)
     return {'ok': True, 'file': _safe(name)}
 
 

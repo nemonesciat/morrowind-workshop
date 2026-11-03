@@ -46,6 +46,20 @@ def _data(db, v):
     return db.files[r[3]].record_at(r[4])[2]
 
 
+_STR_MEMO = {}
+
+
+def _strings_in_memo(tag, b64):
+    """_strings_in of a record kept as base64, remembered: the master list is worked out on every change."""
+    k = (tag, b64)
+    got = _STR_MEMO.get(k)
+    if got is None:
+        if len(_STR_MEMO) > 50000:
+            _STR_MEMO.clear()
+        got = _STR_MEMO[k] = _strings_in(tag, unb64(b64))
+    return got
+
+
 def _strings_in(tag, data):
     """IDs this record mentions (fields that hold IDs, plus words in script text)."""
     out = []
@@ -82,17 +96,28 @@ def _script_ids(text):
     return out
 
 
+_ID_MEMO = {}
+
+
 def _ref_id(subs):
     for t, d in subs:
         if t == 'NAME':
-            return zstr(unb64(d) if isinstance(d, str) else d)
+            if not isinstance(d, str):
+                return zstr(d)
+            got = _ID_MEMO.get(d)
+            if got is None:
+                if len(_ID_MEMO) > 50000:
+                    _ID_MEMO.clear()
+                got = _ID_MEMO[d] = zstr(unb64(d))
+            return got
     return ''
 
 
 # ------------------------------------------------------------------ masters
-def lean_masters(db, with_reasons=False):
+def lean_masters(db, with_reasons=False, texts=None):
     """The masters the mod really needs: whose objects it moves or removes, whose records it changes
-    (the file that first made them) and whose things it uses. Plus those files' own masters."""
+    (the file that first made them) and whose things it uses. Plus those files' own masters. texts: {place key: its
+    JSON text}, so what a place uses is read again only when it changed (each change read every object of the mod)."""
     p = db.project
     own = _own_pidx(db)
     need = {}
@@ -121,6 +146,8 @@ def lean_masters(db, with_reasons=False):
         if pi is not None:
             add(pi, why)
 
+    # (without reasons, each ID used anywhere is looked up once: 70,000 lookups a change on a big mod)
+    pending = set() if not with_reasons else None
     for rec in p.records.values():
         tag, key = rec['tag'], rec['key']
         label = '%s "%s"' % (tag, key.split('|')[0])
@@ -128,12 +155,27 @@ def lean_masters(db, with_reasons=False):
             add(_definer(db, tag, key, own), 'you change ' + label)
         if tag == 'INFO':
             add(_definer(db, 'DIAL', key.split('|', 1)[0], own), 'you add lines to topic "%s"' % key.split('|', 1)[0])
-        for s in _strings_in(tag, unb64(rec['data'])):
+        if pending is not None:
+            pending.update(_strings_in_memo(tag, rec['data']))
+            continue
+        for s in _strings_in_memo(tag, rec['data']):
             uses(s, label + ' uses "%s"' % s)
+    memo = p.__dict__.setdefault('_master_memo', {}) if texts is not None and not with_reasons else None
+    own_low = p.plugin.lower()
     for ck, c in list(p.cells.items()):
         if not c['refs'] and not c.get('props'):
             continue
         add(_definer(db, 'CELL', ck, own), 'you change the place "%s"' % ck)
+        if memo is not None and texts.get(ck) is not None:
+            t = texts[ck]
+            got = memo.get((ck, own_low))
+            if got is None or not (got[0] is t or got[0] == t):
+                got = memo[(ck, own_low)] = (t, {r['origin'] for r in c['refs'].values() if r['origin'] != own_low},
+                                  {_ref_id(r['subs']) for r in c['refs'].values() if r['origin'] == own_low} - {''})
+            for o in got[1]:
+                add(db.plugin_index(o), '')
+            pending.update(got[2])
+            continue
         for r in list(c['refs'].values()):
             if r['origin'] != p.plugin.lower():
                 add(db.plugin_index(r['origin']), 'you move or remove objects in "%s"' % ck)
@@ -141,6 +183,11 @@ def lean_masters(db, with_reasons=False):
                 rid = _ref_id(r['subs'])
                 if rid:
                     uses(rid, 'you place "%s"' % rid)
+    for rid in pending or ():
+        uses(rid, '')
+    if memo is not None and len(memo) > 2 * len(p.cells) + 100:
+        for k in [k for k in memo if k[0] not in p.cells]:
+            del memo[k]
     # masters of masters
     stack = list(need)
     while stack:

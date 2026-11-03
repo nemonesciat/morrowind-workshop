@@ -59,10 +59,12 @@
 
 			}
 
-			function loadARGBMip( buffer, dataOffset, width, height ) {
+			// (Morrowind Workshop: also 24-bit BGR and 32-bit without alpha, as many of the game's icons are kept; they
+			// came out black, 2026-11-02. bpp: bytes a pixel in the file)
+			function loadARGBMip( buffer, dataOffset, width, height, bpp = 4, opaque = false ) {
 
 				const dataLength = width * height * 4;
-				const srcBuffer = new Uint8Array( buffer, dataOffset, dataLength );
+				const srcBuffer = new Uint8Array( buffer, dataOffset, width * height * bpp );
 				const byteArray = new Uint8Array( dataLength );
 				let dst = 0;
 				let src = 0;
@@ -77,8 +79,8 @@
 						src ++;
 						const r = srcBuffer[ src ];
 						src ++;
-						const a = srcBuffer[ src ];
-						src ++;
+						const a = bpp === 4 && ! opaque ? srcBuffer[ src ] : 255;
+						if ( bpp === 4 ) src ++;
 						byteArray[ dst ] = r;
 						dst ++; //r
 
@@ -143,6 +145,7 @@
 			let blockBytes;
 			const fourCC = header[ off_pfFourCC ];
 			let isRGBAUncompressed = false;
+			let srcBpp = 4, opaqueSrc = false;
 
 			switch ( fourCC ) {
 
@@ -170,6 +173,14 @@
 					if ( header[ off_RGBBitCount ] === 32 && header[ off_RBitMask ] & 0xff0000 && header[ off_GBitMask ] & 0xff00 && header[ off_BBitMask ] & 0xff && header[ off_ABitMask ] & 0xff000000 ) {
 
 						isRGBAUncompressed = true;
+						blockBytes = 64;
+						dds.format = THREE.RGBAFormat;
+
+					} else if ( ( header[ off_RGBBitCount ] === 24 || header[ off_RGBBitCount ] === 32 ) && header[ off_RBitMask ] === 0xff0000 && header[ off_GBitMask ] === 0xff00 && header[ off_BBitMask ] === 0xff ) {
+
+						isRGBAUncompressed = true;
+						srcBpp = header[ off_RGBBitCount ] / 8;
+						opaqueSrc = true;
 						blockBytes = 64;
 						dds.format = THREE.RGBAFormat;
 
@@ -217,8 +228,8 @@
 
 					if ( isRGBAUncompressed ) {
 
-						byteArray = loadARGBMip( buffer, dataOffset, width, height );
-						dataLength = byteArray.length;
+						byteArray = loadARGBMip( buffer, dataOffset, width, height, srcBpp, opaqueSrc );
+						dataLength = width * height * srcBpp;
 
 					} else {
 

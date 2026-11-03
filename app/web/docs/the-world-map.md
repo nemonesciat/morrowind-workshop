@@ -70,10 +70,19 @@ pieces as you move them (several selected snap as one), and **Land on surfaces**
 Double-click a thing in 3D for its window: its record and its placement together.
 
 **Doors** have **Leads to**: search a place to make the door lead there (tick **Make the door at the other end
-lead back here**). The arrival spot is chosen for you, just in front of the door there on the side with floor. In
-the door's window you can type it (**X**, **Y**, **Height**, **Facing**), or **📍 Pick on the map…** and click the
-spot. Click a **door** instead while picking, and the two doors lead to each other, each arriving in front of the
-other.
+lead back here**). The arrival spot is chosen for you, just in front of the door there on the side with floor. To
+set it yourself:
+
+- **Type it**: **Arrive X**, **Y**, **Height** and **Facing °** (0 north, 90 east), then **Set**. Kept exactly.
+- **📍 Pick…** opens the place it leads to. Click the floor there, or press and drag the way the player should face
+  (a figure with an arrow shows it; the faint one is the arrival now). A plain click faces away from the nearest
+  door, into the room. You stand on the floor under the spot, a step off any wall. On the map, a place with
+  several storeys takes the storey the **Floors** slider shows.
+- **📷 Where the camera is** (while picking in 3D): exactly where the camera stands, facing the way it looks.
+- **Click a door** while picking: the two doors lead to each other, each arriving in front of the other.
+- **🧍 Where I stand** (the game linked): the door leads to where your character stands in game, facing their way.
+
+Setting one door's arrival never changes the door at the other end once that one leads back.
 
 With several selected: **⧉ Copy**, **Duplicate**, **⟳ 90°**, **Delete all**, and **Save as a prefab** to drop the
 group anywhere later.

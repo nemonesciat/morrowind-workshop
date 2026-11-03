@@ -271,8 +271,8 @@ def save_prefab(db, name, items, source=''):
     os.makedirs(PREFAB_DIR, exist_ok=True)
     path = os.path.join(PREFAB_DIR, _safe(name) + '.json')
     keep = [{k: it[k] for k in ('id', 'name', 'type', 'dx', 'dy', 'dz', 'rx', 'ry', 'rz', 's', 'b', 'lib') if k in it} for it in items]
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump({'name': name, 'items': keep, 'saved': time.strftime('%Y-%m-%d %H:%M'), 'from': source}, f, indent=1)
+    from project import write_json
+    write_json(path, {'name': name, 'items': keep, 'saved': time.strftime('%Y-%m-%d %H:%M'), 'from': source}, indent=1)
     return {'ok': True, 'file': _safe(name)}
 
 

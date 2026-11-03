@@ -54,6 +54,8 @@ local ARRIVED = 48       -- this near the spot is there
 local STUCK = 45         -- seconds of walking before they are put there
 local timer = 0
 local state = {}         -- actor id -> { slot = index, walking = seconds or nil }
+local hurtAt = {}        -- actor id -> { health last seen, when it last dropped (game seconds) }
+local CALM = 60          -- seconds after the last hurt before the routine takes over again
 
 local function hourNow()
   return (core.getGameTime() / 3600) % 24
@@ -68,12 +70,18 @@ local function slotAt(r, h)
   return cur
 end
 
--- left to the game: dead, hurt (a fight, most likely) or with a weapon or a spell out
+-- left to the game: dead, just hurt (a fight, most likely) or with a weapon or a spell out. (Just hurt: the
+-- game's people don't heal by themselves, so "below full health" kept anyone once scratched off their day for good)
 local function busy(o)
   if types.Actor.isDead(o) then return true end
   local ok, hurt = pcall(function()
-    local hp = types.Actor.stats.dynamic.health(o)
-    return hp.current < hp.base + hp.modifier - 1
+    local now = core.getSimulationTime()
+    local hp = types.Actor.stats.dynamic.health(o).current
+    local h = hurtAt[o.id]
+    if not h then h = { hp = hp, at = -1e9 }; hurtAt[o.id] = h end
+    if hp < h.hp - 0.5 then h.at = now end
+    h.hp = hp
+    return now - h.at < CALM
   end)
   if ok and hurt then return true end
   local ok2, stance = pcall(function() return types.Actor.getStance(o) end)
@@ -130,7 +138,7 @@ local function onUpdate(dt)
   local h = hourNow()
   local live = {}
   for _, o in ipairs(world.activeActors) do
-    local r = o.recordId and ROUTINES[o.recordId]
+    local r = o.recordId and ROUTINES[tostring(o.recordId):lower()]
     if r and o:isValid() then
       live[o.id] = true
       if busy(o) then
@@ -143,6 +151,9 @@ local function onUpdate(dt)
   -- (out of play: forgotten, so they are set again when next seen)
   for id in pairs(state) do
     if not live[id] then state[id] = nil end
+  end
+  for id in pairs(hurtAt) do
+    if not live[id] then hurtAt[id] = nil end
   end
 end
 

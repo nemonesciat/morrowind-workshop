@@ -388,7 +388,7 @@ arriveAt = function(x, y, z, rz){
   if (!(TW.answer && TW.answer.kind === 'spot')) return _twArriveAt(x, y, z, rz);
   // (on the map there's no height: the door's arrival is worked out by the server, the rest takes the nearest thing's)
   const zg = z != null ? z : groundZ(x, y);
-  twAnswer({x, y, z, zg, rz: rz || 0, key: cellKeyAt(x, y), cell: W.info && W.info.interior ? W.info.name : '', place: twPlaceName()});
+  twAnswer({x, y, z, zg, rz: rz == null ? null : rz, key: cellKeyAt(x, y), cell: W.info && W.info.interior ? W.info.name : '', place: twPlaceName()});
 };
 addEventListener('keydown', e => { if (e.key === 'Escape' && TW.answer) twAskEnd(true); });
 setInterval(() => { if (TW.answer && TW.answer.kind === 'spot' && W.mode !== 'arrive') twAskEnd(true); }, 1000);

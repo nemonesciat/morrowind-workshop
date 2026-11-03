@@ -255,7 +255,7 @@ function owRefHtml(){
           <label class="cfield"><span>X</span><input class="inp num" type="number" id="ow-ax" value="${at && at[0] != null ? Math.round(at[0]) : ''}"></label>
           <label class="cfield"><span>Y</span><input class="inp num" type="number" id="ow-ay" value="${at && at[1] != null ? Math.round(at[1]) : ''}"></label>
           <label class="cfield"><span>Height</span><input class="inp num" type="number" id="ow-az" value="${at && at[2] != null ? Math.round(at[2]) : ''}"></label>
-          <label class="cfield"><span>Facing °</span><input class="inp num" type="number" id="ow-ar" value="${at ? Math.round(owDeg(at[3] || 0)) : ''}"></label></div>
+          <label class="cfield"><span>Facing °</span><input class="inp num" type="number" id="ow-ar" value="${at && at[3] != null ? Math.round(owDeg(at[3])) : ''}" placeholder="into the place"></label></div>
         <div class="actions" style="margin-top:6px"><button class="btn sm" data-ow="arrive" title="Open the place it leads to and click where the player should arrive; or click a door there, and the two doors lead to each other, each arriving in front of the other">📍 Pick on the map…</button><button class="btn sm" data-ow="unlink">Remove the link</button></div>
         <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="ow-both" ${W.relinkBoth !== false ? 'checked' : ''}> Make the door at the other end lead back here</label>` : '<div class="msg" style="margin-top:6px">Nowhere: an ordinary door that just opens and closes.</div>'}`;
   }
@@ -311,7 +311,7 @@ function owDrawRef(keepTyped){
     if (ax[0]) ax.forEach(el => el.onchange = () => {
       const v = ax.map(x => x.value === '' ? null : +x.value);
       if (v[0] == null || v[1] == null || v.some(x => x != null && !isFinite(x))) return;
-      OW.door = Object.assign(OW.door || {target: undefined, label: ''}, {at: [v[0], v[1], v[2], (v[3] || 0) * Math.PI / 180], changed: true});
+      OW.door = Object.assign(OW.door || {target: undefined, label: ''}, {at: [v[0], v[1], v[2], v[3] == null ? null : v[3] * Math.PI / 180, v[2] != null ? 1 : 0], changed: true});
       owMsg();
     });
   }
@@ -443,7 +443,7 @@ async function owArrived(x, y, z, rz){
   const P = OW.picking; OW.picking = false; W.arriving = null;
   setMode(null);
   if (!OW.el) return;
-  OW.door = Object.assign(OW.door || {target: undefined, label: ''}, {at: [x, y, z, rz || 0], changed: true});
+  OW.door = Object.assign(OW.door || {target: undefined, label: ''}, {at: [x, y, z, rz == null ? null : rz], changed: true});
   await worldOpen(P.cell);
   selectRef(P.cell, P.k, true);
   OW.el.style.display = ''; owDrawRef();

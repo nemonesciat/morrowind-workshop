@@ -85,7 +85,7 @@ def save_plan(db, plan):
              'protect': _clean_opts(plan.get('protect'), PROTECT),
              'only': [str(r).lower()[:64] for r in (plan.get('only') or []) if r][:20]}
     p.land = dict(p.land or {}, plan=clean)
-    p.save()
+    p.save_soon()
     return clean
 
 

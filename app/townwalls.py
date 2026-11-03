@@ -455,7 +455,11 @@ def lay(db, plan, family=None, cell=None):
     when the game sets that straight on itself at a shorter step, else the side is lengthened to whole steps."""
     K = kits(db)
     fam = family if family in K else pick_family(db, plan)
-    if not fam:
+    if not fam or family == 'palisade':
+        # (a village of a culture that rings itself with a palisade: the Nords')
+        P = palisade_for(db, plan, family == 'palisade')
+        if P:
+            return lay_palisade(db, plan, P)
         return {'family': None, 'pieces': [], 'outline': [], 'gates': 0, 'faults': ['No wall for this culture']}
     kit = K[fam]
     L = kit['L']
@@ -506,6 +510,8 @@ def lay(db, plan, family=None, cell=None):
             chain.append(p)
         units.append(chain)
     streets, roads = _street_crossings(plan, poly)
+    if db is not None:
+        streets, roads = _downhill_gates(db, poly, streets, roads)
     gates = 0
     for k in range(n):
         out_ = units[k][-1]
@@ -544,7 +550,134 @@ def lay(db, plan, family=None, cell=None):
     pieces += _big_towers(db, fam, kit, poly, [need[t] == dom for t in turns], pieces)
     pieces = _once(pieces)
     return {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': gates, 'faults': faults,
-            'roads': roads if gates else []}
+            'roads': _gate_roads(poly, roads, pieces, L) if gates else []}
+
+
+def _gate_roads(poly, roads, pieces, L):
+    """The streets carried out to the wall, met to the gates: a gate stands up to a length aside from where its street
+    crossed the wall (whole steps), and the street ran into the wall beside it, the gate's way unpaved (both gates of a
+    walled Imperial town, 512 off, lab w01). Each carried stretch ends at its gate's middle."""
+    gates = [p['pose'] for p in pieces if p.get('kind') in ('gate', 'end')]
+    if not gates:
+        return roads
+    cx, cy = sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
+    out = []
+    for b, q, w in roads:
+        g = min(gates, key=lambda G: math.hypot(G.x - q[0], G.y - q[1]))
+        if math.hypot(g.x - q[0], g.y - q[1]) > 1.5 * L + 64:
+            out.append((b, q, w))
+            continue
+        # (an opening's two end pieces: its middle between them)
+        pair = [G for G in gates if math.hypot(G.x - g.x, G.y - g.y) <= 4 * L and G is not g]
+        gx, gy = g.x, g.y
+        if pair and not any(p['pose'] is g and p.get('kind') == 'gate' for p in pieces):
+            o = min(pair, key=lambda G: math.hypot(G.x - g.x, G.y - g.y))
+            gx, gy = (g.x + o.x) / 2, (g.y + o.y) / 2
+        u = _unit(gx - cx, gy - cy)
+        out.append((b, (gx, gy), w))
+        if GATE_OUT:
+            out.append(((gx, gy), (gx + u[0] * GATE_OUT, gy + u[1] * GATE_OUT), w))
+    return out
+
+
+GATE_OUT = 0                   # (a gate's street run on this far outside it: on a hill, run 384 or 900 straight down the slope
+                               # it made a hilltop town's road the steeper by a sixth to a quarter, lab r20; none)
+
+
+# ------------------------------------------------------------------------------------------------ palisades
+# Nord villages ring themselves with palisades: sections of posts ~300 long, each turned a few degrees from the last
+# (joins of 296-315 at 0-20 degrees), a gatehouse where the way in passes, every section set on its own ground (the game's
+# Karthgad, Blood Paw Lodge, Criaglorc: lab r01). No straight repeats, so the wall kits never had them and a Nordic town
+# asked for a wall got none.
+PALISADE = {'Nordic': {'posts': ('t_nor_setpalisade_posts_02', 't_nor_setpalisade_posts_01', 't_nor_setpalisade_posts_03'),
+                       'gate': 't_nor_setpalisade_gatehouse_02', 'post': 't_nor_setpalisade_post_01', 'step': 300.0,
+                       'gate_half': 330.0}}
+PALISADE_ROUND = 3             # (the outline's corners rounded off this many times over: the game's palisades curve)
+
+
+def palisade_for(db, plan, asked=False):
+    """The culture's palisade where its game towns stand them and its pieces load (asked: the Nords' for any
+    culture, chosen by name), else None."""
+    P = PALISADE.get(plan.get('culture')) or (PALISADE['Nordic'] if asked else None)
+    if not P or db is None or db.resolve_id(P['posts'][0]) is None or db.resolve_id(P['gate']) is None:
+        return None
+    return P
+
+
+def lay_palisade(db, plan, P):
+    """A palisade round a village: W as lay() gives it ({'family': 'palisade', 'pieces', 'outline', 'gates', 'roads',
+    'faults', 'palisade': True}); grounded() sets each section on its own ground."""
+    poly, _th = ([tuple(p) for p in plan['wall_outline']], 0.0) if plan.get('wall_outline') else outline(plan, 1024.0, db, 1.0)
+    if len(poly) < 3:
+        return {'family': None, 'pieces': [], 'outline': [], 'gates': 0, 'faults': ['No plots to wall']}
+    # (rounded: each corner cut a quarter of the way along its sides, over and over)
+    ring = list(poly)
+    for _r in range(PALISADE_ROUND):
+        nr = []
+        for i in range(len(ring)):
+            a, b = ring[i], ring[(i + 1) % len(ring)]
+            nr += [(a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25), (a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75)]
+        ring = nr
+    # (the ring walked in sections of a step each)
+    step = P['step']
+    per = sum(math.hypot(ring[(i + 1) % len(ring)][0] - ring[i][0], ring[(i + 1) % len(ring)][1] - ring[i][1]) for i in range(len(ring)))
+    n = max(8, int(round(per / step)))
+    step = per / n
+
+    def at(t):
+        t %= per
+        for i in range(len(ring)):
+            a, b = ring[i], ring[(i + 1) % len(ring)]
+            L = math.hypot(b[0] - a[0], b[1] - a[1])
+            if t <= L or i == len(ring) - 1:
+                f = t / L if L else 0.0
+                return a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f
+            t -= L
+        return ring[0]
+    pts = [at(k * step) for k in range(n)]
+    # (the gates: where the streets cross the ring, as lay() finds them)
+    sides, roads = _street_crossings(plan, pts)
+    sides, roads = _downhill_gates(db, pts, sides, roads)
+    gates_at = []
+    for k, ds in sides.items():
+        a, b = pts[k], pts[(k + 1) % n]
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        for h in ds:
+            gates_at.append((a[0] + d[0] * h, a[1] + d[1] * h, d))
+    pieces = []
+    rng_i = 0
+    for k in range(n):
+        a, b = pts[k], pts[(k + 1) % n]
+        mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        if any(math.hypot(mx - g[0], my - g[1]) < P['gate_half'] + step / 2 for g in gates_at):
+            continue
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        pid = P['posts'][(k * 7 + rng_i) % len(P['posts'])]
+        pieces.append({'id': pid, 'pose': Pose(mx, my, 0.0, math.atan2(-d[1], d[0]), pid), 'kind': 'wall', 'run': 0})
+    for gx, gy, d in gates_at:
+        pieces.append({'id': P['gate'], 'pose': Pose(gx, gy, 0.0, math.atan2(-d[1], d[0]), P['gate']), 'kind': 'gate', 'run': 0})
+        for s_ in (-1, 1):
+            x, y = gx + d[0] * s_ * (P['gate_half'] + 20), gy + d[1] * s_ * (P['gate_half'] + 20)
+            pieces.append({'id': P['post'], 'pose': Pose(x, y, 0.0, math.atan2(-d[1], d[0]), P['post']), 'kind': 'end', 'run': 0})
+    return {'family': 'palisade', 'kit': {'L': step, 'straight': None}, 'pieces': pieces, 'outline': pts, 'gates': len(gates_at),
+            'faults': [] if gates_at else ['No street crosses the palisade'], 'roads': roads if gates_at else [], 'palisade': True}
+
+
+def _palisade_grounded(db, W):
+    """Each section stood as the game stands that piece over its ground (its posts run deep into it)."""
+    import townbuild
+    keep, memo = [], {}
+    for p in W['pieces']:
+        q = p['pose']
+        g = mapdata.terrain_z(db, q.x, q.y)
+        if g is None or g < 0:
+            continue
+        o = townbuild._game_over_ground(db, p['id'].lower())
+        q.z = g + (o if o is not None else 0.0)
+        p['corners'] = _box(db, p['id'], q, memo)[0]
+        keep.append(p)
+    W['pieces'] = keep
+    return W
 
 
 SAME = 8                       # (two pieces of one model this close, facing the same way or back to back, are one)
@@ -614,6 +747,170 @@ def _big_towers(db, fam, kit, poly, outer, pieces):
     return out
 
 
+# stairs up to the wall walk from inside, as the game's forts and walled towns have theirs (its forts keep 1-7 each,
+# lab j04/j05): ex_imp_wall_stairs_03 against a straight's inner face, 320 out from its line and 256 under it, turned
+# half round on the -y side (8 of 8 in the game). Without them a walk was reached only through a tower room, and a town
+# or castle with none had a walk no one could climb to
+STAIRS = {'ex_imp': {'id': 'ex_imp_wall_stairs_03', 'ly': 320.0, 'dz': -256.0}}
+STAIRS_CLEAR = 900             # (no stair this near a corner, a gate, an opening or a tower)
+STAIRS_EVERY = 14              # (one beside each gate, and one every so many lengths besides)
+STAIRS_MAX = 4
+
+
+def wall_stairs(W, avoid=(), most=STAIRS_MAX, free=None, db=None):
+    """Stairs up to the walk for a laid wall W (its kit's own, STAIRS): [{'id', 'pose', 'kind': 'stairs', 'dz',
+    'host'}], each against a plain length's inner face, one near each gate first, then spread round the wall.
+    avoid: more [(x, y)] to keep clear of (a castle's round towers); free(stair): whether its ground is free."""
+    S = STAIRS.get(W.get('family'))
+    poly = W.get('outline') or []
+    kit = W.get('kit') or {}
+    if not S or len(poly) < 3:
+        return []
+    keep_off = [(p['pose'].x, p['pose'].y) for p in W['pieces'] if p['id'] != kit.get('straight') or p.get('kind') != 'wall']
+    keep_off += list(avoid)
+    cand = [p for p in W['pieces'] if p.get('kind') == 'wall' and p['id'] == kit.get('straight') and 'run' in p
+            and all(math.hypot(p['pose'].x - x, p['pose'].y - y) > STAIRS_CLEAR for x, y in keep_off)]
+    stair = {}
+    for c in cand:
+        q = c['pose']
+        for side in (-1, 1):
+            ly = side * S['ly']
+            wx, wy = q.x + ly * math.sin(q.rz), q.y + ly * math.cos(q.rz)
+            if _inside(poly, (wx, wy)):
+                st = {'id': S['id'], 'pose': Pose(wx, wy, 0.0, q.rz + (math.pi if side < 0 else 0.0), S['id']),
+                      'kind': 'stairs', 'dz': S['dz'], 'host': q}
+                if (free is None or free(st)) and (db is None or _stair_ground(db, st, q)):
+                    stair[id(c)] = st
+                break
+    cand = [c for c in cand if id(c) in stair]
+    gates = [p['pose'] for p in W['pieces'] if p.get('kind') in ('gate', 'end')]
+    picks = []
+    for g in gates:
+        near = sorted((c for c in cand if c not in picks), key=lambda c: math.hypot(c['pose'].x - g.x, c['pose'].y - g.y))
+        if near and math.hypot(near[0]['pose'].x - g.x, near[0]['pose'].y - g.y) < STAIRS_CLEAR + 1200:
+            picks.append(near[0])
+    # (then round the wall, the length furthest from every stair so far, while the wall is long enough for one more)
+    n_more = max(1 if not picks else 0, len(cand) // STAIRS_EVERY)
+    for _i in range(n_more):
+        rest = [c for c in cand if c not in picks]
+        if not rest or len(picks) >= most:
+            break
+        far = max(rest, key=lambda c: min([math.hypot(c['pose'].x - o['pose'].x, c['pose'].y - o['pose'].y) for o in picks] or [1e9]))
+        if picks and min(math.hypot(far['pose'].x - o['pose'].x, far['pose'].y - o['pose'].y) for o in picks) < kit.get('L', 512) * STAIRS_EVERY / 2:
+            break
+        picks.append(far)
+    return [stair[id(c)] for c in picks[:most]]
+
+
+DOUBLED = 0.3                  # (a new wall piece over this share of whose footprint another wall already stands is left out)
+
+
+def wall_models(db):
+    """Every wall kit's pieces (the towns' and the castle survey's house forts), lower case."""
+    out = set()
+    for k in kits(db).values():
+        out |= set(k['models'])
+    try:
+        import castlesurvey
+        for k in (castlesurvey.survey(db).get('wall_kits') or {}).values():
+            out |= set(k.get('models') or ())
+    except Exception:
+        pass
+    return out
+
+
+def standing_walls(db, pts, R=1200, skip=()):
+    """The wall pieces already standing near pts (a town's or a castle's, the game's or made): [(corners, z0, z1)]."""
+    M = wall_models(db)
+    cells = {'#%d,%d' % (math.floor((x + dx) / 8192.0), math.floor((y + dy) / 8192.0)) for x, y in pts for dx in (-R, R) for dy in (-R, R)}
+    out = []
+    for ck in cells:
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if r['k'] in skip or r['id'].lower() not in M or not r.get('b'):
+                continue
+            b, s = r['b'], r.get('s') or 1.0
+            c, sn = math.cos(r['p'][5]), math.sin(r['p'][5])
+            cs = [(r['p'][0] + (bx * c + by * sn) * s, r['p'][1] + (-bx * sn + by * c) * s) for bx, by in ((b[0], b[1]), (b[3], b[1]), (b[3], b[4]), (b[0], b[4]))]
+            out.append((cs, r['p'][2] + b[2] * s, r['p'][2] + b[5] * s))
+    return out
+
+
+def _quad_area(q):
+    return abs(sum(q[i][0] * q[(i + 1) % len(q)][1] - q[(i + 1) % len(q)][0] * q[i][1] for i in range(len(q)))) / 2.0
+
+
+def _clip(subject, clip):
+    """Convex polygon clipping (Sutherland-Hodgman): subject inside convex clip."""
+    out = list(subject)
+    n = len(clip)
+    sgn = 1.0 if sum(clip[i][0] * clip[(i + 1) % n][1] - clip[(i + 1) % n][0] * clip[i][1] for i in range(n)) > 0 else -1.0
+    for i in range(n):
+        a, b = clip[i], clip[(i + 1) % n]
+        inp, out = out, []
+        if not inp:
+            break
+        side = lambda p: sgn * ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) >= 0
+        for j in range(len(inp)):
+            P, Q = inp[j], inp[(j + 1) % len(inp)]
+            if side(Q):
+                if not side(P):
+                    out.append(_isect(P, Q, a, b))
+                out.append(Q)
+            elif side(P):
+                out.append(_isect(P, Q, a, b))
+    return out
+
+
+def _isect(P, Q, a, b):
+    x1, y1, x2, y2 = P[0], P[1], Q[0], Q[1]
+    x3, y3, x4, y4 = a[0], a[1], b[0], b[1]
+    d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(d) < 1e-9:
+        return Q
+    t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d
+    return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+
+
+def drop_doubled(db, W, skip=()):
+    """W's pieces with those left out that stand where a wall already does: a castle drawn against a town's wall, or a
+    town walled round a castle, ran two walls through each other. Where they meet the wall standing there serves both.
+    The count left out."""
+    memo = {}
+    have = standing_walls(db, [(p['pose'].x, p['pose'].y) for p in W['pieces']], 800, skip)
+    if not have:
+        return 0
+    keep, n = [], 0
+    for p in W['pieces']:
+        cs, b = _box(db, p['id'], p['pose'], memo)
+        if cs and p.get('kind') not in ('stairs',):
+            A = _quad_area(cs) or 1.0
+            if any(_quad_area(_clip(cs, h[0]) or []) >= DOUBLED * A for h in have
+                   if abs(h[0][0][0] - cs[0][0]) < 1500 and abs(h[0][0][1] - cs[0][1]) < 1500):
+                n += 1
+                continue
+        keep.append(p)
+    W['pieces'] = keep
+    if n:
+        W.setdefault('faults', []).append('%d pieces left out where a wall already stands' % n)
+    return n
+
+
+STAIRS_GROUND = 200            # (a stair's ground this near its wall's, or the stair would stand in a bank or in the air)
+
+
+def _stair_ground(db, st, host):
+    """Whether the ground under a stair lies as the ground under its length does: inside a wall at a hill's foot the
+    land rises steeply, and a stair set there stood 939 deep in it, its top meeting no walk (lab w02)."""
+    g0 = mapdata.terrain_z(db, host.x, host.y)
+    if g0 is None:
+        return False
+    q = st['pose']
+    pts = [(q.x, q.y)] + [(q.x + dx * math.cos(q.rz) + dy * math.sin(q.rz), q.y - dx * math.sin(q.rz) + dy * math.cos(q.rz))
+                          for dx in (-440, 440) for dy in (-240, 240)]
+    zs = [mapdata.terrain_z(db, x, y) for x, y in pts]
+    return all(z is not None and abs(z - g0) <= STAIRS_GROUND for z in zs)
+
+
 def _unit(x, y):
     h = math.hypot(x, y) or 1.0
     return x / h, y / h
@@ -664,6 +961,53 @@ def _street_crossings(plan, poly):
             if best and (si == 0 or (best[0] <= REACH / 3 and not ringed)):
                 out[best[1]].append(best[2])
                 roads.append((b, best[3], st.get('w') or 256))
+    return out, roads
+
+
+# gates on the low side: the game's walled towns and forts are entered from below, 63% of their gates on the lowest third
+# of their wall's ground and 15% on the highest (123 gates, lab j03); the main street carried out at both ends gave a
+# gate at its top as often as at its foot
+GATE_HIGH = 0.67               # (a gate on ground higher than this share of the wall's)
+GATE_RISE = 192                # (and this much over the lowest gate's ground) is left out, while another gate remains
+
+
+def _downhill_gates(db, poly, streets, roads):
+    n = len(poly)
+    ring = []
+    for k in range(n):
+        a, b = poly[k], poly[(k + 1) % n]
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        for i in range(max(1, int(L / 256))):
+            t = i / max(1, int(L / 256))
+            z = mapdata.terrain_z(db, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+            if z is not None:
+                ring.append(z)
+    gs = []
+    for k, ds in streets.items():
+        a, b = poly[k], poly[(k + 1) % n]
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        for h in ds:
+            x, y = a[0] + d[0] * h, a[1] + d[1] * h
+            gs.append((mapdata.terrain_z(db, x, y), k, h, (x, y)))
+    gs = [g for g in gs if g[0] is not None]
+    if len(gs) < 2 or not ring:
+        return streets, roads
+    low = min(g[0] for g in gs)
+    drop = []
+    for g in sorted(gs, key=lambda g: -g[0]):
+        if len(gs) - len(drop) <= 1:
+            break
+        rank = sum(1 for z in ring if z < g[0] - 32) / float(len(ring))
+        if rank > GATE_HIGH and g[0] > low + GATE_RISE:
+            drop.append(g)
+    if not drop:
+        return streets, roads
+    out = defaultdict(list)
+    for k, ds in streets.items():
+        for h in ds:
+            if not any(g[1] == k and abs(g[2] - h) < 1 for g in drop):
+                out[k].append(h)
+    roads = [r for r in roads if not any(math.hypot(r[1][0] - g[3][0], r[1][1] - g[3][1]) < 400 for g in drop)]
     return out, roads
 
 
@@ -823,6 +1167,8 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
     accommodate walls ... within tolerance"). What stands on that ground follows it (skip: the town's own new refs).
     Returns the cells changed."""
     import landscape
+    if W.get('palisade'):
+        return 0                          # (a palisade follows the land, section by section)
     runs = defaultdict(list)
     for p in W['pieces']:
         if 'run' in p:
@@ -915,6 +1261,8 @@ def grounded(db, W):
     into level stretches. Corners take the level of the runs either side when that buries their foot. Pieces over open
     water or on no land are left out, as faults. W changed. (Each piece set on the ground under it alone made a jagged
     wall at a dozen heights, the user's first town, 2026-10-31.)"""
+    if W.get('palisade'):
+        return _palisade_grounded(db, W)
     memo = {}
     keep, wet = [], 0
     for p in W['pieces']:
@@ -975,17 +1323,23 @@ def grounded(db, W):
                 hp['_b'] = nb_
                 # (its top at least the wall's, its foot under its own ground)
                 hp['pose'].z = min(max(hp['pose'].z, top - nb_[5]), hp['_g'][0] - SINK - nb_[2]) if nb_[5] - nb_[2] > 0 else hp['pose'].z
-    seg, starts = [], []
+    seg, starts, segs = [], [], []
     for i, p in enumerate(order):
         if seg:
             lo, hi = span(seg + [p])
             if lo > hi:
                 level(seg)
+                segs.append(seg)
                 seg = []
                 starts.append(i)
         seg.append(p)
     if seg:
         level(seg)
+        segs.append(seg)
+    St = STEP_PIECES.get(W.get('family'))
+    if St and straight:
+        for k in range(1, len(segs)):
+            _stepped(db, segs[k - 1], segs[k], St, straight, span, memo)
     for i in starts:
         towered(i)
     # (round the loop: where the last stretch meets the first at another level, a tower there too)
@@ -993,12 +1347,21 @@ def grounded(db, W):
         towered(0)
     # (the towers and the keep at the level of the wall running into them, the highest where two levels meet so the
     # step hides in the tower; sunk further where the ground under them lies lower)
+    hosts = {id(p['pose']) for p in keep}
     for p in big:
         q = p['pose']
+        if p.get('host') is not None:
+            # (a stair against its length: at that length's level, gone with it when it was left out)
+            if id(p['host']) not in hosts:
+                p['_gone'] = True
+                continue
+            q.z = p['host'].z + p['dz']
+            continue
         near = sorted(order, key=lambda o: math.hypot(o['pose'].x - q.x, o['pose'].y - q.y))[:2]
         wz = max(o['pose'].z for o in near) if near else p['_g'][0] + 208
         gc = mapdata.terrain_z(db, q.x, q.y)
         q.z = wz + p['dz'] if gc is None else min(wz + p['dz'], gc - SINK - p['_b'][2])
+    keep = [p for p in keep if not p.pop('_gone', False)]
     for p in keep:
         for k_ in ('_g', '_b'):
             p.pop(k_, None)
@@ -1006,6 +1369,60 @@ def grounded(db, W):
     if wet:
         W['faults'].append('%d pieces over water left out' % wet)
     return W
+
+
+# the walls that climb on step pieces of their own where a run changes level (lab j09 joins): Hlaalu's wall_up_01, a
+# length whose one end stands 128 higher (its neighbour at -x 128 up), Velothi's wall_05 (at +x 128 up); laid without
+# them, a Hlaalu or Velothi run stepped with its end standing bare over the next; Redoran's wu_01 the same way
+STEP_PIECES = {'ex_hlaalu': {'id': 'ex_hlaalu_wall_up_01', 'rise': 128.0, 'up': -1},
+               't_de_setveloth': {'id': 't_de_setveloth_x_wall_05', 'rise': 128.0, 'up': 1},
+               # (a Redoran house's fort wall, Indarys's wu_01: the castle maker's Redoran stronghold on a slope)
+               'ex_r_pcfort': {'id': 'ex_r_pcfort_wu_01', 'rise': 128.0, 'up': -1}}
+STEP_MOST = 3                  # (a step of more rises than this is left to the run's own ends)
+STEP_GIVE = 48                 # (how far a stretch's level may leave what its ground asks, to climb on whole steps)
+
+
+def _stepped(db, A, B, St, straight, span, memo):
+    """Where level stretch B follows A along the same side, B's level set a whole number of rises from A's (within
+    what its ground allows) and the lengths between climbed on the step piece: the last of A's going down, the first
+    of B's going up."""
+    a, b = A[-1], B[0]
+    if a.get('run') is None or a.get('run') != b.get('run') or a['id'] != straight or b['id'] != straight:
+        return False
+    za, zb = a['pose'].z, b['pose'].z
+    lo, hi = span(B)
+    rise = St['rise']
+    # (a stretch's level may give a little, its foot or top a hand's breadth off: else a whole number of rises seldom
+    # fitted, the ground allowing a stretch 10 to 60 units of play, and no step piece was ever laid, lab r26)
+    ks = [k for k in range(-STEP_MOST, STEP_MOST + 1) if lo - STEP_GIVE <= za + k * rise <= hi + STEP_GIVE]
+    if not ks:
+        return False
+    k = min(ks, key=lambda k: (abs(k), abs(za + k * rise - zb)))
+    if k == 0:
+        for p in B:
+            p['pose'].z = za                 # (one level after all: no step)
+        return True
+    run = B[:k] if k > 0 else A[k:]
+    if len(run) < abs(k) or any(p['id'] != straight or p.get('run') != a.get('run') for p in run):
+        return False
+    for p in B:
+        p['pose'].z = za + k * rise
+    # (each step piece turned so it climbs the way the wall does: from A towards B when B is higher)
+    fwd = (b['pose'].x - a['pose'].x, b['pose'].y - a['pose'].y)
+    for j, p in enumerate(run):
+        q = p['pose']
+        lx = (math.cos(q.rz), -math.sin(q.rz))
+        climb = St['up'] * (1 if lx[0] * fwd[0] + lx[1] * fwd[1] > 0 else -1)
+        if (climb > 0) != (k > 0):
+            q.rz = (q.rz + math.pi) % (2 * math.pi)
+        p['id'] = q.id = St['id']
+        p['kind'] = 'step'
+        # (its low end at the level it climbs from)
+        q.z = za + (j * rise if k > 0 else -(j + 1) * rise)
+        nb_ = _box(db, St['id'], q, memo)[1]
+        if nb_:
+            p['_b'] = nb_
+    return True
 
 
 def square_up(pts, step):
@@ -1064,6 +1481,11 @@ def choices(db):
     for f, k in kits(db).items():
         out.append({'id': f, 'piece': k['straight'], 'step': k['L'], 'towns': (k.get('towns') or [])[:4], 'cultures': k.get('cultures') or {},
                     'placed': k['placed'], 'gate': any(v['kind'] == 'gate' for v in k['inline'].values())})
+    P = PALISADE['Nordic']
+    if db.resolve_id(P['posts'][0]) is not None and db.resolve_id(P['gate']) is not None:
+        n = sum(len(db.used_in.get(m, ())) for m in P['posts'])
+        out.append({'id': 'palisade', 'piece': P['posts'][0], 'step': P['step'], 'towns': ['Karthgad', 'Blood Paw Lodge', 'Criaglorc'],
+                    'cultures': {'Nordic': 3}, 'placed': n, 'gate': True})
     return sorted(out, key=lambda o: -o['placed'])
 
 

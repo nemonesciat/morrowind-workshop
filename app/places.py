@@ -38,11 +38,9 @@ def _header(db, key):
     lst = [v for v in db.by_key.get(('CELL', key), []) if v not in db.dead]
     if not lst:
         raise EditError('That place does not exist.')
-    from project import split_cell
     r = db.recs[lst[-1]]
-    _t, flags, data = db.files[r[3]].record_at(r[4])
-    hdr, _refs = split_cell(data)
-    return hdr, flags
+    hdr, _refs = db.cell_split(lst[-1])
+    return hdr, r[6]
 
 
 def read(db, key):

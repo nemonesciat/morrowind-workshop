@@ -157,6 +157,7 @@ function v3Reset(){
   V3.objs.clear();
   for (const k of Object.keys(V3.lands)){ if (V3.lands[k].mesh) V3.ground.remove(V3.lands[k].mesh); }
   V3.lands = {};
+  for (const k of Object.keys(V3.landOld || {})) v3LandOldDrop(k);
   if (W.ext){
     V3.origin = [(i.gx + 0.5) * CELL, (i.gy + 0.5) * CELL, 0];
     V3.scene.background = new T.Color(0x9fb5c6);
@@ -909,6 +910,7 @@ function v3Terrain(){
     api(`/api/land?gx=${gx}&gy=${gy}&tex=1`).then(L => {
       if (!V3.lands[k] || V3.lands[k].n !== n) return;
       V3.lands[k] = {loading: false, gx, gy, n};
+      v3LandOldDrop(k);
       if (L.exists){
         // the ground textures by name, so painting can add new ones: slot list + one slot number per patch
         L.paths = L.tex.slice(); L.ids = L.t.map(i => L.paths[i]); L.origId = L.tid || L.t.map(() => '');
@@ -921,6 +923,10 @@ function v3Terrain(){
     const [x, y] = k.split(',').map(Number);
     if ((Math.abs(x - cx) > D + 1 || Math.abs(y - cy) > D + 1) && !(V3.stroke && V3.stroke.cells.has(k))) v3LandDrop(k);
   }
+  for (const k of Object.keys(V3.landOld || {})){
+    const [x, y] = k.split(',').map(Number);
+    if (Math.abs(x - cx) > D + 1 || Math.abs(y - cy) > D + 1) v3LandOldDrop(k);
+  }
   if (V3.grassFor !== cx + ',' + cy) v3GrassReload();      // the mod's grass around the camera
 }
 function v3LandDrop(k){
@@ -928,8 +934,23 @@ function v3LandDrop(k){
   if (m){ V3.ground.remove(m); m.geometry.dispose(); m.material.dispose(); }
   delete V3.lands[k];
 }
-// forget the ground so it loads again (after undo, or after the Workshop changed it)
-function v3LandsReload(){ for (const k of Object.keys(V3.lands)) v3LandDrop(k); if (V3.on && W.ext) v3Terrain(); }
+function v3LandOldDrop(k){
+  const m = V3.landOld && V3.landOld[k];
+  if (m){ V3.ground.remove(m); m.geometry.dispose(); m.material.dispose(); delete V3.landOld[k]; }
+}
+// forget the ground so it loads again (after undo, or after the Workshop changed it). The ground drawn now stays
+// until its cell's new ground comes: dropped at once, the land vanished for as long as a busy Workshop took to send
+// it again, and "landmasses keep disappearing" (2026-11-02)
+function v3LandsReload(){
+  V3.landOld = V3.landOld || {};
+  for (const k of Object.keys(V3.lands)){
+    const m = V3.lands[k].mesh;
+    if (m && !V3.landOld[k]){ V3.landOld[k] = m; delete V3.lands[k]; }
+    else v3LandDrop(k);
+  }
+  if (V3.on && W.ext) v3Terrain();
+  else for (const k of Object.keys(V3.landOld)) v3LandOldDrop(k);
+}
 
 // One mesh per cell (65 x 65 heights). The ground textures blend smoothly into each other
 // like in game: a small map says which texture each 512-unit patch has, and the shader mixes
@@ -1761,6 +1782,7 @@ function v3Bind(el){
   el.addEventListener('mousedown', e => {
     el.focus();
     if (e.button === 1) e.preventDefault();
+    if (typeof arDown3 === 'function' && arDown3(e)) return;          // a door's arrival: press, drag the way they face (arrive.js)
     if (e.button === 0 && (V3.tc.dragging || V3.tc.axis)) return;      // using the handles
     if (e.button === 0 && !e.altKey && v3LandOn() && V3.landOpen){
       // the ground brush
@@ -1947,15 +1969,6 @@ function v3Pick(e, any, skipKey){
 function v3Click(e){
   // (Extend mode: a click on an open edge's strip picks it; fixhere/extend.js)
   if (typeof extendPick3D === 'function' && extendPick3D(e, true)) return;
-  if (W.mode === 'arrive'){
-    const h = v3Pick(e, true);
-    if (h && h.obj && h.obj.r && h.obj.r.type === 'DOOR' && typeof arriveDoor === 'function') return arriveDoor(h.obj.ck, h.obj.r.k);
-    if (!h || !h.world) return toast('Click on the floor or ground where the player should arrive.');
-    // facing the way the camera looks, in whole 15° steps
-    const yaw = Math.round(((V3.yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (Math.PI / 12)) * (Math.PI / 12);
-    arriveAt(h.world[0], h.world[1], h.world[2] + 10, yaw);
-    return;
-  }
   if (W.mode === 'place' || W.mode === 'play'){
     const G = W.mode === 'place' && V3.ghost;
     const h = G && G.hit ? {world: G.hit} : v3Pick(e, true);

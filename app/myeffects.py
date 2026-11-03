@@ -66,8 +66,8 @@ DOES = [
     ('leech', 'Leech', 'Each second, the magnitude taken from their health, magicka or fatigue and given to the caster.'),
     ('swap', 'Swap places', 'The caster and the one it lands on change places.'),
     ('resurrect', 'Raise the dead', 'Cast at a corpse (OpenMW 0.52), it stands up again; or the dead within so many feet of the one it '
-                  'lands on (cast on Self: of you). In 0.52 by the game\'s own Resurrect; before, made again with what was left '
-                  'on them. As they were, or on your side, following you.'),
+                  'lands on (cast on Self: of you). In 0.52 by the game\'s own Resurrect; before, made again. Either way with what '
+                  'was left on them: what you looted stays yours. As they were, or on your side, following you.'),
     ('knockdown', 'Knock down', 'They fall to the ground and get up again as the game\'s own knockdowns do (OpenMW 0.52; before 0.52, '
                   'their fatigue drops below nothing, which floors them too).'),
     ('blink', 'Blink', 'The caster appears where it lands: beside the one it hits or, cast at a target in OpenMW 0.52, where the bolt '
@@ -521,7 +521,16 @@ def _lua(v):
         return '{ %s }' % ', '.join(_lua(x) for x in v)
     if isinstance(v, dict):
         return '{ %s }' % ', '.join('[%s] = %s' % (_lua(str(k)), _lua(x)) for k, x in v.items())
-    return json.dumps(str(v))
+    return lua_str(v)
+
+
+def lua_str(v):
+    """A Lua string literal. Not json's \\uXXXX escapes: LuaJIT refuses them ("invalid escape sequence") and the whole
+    script then fails to load, so a name like "Mära's Touch" or a message with a dash stopped every effect of the mod.
+    Letters stay as they are (UTF-8); control characters become Lua's \\ddd."""
+    s = json.dumps(str(v), ensure_ascii=False)
+    return re.sub(r'\\\\|\\u([0-9a-fA-F]{4})', lambda m: m.group(0) if not m.group(1) else ''.join(
+        '\\%03d' % b for b in chr(int(m.group(1), 16)).encode('utf-8', 'surrogatepass')), s)
 
 
 EVENTS = re.compile(r'\bWS_MyEffect(World|Message|Raised|Stat|Stagger|Quake|Glow)\b')
@@ -687,6 +696,9 @@ local DOES = {
 }
 
 local active = {}          -- spell:index -> { d = steps, mag, caster, tick, fight }
+-- (what was going on when the game was saved: without it, loading a save re-ran every "as it lands" step of an
+-- effect still on them, a second summon, spawn or cast, and Calm or Frenzy kept the 0 or 100 it had set for good)
+local restored = nil       -- old key -> saved state, until the first frame after a load has matched them
 
 local function change(stat, amount)
   local s = Actor.stats.dynamic[stat](self)
@@ -919,8 +931,26 @@ return {
             now[key] = true
             local st = active[key]
             local mag = effect.magnitudeThisFrame or effect.magnitude or 0
+            if not st and restored then
+              -- (after a load: the same spell carries on, by its key or else by the spell and the effect's place in it)
+              local old = restored[key]
+              if not old then
+                for k2, o in pairs(restored) do
+                  if o.spell == tostring(spell.id) and o.index == effect.index and o.id == effect.id then old = o; key = k2; break end
+                end
+              end
+              if old then
+                restored[key] = nil
+                key = tostring(spell.activeSpellId) .. ':' .. tostring(effect.index)
+                st = { d = d, mag = mag, caster = spell.caster, tick = old.tick or 0, id = effect.id, key = old.key,
+                       user = {}, left = effect.durationLeft, fight = old.fight, scaled = old.scaled, summoned = old.summoned,
+                       spell = old.spell, index = old.index }
+                active[key] = st
+              end
+            end
             if not st then
-              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {}, left = effect.durationLeft }
+              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {}, left = effect.durationLeft,
+                     spell = tostring(spell.id), index = effect.index }
               active[key] = st
               each(st, 'land', dt)
             end
@@ -945,6 +975,26 @@ return {
           active[key] = nil
         end
       end
+      if restored then
+        -- (ended while the game was not running: only put right what it had changed, no "as it ends" steps)
+        for _, o in pairs(restored) do
+          if o.fight ~= nil then Actor.stats.ai.fight(self).base = o.fight end
+          if o.scaled then world('unscale', {}) end
+          if o.summoned then world('unsummon', { spell = tostring(self.id) .. ':' .. o.key }) end
+        end
+        restored = nil
+      end
+    end,
+    onSave = function()
+      local out = {}
+      for key, st in pairs(active) do
+        out[key] = { id = st.id, key = st.key, tick = st.tick, fight = st.fight, scaled = st.scaled,
+                     summoned = st.summoned, spell = st.spell, index = st.index }
+      end
+      return { active = out }
+    end,
+    onLoad = function(data)
+      if data and data.active and next(data.active) then restored = data.active end
     end,
   },
   eventHandlers = {
@@ -1176,6 +1226,38 @@ end
 local RAISE_SCRIPT = ''
 local raiseQueue = {}
 
+-- (the game's Resurrect gives them back everything their record starts them with, the things the player looted too:
+-- so what the corpse still has is put by in a chest of the Workshop's out of sight below them first, the record's
+-- things taken away once they stand, and the corpse's own put back on them, the same things, worn as they were)
+local function holderId()
+  if types.Container.records['chest_small_01'] then return 'chest_small_01' end
+  for _, rec in ipairs(types.Container.records) do
+    if not rec.isOrganic and (rec.mwscript or '') == '' then return rec.id end
+  end
+  return nil
+end
+
+local function emptied(inv)
+  pcall(function() inv:resolve() end)
+  for _, item in ipairs(inv:getAll()) do pcall(function() item:remove() end) end
+end
+
+local function putBy(r)
+  local c = r.c
+  r.equip = {}
+  local okE, eq = pcall(types.Actor.getEquipment, c)
+  if okE and eq then for slot, item in pairs(eq) do r.equip[slot] = item.recordId end end
+  local hid = holderId()
+  if not hid then return end
+  local h = world.createObject(hid, 1)
+  h:teleport(c.cell, c.position - util.vector3(0, 0, 3000))
+  r.holder = h
+end
+
+local function moveAll(from, to)
+  for _, item in ipairs(from:getAll()) do pcall(function() item:moveInto(to) end) end
+end
+
 local function raiseNear(cell, pos, d, skip, first, tell)
   local reach = (d.feet or 15) * FT
   local dead = {}
@@ -1230,14 +1312,23 @@ local function quakeAt(cell, pos, d)
     elseif q.cell == cell and (q.pos - pos):length() < q.reach then return end
   end
   quakes[#quakes + 1] = { pos = pos, cell = cell, reach = reach, at = now }
-  local cells = { cell }
-  if cell.isExterior then
-    pcall(function() local all = {}; for _, c in ipairs(world.activeCells) do all[#all + 1] = c end; if #all > 0 then cells = all end end)
-  end
   local near = {}
-  for _, c in ipairs(cells) do
+  -- (OpenMW 0.52: everything within reach, across cell borders outside; there is no world.activeCells, so before
+  -- 0.52 only the cell it landed in)
+  local okR, inRange = false, nil
+  if world.getObjectsInRange then okR, inRange = pcall(world.getObjectsInRange, pos, reach) end
+  if okR and inRange then
+    for _, o in ipairs(inRange) do
+      for _, T in ipairs(LOOSE_TYPES) do
+        if T.objectIsInstance(o) then
+          if looseThing(o, T) then near[#near + 1] = { o = o, dist = (o.position - pos):length() } end
+          break
+        end
+      end
+    end
+  else
     for _, T in ipairs(LOOSE_TYPES) do
-      for _, o in ipairs(c:getAll(T)) do
+      for _, o in ipairs(cell:getAll(T)) do
         local dist = (o.position - pos):length()
         if dist <= reach and looseThing(o, T) then near[#near + 1] = { o = o, dist = dist } end
       end
@@ -1390,6 +1481,13 @@ if okI and I.Projectiles and I.Projectiles.addOnProjectileHitHandler and next(HI
         local okR, r = pcall(function() return info.item.type.record(info.item) end)
         if okR and r and r.enchant then rec = core.magic.enchantments.records[r.enchant] end
       end
+      if not rec and info.id then
+        -- (an enchanted thing's bolt names the thing itself, as the game's own hit handler reads it)
+        for _, T in ipairs({ types.Armor, types.Weapon, types.Clothing, types.Book }) do
+          local okR, r = pcall(function() return T.records[info.id] end)
+          if okR and r and r.enchant and r.enchant ~= '' then rec = core.magic.enchantments.records[r.enchant]; break end
+        end
+      end
       if not rec then return end
       for n, e in ipairs(rec.effects) do
         local steps = HITS[tostring(e.id):lower()]
@@ -1437,15 +1535,48 @@ return {
       local r = raiseQueue[1]
       if r then
         if not r.c:isValid() then
+          if r.holder and r.holder:isValid() then r.holder:remove() end
           table.remove(raiseQueue, 1)
         elseif r.step == 0 then
+          -- (a chest out of sight, in place next frame)
+          local ok, err = pcall(putBy, r)
+          if not ok then print('[Workshop] Resurrect, putting by: ' .. tostring(err)) end
+          r.step = 1
+        elseif r.step == 1 then
+          -- the corpse's things into it, then the game's own Resurrect
+          if r.holder and r.holder:isValid() then
+            local ok, err = pcall(function()
+              local hinv = types.Container.inventory(r.holder)
+              emptied(hinv)
+              local cinv = types.Actor.inventory(r.c)
+              pcall(function() cinv:resolve() end)
+              moveAll(cinv, hinv)
+            end)
+            if not ok then print('[Workshop] Resurrect, putting by: ' .. tostring(err)) end
+          end
           local ok, err = pcall(world.mwscript.startGlobalScript, RAISE_SCRIPT, r.c)
           if not ok then print('[Workshop] Resurrect: ' .. tostring(err)) end
-          r.step = 1
-        elseif r.step < 4 then
-          r.step = r.step + 1
+          r.step = 2
+        elseif r.step < 5 or (r.step < 120 and types.Actor.isDead(r.c)) then
+          r.step = r.step + 1          -- (a few frames, and until they stand: two seconds at most)
+        elseif r.step < 1000 then
+          -- standing again: the record's things out, the corpse's own back (if Resurrect failed, back on the corpse)
+          local alive = not types.Actor.isDead(r.c)
+          if not alive then print('[Workshop] Resurrect: ' .. tostring(r.c.recordId) .. ' did not stand up') end
+          if r.holder and r.holder:isValid() then
+            local ok, err = pcall(function()
+              local inv = types.Actor.inventory(r.c)
+              emptied(inv)
+              moveAll(types.Container.inventory(r.holder), inv)
+            end)
+            if not ok then print('[Workshop] Resurrect, giving back: ' .. tostring(err)) end
+            local holder = r.holder
+            if holder:isValid() and #types.Container.inventory(holder):getAll() == 0 then holder:remove() end
+          end
+          if alive then r.step = 1000 else table.remove(raiseQueue, 1) end
         else
-          r.c:sendEvent('WS_MyEffectRaised', { health = r.health, side = r.side, caster = r.caster })
+          -- (a frame later, with their things in hand: worn as they were, at the health asked for, on whose side)
+          r.c:sendEvent('WS_MyEffectRaised', { equip = r.equip, health = r.health, side = r.side, caster = r.caster })
           table.remove(raiseQueue, 1)
         end
       end
@@ -1494,10 +1625,12 @@ return {
         end
       end
     end,
-    onSave = function() return { scaled = scaled, summoned = summoned } end,
+    -- (the raise queue too: a save made while a corpse's things are put by keeps them, and the raising carries on)
+    onSave = function() return { scaled = scaled, summoned = summoned, raiseQueue = raiseQueue } end,
     onLoad = function(data)
       if data and data.scaled then scaled = data.scaled end
       if data and data.summoned then summoned = data.summoned end
+      if data and data.raiseQueue then raiseQueue = data.raiseQueue end
     end,
   },
   eventHandlers = {

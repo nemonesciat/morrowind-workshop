@@ -14,13 +14,16 @@ function icLoadImage(url){
 // a picture's pixels as something a canvas can draw: an <img> for what the browser reads, else (.dds, .tga)
 // drawn by the 3D view's loaders on a canvas of its own
 async function icSource(src){
-  const path = (src.path || '').toLowerCase();
-  if (src.url || !/\.(dds|tga)$/.test(path)){
+  const path = (src.path || '').toLowerCase(), game = /\.(dds|tga)$/.test(path) || /\.(dds|tga)$/i.test(src.name || '');
+  if (!game){
     const im = await icLoadImage(src.url || '/api/file?path=' + encodeURIComponent(path));
     return {w: im.naturalWidth, h: im.naturalHeight, draw: (ctx, x, y, w, h) => ctx.drawImage(im, x, y, w, h)};
   }
   await ensureThree();                // (the 3D view's loaders, fetched the first time anything needs them)
-  const tex = await new Promise((res, rej) => v3Tex(path, res, () => rej(new Error('That picture could not be read.'))));
+  // (a .dds or .tga from your PC read by the same loaders: the browser's own reader can't, and "Use it" stayed grey)
+  const tex = src.url
+    ? await new Promise((res, rej) => (/\.dds$/i.test(src.name) ? new THREE.DDSLoader() : new THREE.TGALoader()).load(src.url, res, undefined, () => rej(new Error('That picture could not be read.'))))
+    : await new Promise((res, rej) => v3Tex(path, res, () => rej(new Error('That picture could not be read.'))));
   const T = THREE, iw = (tex.image && tex.image.width) || 256, ih = (tex.image && tex.image.height) || 256;
   if (!IC.r){
     IC.r = new T.WebGLRenderer({alpha: true, preserveDrawingBuffer: true}); IC.r.setClearColor(0x000000, 0);
@@ -56,14 +59,22 @@ function icRender(S, size, mode){
 
 async function icPick(kind, opts){
   opts = opts || {};
+  // (once: the Library list was slow to come while the Workshop was busy, a second click opened a second window)
+  if (IC.opening || document.querySelector('.modal-bg[data-icpick]')) return;
+  IC.opening = true;
   let lib = [];
   try { lib = ((await api('/api/library')).items || []).filter(i => i.type === 'texture' && i.ok !== false); } catch (e){}
-  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  finally { IC.opening = false; }
+  // (a picture kept as both .dds and .tga, as the game's icons often are: once, the .dds)
+  const rank = f => /\.dds$/i.test(f) ? 0 : /\.(png|jpe?g)$/i.test(f) ? 1 : 2, best = {};
+  for (const i of lib){ const k = (i.file || '').toLowerCase().replace(/\.[^./]+$/, ''); if (!best[k] || rank(i.file) < rank(best[k].file)) best[k] = i; }
+  lib = lib.filter(i => best[(i.file || '').toLowerCase().replace(/\.[^./]+$/, '')] === i);
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.icpick = '1';
   bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>An icon from a picture</h2>
     <div class="msg" style="line-height:1.55">Pick a picture: the Workshop makes ${IC_NOTE[kind]} from it, in the sizes the game wants, and keeps ${kind === 'effect' ? 'them' : 'it'} with your mod.</div>
     <div class="icgrid">${lib.map((i, n) => `<button class="ictile" data-icn="${n}" title="${esc(i.name)}">${/\.(dds|tga)$/i.test(i.file) ? `<img data-swatch="${esc(i.file)}" alt="">` : `<img src="/api/file?path=${encodeURIComponent(i.file)}" alt="">`}<span>${esc(i.name)}</span></button>`).join('')
       || '<div class="msg">Your Library has no pictures yet. Add them on the Library page (drop them there), or pick a file from your PC below.</div>'}</div>
-    <label class="msg" style="display:block;margin-top:8px">Or a picture from your PC (.png, .jpg, .webp, .gif, .bmp): <input type="file" id="ic-file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*"></label>
+    <label class="msg" style="display:block;margin-top:8px">Or a picture from your PC (.png, .jpg, .dds, .tga, .webp, .bmp): <input type="file" id="ic-file" accept=".png,.jpg,.jpeg,.dds,.tga,.webp,.gif,.bmp,image/*"></label>
     <div id="ic-prev" style="display:none;margin-top:10px">
       <div class="icrow"><div id="ic-imgs" class="icimgs"></div>
         <div><label>Name<input class="inp" id="ic-name"></label>
@@ -85,6 +96,12 @@ async function icPick(kind, opts){
   const sizes = IC_SIZES[kind];
   const draw = () => {
     if (!S) return;
+    // (a picture that came out all black or empty didn't draw: made into an icon anyway, it showed in the game as a
+    // black square, 2026-11-02)
+    const c = document.createElement('canvas'); c.width = c.height = 16; const g = c.getContext('2d'); S.draw(g, 0, 0, 16, 16);
+    const px = g.getImageData(0, 0, 16, 16).data; let lit = 0;
+    for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 8 && px[i] + px[i + 1] + px[i + 2] > 24) lit++;
+    if (!lit){ $('#ic-prev').style.display = 'none'; $('#ic-ok').disabled = true; made = null; toast('That picture came out all black: the Workshop could not read it. Pick another, or the same one as .png.', true); return; }
     const mode = bg.querySelector('[name=ic-mode]:checked').value;
     made = sizes.map(z => icRender(S, z, mode));
     $('#ic-imgs').innerHTML = made.map((u, n) => `<figure><img src="${u}" width="${sizes[n]}" height="${sizes[n]}">${kind === 'effect' ? (n ? 'large' : 'small') : 'icon'} · ${sizes[n]}×${sizes[n]}</figure>`).join('');
@@ -98,7 +115,7 @@ async function icPick(kind, opts){
     bg.querySelectorAll('.ictile').forEach(x => x.classList.toggle('on', x === b));
     const it = lib[+b.dataset.icn]; use({path: it.file}, it.name);
   });
-  $('#ic-file').onchange = e => { const f = e.target.files[0]; if (f){ bg.querySelectorAll('.ictile').forEach(x => x.classList.remove('on')); use({url: URL.createObjectURL(f)}, f.name); } };
+  $('#ic-file').onchange = e => { const f = e.target.files[0]; if (f){ bg.querySelectorAll('.ictile').forEach(x => x.classList.remove('on')); use({url: URL.createObjectURL(f), name: f.name}, f.name); } };
   bg.querySelectorAll('[name=ic-mode]').forEach(r => r.onchange = draw);
   $('#ic-no').onclick = () => bg.remove();
   $('#ic-ok').onclick = async () => {

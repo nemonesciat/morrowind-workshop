@@ -51,13 +51,22 @@ def land_in_order(data):
     return join_subs(out)
 
 
+_LINKS = {}         # (a line's data -> its INAM and PNAM: read on every write of the mod otherwise)
+
+
 def _chain_order(infos):
     """Dialogue lines in the order of their "previous line" links (each after the one it follows)."""
     def link(r, tag):
-        for t, d in iter_subrecords(unb64(r['data'])):
-            if t == tag:
-                return zstr(d)
-        return ''
+        got = _LINKS.get(r['data'])
+        if got is None:
+            got = {}
+            for t, d in iter_subrecords(unb64(r['data'])):
+                if t in ('INAM', 'PNAM') and t not in got:
+                    got[t] = zstr(d)
+            if len(_LINKS) > 100000:
+                _LINKS.clear()
+            _LINKS[r['data']] = got
+        return got.get(tag, '')
     by_id = {link(r, 'INAM'): r for r in infos}
     out, done = [], set()
 
@@ -140,9 +149,17 @@ def load_settings():
         return {}
 
 
+def write_json(path, obj, **kw):
+    """A JSON file written whole or not at all (a copy beside it, then put in its place): a Workshop closed or killed
+    mid-write left a half file, and the settings, a prefab or a plan in it were gone (2026-11-02 audit)."""
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(obj, **kw))
+    os.replace(tmp, path)
+
+
 def save_settings(s):
-    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(s, f, indent=2)
+    write_json(SETTINGS_FILE, s, indent=2)
 
 
 def safe_name(name):
@@ -150,11 +167,42 @@ def safe_name(name):
     return keep[:60] or 'MyMod'
 
 
+SOON = set()            # projects with a save_soon not done yet
+SAVE_LOCK = None        # the lock edits hold (workshop.edit_lock): a later save waits for the edit under way
+
+
+def _nolock():
+    import contextlib
+    return contextlib.nullcontext()
+
+
+def save_pending():
+    """The saves asked for with save_soon, now (the Workshop closing, another mod opening)."""
+    for p in list(SOON):
+        try:
+            p.save()
+        except Exception as e:
+            print('save failed:', e)
+
+
 class Project:
     def __init__(self, path):
         self.path = path
-        with open(path, encoding='utf-8') as f:
-            d = json.load(f)
+        try:
+            with open(path, encoding='utf-8') as f:
+                d = json.load(f)
+        except (OSError, ValueError) as e:
+            # (the file unreadable, the Workshop or the computer stopped mid-save: the whole copy a save writes before
+            # putting it in place, if there is one, is the newest the mod was)
+            try:
+                with open(path + '.tmp', encoding='utf-8') as f:
+                    d = json.load(f)
+            except (OSError, ValueError):
+                raise e
+            print('%s could not be read (%s): opened the copy its last save left' % (os.path.basename(path), e))
+            if os.path.exists(path):
+                os.replace(path, path + '.unreadable')
+            os.replace(path + '.tmp', path)
         self.name = d['name']
         self.plugin = d['plugin']
         self.author = d.get('author', '')
@@ -190,7 +238,7 @@ class Project:
         self.hedr_raw = d.get('hedr')
         self.plugin_backup = d.get('plugin_backup')
         self.undo_stack = []
-        self.last_state = self.state()
+        self.last_state = self.snapshot()
         self.pending_write = None
         try:
             import backups
@@ -228,20 +276,28 @@ class Project:
             if len(out) >= count:
                 break
             d = e.get('diff')
-            raw = json.dumps(d) if d else ''
-            if d and len(raw) > self.BIG_DIFF:
+            # (each entry's size measured once: measured again on every save, 0.8 s a save on a big mod)
+            sizes = self.__dict__.setdefault('_diff_sizes', {})
+            got = sizes.get(id(e))
+            if got and got[0] is d:
+                n, raw = got[1], None
+            else:
+                raw = json.dumps(d) if d else ''
+                n = len(raw)
+                sizes[id(e)] = (d, n)
+            if d and n > self.BIG_DIFF:
                 name = e.get('diff_file') or '%d-%d.json' % (e.get('id', 0), int(time.time()))
                 path = os.path.join(hd, name)
                 if not os.path.exists(path):
                     try:
                         os.makedirs(hd, exist_ok=True)
                         with open(path + '.tmp', 'w', encoding='utf-8') as f:
-                            f.write(raw)
+                            f.write(raw if raw is not None else json.dumps(d))
                         os.replace(path + '.tmp', path)
                     except OSError:
                         name = None
                 if name:
-                    hist += len(raw)
+                    hist += n
                     if hist > self.HISTORY_MAX:
                         break
                     e['diff_file'] = name
@@ -250,7 +306,7 @@ class Project:
                     out.append(lite)
                     total += len(json.dumps(lite))
                     continue
-            size = len(raw) + 200
+            size = n + 200
             if out and total + size > limit:
                 break
             out.append(e)
@@ -265,7 +321,27 @@ class Project:
             pass
         return out
 
-    def save(self):
+    def save_soon(self, delay=1.5):
+        """Save in a moment, once: for what is kept in the mod but isn't an edit (cells marked, the shapes drawn). Each
+        mark saved the whole mod there and then, a second or more on a big one, and marks clicked one after another
+        queued behind each other ("knuckle draggingly slow", 2026-11-02). A save meanwhile covers it."""
+        import threading
+        n = self._soon_n = getattr(self, '_soon_n', 0) + 1
+        SOON.add(self)
+
+        def run():
+            if getattr(self, '_soon_n', 0) != n or self not in SOON:
+                return                                  # (a newer one comes, or a save took it)
+            with SAVE_LOCK or _nolock():
+                if self in SOON:
+                    self.save()
+        t = threading.Timer(delay, run)
+        t.daemon = True
+        t.start()
+
+    def save(self, texts=None):
+        """texts: {place key: its JSON text} already made for this write (editing._write_now), put in as they are."""
+        SOON.discard(self)
         tmp = self.path + '.tmp'
         d = {'name': self.name, 'plugin': self.plugin, 'author': self.author,
              'description': self.description, 'records': self.records, 'cells': self.cells,
@@ -282,8 +358,19 @@ class Project:
         if self.source:
             d.update({'source': self.source, 'masters': self.masters, 'tes3_version': self.tes3_version,
                       'plugin_backup': self.plugin_backup, 'order': self.order, 'hedr': self.hedr_raw})
+        # (dumps, then one write: json.dump to a file runs the pure-Python encoder, ten times slower. A 32 MB mod
+        # took 2-20 s a save, and every mark, shape and brush stroke saves: "knuckle draggingly slow", 2026-11-02)
+        if texts is None:
+            text = json.dumps(d)
+        else:
+            # (the same text json.dumps(d) makes, the places put in from texts)
+            def val(k, v):
+                if k != 'cells':
+                    return json.dumps(v)
+                return '{' + ', '.join('%s: %s' % (json.dumps(ck), texts.get(ck) or json.dumps(c)) for ck, c in v.items()) + '}'
+            text = '{' + ', '.join('%s: %s' % (json.dumps(k), val(k, v)) for k, v in d.items()) + '}'
         with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(d, f)
+            f.write(text)
         os.replace(tmp, self.path)
         try:
             import backups
@@ -295,13 +382,53 @@ class Project:
         return json.dumps({'records': self.records, 'cells': self.cells, 'next_ref': self.next_ref, 'lua': self.lua,
                            'grass': self.grass, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts})
 
-    def restore(self, state):
-        d = json.loads(state)
-        self.records, self.cells, self.next_ref = d['records'], d['cells'], d['next_ref']
-        self.lua = d.get('lua', [])
-        self.grass = d.get('grass', {})
-        self.scattered = set(d.get('scattered') or [])
-        self.town_parts = d.get('town_parts') or {}
+    def snapshot(self, prev=None):
+        """The state in parts (Snap), sharing the parts that didn't change with prev (the last one by default)."""
+        prev = prev if prev is not None else self.__dict__.get('last_state')
+        prev = prev if isinstance(prev, Snap) else None
+        return Snap.of(self.records, self.cells, self.grass or {}, {'next_ref': self.next_ref, 'lua': self.lua,
+                       'scattered': sorted(self.scattered), 'town_parts': self.town_parts}, prev)
+
+    def restore(self, state, cur=None):
+        """Put the project back as a state was (a Snap, or a state() text). cur: a Snap of the project as it is now, so
+        the parts the same in both are kept as they are, not read again."""
+        if not isinstance(state, Snap):
+            d = json.loads(state)
+            self.records, self.cells, self.next_ref = d['records'], d['cells'], d['next_ref']
+            self.lua = d.get('lua', [])
+            self.grass = d.get('grass', {})
+            self.scattered = set(d.get('scattered') or [])
+            self.town_parts = d.get('town_parts') or {}
+            return
+        cur = cur if isinstance(cur, Snap) else None
+
+        def back(parts, now, live):
+            if now is None:
+                return {k: json.loads(s) for k, s in parts.items()}
+            return {k: live[k] if k in live and (now.get(k) is s or now.get(k) == s) else json.loads(s) for k, s in parts.items()}
+        self.records = back(state.r, cur and cur.r, self.records)
+        self.cells = back(state.c, cur and cur.c, self.cells)
+        self.grass = back(state.g, cur and cur.g, self.grass or {})
+        m = json.loads(state.m)
+        self.next_ref, self.lua = m['next_ref'], m.get('lua', [])
+        self.scattered = set(m.get('scattered') or [])
+        self.town_parts = m.get('town_parts') or {}
+
+    def cell_bytes_of(self, key, c, masters, text=None):
+        """cell_bytes, kept for each place by its JSON text: a place that didn't change isn't encoded again. Every change
+        encoded every place twice (to sync, then to write), 2 s and more a change on a 32 MB mod (2026-11-02 audit)."""
+        text = text if text is not None else json.dumps(c)
+        memo = self.__dict__.setdefault('_cellbin', {})
+        sig = (tuple(masters), self.plugin.lower(), bool(self.source))
+        got = memo.get(key)
+        if got is not None and got[1] == sig and (got[0] is text or got[0] == text):
+            return got[2]
+        b = self.cell_bytes(c, masters)
+        if len(memo) > 2 * len(self.cells) + 100:
+            for k in [k for k in memo if k not in self.cells]:
+                del memo[k]
+        memo[key] = (text, sig, b)
+        return b
 
     # ----- Lua scripts (OpenMW): files next to the plugin, listed in a .omwscripts file -----
     def lua_allowed(self):
@@ -414,7 +541,12 @@ class Project:
 
     # ----- compiling -----
     def cell_bytes(self, c, masters):
-        """Build CELL record data. masters: list of lowercase master names."""
+        """Build CELL record data. masters: list of lowercase master names. Each object's bytes are kept by what it
+        holds, so an unchanged one isn't encoded again: every change and every write of the mod encoded all of it,
+        seconds on a big mod, hundreds of times in a town (2026-11-02)."""
+        memo = self.__dict__.setdefault('_chunks', {})
+        if len(memo) > 600000:
+            memo.clear()
         out = [join_subs([(t, unb64(d)) for t, d in c['header']])]
 
         def chunk(r):
@@ -428,6 +560,14 @@ class Project:
                 # this one and switched off, say): nothing to write it against; Health check lists these
                 return None
             frmr = (upper << 24) | (r['idx'] & 0xFFFFFF)
+            key = (frmr, bool(r.get('deleted')), tuple(d for _t, d in r['subs']), tuple(t for t, _d in r['subs']),
+                   tuple(d for _t, d in r['mvrf']) if r.get('mvrf') else None)
+            b = memo.get(key)
+            if b is None:
+                b = memo[key] = encode(r, frmr)
+            return b
+
+        def encode(r, frmr):
             subs = [(t, unb64(d)) for t, d in r['subs']]
             if r.get('deleted') and not any(t == 'DELE' for t, _d in subs):
                 subs = [(t, d) for t, d in subs if t == 'NAME'] + [('DELE', b'\0\0\0\0')]
@@ -482,8 +622,8 @@ class Project:
                 out += _chain_order(infos.pop(r['key'], []))
         return out
 
-    def build(self, masters_with_sizes, out_path):
-        """Write the .omwaddon. masters_with_sizes: [(name, size)] in load order."""
+    def build(self, masters_with_sizes, out_path, texts=None):
+        """Write the .omwaddon. masters_with_sizes: [(name, size)] in load order. texts: the places' JSON texts, if made."""
         masters = [m.lower() for m, _s in masters_with_sizes]
         body = []
         count = 0
@@ -500,7 +640,7 @@ class Project:
             return 0
 
         def emit_cell(key, c):
-            data = self.cell_bytes(c, masters)
+            data = self.cell_bytes_of(key, c, masters, texts.get(key) if texts else None)
             body.append(b'CELL' + struct.pack('<III', len(data), 0, c.get('flags', 0)) + data)
 
         recs = self._emit_order(list(self.records.values()))
@@ -584,22 +724,96 @@ class Project:
         return count
 
 
+class Snap:
+    """A project's state in parts: each record, place and cell of grass as its own JSON text, the rest in one. Undo keeps
+    one a step, and a part that didn't change is the same string as in the step before, so a step costs what it changed.
+    The whole mod's text a step (30 MB on a big mod: the 300 MB cap was reached in ten steps) and a whole read of it to
+    find what a change did made every move, Undo and brush stroke take 2-5 s there (2026-11-02 audit)."""
+    __slots__ = ('r', 'c', 'g', 'm', 'size')
+
+    def __init__(self, r, c, g, m, size):
+        self.r, self.c, self.g, self.m, self.size = r, c, g, m, size     # (size: the bytes of the parts new in it)
+
+    @staticmethod
+    def of(records, cells, grass, meta, prev=None):
+        size = [0]
+
+        def parts(d, old):
+            out = {}
+            for k, v in d.items():
+                s = json.dumps(v)
+                o = old.get(k) if old else None
+                if o is not None and o == s:
+                    s = o
+                else:
+                    size[0] += len(s)
+                out[k] = s
+            return out
+        m = json.dumps(meta)
+        if prev is not None and prev.m == m:
+            m = prev.m
+        else:
+            size[0] += len(m)
+        return Snap(parts(records, prev and prev.r), parts(cells, prev and prev.c), parts(grass, prev and prev.g), m, size[0])
+
+    @staticmethod
+    def from_text(s):
+        d = json.loads(s)
+        return Snap.of(d['records'], d['cells'], d.get('grass') or {}, {'next_ref': d['next_ref'], 'lua': d.get('lua', []),
+                       'scattered': d.get('scattered') or [], 'town_parts': d.get('town_parts') or {}})
+
+    def text(self):
+        """The whole state as Project.state() writes it."""
+        def obj(parts):
+            return '{' + ', '.join('%s: %s' % (json.dumps(k), v) for k, v in parts.items()) + '}'
+        m = json.loads(self.m)
+        return '{"records": %s, "cells": %s, "next_ref": %s, "lua": %s, "grass": %s, "scattered": %s, "town_parts": %s}' % (
+            obj(self.r), obj(self.c), json.dumps(m['next_ref']), json.dumps(m.get('lua', [])), obj(self.g),
+            json.dumps(m.get('scattered') or []), json.dumps(m.get('town_parts') or {}))
+
+
+_AS_SNAP = {}       # (a state text made into a Snap: the last one, by its text)
+
+
+def as_snap(s):
+    if isinstance(s, Snap):
+        return s
+    got = _AS_SNAP.get(s)
+    if got is None:
+        got = Snap.from_text(s)
+        _AS_SNAP.clear()
+        _AS_SNAP[s] = got
+    return got
+
+
+def state_text(s):
+    """A state (Snap or text) as text, for what reads it whole (building together, the live link)."""
+    return s.text() if isinstance(s, Snap) else s
+
+
 def state_diff(before, after):
-    """What changed between two project states, per record and per placed object,
+    """What changed between two project states (Snaps, or state() texts), per record and per placed object,
     as [before, after] pairs, so one change can be taken back on its own later."""
-    b, a = json.loads(before), json.loads(after)
+    b, a = as_snap(before), as_snap(after)
     recs = {}
-    for k in set(b['records']) | set(a['records']):
-        if b['records'].get(k) != a['records'].get(k):
-            recs[k] = [b['records'].get(k), a['records'].get(k)]
+    for k in set(b.r) | set(a.r):
+        x, y = b.r.get(k), a.r.get(k)
+        if x is y or x == y:
+            continue
+        x, y = json.loads(x) if x is not None else None, json.loads(y) if y is not None else None
+        if x != y:
+            recs[k] = [x, y]
     cells = {}
-    for ck in set(b['cells']) | set(a['cells']):
-        bc, ac = b['cells'].get(ck) or {}, a['cells'].get(ck) or {}
+    for ck in set(b.c) | set(a.c):
+        x, y = b.c.get(ck), a.c.get(ck)
+        if x is y or x == y:
+            continue
+        bc, ac = json.loads(x) if x is not None else {}, json.loads(y) if y is not None else {}
         br, ar = bc.get('refs', {}), ac.get('refs', {})
         refs = {rk: [br.get(rk), ar.get(rk)] for rk in set(br) | set(ar) if br.get(rk) != ar.get(rk)}
         if refs:
             meta = {'flags': (ac or bc).get('flags', 0), 'header': (ac or bc).get('header', [])}
-            if ck not in b['cells']:
+            if ck not in b.c:
                 meta['new'] = True                  # this change made the place (or first touched it)
             if (ac or bc).get('plan'):
                 meta['plan'] = (ac or bc)['plan']

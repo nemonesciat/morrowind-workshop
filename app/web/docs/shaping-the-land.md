@@ -286,7 +286,10 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **Wall:** none, its culture's own, or one you pick. The wall is made of the game's pieces, each joined to the
   next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out.
   Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
-  the land round it), and the wall sunk deep enough that no foot shows.
+  the land round it), and the wall sunk deep enough that no foot shows. Where it must change height, Hlaalu and
+  Velothi walls climb on their own step pieces; Imperial walls step at a tower. Gates stand on the low side, where
+  the town's streets go out, and the streets run on through them. Stairs inside lead up to the wall walk.
+  A Nord village gets a **palisade**: post sections following the land round it, with a gatehouse on the way in.
 - **Dressed:** sets out what the culture's own towns set out. Before doors: benches, signs, lanterns, crates, a
   smith's forge and anvil. Along the streets: carts, stools, barrels. In the square: a well or a shrine. And the
   culture's own scenes, such as Telvanni slave pods or a gallows, as often as its towns have them.
@@ -311,8 +314,10 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **People** (with Furnished): a household in each, cast as the game's places of that kind have them, owning its beds and chests.
   This takes a minute or two for a town.
 - **The wall's keep and towers** (with Furnished or Empty shells): each has a door at the ground on the town side and an arched
-  door on the wall walk where the wall runs into it. Behind them is a spiral-stair room joining the two, so you can
-  climb from the street to the walk inside. It is furnished by the Workshop, never with the original room's things.
+  door on the wall walk where the wall runs into it, set only where the way out of it is clear. Behind them is a
+  spiral-stair room joining the two, so you can climb from the street to the walk inside. The towers' rooms share one
+  place ("Varnhold, Wall Towers"), each joined to the next round the wall, and the keep's room to the towers beside it.
+  They are furnished by the Workshop, never with the original room's things.
 - **🏘 Make it** builds it (the button at the top of the panel builds every town drawn). Each building is set on the ground, and the ground is raised where its foot or door
   would show a gap. The streets are paved with the road of the nearest towns of that culture. One Undo takes it all back.
 - **Editing it afterwards:** right-click any piece of one of its buildings → **▣ Select the whole building**, then move
@@ -349,6 +354,13 @@ tower and the keep, so you can walk from the keep into the towers without going 
 
 **Doors face the world.** Each outside door sets you down just inside, in front of the door that leads back. Going
 out, you stand a step outside it, facing away.
+
+**Inside the wall** an Imperial fort has stairs up to the walk and a bailey set out the way the game's forts keep
+theirs: stores of crates and barrels, training dummies, a cart, a well, benches, a smith's anvil. Each group stands in
+the castle's own places, against a wall or in the yard, clear of the way from the gate to the keep.
+
+**Beside a town.** Drawn against a walled town, the castle's gate turns towards the town, and where the two walls
+meet only one is built: the wall already standing serves both. A town walled round a castle does the same.
 
 **🏰 Make it** evens the ground under the wall and the keep, clears trees and rocks inside, and builds it all.
 One Undo takes it back. **✕ Remove** takes away what it built, rooms included; the ground stays.

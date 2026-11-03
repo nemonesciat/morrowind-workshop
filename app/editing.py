@@ -7,7 +7,7 @@ import threading
 import time
 
 from esm import ENC, iter_subrecords, zstr
-from project import b64, join_subs, ref_info, set_ref_pos, state_diff, unb64, zs
+from project import Snap, b64, join_subs, ref_info, set_ref_pos, state_diff, state_text, unb64, zs
 
 PLACEABLE = {'STAT', 'ACTI', 'DOOR', 'CONT', 'LIGH', 'NPC_', 'CREA', 'LEVC', 'WEAP', 'ARMO', 'CLOT', 'MISC',
              'BOOK', 'ALCH', 'INGR', 'APPA', 'LOCK', 'PROB', 'REPA'}
@@ -28,9 +28,9 @@ def plugin_path(db):
     return os.path.join(d, db.project.plugin)
 
 
-def build(db):
-    """Write the mod (with its Lua files) and its grass file, if it has grass."""
-    db.project.build(db.proj_masters, plugin_path(db))
+def build(db, texts=None):
+    """Write the mod (with its Lua files) and its grass file, if it has grass. texts: the places' JSON texts, if made."""
+    db.project.build(db.proj_masters, plugin_path(db), texts)
     try:
         import grass
         grass.write(db)
@@ -58,7 +58,12 @@ def lua_content(db):
 # One operation made of several changes (a town's Make: its outside, each house copied and peopled, its doors linked):
 # each change logged inside it carries the operation's id, so My mod shows them as one row (the user 2026-11-02: two
 # towns made after another were lost among their houses' rows and the ground reshaped before them).
-_op = {'cur': None}
+# (per thread: a town making lets other requests in between its steps, breathe(), and their changes aren't the town's)
+_op = {}
+
+
+def _cur_op():
+    return _op.get(threading.get_ident())
 
 
 class operation:
@@ -66,47 +71,101 @@ class operation:
         self.kind, self.mine = kind, False
 
     def __enter__(self):
-        if not _op['cur']:                  # (one inside another is part of the outer one)
-            _op['cur'], self.mine = '%s-%d' % (self.kind, int(time.time() * 1000)), True
+        me = threading.get_ident()
+        if not _op.get(me):                 # (one inside another is part of the outer one)
+            _op[me], self.mine = '%s-%d' % (self.kind, int(time.time() * 1000)), True
         return self
 
     def __exit__(self, *_a):
         if self.mine:
-            _op['cur'] = None
+            _op.pop(threading.get_ident(), None)
+
+
+# Long work (a town, a castle, furnishing many rooms) steps aside after each change it makes for the requests waiting
+# for the edit lock, and goes on when they are done: a town held the lock for six minutes and every other click in
+# the Workshop waited on it, "staring at a locked screen is unacceptable" (the user, 2026-11-02). Undo, Redo and
+# switching mods are refused meanwhile (they would pull the half-made town from under it); BUSY says what is making.
+WAITING = [0]                   # requests waiting for WRITE_LOCK now (the server counts them, workshop._EditLock)
+BUSY = {}                       # thread -> the operation it lets others in on, while it does
+BREATHE_AFTER = 3.0             # (only work that has run this long steps aside)
+_req = threading.local()
+
+
+def request_started():
+    _req.t = time.time()
+
+
+def breathe():
+    """Let the requests waiting for the edit lock have it, then take it back. Call it where the project is in one
+    piece: after a commit."""
+    lk = WRITE_LOCK
+    if lk is None or not WAITING[0] or time.time() - getattr(_req, 't', time.time()) < BREATHE_AFTER:
+        return
+    if not lk._is_owned():
+        return
+    me = threading.get_ident()
+    n = lk._recursion_count()
+    BUSY[me] = _op.get(me) or 'work'
+    for _ in range(n):
+        lk.release()
+    try:
+        t0 = time.time()
+        while WAITING[0] and time.time() - t0 < 5:
+            time.sleep(0.02)
+    finally:
+        for _ in range(n):
+            lk.acquire()
+        BUSY.pop(me, None)
+
+
+BUSY_NAMES = {'town': 'Making a town', 'castle': 'Making a castle', 'land': 'Shaping the land', 'example': 'Making an example'}
+
+
+def busy_with():
+    """What long work is under way while it lets others in ('Making a town'...), or None."""
+    for v in list(BUSY.values()):
+        return BUSY_NAMES.get(str(v).split('-')[0], 'A big change')
+    return None
 
 
 def commit(db, note=None, reverts=None):
     p = db.project
     before = getattr(p, 'last_state', None)
-    after = p.state()
+    after = p.snapshot(before)
     entry = None
     if note:
         entry = p.note(note, state_diff(before, after) if before is not None else None)
         if reverts:
             entry['reverts'] = reverts
-        if _op['cur']:
-            entry['op'] = _op['cur']
+        if _cur_op():
+            entry['op'] = _cur_op()
     if before is not None:
         stack = p.__dict__.setdefault('undo_stack', [])
         stack.append((before, note or 'change', entry['id'] if entry else None))
         del stack[:-100]
         p.redo_stack = []                   # (a new change after an Undo: what was undone can't come back)
         p.redo_together = []
-        # big projects (lots of grass) make big undo steps: keep the history within ~300 MB
-        total = sum(len(s[0]) for s in stack)
+        # big projects (lots of grass) make big undo steps: keep the history within ~300 MB (a Snap counts the parts
+        # new in it; the rest it shares with the step before)
+        total = sum(_step_size(s[0]) for s in stack)
         while len(stack) > 5 and total > 300_000_000:
-            total -= len(stack.pop(0)[0])
+            total -= _step_size(stack.pop(0)[0])
     p.last_state = after
-    db.sync_project()
+    db.sync_project(texts=after.c)
     _write_soon(db)
     _notify(db, entry)
     try:
         import together
         if together.active():
-            together.on_commit(db, before, after, note)       # (building together: to everyone else)
+            together.on_commit(db, state_text(before), state_text(after), note)       # (building together: to everyone else)
     except Exception as e:                  # sharing must never break editing
         print('building together:', e)
+    breathe()
     return entry
+
+
+def _step_size(s):
+    return s.size if isinstance(s, Snap) else len(s)
 
 
 # The project file and the plugin are written a moment after a change, not inside it: writing a big
@@ -121,12 +180,19 @@ _writer = {'pending': None, 'thread': None, 'lock': threading.Lock(), 'done': th
 
 
 def _write_now(db):
+    import json
+    texts = None
     try:
-        db.project.save()
+        # (each place's text made once, for the project file and to tell which places' bytes are as they were)
+        texts = {ck: json.dumps(c) for ck, c in db.project.cells.items()}
+    except Exception as e:
+        print('could not read the places:', e)
+    try:
+        db.project.save(texts)
     except Exception as e:
         print('could not save the project:', e)
     try:
-        build(db)
+        build(db, texts)
     except Exception as e:
         print('could not write the mod:', e)
 
@@ -304,26 +370,26 @@ def undo(db, to_depth=None):
     target = len(stack) - 1 if to_depth is None else max(0, int(to_depth))
     undone, ids, redo = [], [], []
     before = p.last_state
-    cur = p.state()
+    cur = p.snapshot(before)
     while len(stack) > target:
         item = stack.pop()
         state, note = item[0], item[1]
         # (Redo puts back the state as it was before this Undo, step by step: the earliest step on top)
         redo.append((cur, note, item[2] if len(item) > 2 else None))
+        p.restore(state, cur)
         cur = state
-        p.restore(state)
         undone.append(note)
         if len(item) > 2 and item[2]:
             ids.append(item[2])
     for i in ids:
         _set_active(p, i, False)
-    after = p.state()
+    after = p.snapshot(cur if isinstance(cur, Snap) else before)
     entry = p.note('Undid: ' + '; '.join(undone[:5]) + (' (+%d more)' % (len(undone) - 5) if len(undone) > 5 else ''),
                    state_diff(before, after))
     entry['reverts'] = ids
     p.__dict__.setdefault('redo_stack', []).extend(r + (entry['id'],) for r in redo)
     p.last_state = after
-    db.sync_project()
+    db.sync_project(texts=after.c)
     _write_soon(db)
     _notify(db, entry)
     return undone
@@ -355,18 +421,19 @@ def redo(db):
     state, note, orig, undid = redo_stack.pop()
     before = p.last_state
     stack = p.__dict__.setdefault('undo_stack', [])
-    stack.append((p.state(), note, orig))
-    p.restore(state)
+    now = p.snapshot(before)
+    stack.append((now, note, orig))
+    p.restore(state, now)
     if orig:
         _set_active(p, orig, True)
     u = next((x for x in p.log if x.get('id') == undid), None)
     if u and all(not x.get('undone') for x in p.log if x.get('id') in u.get('reverts', [])):
         u['undone'] = True                 # (every step that Undo took back is in effect again)
-    after = p.state()
+    after = p.snapshot(state if isinstance(state, Snap) else now)
     entry = p.note('Redid: ' + note, state_diff(before, after))
     entry['reverts'] = [undid] if undid else []
     p.last_state = after
-    db.sync_project()
+    db.sync_project(texts=after.c)
     _write_soon(db)
     _notify(db, entry)
     return note
@@ -387,13 +454,13 @@ def fold(db, n, note):
     before = items[0][0]
     ids = {it[2] for it in items if len(it) > 2 and it[2]}
     p.log[:] = [e for e in p.log if e.get('id') not in ids]
-    after = p.state()
+    after = p.snapshot()
     entry = p.note(note, state_diff(before, after))
-    if _op['cur']:
-        entry['op'] = _op['cur']
+    if _cur_op():
+        entry['op'] = _cur_op()
     stack.append((before, note, entry['id']))
     p.last_state = after
-    db.sync_project()
+    db.sync_project(texts=after.c)
     _write_soon(db)
     _notify(db, entry)
     return entry
@@ -413,7 +480,20 @@ def _set_active(p, entry_id, active, depth=0):
 
 
 def _footprint(db, e):
-    """What a logged change touched and created, for working out which later changes build on it."""
+    """What a logged change touched and created, for working out which later changes build on it. (Kept for each entry
+    while its diff is the same: My mod's list read every object of every change again, a second a look on a big mod.)"""
+    memo = db.project.__dict__.setdefault('_fp_memo', {}) if db is not None and db.project is not None else {}
+    got = memo.get(id(e))
+    if got is not None and got[0] is e and got[1] is e.get('diff'):
+        return got[2]
+    f = _footprint_of(db, e)
+    if len(memo) > 4000:
+        memo.clear()
+    memo[id(e)] = (e, e.get('diff'), f)
+    return f
+
+
+def _footprint_of(db, e):
     import base64
     d = e.get('diff') or {}
     f = {'keys': set(), 'cells': set(), 'new_cells': set(), 'new_ids': set(), 'names': set(), 'dials': set(),
@@ -462,6 +542,22 @@ def _builds_on(later, earlier):
                 later['names'] & earlier['new_ids'] or later['dials'] & earlier['new_dials'])
 
 
+class _Group:
+    """The union of a group of changes' footprints: _builds_on(later, any of them) in one test, as the lists ask it
+    for every pair of changes (cubic in the log, half a second a look at My mod on a big mod)."""
+    def __init__(self, fp):
+        self.u = {k: set(fp[k]) for k in ('keys', 'new_cells', 'new_ids', 'new_dials')}
+
+    def add(self, fp):
+        for k in self.u:
+            self.u[k] |= fp[k]
+
+    def built_on_by(self, later):
+        u = self.u
+        return bool(later['keys'] & u['keys'] or later['cells'] & u['new_cells'] or
+                    later['names'] & u['new_ids'] or later['dials'] & u['new_dials'])
+
+
 def _adds_to(later, earlier):
     """later puts something into what earlier made (its places, things or topics), not just the same things again."""
     return bool(later['cells'] & earlier['new_cells'] or later['names'] & earlier['new_ids'] or
@@ -496,11 +592,12 @@ def branch_sizes(db):
     fps = {e['id']: _footprint(db, e) for e in live}
     out = {}
     for n, e in enumerate(live):
-        group = [e['id']]
+        group, size = _Group(fps[e['id']]), 0
         for later in live[n + 1:]:
-            if any(_builds_on(fps[later['id']], fps[g]) for g in group):
-                group.append(later['id'])
-        out[e['id']] = len(group) - 1
+            if group.built_on_by(fps[later['id']]):
+                group.add(fps[later['id']])
+                size += 1
+        out[e['id']] = size
     return out
 
 
@@ -509,13 +606,16 @@ def _dependents(db, entry_id):
     p = db.project
     live = _live(p)
     fps = {e['id']: _footprint(db, e) for e in live}
-    group = [entry_id]
+    group, out = None, []
+    if entry_id in fps:
+        group = _Group(fps[entry_id])
     for e in live:
-        if e['id'] <= entry_id:
+        if e['id'] <= entry_id or group is None:
             continue
-        if any(_builds_on(fps[e['id']], fps[g]) for g in group if g in fps):
-            group.append(e['id'])
-    return group[1:]
+        if group.built_on_by(fps[e['id']]):
+            group.add(fps[e['id']])
+            out.append(e['id'])
+    return out
 
 
 def _revert_diff(p, d):

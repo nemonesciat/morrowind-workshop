@@ -670,7 +670,7 @@ def _street_town(poly, fig, rng, spread):
     if fig.get('_ring'):
         rs = _ring_street(poly, fig)
         if rs:
-            streets.append(rs)
+            streets.extend(rs)
     elif fig.get('ground'):
         qs = _quay(poly, fig)
         if qs:
@@ -873,14 +873,16 @@ def _ring_street(poly, fig):
     buildings stands between it and the wall, backs to the wall and doors to the street, as walled towns are built. Planned
     without it, a walled town's streets ran down its middle only and its buildings stood in a blob, the wall round them
     two fifths empty, and the doors off the streets opened onto each other's walls (the Tamriel practice, 2026-11-01;
-    the user: "entrances tend to line up along streets, common access coves")."""
+    the user: "entrances tend to line up along streets, common access coves"). A list."""
     sizes = fig['sizes']
     deep = sorted(d for _w, d in sizes)[len(sizes) // 2]
     w = 512.0
     r = inset(poly, deep + fig['setback'] + w / 2 + 64)
     if len(r) < 3 or _area(r) < 0.2 * _area(poly):
         return None
-    return {'pts': [(round(x, 1), round(y, 1)) for x, y in r + [r[0]]], 'w': w, 'main': False, 'ring': True}
+    # (a list, though one: on a hillside its steep stretches were tried left out, and the town's streets came out steeper
+    # still, a fifth of its road over 0.25 against 7% with the lane whole, lab r20)
+    return [{'pts': [(round(x, 1), round(y, 1)) for x, y in r + [r[0]]], 'w': w, 'main': False, 'ring': True}]
 
 
 COURT = 640                    # a court's half width: a small yard shared by the doors round it

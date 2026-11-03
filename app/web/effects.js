@@ -154,7 +154,7 @@ function mxDoesRow(d, n){
     inner = `${mxSel('which', n, {one: 'the nearest of the dead', all: 'all the dead'}, d.which || 'one')}
       <span class="msg">within</span>${mxNum('feet', n, d.feet || 15, 70)}<span class="msg">feet stand up again, at</span>${mxNum('health', n, d.health || 100, 60)}<span class="msg">% health,</span>
       ${mxSel('side', n, {own: 'as they were', ally: 'on the caster\'s side, following'}, d.side || 'own')}
-      <span class="msg" style="width:100%">Cast it on Self (the game's magic doesn't land on the dead): it raises those lying near you. They come back with what was left on them; what you looted stays taken.</span>`;
+      <span class="msg" style="width:100%">As a bolt (On Target), aim it at a corpse: it stands up by the game's own Resurrect (OpenMW 0.52). On Self: those lying near you. Before 0.52 they are made again where they lay, with what was left on them.</span>`;
   } else if (d.kind === 'quake'){
     // (2026-10-25, the user: "don't want all the furniture and whatnot flying off the shelves")
     inner = `<span class="msg">the ground shakes within</span>${mxNum('feet', n, d.feet || 30, 70)}<span class="msg">feet, strength</span>${mxNum('strength', n, d.strength || 5, 60)}

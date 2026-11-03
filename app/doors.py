@@ -55,6 +55,56 @@ def _floor_at(db, m, x, y, bottom):
     return z
 
 
+def stand_spot(db, m, x, y, top, rz=None):
+    """Where the player stands at a spot picked for a door's arrival: [x, y, z, rz] and whether it was moved off a
+    wall, or None (nothing to stand on). The floor is the first one down from `top` with room to stand (a click on
+    the map has no height: top is a step above the nearest door's foot, so roofs, upper storeys and tables over the
+    spot are not it); the spot is pushed out of the walls round it, and a facing not given is away from the nearest
+    door, into the place. Picked arrivals took the top of whatever stood there and faced north: "pressing on where
+    I want to land seems to have random effects" (StingDR, 2026-11-02)."""
+    import seethrough
+    if m['interior']:
+        key = (id(db.recs), m.get('key'), len(m['refs']))
+        if key not in _scenes:
+            _scenes.clear()
+            _scenes[key] = seethrough.place_scene(db, m)
+        sc, land = _scenes[key], None
+    else:
+        sc, land = _local_scene(db, {'p': [x, y, 0.0]}), mapdata.terrain_z(db, x, y)
+    z = None
+    for _ in range(4):
+        hit = sc.nearest_any((x, y, top), (0.0, 0.0, -1.0), 2000.0)
+        f = top - hit[0] if hit else None
+        if land is not None and land <= top and (f is None or land > f):
+            f = land
+        if f is None:
+            break
+        up = sc.nearest_any((x, y, f + 20.0), (0.0, 0.0, 1.0), 400.0)
+        if up is None or up[0] >= 100:
+            z = f
+            break
+        top = f - 5.0                                  # (under a ledge or a table top: the floor beneath)
+    if z is None:
+        return None
+    moved = False
+    for _ in range(2):
+        px = py = 0.0
+        for i in range(8):
+            dx, dy = math.sin(i * math.pi / 4), math.cos(i * math.pi / 4)
+            h = sc.nearest_any((x, y, z + 50.0), (dx, dy, 0.0), 40.0)
+            if h:
+                px -= dx * (40.0 - h[0])
+                py -= dy * (40.0 - h[0])
+        if math.hypot(px, py) < 2:
+            break
+        x, y, moved = x + px, y + py, True
+    if rz is None:
+        ds = [r for r in m['refs'] if r['type'] == 'DOOR' and math.hypot(r['p'][0] - x, r['p'][1] - y) < 600]
+        d = min(ds, key=lambda r: math.hypot(r['p'][0] - x, r['p'][1] - y), default=None)
+        rz = math.atan2(x - d['p'][0], y - d['p'][1]) if d else 0.0
+    return [x, y, z + 10.0, rz], moved
+
+
 OUT_NEAR = 1500                # (the buildings round an outdoor door, for its open side)
 FRONT_SHUT = 7                 # (a door model's learnt front is taken unless it is this shut in: walls all round and a roof)
 
@@ -262,8 +312,24 @@ def arrival(db, target, source_key=None, near=None):
     if near:
         # (a spot that was clicked is where you arrive, even with a door back there: that door still leads back)
         x, y = float(near[0]), float(near[1])
-        z = near[2] if len(near) > 2 and near[2] is not None else mapdata.surface_z(db, m['refs'], m['interior'], x, y, None, 1.0, 'NPC_', None) + 10
-        return [x, y, z, 0, 0, float(near[3]) if len(near) > 3 and near[3] is not None else 0.0], back
+        rz = near[3] if len(near) > 3 else None
+        if len(near) > 4 and near[4] and near[2] is not None:
+            # (typed, or where the player stands in game: exactly that, nothing moved)
+            arrival.moved = False
+            return [x, y, float(near[2]), 0, 0, float(rz or 0.0)], back
+        if len(near) > 2 and near[2] is not None:
+            top = near[2] + 60.0                       # (clicked in 3D: the floor there)
+        else:
+            d = min(doors, key=lambda r: math.hypot(r['p'][0] - x, r['p'][1] - y), default=None)
+            top = d['p'][2] + 150.0 if d else None     # (on the map: the floor of the nearest door's storey)
+        got = stand_spot(db, m, x, y, top, rz) if top is not None else None
+        if got:
+            (x, y, z, rz), moved = got
+        else:
+            z = near[2] if len(near) > 2 and near[2] is not None else mapdata.surface_z(db, m['refs'], m['interior'], x, y, None, 1.0, 'NPC_', None) + 10
+            rz, moved = rz or 0.0, False
+        arrival.moved = moved
+        return [x, y, z, 0, 0, float(rz)], back
     linked = [r for r in doors if r.get('to')]
     if linked:
         return _in_front(m, linked[0], db), None
@@ -360,17 +426,20 @@ def relink(db, cell_key, refkey, target=None, at=None, both_ways=False):
     near = None
     if at:
         near = [float(at[0]), float(at[1]), None if len(at) < 3 or at[2] is None else float(at[2]),
-                float(at[3]) if len(at) > 3 and at[3] is not None else None]
+                float(at[3]) if len(at) > 3 and at[3] is not None else None, bool(len(at) > 4 and at[4])]
+    arrival.moved = False
     pos, back = arrival(db, target, None if same else cell_key, near)
     dest_name = info['name'] if info['interior'] else ''
     editing._store(c, refkey, ref['origin'], ref['idx'], _set_link(ref['subs'], dest_name, pos))
     note = 'Door "%s" in %s now leads to %s' % (rid, editing.cell_label(db, cell_key), info['name'] or info['id'])
     back_done = None
-    if both_ways and here:
-        # the door at the other end: the one that already leads here, or the closest door to where you arrive
+    if both_ways and here and not back:
+        # the door at the other end: the closest door to where you arrive that leads nowhere yet. (A door that
+        # already leads here keeps its own arrival: picking this door's spot reset the one picked for that door
+        # a minute before, and the other way, and people's arrivals seemed to come out at random, 2026-11-02.)
         m2 = mapdata.cellmap(db, target)
-        cand = back or min((r for r in m2['refs'] if r['type'] == 'DOOR' and not (same and r['k'] == refkey)),
-                           key=lambda r: math.hypot(r['p'][0] - pos[0], r['p'][1] - pos[1]), default=None)
+        cand = min((r for r in m2['refs'] if r['type'] == 'DOOR' and not r.get('to') and not (same and r['k'] == refkey)),
+                   key=lambda r: math.hypot(r['p'][0] - pos[0], r['p'][1] - pos[1]), default=None)
         if cand and math.hypot(cand['p'][0] - pos[0], cand['p'][1] - pos[1]) < 600:
             c2, refs2 = editing._cell(db, target)
             r2 = refs2.get(cand['k'])
@@ -382,4 +451,4 @@ def relink(db, cell_key, refkey, target=None, at=None, both_ways=False):
                 back_done = cand['id']
                 note += ' (and back)'
     editing.commit(db, note)
-    return {'ok': True, 'arrive': pos, 'back': back_done}
+    return {'ok': True, 'arrive': pos, 'back': back_done, 'moved': arrival.moved}
