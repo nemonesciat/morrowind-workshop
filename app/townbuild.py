@@ -1502,6 +1502,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         _say('Setting the wall on the ground', 0.87)
         db.sync_project()
         W = townwalls.grounded(db, W)
+        try:
+            townwalls.fill_ground(db, W, new_refs)  # (the ground up to the feet of the stretches raised out of a dip)
+        except Exception as e:
+            print('wall fill:', e)
         townwalls.drop_doubled(db, W, new_refs)     # (where a castle's or another town's wall already stands)
         # (no wall-walk arches: the game stands ex_imp_wallent_02 along its walks, but set there without a building they
         # read as doorways to nowhere, the user's Chillmorrow, test4: "don't add them unless they go on a building")
@@ -1540,7 +1544,15 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         # (what the buildings already carry: a banner of a building's own and another its surroundings brought, set
         # in one spot, flickered)
         also = [(r_['id'], r_['p']) for ck_ in cells for r_ in mapdata.cellmap(db, ck_).get('refs') or () if r_['k'] in new_refs]
-        for t in towndress.dress(db, plan, seed, blocked, also=also):
+        laid_ = towndress.dress(db, plan, seed, blocked, also=also)
+        # (then the story layer: the ground between the houses as their yards, fenced, each with a kind of life;
+        # storydress.yards. Kept clear of what the dressing laid)
+        try:
+            import storydress
+            laid_ += storydress.yards(db, plan, seed, blocked, also=also + [(t_['id'], t_['p']) for t_ in laid_])
+        except Exception as e_:
+            print('town yards:', e_)
+        for t in laid_:
             ri = db.resolve_id(t['id'])
             if ri is None:
                 continue

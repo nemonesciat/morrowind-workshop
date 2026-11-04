@@ -805,9 +805,45 @@ def everything(db, q):
             if rows:
                 groups.append({'group': g, 'items': rows})
         out['sections'][sec] = groups
-    out['line'] = "%d thing%s in every style's palette%s" % (len(found), '' if len(found) == 1 else 's',
-                                                              ' (the most used first; type more to narrow it)' if len(found) >= ALL_MAX else '')
+    # (and the rest of the catalogue: everything the palettes don't hold, dimmer, under one group. The palettes hold
+    # 8,355 of 45,755 statics; a search for "peak" found one rock while three MtPeak variants sat in the Library, the
+    # user, 2026-11-03: "why do so many items not show up in the style palette, even under All")
+    cat = _catalogue(db, words, {r['id'].lower() for _s, _g, r in found})
+    if cat:
+        out['sections']['Catalogue'] = [{'group': "Not in any style's palette", 'items': cat}]
+    out['line'] = "%d thing%s in every style's palette%s%s" % (len(found), '' if len(found) == 1 else 's',
+                                                                ' (the most used first; type more to narrow it)' if len(found) >= ALL_MAX else '',
+                                                                ', and %d more in the catalogue' % len(cat) if cat else '')
     return out
+
+
+CAT_MAX = 200                   # catalogue things the All search shows at most
+
+
+def _catalogue(db, words, skip):
+    """The things of the catalogue that match every word and stand in no style's palette, shaped as rows: the
+    palette's kinds (classify), by id and name."""
+    rows = []
+    for (tag, key), lst in db.by_key.items():
+        if tag not in ('STAT', 'ACTI', 'CONT', 'LIGH', 'MISC', 'BOOK', 'ALCH', 'INGR', 'APPA', 'DOOR') or not lst or lst[-1] in db.dead:
+            continue
+        low = key.lower()
+        if low in skip:
+            continue
+        r = db.recs[lst[-1]]
+        text = ('%s %s' % (r[1], r[2] or '')).lower()
+        if not all(w in text for w in words):
+            continue
+        cls = classify(db, low)
+        if not cls:
+            continue
+        sec, grp, r = cls
+        rows.append({'id': r[1], 'name': r[2], 'type': r[0], 'mesh': (r[5] or '').lower(), 'grp': grp, 'share': None, 'places': 0,
+                     'lift': None, 'at': [], 'also': [], 'cat': True, 'style': ''})
+        if len(rows) >= CAT_MAX:
+            break
+    rows.sort(key=lambda x: (x['name'] or x['id']).lower())
+    return rows
 
 
 # ------------------------------------------------------------------ your own additions

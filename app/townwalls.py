@@ -1241,6 +1241,26 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
             if near:
                 q = p['pose']
                 segs.append(((q.x, q.y), (q.x, q.y), sum(near) / len(near)))
+    return _shape_ground(db, segs, skip, CUT_TOL, RAISE_TOL)
+
+
+FILL_MAX = 1024                # (a stretch sunk this far under its neighbours is raised to them, the ground filled under it)
+LEVEL_AT = 0.7                 # (the ring's level stands at this share of its stretches' ground: more fill, fewer steps up)
+DIP_MIN = 48
+
+
+def fill_ground(db, W, skip=()):
+    """The ground under the wall's raised stretches (grounded's W['fill']) filled up to their feet: a stretch whose ground
+    had been cut to the ring's level stood lower than the walls either side, a dip in the walk with a trench under it
+    (the user's Estmorevale, 2026-11-03: "a couple spots where the walls depress down"). The cells changed."""
+    segs = W.pop('fill', None) or []
+    return _shape_ground(db, segs, skip, 0.0, FILL_MAX) if segs else 0
+
+
+def _shape_ground(db, segs, skip, cut_tol, raise_tol):
+    """The ground along each ((x0, y0), (x1, y1), level) evened towards its level, cut by at most cut_tol and raised by at
+    most raise_tol, fading back into the land round it (LEVEL_R, LEVEL_BLEND). The cells changed."""
+    import landscape
     if not segs:
         return 0
     reach = LEVEL_R + LEVEL_BLEND_MAX
@@ -1274,7 +1294,7 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
                         d = dist(x, y, a, b)
                         if d >= reach:
                             continue
-                        blend = max(LEVEL_BLEND, min(LEVEL_BLEND_MAX, LEVEL_FADE * abs(max(z - CUT_TOL, min(z + RAISE_TOL, t)) - z)))
+                        blend = max(LEVEL_BLEND, min(LEVEL_BLEND_MAX, LEVEL_FADE * abs(max(z - cut_tol, min(z + raise_tol, t)) - z)))
                         if d >= LEVEL_R + blend:
                             continue
                         w = 1.0 if d <= LEVEL_R else 0.5 + 0.5 * math.cos(math.pi * (d - LEVEL_R) / blend)
@@ -1282,7 +1302,7 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
                             best = (w, t)
                     if not best:
                         continue
-                    want = max(z - CUT_TOL, min(z + RAISE_TOL, best[1]))
+                    want = max(z - cut_tol, min(z + raise_tol, best[1]))
                     nz = z + best[0] * (want - z)
                     if abs(nz - z) >= 1:
                         h[n] = nz
@@ -1359,6 +1379,8 @@ def grounded(db, W):
         # towers level and the rest steps, never straight to straight (2 of 141), lab sj1/sj2. A corner or a gate
         # arch on the high side closes the step itself)
         a, b = order[i - 1] if i > 0 else order[-1], order[i]
+        if abs((a['pose'].z + a['_b'][5]) - (b['pose'].z + b['_b'][5])) < 16:
+            return                                       # (no step left to hide: the stretches came out level)
         hp = max((a, b), key=lambda p: p['pose'].z + p['_b'][5])
         if any('tower' in p['id'].lower() and p['pose'].z + p['_b'][5] >= hp['pose'].z + hp['_b'][5] - 16 for p in (a, b)):
             return
@@ -1384,6 +1406,8 @@ def grounded(db, W):
     if seg:
         level(seg)
         segs.append(seg)
+    _one_level(segs, W, span, keep)
+    _no_dips(segs, W)
     St = STEP_PIECES.get(W.get('family'))
     if St and straight:
         for k in range(1, len(segs)):
@@ -1418,6 +1442,66 @@ def grounded(db, W):
     if wet:
         W['faults'].append('%d pieces over water left out' % wet)
     return W
+
+
+def _fill_under(fill, seg, z):
+    """The ground wanted under each piece of a stretch set at z: its own foot (a line from the stretch's first piece to
+    its last cut the corners, and the pieces round them stood in the air)."""
+    for p in seg:
+        q = p['pose']
+        fill.append(((q.x, q.y), (q.x, q.y), z + p['_b'][2] + SINK + 8))
+
+
+def _one_level(segs, W, span, keep):
+    """Every level stretch at the ring's one level where it can be: a stretch whose ground lies under that level floats
+    at it and gets its ground filled to its foot (W['fill'], up to FILL_MAX); one whose ground stands too high to show
+    the wall steps up, as the game's walls step at a hill. Before, a stretch took its own ground's level, so a wall on
+    a slope went down it in steps (the user's Fort Estmoth, 2026-11-03: "bring the terrain up to meet it")."""
+    if not segs:
+        return
+    gs = sorted(p['_g'][0] for p in keep)
+    want = gs[int(len(gs) * LEVEL_AT)] + 208               # (level()'s own figure, for the whole ring)
+    fill = W.setdefault('fill', [])
+    for seg in segs:
+        lo, hi = span(seg)
+        if want < lo:
+            z = lo                                      # (a hill: the wall must show over the ground)
+        elif want <= hi:
+            z = want
+        elif want - hi <= FILL_MAX:
+            z = want                                    # (ground under the level: filled up to the foot)
+        else:
+            continue                                    # (too deep to fill: its own level, as before)
+        if abs(z - seg[0]['pose'].z) < 1:
+            continue
+        for p in seg:
+            p['pose'].z = z
+        if z > hi:
+            _fill_under(fill, seg, z)
+
+
+def _no_dips(segs, W):
+    """A level stretch standing under both the stretches either side (DIP_MIN) is raised to the lower of them, when the
+    rise is within FILL_MAX; the ground under it is noted in W['fill'] for fill_ground to bring up to its foot. (The
+    ground under a stretch cut to the ring's level while its neighbours' stayed high left the stretch in a trench.)"""
+    n = len(segs)
+    if n < 3:
+        return
+    fill = W.setdefault('fill', [])
+    for _round in range(n):
+        changed = False
+        for k, seg in enumerate(segs):
+            z = seg[0]['pose'].z
+            zp, zn = segs[k - 1][0]['pose'].z, segs[(k + 1) % n][0]['pose'].z
+            target = min(zp, zn)
+            if z >= target - DIP_MIN or target - z > FILL_MAX:
+                continue
+            for p in seg:
+                p['pose'].z = target
+            _fill_under(fill, seg, target)
+            changed = True
+        if not changed:
+            break
 
 
 # the walls that climb on step pieces of their own where a run changes level (lab j09 joins): Hlaalu's wall_up_01, a

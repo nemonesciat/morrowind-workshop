@@ -410,6 +410,8 @@ const LS_KINDS = {
   lake:    {icon: '◍', label: 'Lake', color: '#58c8e8', closed: true, how: 'Click round the shore, then the first point to close. A basin under the water line.'},
   stamp:   {icon: '◉', label: 'Stamp', color: '#ff8fb8', how: 'Click where it goes: a volcano, a crater, a dome, or a piece of the game\'s own land.'},
   spring:  {icon: '⇣', label: 'Spring', color: '#5fd0ff', point: true, how: 'Click where a river rises. It finds its own way down to the water.'},
+  // (a line the region's cliff rocks are chained along, facing the drop: cliffline.py; it shapes no ground itself)
+  cliff:   {icon: '🪨', label: 'Cliff', color: '#d8a878', how: 'Click along the edge of the drop, double-click to finish. The rocks the region makes its cliffs of are chained along it, facing the lower side.'},
   // (an outline that shapes nothing: pick it, and 🪨 Dress… keeps to it; landshapes leaves it out)
   area:    {icon: '▢', label: 'Dress area', color: '#9be37a', closed: true, how: 'Click round a part of the land, then the first point to close. It changes no ground: 🪨 Dress… can dress only inside it.'},
   // (a town's outline: its streets and buildings planned in a culture's way, townplan.py; it shapes no ground itself)
@@ -422,10 +424,11 @@ const LS_KINDS = {
   wall:    {icon: '🧱', label: 'Wall', color: '#b08a60', closed: true, town: true, how: 'Click round the town: the wall keeps to a grid of its pieces from your first point, its corners square. The town fills it.'},
 };
 const LS_ZONES = {residential: ['Houses', '#7fbf7f'], business: ['Business', '#5aa0dc'], noble: ['Noble', '#c85a8c']};
-const lsNoShape = k => k === 'area' || k === 'town' || k === 'castle' || !!(LS_KINDS[k] && LS_KINDS[k].town);
+const lsNoShape = k => k === 'area' || k === 'town' || k === 'castle' || k === 'cliff' || !!(LS_KINDS[k] && LS_KINDS[k].town);
 // sliders per kind: [param, label, min, max, step, tip]
 const LS_PARAMS = {
   area: [],
+  cliff: [['height', 'Height', 200, 3000, 50, 'About how tall the face stands: the rocks are scaled to it within the sizes the game uses them at'], ['amount', 'Loose rocks', 0, 2, 0.25, 'Boulders at the foot and pieces on the crest: 1 as the game has them, 0 the face alone']],
   town: [], castle: [], street: [], zone: [], wall: [],
   coast: [['height', 'Height', 0, 6000, 50, 'How high the land stands a coast width in from the water'], ['width', 'Coast width', 1024, 16384, 256, 'How far it takes to rise out of the sea'], ['wander', 'Wander', 0, 2, 0.1, 'Small bays and headlands along the waterline (a few hundred units either side of the line drawn)']],
   ridge: [['height', 'Crest', 500, 12000, 100, 'The crest\'s height (lower at the ends)'], ['width', 'Width', 1024, 24576, 256, 'From the crest out to its foot'], ['sharp', 'Sharp', 0, 1, 0.05, '0 rounded hills, 1 a knife-edge crest'], ['spurs', 'Spurs', 0, 2, 0.1, 'How much its width wanders, in spurs and gullies'],
@@ -439,7 +442,7 @@ const LS_PARAMS = {
   stamp: [['radius', 'Radius', 1024, 32768, 256, 'How far it reaches'], ['height', 'Height', -6000, 12000, 50, 'Its height (a crater: its depth); for the game\'s land, 0 keeps it as it is'], ['stretch', 'Stretch', 1, 4, 0.1, 'An oval: so many times longer one way (1: round)'], ['turn', 'Turn', 0, 359, 1, 'Which way its long side points (0: east, 90: north); the game\'s land turns with it']],
 };
 const LS_SHAPES = [['volcano', 'Volcano'], ['cone', 'Cone'], ['caldera', 'Caldera'], ['crater', 'Crater'], ['dome', 'Dome'], ['mesa', 'Mesa'], ['game', 'The game\'s own land']];
-const LS_DEFAULTS = {area: {}, town: {culture: '', seed: 1}, castle: {style: 'Imperial', size: 'medium', seed: 1, rooms: 'furnished'}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
+const LS_DEFAULTS = {area: {}, cliff: {height: 600, side: 0, amount: 1, raise: 0, seed: 1}, town: {culture: '', seed: 1}, castle: {style: 'Imperial', size: 'medium', seed: 1, rooms: 'furnished'}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
   valley: {depth: 900, width: 4096, round: 0.6}, plateau: {height: 2000, width: 768, terraces: 0}, lake: {depth: 400, width: 1536},
   stamp: {shape: 'volcano', radius: 8192, height: 4000, turn: 0, stretch: 1, src: null}, spring: {rise: 800, wander: 1, depth: 256, width: 256, banks: 2048, canyon: 0}};
 
@@ -522,6 +525,14 @@ function lsHtml(){
         <div class="actions"><button class="btn sm" id="ls-src-here" title="Copy the cell open now (and the ones round it)">Use the cell open now</button></div>`;
     }
     for (const [k, lab, mn, mx, st, tip] of LS_PARAMS[sel.kind]) params += `<label title="${esc(tip)}">${lab} <input type="range" data-p="${k}" min="${mn}" max="${mx}" step="${st}" value="${p[k] != null ? p[k] : LS_DEFAULTS[sel.kind][k]}"><span>${p[k] != null ? p[k] : LS_DEFAULTS[sel.kind][k]}</span></label>`;
+    if (sel.kind === 'cliff'){
+      const picked = selectionRefs().map(([c, r]) => r.id).filter(id => /rock|stone|boulder|cliff|crag/i.test(id));
+      params += `<label title="Which side of the line drops away: the lower ground (or the water) as drawn, or say which">Drops <select class="inp" id="ls-cside"><option value="0" ${!p.side ? 'selected' : ''}>to the lower side</option><option value="1" ${p.side === 1 ? 'selected' : ''}>to the left (as drawn)</option><option value="-1" ${p.side === -1 ? 'selected' : ''}>to the right</option></select></label>
+        <label title="Whose rocks: the line's own region's, or another's">Like ${lsRegionSel('ls-like', sel.like || '', 'its own region')}</label>
+        ${picked.length ? `<label class="msg" style="display:flex;gap:6px;align-items:center" title="Chain the rocks you have selected (${esc(picked.slice(0, 3).join(', '))}${picked.length > 3 ? '…' : ''}) instead of the region's"><input type="checkbox" id="ls-cpick" ${p.pick ? 'checked' : ''}> Use the ${picked.length} selected rock${picked.length === 1 ? '' : 's'}</label>` : ''}
+        <label class="msg" style="display:flex;gap:6px;align-items:center" title="Lift the ground behind the line to the face's top, fading back into the land, so the land meets the cliff"><input type="checkbox" id="ls-craise" ${p.raise ? 'checked' : ''}> Raise the land behind it</label>
+        <div class="actions"><button class="btn sm primary" id="ls-clay" title="Lay the rocks along the line now. One Undo takes them back; lay it again for another arrangement">🪨 Lay the cliff</button></div>`;
+    }
     if (sel.kind === 'river' || sel.kind === 'spring') params += `<label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ls-canyon" ${p.canyon ? 'checked' : ''}> A canyon (steep walls)</label>`;
     if (sel.kind === 'coast') params += `<label class="msg" style="display:flex;gap:6px;align-items:center" title="Off: only a strip just outside the outline goes under water, and other land further out stays. On: all the land outside every coast in the marked cells sinks to the sea bed."><input type="checkbox" id="ls-sea" ${p.sea ? 'checked' : ''}> Sea outside (sink all other land)</label>`;
     // (where it acts, and whose character its ground takes; coasts are worked out together, so not for them)
@@ -555,7 +566,7 @@ function lsHtml(){
 // stage 3 and 4 (landpasses.py, landdress.py): the natural passes and the dressing, with the plan's own defaults
 const LS_PASSES = {detail: true, detail_k: 1, settle: true, angle: 0, gullies: 0, terraces: false, tstep: 256, tsharp: 0.6, tslope: 20, valleys: 0,
   rock: 0, rthick: 512, rdip: 0, rdir: 0, rshare: 0.45, ronly: ''};
-const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1, flow: 0};
+const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1, flow: 0, shore: ''};
 function lsPassesHtml(P){
   const A = P.passes = Object.assign({}, LS_PASSES, P.passes || {}), D = P.dress = Object.assign({}, LS_DRESS, P.dress || {});
   const info = LM.prevInfo || {};
@@ -598,6 +609,7 @@ function lsPassesHtml(P){
 function lsDressPick(D){
   const regs = (typeof REG !== 'undefined' && REG.data) ? REG.data.regions : [];
   return `<label title="The region whose land the plan takes after: its textures, its tints and shading, its roughness and slopes">Like <select class="inp" id="lsd-region"><option value="">the nearest region</option>${regs.map(r => `<option value="${esc(r.id.toLowerCase())}" ${r.id.toLowerCase() === D.region ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+      <label title="The shores: as the region lays them (West Gash's are rock), or sandy beaches or rocky shores whatever the region, at the water's edge and the flat ground just over it">Shores <select class="inp" id="lsd-shore">${[['', "as the region's"], ['sand', 'sandy'], ['rock', 'rocky']].map(([v, t]) => `<option value="${v}" ${(D.shore || '') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label title="How many textures a cell: as the region's own cells have (the land survey's median), or fewer or more">Textures <select class="inp" id="lsd-var">${[[-1, 'as many a cell as the region'], [0.4, 'fewer'], [1, 'more'], [2, 'many']].map(([v, t]) => `<option value="${v}" ${+D.variety === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
 }
 // Texture only: the marked cells' land textured by its slopes, heights and shores, as it is (landshapes.texture_only)
@@ -728,6 +740,7 @@ function lsPassesBind(P){
   on('lsd-region', el => { D.region = el.value; if (!el.value) D.assign = false; lsChanged(true); });
   on('lsd-assign', el => { D.assign = el.checked; lsChanged(); });
   on('lsd-var', el => { D.variety = +el.value; lsChanged(); });
+  on('lsd-shore', el => { D.shore = el.value; lsChanged(); });
   on('lsd-tints', el => { D.tints = el.checked; lsChanged(); });
   on('lsd-seams', el => { D.seams = el.checked; lsChanged(); });
   on('lsd-hollows', el => { D.hollows = el.checked; lsChanged(); });
@@ -782,6 +795,10 @@ function lsBind(){
   root.querySelectorAll('[data-src]').forEach(r => r.onchange = () => { sel.p.src = sel.p.src || [0, 0, 0, 0]; sel.p.src[+r.dataset.src] = +r.value; lsChanged(); });
   const sh = $('#ls-shape'); if (sh) sh.onchange = () => { sel.p.shape = sh.value; if (sh.value === 'game'){ sel.p.height = 0; } lsChanged(true); };
   const here = $('#ls-src-here'); if (here) here.onclick = () => { const i = W.info || {}; sel.p.src = [i.gx - 1, i.gy - 1, i.gx + 1, i.gy + 1]; lsChanged(true); };
+  const cs = $('#ls-cside'); if (cs) cs.onchange = () => { sel.p.side = +cs.value; lsChanged(); };
+  const cp = $('#ls-cpick'); if (cp) cp.onchange = () => { sel.p.pick = cp.checked ? 1 : 0; lsChanged(); };
+  const cr = $('#ls-craise'); if (cr) cr.onchange = () => { sel.p.raise = cr.checked ? 1 : 0; lsChanged(); };
+  const cl = $('#ls-clay'); if (cl) cl.onclick = () => lsLayCliff(sel, cl);
   const cy = $('#ls-canyon'); if (cy) cy.onchange = () => { sel.p.canyon = cy.checked ? 1 : 0; lsChanged(); };
   const se = $('#ls-sea'); if (se) se.onchange = () => { sel.p.sea = se.checked ? 1 : 0; lsChanged(); };
   const mi = $('#ls-markit'); if (mi) mi.onclick = async e => {
@@ -1593,6 +1610,23 @@ async function lmRaise(btn){
 // ----- Dress: the marked cells' land dressed as the game dresses the region's (landdecor.dress_all): rocks and
 // cliffs turned to their slopes, and the region's own squares of trees, plants, grass and logs
 // shapes with an outline that dressing can keep to (not towns)
+// a cliff along a drawn line (cliffline.py): the region's cliff rocks chained along it, facing the drop; one Undo
+async function lsLayCliff(L, btn){
+  if (!await needProject()) return;
+  const p = L.p || {};
+  const pieces = p.pick ? selectionRefs().map(([c, r]) => r.id).filter(id => /rock|stone|boulder|cliff|crag/i.test(id)) : [];
+  p.seed = (p.seed || 0) + 1;
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Laying…'; }
+  try {
+    const r = await post('/api/land/cliff', {pts: L.pts, side: p.side || 0, height: p.height || 600, amount: p.amount != null ? p.amount : 1, like: L.like || '', pieces, raise: !!p.raise, seed: p.seed});
+    if (!r.rocks) toast(r.why ? `Nothing laid: ${r.why}.` : 'Nothing laid.', true);
+    else toast(`Laid ${r.rocks} rocks (${r.parts.face} face, ${r.parts.foot} foot, ${r.parts.crest} crest)${r.region ? ', like ' + r.region : ''}${r.raised ? ', land raised behind' : ''}. Undo takes them back.`);
+    lsChanged();
+    await afterChange();
+    for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
+    drawMap(); renderWside(); if (typeof v3Refresh === 'function' && V3.on) v3Refresh();
+  } catch (err){ toast(err.message, true); if (btn){ btn.disabled = false; btn.textContent = '🪨 Lay the cliff'; } }
+}
 function lmDressRings(){
   return (LM.plan && LM.plan.layers || []).map((L, i) => ({L, i}))
     .filter(o => LS_KINDS[o.L.kind] && LS_KINDS[o.L.kind].closed && !LS_KINDS[o.L.kind].town && o.L.pts && o.L.pts.length >= 3);

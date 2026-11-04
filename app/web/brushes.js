@@ -123,7 +123,12 @@ function brEditor(box, set){
 
 async function brNew(seed){
   // (counted from the saved brushes when the Scatter tool hasn't loaded its sets: two "My brush 1" from Browse)
-  const n = (V3.scatSets ? V3.scatSets.sets.filter(s => s.mine).length : (await api('/api/brushes')).brushes.length) + 1;
+  // (an empty brush of yours is the new one: pressing + New brush again and again made "My brush 2", "My brush 3"
+  // of nothing, the user 2026-11-04)
+  const have = (await api('/api/brushes')).brushes;
+  const empty = !seed && have.find(b => !(b.items || []).length);
+  if (empty){ BR.editing = empty; V3.scatSets = null; if (V3.land) V3.land.scatSet = 'my:' + empty.id; return empty; }
+  const n = have.length + 1;
   const items = [];
   if (seed){ const d = await api('/api/brushes/item?id=' + encodeURIComponent(seed.id)); items.push({...d, id: seed.id, name: seed.name || d.name, weight: 5}); }
   const r = await post('/api/brushes/save', {brush: {name: 'My brush ' + n, items}});

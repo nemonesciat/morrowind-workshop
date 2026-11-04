@@ -15,7 +15,9 @@ const SP_SECS = [['Shell', '🧱 Shell', 'Walls, corners, floors, ceilings, door
   ['Sets', '🧩 Sets', 'What the game puts together: a table with its chairs, a bed with its chest, a hearth with its things. Placed whole, one Undo'],
   // (a region's own palette, regionpal.py: what the game sets over its land)
   ['Rocks', '🪨 Rocks & cliffs', "The region's rocks and cliffs, by set: the models of one family, which the game uses together"],
-  ['Growing', '🌿 Trees and plants', "The region's trees, flowers and plants, grass, logs and stumps"]];
+  ['Growing', '🌿 Trees and plants', "The region's trees, flowers and plants, grass, logs and stumps"],
+  // (All only: what the palettes don't hold, from the whole catalogue)
+  ['Catalogue', '📚 Catalogue', "Everything else that matches, from the whole catalogue: things no style's palette holds (too rare in any one style)"]];
 // a tab's name: a style, "Used everywhere", or a region's palette ('r:' and its id)
 function spName(c){
   if (c === '*') return 'Used everywhere';
@@ -72,6 +74,8 @@ function spCss(){
   .sp-sets{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
   .sp-set{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:6px;cursor:grab;user-select:none}
   .sp-set:hover,.sp-grid .tile:hover{border-color:var(--goldline)}
+  .sp-grid .tile.sp-cat{opacity:.72}
+  .sp-grid .tile.sp-cat:hover{opacity:1}
   .sp-set .sp-strip{display:flex;gap:2px;align-items:flex-end}
   .sp-set .sp-strip .thumb{width:48px;height:48px}
   .sp-set .sp-strip .thumb:first-child{width:72px;height:72px}
@@ -384,12 +388,13 @@ function spSecs(d){
 }
 function spBadge(it){
   if (it.mine && !it.places) return `<b class="sp-badge mine" title="You added it to this style (right-click: take it out)">yours</b>`;
+  if (it.cat) return `<b class="sp-badge" title="In no style's palette: from the whole catalogue">catalogue</b>`;
   const p = Math.round(100 * (it.share || 0));
   if (SP.cur === '**') return `<b class="sp-badge${it.share >= 0.25 ? ' staple' : ''}" title="${esc(it.style || '')}: in ${it.places} of its places learnt from (${p}%)">${esc((it.style || '').slice(0, 10))}</b>`;
   return `<b class="sp-badge${it.share >= 0.25 ? ' staple' : ''}" title="${SP.cur === '*' ? 'In ' + p + '% of all the places learnt from' : 'In ' + it.places + ' of the ' + esc(spName(SP.cur)) + (SP.cur.startsWith('r:') ? ' cells' : ' places') + ' learnt from (' + p + '%)'}">${p < 1 ? '<1' : p}%</b>`;
 }
 function spTileHtml(it){
-  return `<div class="tile" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-spid="${esc(it.id)}">${thumbImg(it.id, it.type, 96)}<span>${esc(it.name || it.id)}</span>${spBadge(it)}</div>`;
+  return `<div class="tile${it.cat ? ' sp-cat' : ''}" draggable="true" data-pid="${esc(it.id)}" data-pname="${esc(it.name || it.id)}" data-ptype="${esc(it.type || '')}" data-spid="${esc(it.id)}">${thumbImg(it.id, it.type, 96)}<span>${esc(it.name || it.id)}</span>${spBadge(it)}</div>`;
 }
 function spGridHtml(d){
   let any = false;

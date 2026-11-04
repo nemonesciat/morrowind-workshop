@@ -1280,7 +1280,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(fixit.variants(db, q.get('cell', ''), q.get('ref', '')))
             elif u.path == '/api/scatter/sets':
                 import scatter
-                self._json(scatter.sets(db, q.get('cell', '')))
+                self._json(scatter.sets(db, q.get('cell', ''), region=q.get('region', '')))
             elif u.path == '/api/library':
                 import library
                 self._json(library.listing(db))
@@ -2097,6 +2097,13 @@ class Handler(BaseHTTPRequestHandler):
                     parts = body.get('parts') or {'rocks': amt, 'growth': amt}
                     return self._json(landdecor.dress_all(db, body.get('cells') or [], body.get('like') or '', parts,
                                                           body.get('seed'), body.get('outline'), body.get('brush') or ''))
+                if u.path == '/api/land/cliff':
+                    # a cliff along a drawn line: the region's cliff rocks chained along it, facing the drop (cliffline.py)
+                    import cliffline
+                    with editing.operation('cliff'):
+                        return self._json(cliffline.lay(db, body.get('pts') or [], int(body.get('side') or 0), float(body.get('height') or 600),
+                                                        body.get('like') or '', body.get('seed'), body.get('pieces') or None,
+                                                        bool(body.get('raise')), float(body.get('amount') or 1.0)))
                 if u.path == '/api/land/revert':
                     # everything the mod changed in the marked cells taken back, as one step
                     return self._json(editing.revert_cells(db, body.get('cells') or []))
@@ -2854,8 +2861,12 @@ def model_for(q):
             import npcbody
             try:
                 _model_cache[key] = npcbody.npc_body(db, ri)
-            except Exception:
+            except Exception as e:
+                # (said in the log: a person drawn as the stand-in figure gave no clue why, StingDR 2026-11-03)
+                print('npc body: %s: %s: %s' % (r[1], type(e).__name__, e))
                 _model_cache[key] = None
+            if not _model_cache[key]:
+                print('npc body: %s: no body could be put together' % r[1])
         if not _model_cache[key]:
             return {'error': 'Could not put this character\'s body together.'}
         return {'model': 'body', 'shapes': _model_cache[key]}

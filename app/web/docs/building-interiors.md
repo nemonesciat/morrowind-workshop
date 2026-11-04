@@ -159,7 +159,9 @@ them:
   whole, as one Undo.
 
 **🔍 All** (first in the list) searches every style's palette at once; each result shows the style that has it
-most. **⇲** on the palette's title bar docks it as a panel, beside Place or wherever you drag its tab; its panel
+most. A style's palette holds what the game uses in that style often enough to count (in at least 3 of its places and
+3% of them), so a thing rare in every style is in none; All then lists it below, dimmer, under **📚 Catalogue**, from
+the whole catalogue. **⇲** on the palette's title bar docks it as a panel, beside Place or wherever you drag its tab; its panel
 menu (⋮) has **Float it as a window**. It opens the way you left it.
 
 Under **Regions**, each region has its own palette (◆ the open place's): **🪨 Rocks & cliffs**, grouped by set

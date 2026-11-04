@@ -1363,14 +1363,12 @@ const V3_BRUSH = [64, 4096];        // (64: just the land point under the brush,
 function v3BrushClamp(v){ return Math.max(V3_BRUSH[0], Math.min(V3_BRUSH[1], Math.round(v / 16) * 16)); }
 function v3PosSize(t){ return v3BrushClamp(V3_BRUSH[0] * Math.pow(V3_BRUSH[1] / V3_BRUSH[0], t / 1000)); }
 function v3SizePos(v){ return Math.round(1000 * Math.log(v3BrushClamp(v) / V3_BRUSH[0]) / Math.log(V3_BRUSH[1] / V3_BRUSH[0])); }
-// the Ground window's size: dragged by its corner (the user: "It should be possible to resize the ground window"), kept
+// the Ground window's size: dragged by its corner while it is open (the user: "It should be possible to resize the
+// ground window"), and each time it opens its own size again, tall enough for everything in it (a size kept from a
+// drag came back on every start, tiny and cut short: the user, 2026-11-03)
 function v3LandSized(p){
-  try { const s = JSON.parse(localStorage.getItem('ws-size-ground') || 'null'); if (s){ p.style.width = s[0] + 'px'; p.style.height = s[1] + 'px'; } } catch (e) {}
-  if (typeof ResizeObserver !== 'function') return;
-  new ResizeObserver(() => {
-    if (!p.style.width && !p.style.height) return;          // (only a size the corner gave it)
-    try { localStorage.setItem('ws-size-ground', JSON.stringify([p.offsetWidth, p.offsetHeight])); } catch (e) {}
-  }).observe(p);
+  try { localStorage.removeItem('ws-size-ground'); } catch (e) {}
+  p.style.width = p.style.height = '';
 }
 async function v3LandPanel(){
   let p = $('#v3land');
@@ -1470,6 +1468,21 @@ async function v3TintPanel(){
     ${I.seams.length ? `<br>${I.seams.length} kind${I.seams.length === 1 ? '' : 's'} of seam in this cell${dark.length ? `; the game darkens such joins by about ${Math.round(dark.reduce((a, b) => a + b, 0) / dark.length)}%` : ''}.` : '<br>No seams between textures in this cell.'}`;
 }
 // ----- scattering what grows in the region
+// (the regions with land of their own to learn from, fetched once; the cell's own region first)
+function v3ScatRegionOpts(S_){
+  const here = (S_.own || S_.region || '').toLowerCase(), want = (V3.land && V3.land.scatRegion) || '';
+  const cap = r => r.replace(/\b\w/g, c => c.toUpperCase());
+  if (!V3.lookList){ V3.lookList = []; api('/api/land/looks').then(r => { V3.lookList = r.looks || []; const sel = $('#v3lscreg'); if (sel && sel.options.length <= 1) v3ScatterPanel(); }).catch(() => {}); }
+  const rows = V3.lookList.filter(o => o.region !== here);
+  return `<option value="">${esc(here ? cap(here) + ' (here)' : 'the cells around here')}</option>` + rows.map(o => `<option value="${esc(o.region)}" ${o.region === want ? 'selected' : ''}>${esc(o.name)}</option>`).join('');
+}
+// (your own brushes: buttons while there are a few; past three, one list, so they don't pile up, the user 2026-11-04)
+function v3OwnBrushesHtml(S_, B){
+  const mine = S_.sets.filter(s => s.mine);
+  if (mine.length <= 3) return mine.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="One of your own brushes: pick it to use, rename or delete it">★ ${esc(s.label)}</button>`).join('');
+  const on = mine.find(s => s.key === B.scatSet);
+  return `<select id="v3lown" class="inp ${on ? 'primary' : ''}" title="Your own brushes: pick one to use, rename or delete it"><option value="">★ Mine (${mine.length})…</option>${mine.map(s => `<option value="${s.key}" ${s.key === B.scatSet ? 'selected' : ''}>★ ${esc(s.label)}</option>`).join('')}</select>`;
+}
 async function v3ScatterPanel(){
   const box = $('#v3lscat'); if (!box) return;
   // (drawn again on every pick: the panel and the lists in it keep where they were scrolled to. PIN2 on Discord
@@ -1487,9 +1500,11 @@ async function v3ScatterPanel(){
     }
   };
   const ck = cellKeyAt(...v3CamWorld().slice(0, 2));
-  if (!V3.scatSets || V3.scatSets.cell !== ck){
+  // (whose land the sets are learnt from: the cell's own region, or one the user picked; the user, 2026-11-04)
+  const want = (V3.land && V3.land.scatRegion) || '';
+  if (!V3.scatSets || V3.scatSets.cell !== ck || (V3.scatSets.want || '') !== want){
     box.innerHTML = '<div class="faint"><span class="spin"></span>Finding what grows here…</div>';
-    try { V3.scatSets = await api('/api/scatter/sets?cell=' + encodeURIComponent(ck)); V3.scatSets.cell = ck; }
+    try { V3.scatSets = await api('/api/scatter/sets?cell=' + encodeURIComponent(ck) + '&region=' + encodeURIComponent(want)); V3.scatSets.cell = ck; V3.scatSets.want = want; }
     catch (e){ box.innerHTML = `<div class="faint">${esc(e.message)}</div>`; return; }
     // (the Ground panel was drawn again while the sets came: that newer panel fills its own box; this one is gone
     // from the page, and the brush editor in it found none of its fields, "setting 'onchange'" of null)
@@ -1503,10 +1518,11 @@ async function v3ScatterPanel(){
   B.scatOff = B.scatOff || {};
   B.scatThick = B.scatThick || 5;
   box.innerHTML = `<div class="v3lrow" title="Remove clears only what this brush scattered, of the kinds ticked. Ctrl while dragging does the other one"><button class="btn sm ${B.scatErase ? '' : 'primary'}" data-se="0">🌿 Paint</button><button class="btn sm ${B.scatErase ? 'primary' : ''}" data-se="1">✕ Remove</button></div>
-    <div class="v3lrow" style="flex-wrap:wrap">${S_.sets.map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="${s.mine ? 'One of your own brushes' : 'What grows in this region'}">${s.mine ? '★ ' : ''}${esc(s.label)}</button>`).join('')}
-      <button class="btn sm" id="v3lnewbr" title="A brush of your own: any objects, from mods too">+ New brush</button></div>
+    <div class="v3lrow" style="flex-wrap:wrap">${S_.sets.filter(s => !s.mine).map(s => `<button class="btn sm ${s.key === B.scatSet ? 'primary' : ''}" data-ss="${s.key}" title="What grows in this region">${esc(s.label)}</button>`).join('')}
+      ${v3OwnBrushesHtml(S_, B)}
+      <button class="btn sm" id="v3lnewbr" title="A brush of your own: any objects, from mods too. Rename or delete one under its ★ button">+ New brush</button></div>
     <label class="v3lrow" title="How thickly things grow: 5 as the game has this kind, 10 about three times as thick, 1 under half">Thickness <input type="range" id="v3lthick" min="1" max="10" value="${B.scatThick}"><span>${B.scatThick}</span></label>` +
-    (set.mine ? '' : `<div class="faint" style="margin:4px 0;display:flex;gap:4px;align-items:center"><span style="flex:1">From ${esc(S_.region ? S_.region.replace(/\b\w/g, c => c.toUpperCase()) : 'the cells around here')}, used most first. Click to leave one out:</span>${brViewSel()}</div>` +
+    (set.mine ? '' : `<div class="faint" style="margin:4px 0;display:flex;gap:4px;align-items:center"><span style="flex:1">From <select id="v3lscreg" class="inp" style="max-width:150px" title="Whose land the brush learns from: this cell's region, or another's">${v3ScatRegionOpts(S_)}</select>, used most first. Click to leave one out:</span>${brViewSel()}</div>` +
     (BR.view === 'grid'
       ? `<div class="br-grid">${set.items.map(it => `<label class="br-tile ${B.scatOff[it.id.toLowerCase()] ? 'off' : ''}" title="${esc(it.name || it.id)} (${esc(it.id)}), used ${it.n} times nearby"><input type="checkbox" hidden data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}>${thumbImg(it.id, '', 96)}<span>${esc(it.name || it.id)}</span></label>`).join('')}</div>`
       : `<div class="v3scat">${set.items.map(it => `<label class="${B.scatOff[it.id.toLowerCase()] ? '' : 'on'}" title="${esc(it.id)} — used ${it.n} times nearby"><input type="checkbox" data-si="${esc(it.id)}" ${B.scatOff[it.id.toLowerCase()] ? '' : 'checked'}> ${esc(it.name || it.id)}</label>`).join('')}</div>`));
@@ -1547,6 +1563,8 @@ async function v3ScatterPanel(){
     };
   }
   box.querySelectorAll('[data-ss]').forEach(b => b.onclick = () => { B.scatSet = b.dataset.ss; v3LandSave(); v3ScatterPanel(); });
+  const ob = $('#v3lown'); if (ob) ob.onchange = () => { if (ob.value){ B.scatSet = ob.value; v3LandSave(); v3ScatterPanel(); } };
+  const rg = $('#v3lscreg'); if (rg) rg.onchange = () => { B.scatRegion = rg.value; B.scatOff = {}; V3.scatSets = null; v3LandSave(); v3ScatterPanel(); };
   box.querySelectorAll('[data-se]').forEach(b => b.onclick = () => { B.scatErase = b.dataset.se === '1'; v3LandSave(); v3ScatterPanel(); });
   $('#v3lthick').oninput = e => { B.scatThick = +e.target.value; e.target.nextElementSibling.textContent = B.scatThick; v3LandSave(); };
   box.querySelectorAll('[data-si]').forEach(c => c.onchange = () => { const k = c.dataset.si.toLowerCase(); if (c.checked) delete B.scatOff[k]; else B.scatOff[k] = 1; v3LandSave(); const l = c.parentElement; if (l.classList.contains('br-tile')) l.classList.toggle('off', !c.checked); else l.classList.toggle('on', c.checked); });

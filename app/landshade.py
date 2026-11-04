@@ -144,17 +144,17 @@ def learn(db, gx, gy):
     return out
 
 
-def learn_near(db, gx, gy, region=''):
+def learn_near(db, gx, gy, region='', force=False):
     """learn() at the cell, or (land far out in the sea, with no game landscapes round it) at the middle cell of the
-    region it takes after (landsurvey's cells)."""
-    L = learn(db, gx, gy)
-    if L['cells'] >= 8 or not region:
+    region it takes after (landsurvey's cells); force: the region's, whatever stands near."""
+    L = learn(db, gx, gy) if not force else None
+    if L is not None and (L['cells'] >= 8 or not region):
         return L
     import landsurvey
     s = landsurvey.ready(db)
     ks = [k for k, c in ((s or {}).get('cells') or {}).items() if c['region'] == region.lower() and c['k'] != 'sea' and c['vclr']]
     if not ks:
-        return L
+        return L if L is not None else learn(db, gx, gy)
     xs = sorted(int(k.split(',')[0]) for k in ks)
     ys = sorted(int(k.split(',')[1]) for k in ks)
     mx, my = xs[len(xs) // 2], ys[len(ys) // 2]
@@ -220,12 +220,15 @@ def mixes(grid):
     return [_mix(grid, x, y) for y in range(N) for x in range(N)]
 
 
-def colours(db, gx, gy, mode, strength, region, grid, col, H=None, around=None, mix=None):
+def colours(db, gx, gy, mode, strength, region, grid, col, H=None, around=None, mix=None, L=None):
     """(the cell's new colours as bytes, or None where shade() would leave the cell as it is; how many cells the
     tints were learnt from). grid: texture file per patch; col: its colours now (None: none yet); H, around: its
-    heights and the heights round it, for 'hollows' (read from the land when not given); mix: mixes(grid)."""
+    heights and the heights round it, for 'hollows' (read from the land when not given); mix: mixes(grid); L: the
+    tints to use (learn_near's), the same for every cell of one run: learnt cell by cell, the cells of one island
+    took their tints from different game land, 4 cells at a time, and met at a hard line (the user, 2026-11-03)."""
     import landscape
-    L = learn_near(db, gx, gy, region) if mode != 'hollows' else {'cells': 0}
+    if L is None:
+        L = learn_near(db, gx, gy, region) if mode != 'hollows' else {'cells': 0}
     cur = bytearray(col) if col else bytearray(b'\xff' * (N * N * 3))
     new = bytearray(cur)
     if mode == 'hollows':

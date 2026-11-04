@@ -1032,6 +1032,10 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
         # (the wall's levels known before the keep's pad: a keep in the wall line stands at the wall's level)
         db.sync_project()
         W = tw.grounded(db, W)
+        try:
+            tw.fill_ground(db, W, skip)         # (the ground up to the feet of the stretches raised out of a dip)
+        except Exception as e:
+            print('castle wall fill:', e)
     pads = []
     for M in P['modules']:
         kb = M['m']['box']
@@ -1356,10 +1360,20 @@ def _bailey(db, P, W, rng):
                 if math.hypot(x - cx_, y - cy_) < R + pad + r and _in_quad(v, x, y, pad + r):
                     return False
         return True
+    # the yard's jobs first: the smithy by the gate, stables, stores, a shrine, the drill ring, braziers in the corners
+    # (storydress.fort; the user, 2026-11-03: a fort with no routine is a diorama). Then the game's own bailey sets in
+    # what is left
+    out, laid = [], 0
+    try:
+        import storydress
+        roles = storydress.fort(db, poly, (gx, gy), (kx, ky), free, taken, rng, P.get('style') or 'Imperial')
+        out += roles
+        laid += len(roles)
+    except Exception as e:
+        print('castle yard roles:', e)
     # spots: along each side, a set's own distance in from the wall, facing the yard; and in the open yard
     n = len(poly)
     cx0, cy0 = sum(p[0] for p in poly) / n, sum(p[1] for p in poly) / n
-    out, laid = [], 0
     order = list(range(len(sets)))
     rng.shuffle(order)
     tries = 0

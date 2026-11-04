@@ -39,10 +39,12 @@ from editing import EditError, commit, _require_project
 # (town: an outline a town is planned in, townplan.py; it shapes nothing either)
 # (street, zone, wall: drawn in a town, its streets, quarters and wall, townplan.plan_once's opts; they shape nothing)
 # (castle: an outline a keep or castle is planned in, castle.py; it shapes nothing)
-KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall', 'castle')
-NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle')
+KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff')
+NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff')
 DEFAULTS = {
     'area': {},
+    # (cliff: a line the region's cliff rocks are chained along, cliffline.py; it shapes no ground itself)
+    'cliff': {'height': 600, 'side': 0, 'amount': 1, 'raise': 0, 'seed': 1},
     'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'inside': '', 'noinside': False, 'nopeople': False,
              'streets': '', 'density': 1.0, 'counts': {}, 'skip': []},
     'street': {}, 'zone': {'zone': 'residential'}, 'wall': {},
@@ -94,7 +96,8 @@ PASSES = {'detail': True, 'detail_k': 1.0, 'settle': True, 'angle': 0.0, 'gullie
           'tsharp': 0.6, 'tslope': 20.0, 'valleys': 0.0,
           'rock': 0.0, 'rthick': 512.0, 'rdip': 0.0, 'rdir': 0.0, 'rshare': 0.45, 'ronly': ''}
 DRESS = {'variety': -1.0, 'tints': True, 'seams': True, 'hollows': True, 'shade': 1.0, 'region': '', 'assign': False,
-         'rocks': 1.0, 'flow': 0.0}      # (flow: stream beds, off; only the Bitter Coast's land does it, landdress.FLOW_BED)
+         'rocks': 1.0, 'flow': 0.0,      # (flow: stream beds, off; only the Bitter Coast's land does it, landdress.FLOW_BED)
+         'shore': ''}                    # (shores as the region lays them, or 'sand' / 'rock' whatever the region)
 
 
 def _beds(F, inside, dress, seed):
@@ -1087,7 +1090,7 @@ def _preview(db, cells, plan):
         import landdress
         dress = _clean_opts(plan.get('dress'), DRESS)
         seed = int(plan.get('seed') or 1)
-        _ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed, flow=_beds(F, _ins, dress, seed), flow_k=dress['flow'])
+        _ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed, flow=_beds(F, _ins, dress, seed), flow_k=dress['flow'], shore=dress['shore'])
     used = {}
     for gx, gy in keys:
         ox, oy = (gx - G.x0) * per, (gy - G.y0) * per
@@ -1154,7 +1157,7 @@ def _apply(db, cells, plan):
         import landdress
         seed_ = int(plan.get('seed') or 1)
         _say('Texturing', 0.66)
-        ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed_, flow=_beds(F, inside, dress, seed_), flow_k=dress['flow'])
+        ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed_, flow=_beds(F, inside, dress, seed_), flow_k=dress['flow'], shore=dress['shore'])
     # the region's shading (landshade), worked out here for each cell and written with its heights and textures in
     # one go: its tints, then its seams, then its darker hollows, each on what the one before made (as shade() would
     # read them back), on the heights as the record keeps them (to 8 units). One write a cell, not four.
@@ -1165,6 +1168,7 @@ def _apply(db, cells, plan):
     held_keys = {h[2] for h in (F.held or [])}
     q_h = {k: landscape._encode_heights([float(v) for v in new_h[k]])[1] for k in keys} if modes else {}
     shaded = set()
+    tints = _tints_for(db, keys, rmain, dress) if modes else None
     for n_, (gx, gy) in enumerate(keys):
         _say('Writing cell %d of %d' % (n_ + 1, len(keys)), 0.69 + 0.13 * n_ / max(1, len(keys)))
         k = (gx, gy)
@@ -1176,7 +1180,8 @@ def _apply(db, cells, plan):
             mix = landshade.mixes(grid) if ('texture' in modes or 'seams' in modes) else None
             for mode in modes:
                 new, _n = landshade.colours(db, gx, gy, mode, max(0.0, min(1.0, float(dress['shade']))), rmain, grid, col,
-                                            H=q_h[k], around=landscape.around_of(db, gx, gy, q_h), mix=mix)
+                                            H=q_h[k], around=landscape.around_of(db, gx, gy, q_h), mix=mix,
+                                            L=tints if mode != 'hollows' else None)
                 if new is not None:
                     col = new
                     shaded.add(mode)
@@ -1230,6 +1235,17 @@ def _apply(db, cells, plan):
 KEEP_TEX = re.compile(r'road|path|street|cobble|flagston|pave|bridge|walkway|plank')
 
 
+def _tints_for(db, keys, region, dress):
+    """One tint table for every cell of a run (landshade.learn_near at the middle of the cells): from the Like
+    region's own land when one is chosen, else from the game land nearest the middle. Learnt cell by cell, an
+    island's cells took their tints from different land, four cells at a time, and met at a hard line."""
+    import landshade
+    xs = sorted(k[0] for k in keys)
+    ys = sorted(k[1] for k in keys)
+    mx, my = xs[len(xs) // 2], ys[len(ys) // 2]
+    return landshade.learn_near(db, mx, my, region, force=bool(dress.get('region')))
+
+
 def texture_only(db, cells, plan, preview=False):
     """The marked cells textured as the game textures their region at each slope, height and distance from the
     water (landdress), with the plan's Dressing settings (Like, Textures, tints, seams, hollows), the land's heights
@@ -1252,7 +1268,7 @@ def texture_only(db, cells, plan, preview=False):
     reg = {k: (dress['region'] or landrange._region_of(db, k[0], k[1])).lower() for k in keys}
     import landdress
     ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed, flow=_beds(F, _marked_points(F, keys), dress, seed),
-                                    flow_k=dress['flow'])
+                                    flow_k=dress['flow'], shore=dress['shore'])
     # what stays: roads and paving by name, and the ground under what is built (Protection), patch by patch
     prot = _clean_opts(plan.get('protect'), PROTECT)
     hold = _holds(db, F, keys, prot['margin'])[0] if prot['hold'] else None
@@ -1294,6 +1310,7 @@ def texture_only(db, cells, plan, preview=False):
     import landshade
     modes = [m for m, kk in (('texture', 'tints'), ('seams', 'seams'), ('hollows', 'hollows')) if dress[kk]]
     rmain = Counter(reg.values()).most_common(1)[0][0] if reg else ''
+    tints = _tints_for(db, keys, rmain, dress) if modes else None
     done = 0
     for gx, gy in keys:
         k = (gx, gy)
@@ -1307,7 +1324,8 @@ def texture_only(db, cells, plan, preview=False):
             q_h = landscape._encode_heights([float(v) for v in landscape.read(db, gx, gy)['h']])[1]
             for mode in modes:
                 new, _n = landshade.colours(db, gx, gy, mode, max(0.0, min(1.0, float(dress['shade']))), rmain, grid, col,
-                                            H=q_h, around=landscape.around_of(db, gx, gy), mix=mix)
+                                            H=q_h, around=landscape.around_of(db, gx, gy), mix=mix,
+                                            L=tints if mode != 'hollows' else None)
                 if new is not None:
                     col = new
             cols = col

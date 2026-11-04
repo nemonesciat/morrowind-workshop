@@ -7,6 +7,7 @@ broad noise so neighbouring patches agree (the game's ground comes in patches, n
 always takes the commonest, 1 follows the shares. A last tidy-up gives a lone patch its neighbours' texture.
 Roads and the default texture are never picked: a road is laid on purpose, not by slope."""
 import math
+import re
 from collections import Counter, deque
 
 import landrange
@@ -31,6 +32,102 @@ def _tables(db, region):
     t3 = {tuple(int(v) for v in k.split(',')): keep(v['top']) for k, v in (R.get('textures3') or {}).items() if v['n'] >= 12}
     t2 = {tuple(int(v) for v in k.split(',')): keep(v['top']) for k, v in (R.get('textures') or {}).items() if v['n'] >= 12}
     return {k: v for k, v in t3.items() if v}, {k: v for k, v in t2.items() if v}
+
+
+_ALL = {}
+
+
+def _all_tables(db):
+    """The game's textures at each band over every region together: what a region's own land never shows (a
+    region with no steep ground, a made-up region with no land at all), as the game lays it elsewhere."""
+    k = id(db.recs)
+    if k in _ALL:
+        return _ALL[k]
+    s = landsurvey.ready(db)
+    t3, t2 = Counter(), Counter()
+    tot3, tot2 = Counter(), Counter()
+    for R in ((s or {}).get('regions') or {}).values():
+        for key, v in (R.get('textures3') or {}).items():
+            b = tuple(int(x) for x in key.split(','))
+            for n, sh in v['top']:
+                t3[(b, n)] += sh * v['n']
+                tot3[b] += sh * v['n']
+        for key, v in (R.get('textures') or {}).items():
+            b = tuple(int(x) for x in key.split(','))
+            for n, sh in v['top']:
+                t2[(b, n)] += sh * v['n']
+                tot2[b] += sh * v['n']
+    import landscape
+    by_file = {}
+    for (_f, _i), (rid, tex) in landscape._ltex_all(db).items():
+        by_file.setdefault(tex.lower(), rid)
+
+    def table(t, tot):
+        out = {}
+        for (b, n), c in t.items():
+            if n != 'default' and 'road' not in n and n in by_file and tot[b] >= 200:
+                out.setdefault(b, []).append((by_file[n], n, c / tot[b]))
+        return {b: sorted(v, key=lambda x: -x[2])[:8] for b, v in out.items()}
+    _ALL.clear()
+    _ALL[k] = (table(t3, tot3), table(t2, tot2))
+    return _ALL[k]
+
+
+ROCKY = re.compile(r'rock|stone|cliff|scree|crag|boulder|lava', re.I)
+SANDY = re.compile(r'sand|beach|shore|pebble|shell', re.I)
+SHORE_Z = 150                  # a flat patch this low within 2048 of the water is beach too, with Shores set
+
+
+def _shore_choices(db, region, mode):
+    """[(LTEX id, file, share)] for the shores: the region's own sand (or rock) textures, by their shares over all
+    its ground, else the game's at the water's edge."""
+    like = SANDY if mode == 'sand' else ROCKY
+    t3, t2 = _tables(db, region)
+    c = Counter()
+    for ch in list(t3.values()) + list(t2.values()):
+        for rid, n, sh in ch:
+            if like.search(n):
+                c[(rid, n)] += sh
+    if not c:
+        A3, _a2 = _all_tables(db)
+        for b, ch in A3.items():
+            if b[2] == 1 and b[1] == 1:
+                for rid, n, sh in ch:
+                    if like.search(n):
+                        c[(rid, n)] += sh
+    tot = sum(c.values())
+    return [(rid, n, v / tot) for (rid, n), v in c.most_common(3)] if tot else []
+
+
+def _shores(db, keys, regions, pre, ids, files, mode, seed, variety):
+    """With Shores set to sandy or rocky: the patches at the water's edge (and the flat ground just over it) take
+    those textures, whatever the region lays there (West Gash's shores are rock, 74%; the user wanted beaches)."""
+    stats, dist, memo = pre
+    reach = landsurvey.SHORE_BANDS[-1]
+    tabs = {}
+    for gx, gy in keys:
+        if (gx, gy) not in ids:
+            continue
+        r = regions.get((gx, gy), '')
+        if r not in tabs:
+            tabs[r] = _shore_choices(db, r, mode)
+        ch = tabs[r]
+        if not ch:
+            continue
+        for k, (sl, z, _w) in enumerate(stats[(gx, gy)]):
+            if z <= 0:
+                continue
+            px, py = k % 16, k // 16
+            sb = landsurvey._band(sl, landsurvey.SLOPES)
+            shb = landsurvey.shore_band(dist.get((gx * 16 + px, gy * 16 + py), reach))
+            # (at the water's edge up to 45 degrees: a raised island drops steeply into the sea, and a beach that
+            # needs gentle ground never came; the flat ground just over it too)
+            if not ((shb <= 1 and sb <= 3 and z < landsurvey.HEIGHTS[1]) or (shb == 2 and sb <= 1 and z < SHORE_Z)):
+                continue
+            wx, wy = (gx * 16 + px + 0.5) * 512, (gy * 16 + py + 0.5) * 512
+            u = min(0.999, max(0.0, 0.5 + 0.5 * landrange.noise(wx, wy, seed + 303, 1.0) / 1.6))
+            c = _pick(ch, u, variety if variety >= 0 else 1.0)
+            ids[(gx, gy)][k], files[(gx, gy)][k] = c[0], c[1]
 
 
 def patch_stats(F, gx, gy):
@@ -151,11 +248,12 @@ def pattern(db, region):
 FLOW_BED = 12.0
 
 
-def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=None, flow_k=0.0):
+def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=None, flow_k=0.0, shore=''):
     """{(gx, gy): [256 LTEX ids]} and {(gx, gy): [256 texture files]} for the cells, from the working grid. variety
     below 0: the one that gives the region's own number of textures a cell (landsurvey 'tex_per_cell', median).
     flow: landwater.patch_flow's {(patch x, y): ground draining through}; with flow_k a patch that much ground drains
-    through (FLOW_BED / flow_k) takes the textures the region has at the water's edge, so stream beds show."""
+    through (FLOW_BED / flow_k) takes the textures the region has at the water's edge, so stream beds show.
+    shore: '' as the region lays its shores, 'sand' or 'rock' for beaches or rocky shores whatever the region."""
     from landshapes import _check_stop             # (a land preview stopped from the busy chip gives up between steps)
     beds = {p for p, a in flow.items() if a >= FLOW_BED / flow_k} if flow and flow_k > 0 else None
     _check_stop()
@@ -238,6 +336,8 @@ def textures(db, F, keys, regions, variety=-1.0, seed=1, also_grid=None, flow=No
             for p in range(256):
                 if (gx * 16 + p % 16, gy * 16 + p // 16) in beds:
                     ids[k][p], files[k][p] = bids[k][p], bfiles[k][p]
+    if shore in ('sand', 'rock'):
+        _shores(db, keys, regions, pre, ids, files, shore, seed, variety)
     return ids, files
 
 
@@ -275,6 +375,11 @@ def _textures(db, F, keys, regions, variety=1.0, seed=1, also_grid=None, cap=Non
                 # (a stream bed: the region's textures at the water's edge for this slope and height, if it has any)
                 ch = t3.get((sb, hb, at_water[0])) or t3.get((sb, hb, at_water[1]))
             ch = ch or t3.get((sb, hb, shb)) or t2.get((sb, hb))
+            if not ch:
+                # (ground the region never shows, a cliff in a region of plains: as the game lays it elsewhere, before
+                # the region's nearest band; the nearest band gave a mountain face the lowland's grass)
+                A3, A2 = _all_tables(db)
+                ch = A3.get((sb, hb, shb)) or A2.get((sb, hb))
             if not ch:
                 near = sorted((abs(s - sb) + abs(b - hb) * 2, (s, b)) for (s, b) in t2)
                 ch = t2[near[0][1]] if near else None

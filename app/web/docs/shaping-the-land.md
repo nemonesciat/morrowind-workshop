@@ -195,6 +195,7 @@ ground instead.
 | Like | The region whose land the plan takes after: textures, tints, roughness and slopes. Default: each cell's own. |
 | Put the cells in this region | Its weather, sounds and creatures go with the land. |
 | Textures | How many textures a cell: as many as the region's cells have, or fewer or more. |
+| Shores | As the region lays them (West Gash's shores are rock, Nedothril's half sand), or **sandy** beaches or **rocky** shores whatever the region: at the water's edge and on the flat ground just over it, in the region's own sand or rock texture where it has one. Also in Texture only. |
 | Tint, seams, hollows, Shading | The region's own colouring, laid on as the game does. |
 | Rocks | The region's rocks on the new slopes and cliffs, as thickly as the game sets them on such ground, at the foot, on the face and at the crest, turned to the slope as the game turns them. |
 | Stream beds | Where much water runs, the region's water's-edge textures (mud, wet ground), so streams show. Off by default: the Bitter Coast's own land does this, most regions' don't. Also in Texture only. |
@@ -275,6 +276,14 @@ more and some **Tilt**.
   under **Where**: only the land inside is dressed. No cells need marking for it. A region for each part: mark or draw it, Dress with that region, then the next.
 - Not where something stands already, and not under water. One Undo takes it all back.
 
+**🪨 Cliff** (a shape in the Land panel) makes a coast or a drop the way the game's are, without picking pieces one by one:
+click along the edge, double-click to finish, then **🪨 Lay the cliff**. The rocks the region makes its cliffs of are
+chained along the line, each in a pose the game set such a rock in, facing the lower side (or the water); boulders
+lie at the foot and pieces on the crest. **Height** scales them within the sizes the game uses; **Drops** says which
+side falls away when the lower side isn't the one you mean; **Like** borrows another region's rocks; with rocks
+selected, **Use the selected rocks** chains those instead; **Raise the land behind it** lifts the ground to the
+face's top. One Undo; lay it again for another arrangement.
+
 To place rocks, cliffs, trees and plants by hand, open the **🎨 Style palette** and pick a region under **Regions**.
 
 ## Towns
@@ -289,6 +298,8 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   the land round it), and the wall sunk deep enough that no foot shows. Where it must change height, Hlaalu and
   Velothi walls climb on their own step pieces; Imperial walls step at a tower. Gates stand on the low side, where
   the town's streets go out, and the streets run on through them, never out onto the sea or over a cliff. Stairs inside lead up to the wall walk.
+  The wall goes round at one level: where the ground lies lower it is brought up to the wall's foot, and the wall
+  steps up only where a hill stands too high to cut. Castle walls the same.
   A Nord village gets a **palisade**: post sections following the land round it, with a gatehouse on the way in.
 - **Dressed:** sets out what the culture's own towns set out. Before doors: benches, signs, lanterns, crates, a
   smith's forge and anvil. Along the streets: carts, stools, barrels. In the square: a well or a shrine. And the
@@ -316,6 +327,10 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   lit, for you to furnish. **None:** outsides only. A home is named after the person who heads it ("Nala Niabhe's
   Lodge"), a shop after its keeper and trade ("Gilas Mundrethi: Clothier"); temples, guilds and towers keep what
   they are.
+- **Yards:** the ground behind each house is its yard, fenced in the culture's own fence (Imperial rails, Nord and
+  Breton farm fences, Dunmer wooden fences), with one kind of life in it: a kitchen yard (barrels, sacks, a chicken
+  cage), a garden (rows of the culture's crops), a workshop yard behind a shop (crates, a wheelbarrow), or a pen (hay
+  and a trough). A planter stands by some doors. Nothing is laid where a building, a street or the dressing stands.
 - **People:** outdoors, guards of the culture's own at the gates, the great doors and on the streets, sellers at their
   stalls (they barter; their wares and stock are theirs), and townsfolk about the streets and doors, as many a
   building as its towns have. With Furnished, a household in each too, owning its beds and chests. This takes a minute
@@ -347,6 +362,10 @@ anything is built.
   - **Dunmer stronghold:** the old Chimer keep on its stepped platform, with its ways in to the upper and lower
     levels, the dome and the propylon chamber. **Small** is a keep without the platform.
   - **Redoran stronghold:** a house stronghold of manor, tower, services and a house, inside a Redoran wall and gate.
+- **The yard has jobs:** a smithy along the gate's wall (forge, anvil, bellows, grindstone), stables on the longest
+  free wall (hay, a trough), stores on the next (crates, barrels, a wheelbarrow), a shrine by the keep, a drill ring
+  with dummies and targets to one side of the way in, and a brazier in each corner — then the game's own bailey
+  things in what is left.
 - **Size:** small, medium or large, against the game's own forts of that kind; **As drawn** fills your outline.
   A large Imperial fort has a second hall beside the keep (a chapel or an armoury).
 - **Gate:** **By itself**, the gate goes on the low side that's dry land, never out onto the sea or over a cliff.

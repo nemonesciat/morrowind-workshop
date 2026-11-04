@@ -253,6 +253,9 @@ def npc_body(db, ri):
     # what fills each slot: the race's skin, the NPC's own head and hair, then clothes, then armour
     slots = {}
     parts = _race_parts(db, race)
+    if not parts:
+        # (a race of a mod with no skin parts of its own: the game's default race's, so the person has a body)
+        parts = _race_parts(db, 'Dark Elf') or _race_parts(db, 'Imperial')
     for part, sl in PART_SLOTS.items():
         bid = parts.get((part, female)) or parts.get((part, False))
         if bid:
@@ -278,13 +281,23 @@ def npc_body(db, ri):
                 pid = (pr.get('CNAM') if female else None) or pr.get('BNAM')
                 if pid and slots.get(slot, (None, -1))[1] <= rank:
                     slots[slot] = (pid, rank)
-    shapes = []
-    for slot, (pid, _rank) in slots.items():
-        node = SLOT_NODE.get(slot)
-        model = _model_of(db, pid)
-        if not node or not model or node not in skel:
-            continue
-        shapes += part_shapes(db, model, node, skel)
+    def dressed(skel):
+        out = []
+        for slot, (pid, _rank) in slots.items():
+            node = SLOT_NODE.get(slot)
+            model = _model_of(db, pid)
+            if not node or not model or node not in skel:
+                continue
+            out += part_shapes(db, model, node, skel)
+        return out
+    shapes = dressed(skel)
+    if not shapes and skel_path != 'meshes/base_anim.nif':
+        # (an animated NPC of a mod carries a skeleton file of its own, with other node names or none the parts
+        # know: the game's own skeleton stands in, so the person has a body in the view; StingDR, 2026-11-03,
+        # "all animated npcs… library of vivec enhanced")
+        base = skeleton(db, 'meshes/base_animkna.nif' if beast else 'meshes/base_anim_female.nif' if female else 'meshes/base_anim.nif')             or skeleton(db, 'meshes/base_anim.nif')
+        if base:
+            shapes = dressed(base)
     if not shapes:
         return None
     # the race's build: taller, broader

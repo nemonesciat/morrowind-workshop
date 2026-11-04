@@ -859,6 +859,7 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
     taken, names, used = set(), [], {}
     said = []
     made = folks = skipped = 0
+    tried = set()                    # (every place this run made or began: the ones no door leads to go at the end)
     for k, q in enumerate(plan['plots']):
         if say:
             say(k / float(len(plan['plots']) or 1))
@@ -900,6 +901,7 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 head_cls = h.get('cls')
                 family = castsurvey._split_name(h['name'], h.get('race') or '')[1] or None
         name = _unique(db, interior_name(db, town, tname, townsurvey.kind_of(tname), head, family, culture, rng), taken)
+        tried.add(name.lower())
         try:
             out = None
             if OWN_LAYOUTS:
@@ -921,6 +923,7 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
             continue
         made += 1
         names.append(out['name'])
+        tried.update(k_.lower() for k_, _s in out.get('from') or [(out['key'], t)])
         for k_, src_ in out.get('from') or [(out['key'], t)]:
             try:
                 make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()), kind, head_cls)
@@ -971,4 +974,29 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         import editing
         if populate.write_lines(db, said):
             editing.commit(db, 'Lines for the people of %s' % town)
+    _drop_unled(db, tried)
     return {'interiors': made, 'people': folks, 'names': names, 'skipped': skipped}
+
+
+def _drop_unled(db, keys):
+    """The places of this run no door leads to, taken out: a pod copied without a door of its own outside, and the
+    cell an own layout began before its builder gave up (a bakery of 18 things and three "pod 2"s no one could reach,
+    the user's Estmorevale, 2026-11-03)."""
+    import mapdata
+    p = db.project
+    mine = {k for k in p.cells if k.lower() in keys and not k.startswith('#')}
+    if not mine:
+        return 0
+    led = set()
+    for ck in list(p.cells):
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if r['type'] == 'DOOR' and (r.get('to') or {}).get('key'):
+                led.add(r['to']['key'].lower())
+    gone = [k for k in mine if k.lower() not in led]
+    for k in gone:
+        p.cells.pop(k, None)
+        p.records.pop('PGRD|' + k, None)
+    if gone:
+        print('town: %d place(s) no door led to, taken out: %s' % (len(gone), gone[:6]))
+        db.sync_project()
+    return len(gone)

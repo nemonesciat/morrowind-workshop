@@ -49,17 +49,19 @@ def _cap_scale(kind, s):
     return min(s, 1.3) if kind == 'rocks' else s
 
 
-def sets(db, cell_key, sample=36):
+def sets(db, cell_key, sample=36, region=''):
     """{'region', 'sets': [{key, label, items: [{id, name, n, smin, smax, sink, size}]}]} for the
-    region an outdoor cell is in (or the cells around it, when it has none)."""
+    region an outdoor cell is in (or the cells around it, when it has none), or the region asked for (the user,
+    2026-11-04: no way to choose whose trees the brush paints)."""
     if not cell_key.startswith('#'):
         return {'region': '', 'sets': custom_sets(db)}
     gx, gy = (int(v) for v in cell_key[1:].split(','))
     rmap = regions.region_map(db)
-    reg = rmap.get('%d,%d' % (gx, gy), '')
+    reg = (region or '').lower() or rmap.get('%d,%d' % (gx, gy), '')
+    own = rmap.get('%d,%d' % (gx, gy), '')
     stamp = (reg or cell_key, id(db.recs), len(db.recs))
     if stamp in _cache:
-        return dict(_cache[stamp], sets=_cache[stamp]['sets'] + custom_sets(db))
+        return dict(_cache[stamp], own=own, sets=_cache[stamp]['sets'] + custom_sets(db))
     # cells of the same region, nearest first (or simply the nearest cells)
     cand = [tuple(int(v) for v in k.split(',')) for k, r in rmap.items() if r == reg] if reg else []
     if not cand:
@@ -113,7 +115,7 @@ def sets(db, cell_key, sample=36):
             out.append({'key': key, 'label': label, 'items': items})
     res = {'region': reg, 'sets': out}
     _cache[stamp] = res
-    return dict(res, sets=out + custom_sets(db))
+    return dict(res, own=own, sets=out + custom_sets(db))
 
 
 # ------------------------------------------------------------------ your own brushes
