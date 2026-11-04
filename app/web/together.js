@@ -88,8 +88,7 @@ function togRender(){
       : st.router === 'off' ? 'not asking the router (test mode)'
       : `your router didn't let people in by itself: ${esc((st.router || '').replace(/^no \(|\)$/g, ''))}`;
     m.innerHTML = `<h2>👥 You're hosting ${esc((S.summary && S.summary.project && S.summary.project.name) || '')}</h2>
-      <div class="msg">Send this <b>invite code</b> to the people you want to build with (like a key: only give it to them). They paste it in their Workshop under 👥 Build together → Join.
-        It stays the same for this mod, so they can come back any time you're hosting.</div>
+      <div class="msg">Send this <b>invite code</b> only to the people you build with; they paste it under 👥 Build together → Join. It stays the same for this mod.</div>
       <div style="display:flex;gap:6px;margin:8px 0"><input class="inp" id="tog-code" readonly value="${esc(st.invite || '')}" style="flex:1;font-family:monospace;font-size:12px"><button class="btn primary" id="tog-copy">Copy</button></div>
       <div class="msg"><b>Here now:</b> ${who || 'just you so far'}</div>
       ${feed ? `<div style="margin-top:6px;max-height:110px;overflow:auto">${feed}</div>` : ''}

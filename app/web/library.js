@@ -458,9 +458,7 @@ async function packBrowse(){
     if (tab === 'places') return showPlaces(body);
     const probs = data.problems.map(p => `<div class="msg err">${esc(p)}</div>`).join('');
     if (!data.packs.length){
-      body.innerHTML = probs + `<div class="msg" style="max-width:640px">No packs yet. Packs show up here from the <b>places</b> you list: a folder (one that syncs, like Dropbox or Google Drive,
-        shared with friends; a USB stick) or a link (to a pack, a web page or folder that links to packs, or a packs.json list).
-        Your own folder to start with: <code>${esc(data.shared_folder)}</code>. Put .wspack files in it, or save packs into it from ⤓ Make a pack.</div>`;
+      body.innerHTML = probs + `<div class="msg" style="max-width:640px">No packs yet. They come from the <b>places</b> you list: a shared folder or a link. Your own folder to start with: <code>${esc(data.shared_folder)}</code>.</div>`;
       return;
     }
     body.innerHTML = probs + `<div class="lib-grid">${data.packs.map((p, k) => {
@@ -496,9 +494,7 @@ async function packBrowse(){
       <span title="${s.kind === 'folder' ? 'A folder' : 'A link'}">${s.kind === 'folder' ? '📁' : '🔗'}</span>
       <input class="inp" data-pn="${k}" value="${esc(s.name || '')}" placeholder="A name" style="width:200px">
       <input class="inp" data-pw="${k}" value="${esc(s.where)}" style="flex:1"><button class="btn sm" data-px="${k}" title="Take it off the list">✕</button></div>`).join('');
-    body.innerHTML = `<div class="msg" style="max-width:760px">Where packs come from. <b>A folder</b>: paste its path, e.g. a Dropbox or Google Drive folder you share with friends
-      (whatever anyone puts in it shows up for everyone), or a USB stick. <b>A link</b>: to one .wspack, to a web page or folder listing that links to packs,
-      or to a <code>packs.json</code> list. Dropbox and Google Drive share links work as they are.</div>
+    body.innerHTML = `<div class="msg" style="max-width:760px">Where packs come from. <b>A folder</b> (a shared Dropbox or Google Drive folder, a USB stick) or <b>a link</b> (a .wspack, a page listing packs, a <code>packs.json</code>).</div>
       <div style="margin:10px 0">${rows || '<div class="msg">No places yet.</div>'}</div>
       <div style="display:flex;gap:6px"><input class="inp" id="ps-new" placeholder="Paste a folder path or a link" style="flex:1"><button class="btn sm" id="ps-add">＋ Add</button></div>
       <div class="actions"><button class="btn primary" id="ps-save">Save places</button><span class="msg" id="ps-msg"></span></div>`;

@@ -960,6 +960,41 @@ class _Writer:
         return key, rk, pos
 
 
+def _pair_dead(db, cells, links):
+    """The doors of these rooms that lead nowhere (no link set, not a trap door) paired two by two, each to the
+    other's room at the other's spot (face_arrivals then sets the arrival at the door's face); an odd one left
+    leads out where the room's first way out does. The number of doors linked."""
+    import doors
+    linked = {(ck, rk) for ck, rk, _d, _p in links}
+    dead = []
+    for ck in cells:
+        m = mapdata.cellmap(db, ck)
+        nm = (mapdata.cell_info(db, ck) or {}).get('name') or ck
+        for r in m.get('refs') or ():
+            if r['type'] == 'DOOR' and not r.get('to') and (ck, r['k']) not in linked and not re.search(r'trap|hatch', r['id'], re.I):
+                dead.append((ck, nm, r))
+    if not dead:
+        return 0
+    # (pairs from different rooms first, the farthest apart: a passage, not a door to the room next door)
+    n = 0
+    while len(dead) >= 2:
+        a = dead.pop(0)
+        others = [d for d in dead if d[0] != a[0]] or dead
+        b = max(others, key=lambda d: (d[0] != a[0], math.dist(d[2]['p'][:2], a[2]['p'][:2])))
+        dead.remove(b)
+        for x, y in ((a, b), (b, a)):
+            _link(db, x[0], x[2]['k'], y[1], [y[2]['p'][0], y[2]['p'][1], y[2]['p'][2], 0.0, 0.0, (y[2]['p'][5] + math.pi) % (2 * math.pi)])
+            n += 1
+    for ck, nm, r in dead:
+        out = next((p_ for c_, _r, d_, p_ in links if c_ == ck and d_ == '' and p_ and not callable(p_)), None)
+        if out:
+            _link(db, ck, r['k'], '', out)
+            n += 1
+    if n:
+        db.sync_project()
+    return n
+
+
 def _link(db, cell, rk, dest, pos):
     import doors
     import editing
@@ -1194,6 +1229,14 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
             pos = pos()
         if pos:
             _link(db, ck, rk, dest, pos)
+    # (the copied rooms' doors into rooms this castle hasn't, left plain: 7 in a keep, 6 in a hall, the user's Fort
+    # Estmoth. Paired across the castle's own rooms so each opens somewhere, the odd one out by the way in)
+    try:
+        n_dead = _pair_dead(db, [k for k in keys.values()] + ([tower_key] if tower_key else []), links)
+        if n_dead:
+            print('castle: %d door(s) that led nowhere paired within %s' % (n_dead, name))
+    except Exception as e:
+        print('castle dead doors:', e)
     editing.commit(db, 'Linked the doors of %s' % name)
     try:
         import doors as doors_
@@ -1207,7 +1250,10 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
         for (mi, g), k in sorted(keys.items()):
             placed += furnish_shell(db, k, g, seed=zlib.crc32(('%s|%s' % (seed, k)).encode()))
         if tower_key:
-            placed += furnish_shell(db, tower_key, None, seed=seed)
+            # (the towers are the garrison's: guardroom, barracks, armoury by storey; with no source room to read a
+            # kind off, 54 tower rooms held 48 things between them, the user's Fort Fostmoth, 2026-11-04)
+            import towninside
+            placed += furnish_shell(db, tower_key, None, seed=seed, kinds=towninside.household_kinds(db, tower_key, 'guard', None))
         editing.commit(db, 'Furnished the rooms of %s' % name)
     # ---- people
     folks = 0
@@ -2442,7 +2488,7 @@ def _kind_of(counts, n_tiles):
     return 'hall' if n_tiles >= 4 else None
 
 
-def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, level=None):
+def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, level=None, like=None):
     """A shell furnished by the Workshop's own furnisher, each room as the kind its source room was (counted from the
     source's things within the room's floor, shift carrying the source's spots to ours), never their spots. The
     number of things placed (0 when the place has no rooms the furnisher can read)."""
@@ -2475,7 +2521,7 @@ def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, l
     if not plan:
         return 0
     try:
-        out = furnish.furnish(db, key, plan, seed=seed, commit=False, level=level)
+        out = furnish.furnish(db, key, plan, seed=seed, commit=False, level=level, like=like)
     except Exception as e:
         print('castle furnish', key, e)
         return 0

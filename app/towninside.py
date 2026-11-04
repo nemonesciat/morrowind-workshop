@@ -18,6 +18,7 @@ import zlib
 
 import math
 import mapdata
+from project import zs
 import townsurvey
 from editing import EditError
 
@@ -495,12 +496,15 @@ TRADE_KIND = (('smith|armorer|armourer|weaponsmith', 'smithy'), ('alchem|apothec
               ('bookseller|scribe', 'bookseller'), ('clothier|tailor|outfitter', 'clothier'), ('pawn', 'pawnbroker'),
               ('publican|innkeeper|barkeep', 'tavern'), ('priest|monk|healer', 'shrine'))
 STOREY = 200                    # (a room's floor this far over the front door's is an upper storey: bedrooms)
+SMITH_PLOT = 1000000            # (a smith's building: at least this footprint, w x d, for a ground room that takes a forge)
 
 
 def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
     """A function (room, kind read off the source, counts) -> the kind to furnish it as, for a town building of the
-    plot kind with a head of that class; or None to keep the source's reading."""
+    plot kind with a head of that class; or None to keep the source's reading. kind 'guild:mages' / 'guild:fighters' /
+    'guild:thieves' names the guild (from the sign outside); plain 'guild' goes by the head's class."""
     import re as _re
+    kind, _sep, gtype = (kind or '').partition(':')
     m = mapdata.cellmap(db, key)
     fronts = [r for r in m.get('refs') or () if r['type'] == 'DOOR' and r.get('to') and not r['to'].get('cell')]
     z0 = min((r['p'][2] for r in fronts), default=None)
@@ -509,14 +513,31 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
         if head_cls and _re.search(rx, head_cls, _re.I):
             trade = k
             break
+    if kind in ('house', 'manor', 'farm', 'shack') and trade in ('tavern', 'shrine'):
+        trade = None                         # (a priest's or a publican's home is a home: a hut furnished as a shrine held 7 things)
     state = {'shop': False, 'living': False, 'bed': 0, 'seen': 0}
     # (how many rooms the place has: a household gets a bedroom by its last room at the latest. The Workshop's own
     # layouts read no kind off the game's rooms, and a two-room house came out living + kitchen with no bed, lab own)
     try:
         import furnish
-        n_rooms = n_rooms_hint or len(furnish.rooms(db, key, trace=False)['rooms'])
+        # (counted the way the furnisher reads them, geometry and all: a one-piece Nord hut has no kit rooms, and a
+        # kit house's count read without its geometry differed from the rooms the furnisher walked, so the bedless
+        # rule never fired: a table, a bench and no bed; Estmorevale and the lab's Common town, 2026-11-04)
+        n_rooms = n_rooms_hint or len(furnish.rooms(db, key)['rooms'])
     except Exception:
         n_rooms = n_rooms_hint or 0
+    # (the trade's room is the biggest on the ground floor whatever its size: with "big" meaning six tiles, every
+    # shop, guild and temple in a two-floor Imperial house of a 5-tile ground room came out storage + bedroom, with
+    # no counter and no wares; Estmorevale, 2026-11-04)
+    try:
+        rooms_ = furnish.rooms(db, key)['rooms']
+    except Exception:
+        rooms_ = []
+    ground_max = max((len(r.get('_tiles') or ()) for r in rooms_
+                      if not (z0 is not None and r.get('floor') is not None and (r['floor'] > z0 + STOREY or r['floor'] < z0 - STOREY))), default=0)
+    guild = gtype or ('mages' if head_cls and _re.search(r'mage|sorcer|wizard|conjur|healer|battlemage|enchant|alchem|witch', head_cls, _re.I) else
+                      'fighters' if head_cls and _re.search(r'warrior|knight|fighter|guard|champion|barbarian|scout|archer', head_cls, _re.I) else
+                      'thieves' if head_cls and _re.search(r'thief|rogue|agent|smuggler|pickpocket|bard', head_cls, _re.I) else 'mages')
 
     def kinds(rm, k, cnt):
         state['seen'] += 1
@@ -533,7 +554,26 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
         tl = rm.get('_tiles') or ()
         upper = z0 is not None and fl is not None and fl > z0 + STOREY
         cellar = z0 is not None and fl is not None and fl < z0 - STOREY
-        big = len(tl) >= 6
+        big = len(tl) >= 6 or (len(tl) >= 3 and len(tl) >= ground_max)
+        if kind == 'guild':
+            # (a guild hall is its guild's: the mages' an enchanter's hall with an alchemist's room and studies, beds
+            # above; the fighters' a training hall, an armoury, barracks; the thieves' a den with its stores)
+            if cellar:
+                return 'storage'
+            if upper:
+                state['bed'] += 1
+                if state['bed'] <= 2:
+                    return 'barracks' if guild == 'fighters' else 'bedroom'
+                return 'training' if guild == 'fighters' else 'study'
+            state['ground'] = state.get('ground', 0) + 1
+            if big and not state['shop']:
+                state['shop'] = True
+                return {'fighters': 'training', 'thieves': 'living'}.get(guild, 'enchanter')
+            if guild == 'fighters':
+                return 'armoury' if state['ground'] <= 2 else 'mess'
+            if guild == 'thieves':
+                return 'storage'
+            return 'alchemist' if state['ground'] == 2 else 'study'
         if kind == 'tavern' or trade == 'tavern':
             if not upper and big and not state['shop']:
                 state['shop'] = True
@@ -582,7 +622,7 @@ def household_level(db, head_cls):
         return None
 
 
-def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None):
+def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None, level=None):
     """A copied place made the Workshop's own: everything but its architecture, doors and built-in lights taken out;
     then furnished by the Workshop's own furnisher (rooms 'furnished'), or left empty with a plain light in every room
     that has none ('shells'). One step of its own. {'taken', 'placed', 'lights'}"""
@@ -603,7 +643,11 @@ def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None):
     placed = 0
     if rooms == 'furnished':
         kinds = household_kinds(db, key, kind or 'house', head_cls) if (kind or head_cls) else None
-        placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), seed, kinds=kinds, level=household_level(db, head_cls))
+        # (and as full as the game's own place of this building, when the source is one: a Nord hut furnished to
+        # its own recipes held 9 to 15 things where the game's huts hold 45 to 89; Estmorevale, 2026-11-04)
+        import kits
+        like = src if src and src != key and kits.game_made(db, src) else None
+        placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), seed, kinds=kinds, level=level or household_level(db, head_cls), like=like)
         if placed:
             try:
                 import livedin
@@ -835,7 +879,10 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
                 editing._store(c2, o['k'], r3['origin'], r3['idx'], doors._set_link(r3['subs'], '', on_floor(db, '', out)))
             editing.commit(db, 'A room in the wall of %s: %s' % (town, name))
             try:
-                make_own(db, key, e['t'], rooms, rng.randrange(1, 1 << 30))
+                # (a wall tower's rooms are a garrison's: guardroom below, barracks and armoury above, the wall keep's
+                # too (its rooms are a tower's, 2 to 8 tiles: as a lord's house its tables found no spot). Read off
+                # the game's bare tower rooms they came out as 79 'bedrooms' with a light each; Estmorevale, 2026-11-04)
+                make_own(db, key, e['t'], rooms, rng.randrange(1, 1 << 30), 'guard', None)
             except EditError as e_:
                 print('wall room made its own:', name, e_)
             used.add(e['t'])
@@ -868,6 +915,8 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         if not dr or not b:
             continue
         kind = q.get('kind') or b['kind']
+        g_ = _guild_sign(db, q, dr) if kind == 'guild' else None
+        kind_in = ('guild:' + g_) if g_ else kind          # (the hall inside is the guild the sign outside names)
         t = template(db, b['m'], kind, rng, used)
         if t is None:
             skipped += 1
@@ -887,6 +936,16 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 if tname:
                     ask['name'] = tname
                 cast_ = populate.cast(db, t, ask, seed=zlib.crc32(('%s|%s|%s|%d' % (seed, town, t, made + skipped)).encode()))
+                # (a smith needs a forge, and a forge a ground room of six tiles or more: on a small building the
+                # forge found no wall, nine slots "on something", and the Smith had racks and no fire. A smith cast
+                # for a small shop is cast again, another trade; Estmorevale, 2026-11-04)
+                for try_ in range(4):
+                    ppl_ = (cast_ or {}).get('people') or []
+                    h_ = next((p_ for p_ in ppl_ if p_.get('relation') in ('head', 'leader')), ppl_[0] if ppl_ else None)
+                    if not (kind == 'shop' and h_ and re.search(r'smith|armorer|armourer', h_.get('cls') or '', re.I)
+                            and b['w'] * b['d'] < SMITH_PLOT):
+                        break
+                    cast_ = populate.cast(db, t, ask, seed=zlib.crc32(('%s|%s|%s|%d|%d' % (seed, town, t, made + skipped, try_ + 1)).encode()))
             except Exception as e:
                 print('town cast:', t, e)
                 cast_ = None
@@ -902,6 +961,11 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 family = castsurvey._split_name(h['name'], h.get('race') or '')[1] or None
         name = _unique(db, interior_name(db, town, tname, townsurvey.kind_of(tname), head, family, culture, rng), taken)
         tried.add(name.lower())
+        if kind == 'shop' and head_cls:
+            try:
+                _resign(db, q, dr, head_cls, culture, rng)       # (the sign outside says the trade inside)
+            except Exception as e:
+                print('town sign:', name, e)
         try:
             out = None
             if OWN_LAYOUTS:
@@ -923,10 +987,15 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
             continue
         made += 1
         names.append(out['name'])
+        # (the plot's door must lead into what was just made: two places a town were made and then taken out as
+        # "no door led to", their doors left leading nowhere; the lab's Common town, 2026-11-04)
+        fr_ = next((r_ for r_ in mapdata.cellmap(db, dr[0]).get('refs') or () if r_['k'] == dr[1]), None)
+        if fr_ is None or ((fr_.get('to') or {}).get('key') or '').lower() != out['key'].lower():
+            print('town door link: %s made, but its door %s leads to %s' % (out['name'], dr, (fr_ or {}).get('to')))
         tried.update(k_.lower() for k_, _s in out.get('from') or [(out['key'], t)])
         for k_, src_ in out.get('from') or [(out['key'], t)]:
             try:
-                make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()), kind, head_cls)
+                make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()), kind_in, head_cls)
             except EditError as e:
                 print('town interior made its own:', name, e)
         q['inside_kind'] = kind
@@ -974,8 +1043,92 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         import editing
         if populate.write_lines(db, said):
             editing.commit(db, 'Lines for the people of %s' % town)
+    _unsign(db, plan)
     _drop_unled(db, tried)
     return {'interiors': made, 'people': folks, 'names': names, 'skipped': skipped}
+
+
+SIGN_OF_TRADE = {'smithy': r'smith|weapon|armor|arms', 'alchemist': r'alchem|potion|apothecary', 'bookseller': r'book',
+                 'clothier': r'cloth|tailor|garment', 'pawnbroker': r'pawn', 'enchanter': r'enchant|magic'}
+
+
+def _resign(db, q, dr, head_cls, culture, rng):
+    """The shop sign hung by a plot's door swapped for one of its trade, when the culture's set has one: a clothier
+    stood under a "general goods" sign, since the signs go up with the dressing, before the household is cast
+    (the user, 2026-11-04: shops "interesting and consistent"). Returns the new sign id or None."""
+    import re as _re
+    import editing
+    import townlife
+    import towndress
+    door = q.get('door')
+    if not door or not dr:
+        return None
+    trade = next((k for rx, k in TRADE_KIND if _re.search(rx, head_cls, _re.I)), None)
+    want = SIGN_OF_TRADE.get(trade) or r'general|goods|merchant'
+    c = db.project.cells.get(dr[0])
+    if not c:
+        return None
+    sign = next((r for r in mapdata.cellmap(db, dr[0]).get('refs') or ()
+                 if r['type'] == 'ACTI' and towndress.SIGN.search(r['id']) and r['k'] in c['refs']
+                 and math.hypot(r['p'][0] - door[0], r['p'][1] - door[1]) < 200), None)
+    if sign is None or _re.search(want, sign['id'], _re.I):
+        return None
+    pat = next((rx for cu, rx in townlife.SIGN_SETS if cu == culture), None)
+    if pat is None:
+        return None
+    ids = sorted(db.recs[lst[-1]][1] for (tag, k), lst in db.by_key.items() if tag == 'ACTI' and lst and _re.search(pat, k)
+                 and towndress.SIGN.search(k) and k not in towndress.NAMED and _re.search(want, k, _re.I))
+    if not ids:
+        return None
+    new = rng.choice(ids)
+    ri = db.resolve_id(new)
+    c_, refs = editing._cell(db, dr[0])
+    ref = refs.get(sign['k'])
+    if ref is None or ri is None:
+        return None
+    subs = [(t, zs(db.recs[ri][1]) if t == 'NAME' else d) for t, d in ref['subs']]
+    editing._store(c_, sign['k'], ref['origin'], ref['idx'], subs)
+    db.sync_project()
+    return new
+
+
+def _guild_sign(db, q, dr):
+    """The guild the sign by a plot's door names ('mages', 'fighters', 'thieves'), or None."""
+    door = q.get('door')
+    if not door or not dr:
+        return None
+    for r in mapdata.cellmap(db, dr[0]).get('refs') or ():
+        if r['type'] == 'ACTI' and 'sign' in r['id'].lower() and math.hypot(r['p'][0] - door[0], r['p'][1] - door[1]) < 200:
+            low = r['id'].lower()
+            if 'guildm' in low or 'mage' in low:
+                return 'mages'
+            if 'guildf' in low or 'fight' in low:
+                return 'fighters'
+            if 'guildt' in low or 'thie' in low:
+                return 'thieves'
+    return None
+
+
+def _unsign(db, plan):
+    """The signs hung beside the doors of plots that got no interior, taken down: a Mages' Guild sign over a
+    door that led nowhere (the user's Estmorevale, 2026-11-04; the signs go up with the dressing, before the
+    interiors). The number taken."""
+    import re as _re
+    n = 0
+    for q in plan['plots']:
+        dr = q.get('door_ref')
+        if not dr or q.get('interior') or not q.get('door'):
+            continue
+        c = db.project.cells.get(dr[0])
+        if not c:
+            continue
+        for r in mapdata.cellmap(db, dr[0]).get('refs') or ():
+            if r['type'] == 'ACTI' and _re.search(r'sign', r['id'], _re.I) and r['k'] in c['refs']                     and math.hypot(r['p'][0] - q['door'][0], r['p'][1] - q['door'][1]) < 200:
+                c['refs'].pop(r['k'], None)
+                n += 1
+    if n:
+        db.sync_project()
+    return n
 
 
 def _drop_unled(db, keys):
@@ -994,6 +1147,8 @@ def _drop_unled(db, keys):
                 led.add(r['to']['key'].lower())
     gone = [k for k in mine if k.lower() not in led]
     for k in gone:
+        outs_ = [(r['to'].get('x'), r['to'].get('y')) for r in mapdata.cellmap(db, k).get('refs') or () if r['type'] == 'DOOR' and r.get('to') and not r['to'].get('cell')]
+        print('town: %s has %d way(s) out at %s and no door in' % (k, len(outs_), [tuple(round(v or 0) for v in o) for o in outs_[:2]]))
         p.cells.pop(k, None)
         p.records.pop('PGRD|' + k, None)
     if gone:

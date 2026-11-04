@@ -103,7 +103,11 @@ the game stands there, most often first. Rest the mouse on one to see it in plac
 - chairs with nothing to sit at;
 - shelves, tapestries and lights hung on nothing;
 - books leaning on nothing;
-- the gaps Find gaps looks for.
+- the gaps Find gaps looks for;
+- and whether the place **serves its purpose**: a smith with no forge, a tavern with no bar or tables, a temple
+  with no shrine, a shop with nothing to sell from, a home with no bed, people with nowhere to sleep, bare rooms,
+  doors inside that lead nowhere, an interior that reaches outside its building. These have no button: the fixes are
+  **Auto-furnish rooms** (pick the kind), the door's **Leads to**, and *Interior from a building*.
 
 Where there's an obvious fix (set it down, pull it out of the wall, remove it), it has a button. Nothing changes
 until you click a fix, and one Undo takes a fix back.

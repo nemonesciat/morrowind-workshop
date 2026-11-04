@@ -340,6 +340,97 @@ def _all_my_script_text(db):
     return '\n'.join(parts)
 
 
+def leftovers(db):
+    """What a place taken out leaves behind (rollinside.py's reason): the mod's own people placed in no cell, the lines
+    whose speaker they are, routine rows for people who no longer exist, and mod-made interiors no door leads to
+    (the rolls in limbo excepted). {'people', 'lines', 'routines', 'cells', 'items', 'summary'}"""
+    p = db.project
+    placed = set()
+    led = set()
+    for ck, c in p.cells.items():
+        for rk, r in c['refs'].items():
+            if r.get('deleted'):
+                continue
+            subs = [(t, unb64(d)) for t, d in r['subs']]
+            rid = _ref_id(subs)
+            if rid:
+                placed.add(rid.lower())
+            for t, d in subs:
+                if t == 'DNAM':
+                    led.add(zstr(d).lower())
+    people = [rec['key'] for k, rec in p.records.items() if rec['tag'] == 'NPC_' and rec.get('created') and rec['key'].lower() not in placed]
+    low_people = {x.lower() for x in people}
+    lines = []
+    for k, rec in p.records.items():
+        if rec['tag'] != 'INFO' or not rec.get('created'):
+            continue
+        for t, d in iter_subrecords(unb64(rec['data'])):
+            if t == 'ONAM' and zstr(d).lower() in low_people:
+                lines.append(k)
+                break
+    rows = []
+    try:
+        import routines
+        for rid in routines.routines(db):
+            if db.resolve_id(rid) is None or rid.lower() in low_people:
+                rows.append(rid)
+    except Exception:
+        rows = []
+    limbo = set()
+    for st in (getattr(p, 'rolls', None) or {}).values():
+        limbo.update(x.lower() for x in (st.get('rolls') or []) + [st.get('old') or ''] if x)
+    cells = []
+    for ck in p.cells:
+        if ck.startswith('#') or ck.lower() in led or ck.lower() in limbo:
+            continue
+        if any(v not in db.dead and db.recs[v][3] != db.proj_pidx for v in db.by_key.get(('CELL', ck.lower()), [])):
+            continue                                  # (a place of the game's or another mod's that this mod changes)
+        if not any(r.get('subs') for r in p.cells[ck]['refs'].values()):
+            continue
+        cells.append(ck)
+    items = [{'label': 'Person "%s" is placed nowhere' % x} for x in people[:20]]
+    items += [{'label': '%d line%s said by people placed nowhere' % (len(lines), '' if len(lines) == 1 else 's')}] if lines else []
+    items += [{'label': '%d daily routine%s for people who are gone' % (len(rows), '' if len(rows) == 1 else 's')}] if rows else []
+    items += [{'label': 'No door leads to %s' % _cell_label(db, ck), 'cell': ck} for ck in cells[:20]]
+    summary = [s for s in ('%d people placed nowhere' % len(people) if people else '', '%d lines' % len(lines) if lines else '',
+                           '%d routines' % len(rows) if rows else '', '%d places no door leads to' % len(cells) if cells else '') if s]
+    return {'people': people, 'lines': lines, 'routines': rows, 'cells': cells, 'items': items, 'summary': summary}
+
+
+def sweep(db):
+    """The leftovers taken out, as one change."""
+    p = db.project
+    lo = leftovers(db)
+    # (the places first: their people become people placed nowhere, swept in the same change)
+    for ck in lo['cells']:
+        p.cells.pop(ck, None)
+        p.records.pop('PGRD|' + ck, None)
+    n_cells = len(lo['cells'])
+    if n_cells:
+        db.sync_project()
+        lo = leftovers(db)
+    for k in lo['lines']:
+        p.records.pop(k, None)
+        dk = k.split('|', 2)[1] if k.count('|') >= 2 else ''
+        if dk and not any(x.startswith('INFO|' + dk + '|') for x in p.records):
+            d = p.records.get('DIAL|' + dk)
+            if d and not d.get('created'):
+                p.records.pop('DIAL|' + dk)
+    for x in lo['people']:
+        p.records.pop('NPC_|' + x, None)
+    if lo['routines']:
+        try:
+            import routines
+            routines.unregister(db, lo['routines'])
+        except Exception as e:
+            print('sweep routines:', e)
+    db.sync_project()
+    n = len(lo['people']) + len(lo['lines']) + len(lo['routines']) + n_cells
+    what = ([('%d places no door led to' % n_cells)] if n_cells else []) + [x for x in lo['summary'] if 'places' not in x]
+    commit(db, 'Health check: swept out %s' % (', '.join(what) or 'nothing'))
+    return {'fixed': n}
+
+
 def _quest_gaps(db):
     import dialogue
     out, topics = [], []
@@ -730,6 +821,11 @@ def checks(db):
                     'items': [{'label': f['text']} for f in vf[:40]]})
     else:
         out.append({'id': 'records', 'sev': 'ok', 'title': 'Every record passes the game\'s own checks', 'detail': '', 'items': []})
+    lo = leftovers(db)
+    if lo['items']:
+        out.append({'id': 'leftovers', 'sev': 'warning', 'title': 'Leftovers: %s' % ', '.join(lo['summary']),
+                    'detail': 'What an interior taken out leaves behind: people placed nowhere (their lines and daily routines with them), and mod-made places no door leads to. Harmless in the game, but baggage.',
+                    'items': lo['items'][:40], 'fix': {'action': 'sweep', 'label': 'Sweep them out'}})
     qg = _quest_gaps(db)
     if qg:
         out.append({'id': 'quests', 'sev': 'warning', 'title': 'Quest stages and topics nobody can reach',
@@ -766,6 +862,8 @@ def checks(db):
 def fix(db, action):
     _require_project(db)
     p = db.project
+    if action == 'sweep':
+        return sweep(db)
     if action == 'clean':
         ident = _identical(db)
         tiny = _tiny_moves(db)

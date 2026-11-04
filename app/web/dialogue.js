@@ -28,7 +28,7 @@ async function renderDialog(){
       <div id="d-list" class="dlist"></div>`;
     ddSearch('d-npc', 'NPC_,CREA', r => dOpen('npc', r.id));
     let t; $('#d-q').oninput = () => { clearTimeout(t); t = setTimeout(() => { D.q = $('#d-q').value; dList(); }, 200); };
-    side.querySelectorAll('[data-dk]').forEach(b => b.onclick = () => { D.kind = b.dataset.dk; side.querySelectorAll('[data-dk]').forEach(x => x.classList.toggle('on', x === b)); dList(); });
+    side.querySelectorAll('[data-dk]').forEach(b => b.onclick = () => { D.kind = b.dataset.dk; side.querySelectorAll('[data-dk]').forEach(x => x.classList.toggle('on', x === b)); dList(); if (D.kind === '4' && D.mode !== 'quest') qlTable(); });
     $('#d-newquest').onclick = dNewQuest;
     $('#d-newtopic').onclick = dNewTopic;
     side.addEventListener('click', e => {
@@ -58,11 +58,12 @@ async function dList(more){
     const p = {q: D.q, limit: D.listMax + 1}; if (D.kind === 'mine') p.mine = '1'; else if (D.kind !== 'all') p.kind = D.kind;
     try { rows = await api('/api/dlg/index?' + new URLSearchParams(p)); } catch (e){ rows = []; }
   }
-  box.innerHTML = rows.slice(0, D.listMax).map(r => `<div class="drow ${D.key === r.key && D.mode !== 'npc' ? 'on' : ''}" data-dopen="${esc(r.key)}" data-dmode="${r.type === 4 ? 'quest' : 'topic'}">
+  box.innerHTML = (D.kind === '4' ? `<button class="btn sm" id="d-table" style="margin:0 0 6px;width:100%" title="Every quest as a table: sort by plugin, see which the Board flags">📋 Table of quests</button>` : '') + rows.slice(0, D.listMax).map(r => `<div class="drow ${D.key === r.key && D.mode !== 'npc' ? 'on' : ''}" data-dopen="${esc(r.key)}" data-dmode="${r.type === 4 ? 'quest' : 'topic'}">
       <span>${D_ICON[r.type] || '💬'} ${esc(r.id)}</span><small>${r.mine_lines ? `<b class="mine">✎ ${r.mine_lines}</b> · ` : ''}${fmtN(r.lines)}</small></div>`).join('')
     + (rows.length > D.listMax ? `<button class="btn sm" id="d-more" style="margin:8px 0;width:100%">Show ${D_PAGE} more</button>` : '')
     || `<div class="msg" style="padding:6px 2px">${D.kind === 'mine' && !D.q ? 'Nothing in your mod yet. Make a quest, a topic, or open a character and give them something to say.' : 'Nothing matches.'}</div>`;
   const m = $('#d-more'); if (m) m.onclick = () => { const top = box.scrollTop; dList(true).then(() => { box.scrollTop = top; }); };
+  const tb = $('#d-table'); if (tb) tb.onclick = qlTable;
 }
 
 function dWelcome(){
@@ -71,6 +72,7 @@ function dWelcome(){
     <div class="cgrid">
       <div class="ccard" data-dw="npc"><div style="font-size:26px">👤</div><b>Give a character lines</b><div class="msg">Open a character on the left and add a greeting or topics. Lines can depend on quest stages, items and more.</div></div>
       <div class="ccard" data-dw="quest"><div style="font-size:26px">📜</div><b>Make a quest</b><div class="msg">A title and numbered journal stages (10, 20 … 100). Characters' lines move it on.</div></div>
+      <div class="ccard" data-dw="quests"><div style="font-size:26px">📋</div><b>Browse quests</b><div class="msg">Every quest in the loaded data, by plugin, with the ones the Board flags; open any on its Board.</div></div>
       <div class="ccard" data-dw="ai"><div style="font-size:26px">✦</div><b>Ask the assistant</b><div class="msg">"Make a short quest for Fenas: she lost a ring in the cave nearby." It writes the quest and the lines.</div></div>
     </div>
     <div class="card msg" style="line-height:1.7"><b style="color:var(--text)">How Morrowind picks a line</b><br>
@@ -78,11 +80,13 @@ function dWelcome(){
   $('#dmain').querySelectorAll('[data-dw]').forEach(c => c.onclick = () => {
     if (c.dataset.dw === 'npc') $('#d-npc').focus();
     else if (c.dataset.dw === 'quest') dNewQuest();
+    else if (c.dataset.dw === 'quests') qlTable();
     else { AI.open = true; $('#aipanel').classList.add('open'); aiStatus().then(renderAI); }
   });
 }
 
 async function dOpen(mode, key){
+  if (mode === 'quests') return qlTable();
   D.mode = mode; D.key = key; D.edit = null;
   $('#dmain').innerHTML = '<div class="msg" style="padding:30px"><span class="spin"></span>Loading…</div>';
   try {
@@ -248,12 +252,12 @@ function dRenderQuest(){
   const q = D.data;
   D.qstages = D.qstages && D.qstagesFor === q.key ? D.qstages : q.stages.map(s => ({...s}));
   D.qstagesFor = q.key;
-  const qtabs = `<div class="cvtabs">${[['stages', '📜 Stages'], ['flow', '🗺 Flow: who moves it on']].map(([k, t]) => `<button data-qtab="${k}" class="${CV.qtab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
-  if (CV.qtab === 'flow'){
+  const qtabs = `<div class="cvtabs">${[['stages', '📜 Stages'], ['board', '🧩 Board'], ['flow', '🗺 Flow: who moves it on']].map(([k, t]) => `<button data-qtab="${k}" class="${CV.qtab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+  if (CV.qtab === 'flow' || CV.qtab === 'board'){
     $('#dmain').innerHTML = `<div class="dwrap cvwide"><div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b></div></div></div>
-      ${qtabs}<div id="q-test"></div><div id="q-flow"></div></div>`;
+      ${qtabs}<div id="q-test"></div><div id="q-flow"></div><div id="q-board"></div></div>`;
     $('#dmain').querySelectorAll('[data-qtab]').forEach(b => b.onclick = () => { CV.qtab = b.dataset.qtab; dRenderQuest(); qtQuestBar(); qtMark(); });
-    cvQuestFlow(q);
+    if (CV.qtab === 'flow') cvQuestFlow(q); else qbBoard(q);
     return;
   }
   let h = `<div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b> (used in conditions and scripts; players never see it)</div></div>

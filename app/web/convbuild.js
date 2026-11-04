@@ -71,8 +71,7 @@ function cbDraw(c){
   const box = $('#cvbody'); if (!box) return;
   const kindName = t => t === 2 ? '👋' : t === 3 ? '🗝' : '💬';
   const known = CB.list.some(x => x.topic === CB.topic);
-  let h = `<div class="msg" style="margin-top:6px;line-height:1.6">Write what ${esc(c.name || c.id)} says in a topic as a tree: what they say (more than one version: the first that fits is said), the answers the player can pick, and what each answer leads to.
-      Saving turns it into the topic's lines, numbered and ordered the way the game needs.</div>
+  let h = `<div class="msg" style="margin-top:6px;line-height:1.6">What ${esc(c.name || c.id)} says in a topic, as a tree: their lines, the player's answers, and where each leads. Saving writes the topic's lines in the game's order.</div>
     <div class="cbpick">${CB.list.map(x => `<button data-cbt="${esc(x.topic)}" class="${x.topic === CB.topic ? 'on' : ''}">${kindName(x.type)} ${esc(x.id)} <small>${x.lines}${x.choices ? ' · branches' : ''}</small></button>`).join('')}
       ${CB.topic && !known ? `<button class="on">${CB.topic.startsWith('greeting') ? '👋' : '💬'} ${esc(CB.tree ? CB.tree.id : CB.topic)} <small>new</small></button>` : ''}
       <button id="cb-new" title="A topic (or greeting) they have nothing of their own in yet">+ New conversation…</button></div>`;

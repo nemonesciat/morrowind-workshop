@@ -83,9 +83,7 @@ function pfRender(){
     return;
   }
   if (PF.learning){
-    P.innerHTML = tabs + `<div class="msg" style="margin:6px 0"><b>Learning how the game puts its buildings together</b>: every building
-      in your load order, once (about nine minutes), so the buildings fitted here are the game's own. This window fills in by itself
-      when it is done; the rest of the Workshop works meanwhile.</div>${typeof learnHtml === 'function' && LEARN.sv && LEARN.sv.left ? learnHtml(LEARN.sv, true) : '<div class="msg"><span class="spin"></span>Starting…</div>'}`;
+    P.innerHTML = tabs + `<div class="msg" style="margin:6px 0"><b>Learning how the game puts its buildings together</b> (once, about nine minutes). This fills in by itself when it is done.</div>${typeof learnHtml === 'function' && LEARN.sv && LEARN.sv.left ? learnHtml(LEARN.sv, true) : '<div class="msg"><span class="spin"></span>Starting…</div>'}`;
     P.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { PF.tab = b.dataset.tab; pfDrop(); pfRender(); });
     return;
   }

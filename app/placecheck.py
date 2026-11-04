@@ -1163,6 +1163,12 @@ def check(db, cell_key, gaps=True):
             issues += found
         except Exception as e:
             print('place check, edges:', e)
+    # does the place serve its purpose: a smith with no forge, a home with no bed, bare rooms, doors to nowhere (purposecheck.py)
+    try:
+        import purposecheck
+        issues += purposecheck.issues(db, cell_key, m)
+    except Exception as e:
+        print('place check, purpose:', e)
     if not n_rooms and not note:
         note = 'No rooms were found here (the place isn\'t laid in a style\'s floor pieces), so only the building was checked.'
     issues.sort(key=lambda i: (ORDER.get(i['kind'], 99), i.get('room', ''), i['id'].lower()))
@@ -1170,7 +1176,15 @@ def check(db, cell_key, gaps=True):
         i['n'] = n
     counts = Counter(i['kind'] for i in issues)
     return {'issues': issues, 'rooms': n_rooms, 'things': n_things, 'style': style, 'gaps': gap_info, 'note': note,
-            'counts': [{'kind': k, 'label': lab, 'what': what, 'n': counts[k]} for k, lab, what in KINDS if counts[k]]}
+            'counts': [{'kind': k, 'label': lab, 'what': what, 'n': counts[k]} for k, lab, what in KINDS + _purpose_kinds() if counts[k]]}
+
+
+def _purpose_kinds():
+    try:
+        import purposecheck
+        return purposecheck.KINDS
+    except Exception:
+        return []
 
 
 def summary(db, cell_key):

@@ -1383,8 +1383,24 @@ def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, til
     if not tiles and not kit and route != 'plan' and not layout:
         # (a shell the game makes a ready-made interior for, a Telvanni pod, a shack, a hut, a tent: a place per\n        # shell, that piece turned to the door and fitted out as one of the game's own; podtwins.py)
         import podtwins
-        if podtwins.pods_of(db, b):
-            out = podtwins.build(db, b, name)
+        pods_ = podtwins.pods_of(db, b)
+        if pods_ and b.get('door') and not any(podtwins.reaches(b['door'], it) for it, _t in pods_):
+            # (the way in given is not a pod's door: a tradehouse made as a pod of its neighbour's group took the
+            # neighbour's door, its own plot's door led nowhere, and it was taken out as unled; the lab's Common
+            # town, 2026-11-04. Planned from the footprint, through its own door)
+            pods_ = []
+        out = None
+        if pods_:
+            try:
+                out = podtwins.build(db, b, name)
+            except EditError as e:
+                # (the twin exists as a model but the game never furnished it with a door to copy, in_nord_house_05:
+                # the plot was skipped and its door led nowhere, under a guild sign; Estmorevale, 2026-11-04. Planned
+                # from the footprint instead, like a building with no twin)
+                if 'no interior of' not in str(e) and 'No Telvanni pod' not in str(e):
+                    raise
+                out = None
+        if out is not None:
             out['plan'] = {'style_name': 'Ready-made interiors', 'tile': None, 'floors': [0], 'ratio': None,
                            'notes': ['%s: %s, the game\'s interior for %s, fitted out as its own %s (the most typical of %d).' % (
                                m['name'], m['twin'], m['pod'], m['from'], m.get('examples') or 0) for m in out['cells']] + out['notes']}

@@ -62,8 +62,8 @@ function sgDraw(){
       <div class="sg-h">Who fits <span class="msg" id="sg-count"></span></div>
       <div class="sg-list" id="sg-list"><div class="msg">Pick the spells first.</div></div>
       <div class="sg-h" style="margin-top:10px">How to give them</div>
-      <label class="msg sg-radio"><input type="radio" name="sg-mode" value="records" ${SG.mode === 'records' ? 'checked' : ''}> <b>In their records</b>: each one's spell list in your mod. Simple and plain to see, but every one of them becomes a change of yours, which can clash with another mod that changes the same people.</label>
-      <label class="msg sg-radio"><input type="radio" name="sg-mode" value="script" ${SG.mode === 'script' ? 'checked' : ''}> <b>By a script</b>: they learn them the first time they come near in game. Their records stay untouched, so it works beside any mod. Needs the mod as an .omwaddon.</label>
+      <label class="msg sg-radio"><input type="radio" name="sg-mode" value="records" ${SG.mode === 'records' ? 'checked' : ''}> <b>In their records</b>: plain to see, but each person becomes a change of yours that another mod may clash with.</label>
+      <label class="msg sg-radio"><input type="radio" name="sg-mode" value="script" ${SG.mode === 'script' ? 'checked' : ''}> <b>By a script</b>: learnt when they first come near; their records stay untouched. Needs an .omwaddon.</label>
       ${SG.mode === 'script' ? `<input class="inp" id="sg-label" placeholder="A name for this rule (e.g. Telvanni mages learn Levitate)" style="margin-top:6px" value="${esc(SG.label || '')}">` : ''}
       ${(O.rules || []).length ? `<div class="sg-h" style="margin-top:12px">Given by script already</div>
         ${O.rules.map((r, n) => `<div class="sg-rule"><span style="flex:1"><b>${esc(r.label || r.spells.join(', '))}</b> <span class="msg">${esc(r.spells.join(', '))} · ${r.n != null ? r.n + ' people' : ''}</span></span><button class="btn sm danger" data-sgrm="${n}" title="Stop giving these by script">✕</button></div>`).join('')}

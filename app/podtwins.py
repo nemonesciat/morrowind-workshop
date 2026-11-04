@@ -156,14 +156,37 @@ def _name_twin(db, low):
     return None
 
 
+FAMILY = {'c': 'common', 'com': 'common', 'imp': 'imperial', 'de': 'dunmer', 't': 'telvanni', 'v': 'velothi', 'nord': 'nord',
+          'ashl': 'ashlander', 'hlaalu': 'hlaalu', 'redoran': 'redoran', 'dae': 'daedric', 'dwrv': 'dwemer', 'velothi': 'velothi'}
+CROSS_MIN = 8                  # a twin of another family (a mod's Nord hut behind an Imperial house): only this many pairs...
+CROSS_SHARE = 0.8              # ...and this share of them say so (two stray examples never)
+
+
+def family_of(low):
+    """The style family a model's name gives: 'nord' for ex_nord_house_01 and in_nord_house_01, 'common' for
+    ex_common_house_tall_02 and in_c_plain_room; '' when the name says nothing."""
+    m = re.match(r'(?:ex|in)_([a-z]+)', low or '')
+    if not m:
+        return ''
+    tok = m.group(1)
+    return FAMILY.get(tok, tok)
+
+
 def twin_for(db, low):
     """The interior piece for an exterior model: the one the game uses most in its interiors behind it
-    (LEARN_MIN pairs, LEARN_SHARE of them), else its name twin; None when the game builds it from tiles."""
+    (LEARN_MIN pairs, LEARN_SHARE of them), else its name twin; None when the game builds it from tiles.
+    A twin of another style family (a one-room Nord hut learnt behind a two-storey Imperial house from two
+    examples in a mod) takes CROSS_MIN pairs at CROSS_SHARE to count: a building pairs with a shell of its own
+    kind and style, else it is planned from its footprint (the user, Estmorevale, 2026-11-04)."""
     s = ready(db)
     c = ((s or {}).get('twins') or {}).get(low)
     if c and not NOT_SHELL.search(low):
         top, n = max(c.items(), key=lambda kv: kv[1])
-        if n >= LEARN_MIN and n >= LEARN_SHARE * sum(c.values()):
+        fe, ft = family_of(low), family_of(top)
+        same = not fe or not ft or fe == ft
+        if same and n >= LEARN_MIN and n >= LEARN_SHARE * sum(c.values()):
+            return top
+        if not same and n >= CROSS_MIN and n >= CROSS_SHARE * sum(c.values()):
             return top
     return _name_twin(db, low)
 
@@ -300,6 +323,10 @@ def build(db, b, name):
         ex_m = S['members'][S['exit']]
         hole = math.atan2(ex_m[2], ex_m[3])                       # (where the twin's own exit stands in its frame)
         rz = (th - hole) % (2 * math.pi)
+        # (square to the grid, the way the game stands its own huts: every one of a town's 27 huts stood at an odd
+        # angle, and the furnisher, whose tiles and wall slots run with the axes, found "no spot" against their
+        # diagonal walls and left them with 2 to 13 things where the game's hold 45 to 89; Estmorevale, 2026-11-04)
+        rz = (round(rz / (math.pi / 2)) * (math.pi / 2)) % (2 * math.pi)
         refs = [(twin, (0.0, 0.0, 0.0, 0.0, 0.0, rz), [], 1.0)]
         exit_at = None
         for k_, (mid, mtype, lx, ly, dz, turn, ms, rx, ry, *_rest) in enumerate(S['members']):

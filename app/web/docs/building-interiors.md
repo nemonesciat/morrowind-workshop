@@ -101,6 +101,29 @@ stairs; **Build** there makes it inside the building, its door linked.
 **🔍 Check this building** looks it over by the game's own rules for its style: pieces standing on nothing, gaps
 in the walls, the roof.
 
+### Roll the interior
+
+Right-click a building that has an interior already (a town's, or one you built) → **🎲 Roll the interior…**, to
+try other interiors for it until one is right, without losing the old one. The card shows the interior as it is
+(**before**) and each roll as a chip with the purpose check's verdict (✓ serves its purpose, ✗ a smith with no
+forge, a home with no bed…); the picked one's plan (its rooms, where the forge, beds, counter and doors are), what it
+holds, and its faults.
+
+- **🎲 Roll** plans and furnishes another interior for the building, in its style, and the building's door leads
+  into it. Four rolls are kept at a time; click a chip to look at another, **👁 Walk in** to see it in place.
+- **Furnish as** picks what it is for (a home, a smithy, a tavern, a Mages' hall…) and how well off.
+- **Roll until it has** a forge, a bed, two floors or no fault rolls again on its own, up to eight times, and stops at
+  the first that passes.
+- **✓ Keep this one** locks it in: the door leads there, the old interior's people move in (their records, lines and
+  daily routines untouched; where they stand and what they own follow the new rooms), the old interior and the other
+  rolls go, the walking paths are made, and the place takes the old name. One Undo takes it all back.
+- **↶ Put the old one back** takes every roll out.
+- **Find the faulty interiors in this town** lists every mod-made interior in the cell the purpose check faults, each
+  with a 🎲 to roll it.
+
+The interior and its people are two layers: a roll never makes people. To give a rolled place new people instead of
+the old ones, keep it, then **Populate** it.
+
 ## The prefab workbench
 
 **Library → 🔨 Prefab workbench** (or **Ctrl+B** anywhere, right-click **Library**, or Ctrl+K "workbench") opens an

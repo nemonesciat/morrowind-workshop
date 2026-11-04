@@ -39,7 +39,9 @@ A plain **.esp** can't hold OpenMW's Lua scripts. An **.omwaddon** can; tools th
 Four steps:
 
 1. **Check**: the mod checked for what would trouble players, each finding marked **Needs fixing**, **Worth a look**
-   or **Good to know**, with a safe fix where there is one. **↻ Check again** after fixing.
+   or **Good to know**, with a safe fix where there is one. **↻ Check again** after fixing. **Leftovers** is what a
+   place taken out leaves behind: people placed nowhere (with their lines and daily routines) and mod-made places no
+   door leads to; **Sweep them out** removes them in one change.
 2. **Describe**: author, description (shown in the OpenMW Launcher), version and what's new, where to start (left
    empty, it lists the doors into your new places), credits and permissions. It writes the **Readme** and the **Nexus
    description** for you; **⧉ Copy** either.

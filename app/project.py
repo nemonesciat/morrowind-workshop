@@ -226,6 +226,8 @@ class Project:
         self.land = d.get('land', {})           # land shaping: {'marks': ['gx,gy', ...]} the cells marked on the land map
         self.scattered = set(d.get('scattered') or [])   # ref keys the Scatter brush placed (its Remove clears only these)
         self.town_parts = d.get('town_parts') or {}       # ref key -> its building's id, for the buildings a town built
+        self.quests = d.get('quests', {})       # the quest Board's plans: quest key -> {'cast': [ids picked before any move uses them]}
+        self.rolls = d.get('rolls', {})         # interiors in limbo (rollinside.py): door 'cell|ref' -> {'old', 'name', 'rolls', ...}
         self.forged = d.get('forged', {})       # the Forge: piece id (lower) -> {'mat'} or {'between': [a, b, f]}, what it was
                                                 # forged as ("Duskglass" isn't glass); outside Undo, read only while the record is there
         # a plugin opened as the mod itself (adopt.py): the file it is saved into, the masters its header
@@ -351,6 +353,10 @@ class Project:
             d['land'] = self.land
         if self.forged:
             d['forged'] = self.forged
+        if self.quests:
+            d['quests'] = self.quests
+        if getattr(self, 'rolls', None):
+            d['rolls'] = self.rolls
         if self.scattered:
             d['scattered'] = sorted(self.scattered)
         if self.town_parts:
@@ -380,14 +386,15 @@ class Project:
 
     def state(self):
         return json.dumps({'records': self.records, 'cells': self.cells, 'next_ref': self.next_ref, 'lua': self.lua,
-                           'grass': self.grass, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts})
+                           'grass': self.grass, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts,
+                           'rolls': getattr(self, 'rolls', None) or {}})
 
     def snapshot(self, prev=None):
         """The state in parts (Snap), sharing the parts that didn't change with prev (the last one by default)."""
         prev = prev if prev is not None else self.__dict__.get('last_state')
         prev = prev if isinstance(prev, Snap) else None
         return Snap.of(self.records, self.cells, self.grass or {}, {'next_ref': self.next_ref, 'lua': self.lua,
-                       'scattered': sorted(self.scattered), 'town_parts': self.town_parts}, prev)
+                       'scattered': sorted(self.scattered), 'town_parts': self.town_parts, 'rolls': getattr(self, 'rolls', None) or {}}, prev)
 
     def restore(self, state, cur=None):
         """Put the project back as a state was (a Snap, or a state() text). cur: a Snap of the project as it is now, so
@@ -399,6 +406,7 @@ class Project:
             self.grass = d.get('grass', {})
             self.scattered = set(d.get('scattered') or [])
             self.town_parts = d.get('town_parts') or {}
+            self.rolls = d.get('rolls') or {}
             return
         cur = cur if isinstance(cur, Snap) else None
 
@@ -413,6 +421,7 @@ class Project:
         self.next_ref, self.lua = m['next_ref'], m.get('lua', [])
         self.scattered = set(m.get('scattered') or [])
         self.town_parts = m.get('town_parts') or {}
+        self.rolls = m.get('rolls') or {}
 
     def cell_bytes_of(self, key, c, masters, text=None):
         """cell_bytes, kept for each place by its JSON text: a place that didn't change isn't encoded again. Every change

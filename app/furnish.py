@@ -181,7 +181,7 @@ RECIPES = {
     # rooms of the trade hold in a third or more of them (a smith's: table 61%, chest 51%, crates 50%, barrels 40%,
     # shelves 39%, racks 24%; the anvil, the bellows and the coals come with the forge, lay_forge_set)
     'smithy': [('forge', 1, 'wall'), ('rack', 2, 'wall'), ('crate', 2, 'wall'), ('barrel', 1, 'corner'), ('chest', 1, 'wall'),
-               ('table', 1, 'wall'), ('chair', 1, 'by_table'), ('shelf', 1, 'wall')],
+               ('table', 1, 'wall'), ('chair', 1, 'by_table'), ('shelf', 1, 'wall'), ('wares', 3, 'on_table')],
     'alchemist': [('table', 1, 'wall'), ('chair', 1, 'by_table'), ('shelf', 2, 'wall'), ('bookshelf', 1, 'wall'), ('chest', 1, 'wall'),
                   ('sack', 2, 'wall'), ('urn', 1, 'corner'), ('bottle', 3, 'on_table'), ('food', 2, 'on_table')],
     'enchanter': [('table', 1, 'centre'), ('chair', 2, 'by_table'), ('bookshelf', 1, 'wall'), ('shelf', 1, 'wall'), ('chest', 1, 'wall'),
@@ -433,7 +433,7 @@ def rooms(db, cell_key, names=None, trace='geometry'):
     if not tiles or premade:
         if not geometry and trace is not True and not (trace and trace(m['refs'])):
             return {'tile': None, 'rooms': [], 'refs': m['refs']}
-        got = (floortrace.trace(db, m, cell_key) if geometry else None) or _floor_tiles(db, m)
+        got = (floortrace.trace(db, m, cell_key, shift=True) if geometry else None) or _floor_tiles(db, m)
         if got:
             tiles, T, traced = got, FLOOR_T, geometry
     elif geometry and not (plan and plan.get('rooms')) and T and T >= 2 * FLOOR_T:
@@ -1124,7 +1124,12 @@ def trade_wares(db, trade, culture):
     ids = {'enchanter': ('misc_soulgem_petty', 'misc_soulgem_lesser', 'misc_soulgem_common', 'misc_soulgem_greater'),
            'clothier': (('t_imp_clothbolt_01', 't_imp_clothbolt_02', 't_imp_clothbolt_03') if imp else ()) +
                        ('misc_clothbolt_01', 'misc_clothbolt_02', 'misc_clothbolt_03'),
-           'pawnbroker': ('t_imp_silverscales_01', 't_com_scalesbrass_01') if imp else ('t_de_scales_01', 't_de_scales_02')}.get(trade, ())
+           'pawnbroker': ('t_imp_silverscales_01', 't_com_scalesbrass_01') if imp else ('t_de_scales_01', 't_de_scales_02'),
+           # (a smith's wares laid out plain: the game's smiths show a few cheap arms on their tables and shelves; an
+           # armorer's hall with seven empty racks and one helmet, Estmorevale, 2026-11-04. The racks stay as the
+           # game keeps them, 496 of 498 empty)
+           'smith': ('iron dagger', 'iron shortsword', 'iron saber', 'iron war axe', 'steel dagger', 'iron helmet', 'iron boots',
+                     'iron_shield', 'imperial helmet armor', 'chitin_helm', 'netch_leather_helm', 'iron cuirass')}.get(trade, ())
     return [i for i in ids if db.resolve_id(i) is not None]
 
 
@@ -2259,7 +2264,18 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         low = r['id'].lower()
         if r['type'] == 'DOOR' or 'jamb' in low or 'doorway' in low:
             zb, zt = span(r)
-            taken.append(((r['p'][0] - clear, r['p'][1] - clear, r['p'][0] + clear, r['p'][1] + clear), zb, zt, True))
+            flat = r.get('b') and ('trap' in low or (r['b'][5] - r['b'][2]) * (r.get('s') or 1) < 60)
+            if flat:
+                # (a trap door lies in the floor: nothing stands on it, but the hut's floor round it is not a
+                # doorway. The 300-square round a 3x3 hut's trap door, with the door's own, left no wall slot
+                # for a chest or a shelf; Estmorevale's in_nord_house_03, 2026-11-04)
+                fp_ = _footprint([v * (r.get('s') or 1.0) for v in r['b']], r['p'][5], r['p'][0], r['p'][1])
+                taken.append(((fp_[0] - 24, fp_[1] - 24, fp_[2] + 24, fp_[3] + 24), zb, zt + 120, True))
+            else:
+                # (a traced hut's door clears 100 each way, its tiles are 128 and the game's huts have the bed by the
+                # door; a kit room's keeps the 150 it had)
+                c_ = clear if (info['tile'] or 256) >= 256 else 100
+                taken.append(((r['p'][0] - c_, r['p'][1] - c_, r['p'][0] + c_, r['p'][1] + c_), zb, zt, True))
             openings.append(r)
         # and the landings at both ends of a staircase
         if r['type'] == 'STAT' and ('stair' in low or 'ramp' in low) and info['tile']:
@@ -2318,7 +2334,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         depth = max(box[2] - box[0], box[3] - box[1]) if abs(fx) < 0.5 and abs(fy) < 0.5 else (box[3] - box[1] if abs(fy) > abs(fx) else box[2] - box[0])
         bx_, by_ = x - fx * (depth / 2 - 6), y - fy * (depth / 2 - 6)    # (just inside the back)
         zm = z + (b[2] + b[5]) / 2 * scale
-        hit = _scene[0].nearest((bx_, by_, zm), (-fx, -fy, 0.0), 40)
+        # (a traced place's walls are not plumb: a Nord hut's logs lean out above the height the tile faces are
+        # measured at, and its dreamcatchers and racks hung on nothing within 40)
+        hit = _scene[0].nearest((bx_, by_, zm), (-fx, -fy, 0.0), 72 if info.get('traced') else 40)
         return hit is not None
 
     def ceiling_over(x, y, z0, reach=900):
@@ -3354,15 +3372,23 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             fam['wares'] = trade_wares(db, trade, STYLE_SET.get(style) or fam.get('_borrowed'))
         tl = room['_tiles']
         # inside the room (wall spots already stand off the measured wall face)
-        inner = (room['x_min'] + 8, room['y_min'] + 8, room['x_max'] - 8, room['y_max'] - 8)
+        # (a traced room's wall faces are measured, and lie within 8 of its 128-unit tile edges: the kit rooms'
+        # margin of 8 then refused every wall slot as "off the floor", and a Nord hut got no bed, shelf or
+        # cupboard; Estmorevale, 2026-11-04)
+        m_in = 0 if room.get('traced') else 8
+        inner = (room['x_min'] + m_in, room['y_min'] + m_in, room['x_max'] - m_in, room['y_max'] - m_in)
         fl = room['floor']
         # open sides of this room (to other rooms, doorways) stay clear
+        n_clear = 0
         for t in tl:
             for s, (dx, dy) in STEP.items():
                 if t['pat'][s] == 'door' or (t['pat'][s] == 'open' and not any(
                         abs(u['x'] - (t['x'] + dx * T)) < 24 and abs(u['y'] - (t['y'] + dy * T)) < 24 for u in tl)):
                     mx, my = t['x'] + dx * T * 0.45, t['y'] + dy * T * 0.45
                     taken.append(((mx - 100, my - 100, mx + 100, my + 100), fl, fl + 200, True))
+                    n_clear += 1
+        if n_clear:
+            last_trace.append((room['name'], 'clearings', '-', '%d doorway clearings of %d tiles' % (n_clear, len(tl))))
             # the mouth of a one-tile nook (three walls: the game's alcove for a bed between posts) stays
             # clear on the room's side: nothing stands across it (the user's cupboard blocking the alcove)
             walls_t = [s for s in STEP if t['pat'][s] == 'wall']
@@ -3637,6 +3663,14 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         return True
             return False
 
+        spot_why = Counter()                    # (why the wall slots refused the last thing: for the trace)
+
+        def why_not(box):
+            if not inside(box):
+                return 'off the floor'
+            cl = [o for o in taken if _overlaps(box, o[0]) and o[1] < fl + 150 and o[2] > fl + 4]
+            return 'in a doorway' if cl and all(o[3] for o in cl) else 'on something'
+
         def wall_spot(b, front, where, pp=None, kind=None, gap=2, near=None, side=None, align=None, columns_first=False, within=None):
             """A free spot for this thing with its back to a wall (a corner first when where is
             'corner'): ((x, y, rot, box), direction into the room), or (None, None). The slot is used up.
@@ -3662,6 +3696,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             # (in an entrance hall a thing that can stand in a mirrored pair takes a slot whose twin
             # across the door's axis is free, when there is one: R1)
             passes = (True, False) if (purpose == 'entry' and entry_axis is not None and kind in MIRROR_KINDS) else (False,)
+            spot_why.clear()
+            across_ = []                         # (a bed's spot across the way in: taken when no other fits, as the game's huts do)
             for want_twin in passes:
               for sl in order:
                 rot = _turn_to_face(front, sl['in'])
@@ -3678,6 +3714,28 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     else:
                         y = min(max(align[1], sl['y'] - T / 2 + half_ + 4), sl['y'] + T / 2 - half_ - 4)
                 box = _footprint(b, rot, x, y)
+                if not fits(box) and (room.get('traced') or max(box[2] - box[0], box[3] - box[1]) > T * 0.9 or kind == 'bed'):
+                    # (a traced room's tiles are 128: a piece centred on a corner tile's slot, a bench of 160, a bed
+                    # of 200, pokes through the end wall, and a hut's 4x3 floor lost 8 of its 14 wall slots that way.
+                    # Slid along the wall into its run, and eased in off a wall face that varies tile by tile (a
+                    # hut's logs, a sill, a hearth's foot); Estmorevale's huts, 2026-11-04)
+                    # (and past a wall post or a chest already standing at the slot: the planned Imperial houses' upper
+                    # rooms keep a post in each corner, and their beds found every slot "on something")
+                    al_ = (sl['in'][1], -sl['in'][0])
+                    for d_ in (32, 64, 96, 128, 160):
+                        for sg_ in (1, -1):
+                            bx2_ = _footprint(b, rot, x + al_[0] * sg_ * d_, y + al_[1] * sg_ * d_)
+                            if fits(bx2_):
+                                x, y, box = x + al_[0] * sg_ * d_, y + al_[1] * sg_ * d_, bx2_
+                                break
+                        if fits(box):
+                            break
+                    for d_ in (8, 16, 24, 32, 40, 48):
+                        if inside(box):
+                            break
+                        bx2_ = _footprint(b, rot, x + sl['in'][0] * d_, y + sl['in'][1] * d_)
+                        if inside(bx2_):
+                            x, y, box = x + sl['in'][0] * d_, y + sl['in'][1] * d_, bx2_
                 if gap > 20:
                     # (the keeper's side behind a counter stays clear too)
                     back = (x - sl['in'][0] * gap, y - sl['in'][1] * gap)
@@ -3687,15 +3745,26 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 if not sl.get('column'):
                     st = settle(b, rot, x, y, sl['in'], box)
                     if st is None:
+                        spot_why['not level on the floor'] += 1
                         continue
                     x, y, box = st
                 if want_twin and entry_mirror(b, front, x, y, rot, kind) is None:
                     continue
                 if kind == 'bed' and BED_OFF_THE_WAY and across_way_in(box):
+                    spot_why['across the way in'] += 1
+                    if fits(box) and room.get('traced'):
+                        across_.append(((x, y, rot, box), sl))
                     continue
                 if fits(box):
                     (col_slots if sl.get('column') else slots).remove(sl)
                     return (x, y, rot, box), sl['in']
+                spot_why[why_not(box)] += 1
+            if across_:
+                # (a one-room hut of 3x3 tiles of 128: every wall slot lies across the line from the door to the
+                # middle, and the household went bedless; the game's own huts of that shell have their beds)
+                spot_, sl = across_[0]
+                (col_slots if sl.get('column') else slots).remove(sl)
+                return spot_, sl['in']
             return None, None
 
         def lay_hearth_set(purpose):
@@ -4035,7 +4104,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         extras_left.remove('forge')
                     last_trace.append((room['name'], 'forge', rid, 'the game\'s smith set from %s: %d things with it' % (ex_.get('cell'), len(laid_))))
                     return f_
-            last_trace.append((room['name'], 'forge', 'no wall took a forge with its anvil: no smithing here'))
+            last_trace.append((room['name'], 'forge', '-', 'no wall took a forge with its anvil: no smithing here' +
+                               ((' (' + ', '.join('%d %s' % (n_, k_) for k_, n_ in spot_why.most_common(3)) + ')') if spot_why else '')))
             return 0
 
         def lay_counter_run(pp, dress_fn):
@@ -5544,6 +5614,18 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 done, face = wall_spot(pb, front, 'corner')
             if not done:
                 done, face = wall_spot(pb, front, 'wall')
+            if not done and mode != 'middle':
+                # (the last resort: out from the walls, anywhere the bed stands level; a household sleeps somewhere.
+                # Two huts in nine went bedless with their wall slots all taken; the lab's Common town, 2026-11-04)
+                for rot_ in (0.0, math.pi / 2):
+                    for dx, dy in ((0, 0), (T * 0.3, 0), (-T * 0.3, 0), (0, T * 0.3), (0, -T * 0.3), (T * 0.6, 0), (-T * 0.6, 0), (0, T * 0.6), (0, -T * 0.6)):
+                        box = _footprint(pb, rot_, cx + dx, cy + dy)
+                        zq = floor_by_mesh(cx + dx, cy + dy, fl)
+                        if fits(box) and zq is not None and abs(zq - fl) <= 24:
+                            done = (cx + dx, cy + dy, rot_, box)
+                            break
+                    if done:
+                        break
             if not done:
                 last_trace.append((room['name'], 'bed', pid, 'no spot (%s)' % mode))
                 return False
@@ -6781,6 +6863,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                                 not (kind == 'table' and any(_overlaps(box, fb_, -100) for fb_ in bedboxes)):
                             done = (cx + dx, cy + dy, rot, box)
                             break
+                    if not done and kind == 'target':
+                        # (a small training hall, its middle in the door's way: the dummies stand at the walls)
+                        done, face = wall_spot(b, front, 'wall', pp=pp, kind=kind)
                 elif where == 'by_table' and tables:
                     # (every table in turn, from the one this seat's number points at: a tavern's seven
                     # chairs all tried the one table the counter's strip had hemmed in, and none sat)
@@ -6826,7 +6911,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                             t['items'].append(box)
                             break
                 if not done:
-                    last_trace.append((room['name'], kind, rid, 'no spot (%s), %d slots left' % (where, len(slots))))
+                    why_ = (': ' + ', '.join('%d %s' % (n_, k_) for k_, n_ in spot_why.most_common(3))) if where in ('wall', 'corner') and spot_why else ''
+                    last_trace.append((room['name'], kind, rid, 'no spot (%s), %d slots left%s' % (where, len(slots), why_)))
                     continue
                 if kind == 'table' and where != 'bedside' and done[3] is not None and any(_overlaps(done[3], f['box'], -100) for f in fronts if f.get('kind') == 'bed'):
                     last_trace.append((room['name'], kind, rid, 'too close to the bed (%s)' % where))

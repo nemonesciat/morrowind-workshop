@@ -1146,6 +1146,22 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/convo/quest':
                 import convo
                 self._json(convo.quest_map(db, q['key']))
+            elif u.path == '/api/quest/board':
+                import questboard
+                self._json(questboard.board(db, q['key']))
+            elif u.path == '/api/quest/list':
+                import questboard
+                self._json({'quests': questboard.quests(db, q.get('mine') == '1')})
+            elif u.path == '/api/roll/view':
+                # an interior in limbo for a building (rollinside.py): the old one, the rolls, which the door leads to
+                import rollinside
+                self._json(rollinside.view(db, q.get('cell', ''), q.get('ref', '')))
+            elif u.path == '/api/roll/faulty':
+                import rollinside
+                self._json(rollinside.faulty(db, q.get('cell', '')))
+            elif u.path == '/api/quest/flags':
+                import questboard
+                self._json({'flags': questboard.flags(db, [k for k in q.get('keys', '').split('|') if k])})
             elif u.path == '/api/dlg/quest':
                 out = dialogue.quest(db, q['key'])
                 out['used'] = dialogue.quests_using(db, q['key'])
@@ -2567,6 +2583,31 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/dlg/line/move':
                     dialogue.move_line(db, body['topic'], body['inam'], int(body['step']))
                     return self._json({'topic': dialogue.topic(db, body['topic'])})
+                if u.path == '/api/quest/move':
+                    # the quest Board: one move (what the player does to reach a stage), written as the game writes it
+                    import questmake
+                    return self._json(questmake.add_move(db, body['key'], body.get('move') or {}))
+                if u.path == '/api/quest/stage':
+                    import questmake
+                    return self._json(questmake.add_stage(db, body['key'], int(body['index']), body.get('text') or '', bool(body.get('finished'))))
+                if u.path == '/api/quest/new':
+                    import questmake
+                    return self._json(questmake.new_quest(db, body.get('id') or '', body.get('title') or '', body.get('first') or ''))
+                if u.path == '/api/roll':
+                    import rollinside
+                    return self._json(rollinside.roll(db, body.get('cell', ''), body.get('ref', ''), body.get('kind'), body.get('level'), body.get('until') or None))
+                if u.path == '/api/roll/pick':
+                    import rollinside
+                    return self._json(rollinside.pick(db, body.get('cell', ''), body.get('ref', ''), body.get('key', '')))
+                if u.path == '/api/roll/keep':
+                    import rollinside
+                    return self._json(rollinside.keep(db, body.get('cell', ''), body.get('ref', ''), body.get('key', ''), body.get('people') or 'move'))
+                if u.path == '/api/roll/cancel':
+                    import rollinside
+                    return self._json(rollinside.cancel(db, body.get('cell', ''), body.get('ref', '')))
+                if u.path == '/api/quest/pin':
+                    import questmake
+                    return self._json(questmake.pin(db, body['key'], body.get('ids') or []))
                 if u.path == '/api/dlg/quest/save':
                     key = dialogue.save_quest(db, body.get('id'), body.get('title'), body.get('stages') or [])
                     return self._json(dialogue.quest(db, key))

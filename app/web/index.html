@@ -1081,8 +1081,8 @@ function learnHtml(sv, short){
   return `<div class="learnbox"><b>Learning from your game's own places</b>
     <div class="msg">${done} of ${total} done${m ? ', ' + m + ' min so far' : ''}. Now: ${esc(now.slice(0, 3).join('; ') || '…')}${now.length > 3 ? '; and ' + (now.length - 3) + ' more' : ''}.</div>
     ${prog}<div class="learnbig"><i style="width:${learnPct(sv)}%"></i></div>
-    ${short ? '' : `<div class="msg">So that what the Workshop builds and furnishes follows how the game itself does it, it studies the places in your load order: how rooms are furnished, how stairs, walls and buildings are put together, how the land is shaped. It happens once, and again only when your load order's places change; it is kept on your PC.</div>
-    <div class="msg">Meanwhile everything works. Auto-furnish, the furnishing of a new house, Plan a prefab and an interior from a building wait for what they need and show this bar; anything built before it is done may come out plainer.</div>
+    ${short ? '' : `<div class="msg" title="It studies the places in your load order: how rooms are furnished, how buildings and land are put together. Once, and again only when your load order's places change; kept on your PC.">The Workshop is learning how your game builds and furnishes, so what it makes follows the game's own ways.</div>
+    <div class="msg">Everything works meanwhile; the tools that need it wait and show this bar.</div>
     <div class="msg"><span class="lnk" data-help="learning">How the Workshop learns…</span></div>`}</div>`;
 }
 function learnShow(sv){
@@ -1878,8 +1878,8 @@ function mergeModal(){
         radios(pv.lua.conflicts, c => `Lua script <b>${esc(c.name)}</b>`) + '</div>';
     } else if (!pv.missing_masters.length) h += '<p class="msg" style="margin:8px 0 0">Nothing clashes: the two mods never changed the same thing differently.</p>';
     if (pv.in_load_order){
-      h += `<div class="msg sev-warning" style="margin-top:10px"><b>"${esc(pv.name)}" is switched on in the game's load order.</b> Left on, the game would show its places twice: its own copy and the merged one.
-        <label style="display:block;margin-top:6px"><input type="checkbox" id="mg-off" checked> Switch ${esc(pv.plugin)} off in the load order when merging (the game then reads your game data again; a save made with it on will warn once that it is missing)</label></div>`;
+      h += `<div class="msg sev-warning" style="margin-top:10px"><b>"${esc(pv.name)}" is on in the load order.</b> Left on, the game would show its places twice.
+        <label style="display:block;margin-top:6px" title="The game then reads your game data again; a save made with it on warns once that it is missing"><input type="checkbox" id="mg-off" checked> Switch ${esc(pv.plugin)} off when merging</label></div>`;
     }
     box.innerHTML = h;
     ok.disabled = !!pv.missing_masters.length;
@@ -1909,9 +1909,8 @@ function mergeModal(){
 async function adoptModal(preset){
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(680px,94vw)"><h2>Set a plugin as the active file</h2>
-    <p class="msg">As in the Construction Set: one plugin is the <b>active file</b>, and every change is saved into it. A mod someone made in the Construction Set (or an earlier mod of yours) becomes the mod you work on: its records, places and placed objects, with its masters, author and description kept.
-      From then on <b>every change is saved straight into that file</b>. Nothing it holds is lost: placed objects keep their numbers, so saved games made with the file still work. The other plugins in your load order stay as they are (changes to their things go into the active file, which then lists them as masters).</p>
-    <p class="msg">A dated copy of the file is made beside it first; later copies go under <b>Backups</b> every few minutes. Master files (.esm) can't be opened this way.</p>
+    <p class="msg">The plugin becomes the mod you work on, and every change is saved into it, as in the Construction Set. Nothing in it is lost: placed objects keep their numbers, so saved games still work.</p>
+    <p class="msg" title="Other plugins in your load order stay as they are; changes to their things go into the active file, which then lists them as masters. Master files (.esm) can't be opened this way.">A dated copy is made beside it first; later copies go under <b>Backups</b>.</p>
     <div id="ad-list" style="max-height:min(42vh,420px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking in your data folders…</div>
     <div class="actions" style="margin-top:8px"><button class="btn sm" id="ad-browse">📂 Choose another file…</button><span class="msg" id="ad-picked"></span></div>
     <div class="msg err" id="ad-err" style="margin-top:8px"></div>
@@ -1978,8 +1977,8 @@ function saveAsModal(){
   const base = p.plugin.replace(/\.[^.]+$/, '');
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Save as a new file</h2>
-    <p class="msg">Everything this mod holds goes into a new plugin file in your mods folder, which becomes the <b>active file</b>: every change from then on is saved into it. Your placed objects keep their numbers.
-      ${p.source ? `The file open now (${esc(p.plugin)}) is left as it is on disk, and your load order follows the new name (the old file is switched off, or the game would show everything twice).` : `The old ${esc(p.plugin)} is removed and your load order follows the new name.`}</p>
+    <p class="msg">A new plugin in your mods folder becomes the active file; placed objects keep their numbers.
+      ${p.source ? `${esc(p.plugin)} stays on disk, switched off in the load order (on, the game would show everything twice).` : `The old ${esc(p.plugin)} is removed; the load order follows the new name.`}</p>
     <label>File name</label><div class="crow" style="align-items:center;gap:8px"><input class="inp" id="sa-name" value="${esc(base)}" maxlength="60" style="flex:1">
       <select class="inp" id="sa-ext" style="max-width:150px"><option value=".esp">.esp</option><option value=".omwaddon" ${p.plugin.toLowerCase().endsWith('.omwaddon') ? 'selected' : ''}>.omwaddon</option></select></div>
     <p class="msg" id="sa-note" style="margin-top:6px"></p>
@@ -2015,7 +2014,7 @@ async function modsModal(){
   document.querySelectorAll('.modal-bg[data-mods]').forEach(x => x.remove());
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.mods = '1';
   bg.innerHTML = `<div class="modal" style="width:min(820px,96vw)"><h2>Your mods</h2>
-    <p class="msg">Every mod you made or opened here, newest first. <b>Delete</b> sends the mod to the ${osw('bin')} (its project, its plugin, its scripts and grass files), where it can be restored, and takes it out of your OpenMW load order. The mod open now can't be deleted: switch to another first.</p>
+    <p class="msg" title="Delete sends the mod's project, plugin, scripts and grass files to the ${osw('bin')}, where they can be restored, and takes it out of the load order. The open mod can't be deleted: switch first.">Every mod you made or opened here, newest first.</p>
     <div id="mx-list" style="max-height:min(56vh,560px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking…</div>
     <div class="msg err" id="mx-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="mx-new">＋ Start a new mod…</button><button class="btn" id="mx-close">Close</button></div></div>`;
@@ -3138,8 +3137,7 @@ const LINK_HIDDEN = new Set();        // game messages dismissed with ✕
 let lastPickSeq = null, followPlayer = false;
 function linkHtml(){
   if (LINK.unlinked_game) return `<div class="linkbox wait"><b style="color:var(--amber)">○ Game not linked</b>
-    <div class="msg" style="margin-top:4px">OpenMW is running, but it wasn't started from the Workshop (perhaps from OpenMW's own Launcher), so the live link is off:
-    the map can't follow you and changes don't show in game. Quit the game, then start it with <b>▶ OpenMW → Start the game</b> at the top, or <b>Play here</b>.</div></div>`;
+    <div class="msg" style="margin-top:4px">OpenMW runs, but not from the Workshop, so the live link is off. Quit it and start it with <b>▶ OpenMW</b> at the top, or <b>Play here</b>.</div></div>`;
   if (!LINK.session && !LINK.connected) return '';
   if (!LINK.connected) return `<div class="linkbox wait"><span class="spin"></span>Waiting for the game… The link connects once you're in game (not at the main menu); a big load order takes a minute or two to start.</div>`;
   const synced = LINK.received >= LINK.version;
@@ -4287,7 +4285,7 @@ function formHtml(kind){
   if (kind === 'ruin' && typeof ruinFormHtml === 'function') return ruinFormHtml(what);
   if (kind === 'build'){
     const copy = CR.bmode === 'copy';
-    return `<h2>Build from pieces${typeof guideLink === 'function' ? guideLink('building-interiors.md', 'The room planner (Create → Build from pieces)') : ''}</h2><p class="msg">Lay out rooms on a grid. The Workshop builds them from the style's own walls, floors, doorways and stairs, and furnishes them the way the game's own places are. <b>Plans ▾</b> has ready-made layouts and your saved ones, and can start from a house the game made, as a plan or copied whole.</p>
+    return `<h2>Build from pieces${typeof guideLink === 'function' ? guideLink('building-interiors.md', 'The room planner (Create → Build from pieces)') : ''}</h2><p class="msg">Lay out rooms on a grid; they are built from the style's own pieces and furnished the game's way. <b>Plans ▾</b> has ready-made layouts and yours, and can start from a house the game made, as a plan or copied whole.</p>
     <div class="frow"><label>Name</label><input class="inp" id="cr-name" placeholder="e.g. Balmora, Dravos Helvi's House" maxlength="63">
       <div class="hint">Morrowind style is "Town, Owner's House". This is the name shown on the door.</div>
       <label class="bplan">Style</label><div class="bplan"><select class="inp" id="cr-bstyle"><option>Loading styles…</option></select><div class="hint" id="cr-bstylehint"></div>
@@ -4379,7 +4377,7 @@ function formHtml(kind){
         <label>Value (gold)</label><input class="inp" id="cr-value" type="number" min="0" placeholder="the usual for this kind" style="max-width:200px">`)}</div>
     <div class="actions"><button class="btn primary" id="cr-go">Create</button><span class="msg" id="cr-msg"></span></div>${what}`;
   if (kind === 'container'){ const ck = CR.ck || o.container_kinds[0], ex = (o.container_examples || {})[ck];
-    return `<h2>Container with contents</h2><p class="msg">A container of your own, made from the game's usual one of that kind, holding what you choose: single things, a pile of gold, or a random loot list that rolls afresh for each player. Lock it and give it an owner if it stands in someone's home.</p>
+    return `<h2>Container with contents</h2><p class="msg">A container of your own holding what you choose: things, gold, or a loot list that rolls afresh. Lock it and give it an owner if it stands in someone's home.</p>
     <div class="frow"><label>Kind</label><div class="radios">${o.container_kinds.map(k => `<label><input type="radio" name="cr-ck" value="${k}" ${k === ck ? 'checked' : ''}>${k}</label>`).join('')}</div>
       <div class="mv sm" id="cr-contview"></div>
       <label>Name</label><input class="inp" id="cr-name" maxlength="31" placeholder="${esc(ex ? ex.name : ck)} (or a name of your own, e.g. Smuggler's Chest)">
@@ -4920,7 +4918,7 @@ function aiContext(){
   if (W.sel) ctx.sel = W.sel.k; else if (W.key) ctx.focus = [W.cam.x, W.cam.y];
   if (!W.ext && W.cut != null) ctx.cut = W.cut;
   if (pageOn('dialog') && D.mode){
-    if (D.mode === 'npc') ctx.npc = D.key; else if (D.mode === 'quest') ctx.quest = D.key; else ctx.topic = D.key;
+    if (D.mode === 'npc') ctx.npc = D.key; else if (D.mode === 'quest') ctx.quest = D.key; else if (D.key) ctx.topic = D.key;
   }
   return ctx;
 }
@@ -5034,6 +5032,7 @@ poll();
 <script src="/web/records.js"></script>
 <script src="/web/convo.js"></script>
 <script src="/web/convbuild.js"></script>
+<script src="/web/questboard.js"></script>
 <script src="/web/populate.js"></script>
 <script src="/web/iconpick.js"></script>
 <script src="/web/ruins.js"></script>
@@ -5043,6 +5042,7 @@ poll();
 <script src="/web/demo.js"></script>
 <script src="/web/navmenu.js"></script>
 <script src="/web/frombuilding.js"></script>
+<script src="/web/rollinside.js"></script>
 <script src="/web/prefabplan.js"></script>
 <script src="/web/bench.js"></script>
 <script src="/web/twowin.js"></script>

@@ -182,12 +182,12 @@ def _reach(stand, seeds):
     return seen
 
 
-def trace(db, m, key=None):
+def trace(db, m, key=None, shift=False):
     """The walkable floor of a place as tiles of T: {(x, y, level): {'pat', 'x', 'y', 'floor'}} (the shape of a
     kit-built place's tiles, each wall side's face measured), or None. Cached per place and its building."""
     key = key or m.get('key')
-    sig = tuple(sorted((r['k'], r['id'].lower(), tuple(round(v, 1) for v in r['p']), r.get('s')) for r in m['refs']
-                       if r.get('arch') or r['type'] == 'DOOR'))
+    sig = (bool(shift),) + tuple(sorted((r['k'], r['id'].lower(), tuple(round(v, 1) for v in r['p']), r.get('s')) for r in m['refs']
+                                       if r.get('arch') or r['type'] == 'DOOR'))
     if key and key in _cache and _cache[key][0] == sig:
         return _cache[key][1]
     tris = _tris_world(db, m)
@@ -202,27 +202,49 @@ def trace(db, m, key=None):
     if len(floor) < 16:
         floor = {(c, z) for c, zs in stand.items() for z in zs}      # (no way in found: every standing floor)
     n = T // G
-    # columns into tiles, one per storey a tile has
-    by_tile = {}
-    for (i, j), z in floor:
-        by_tile.setdefault((i // n, j // n), []).append(((i, j), z))
-    tiles = {}
-    for (ti, tj), cols in by_tile.items():
-        cols.sort(key=lambda cz: cz[1])
-        groups, cur = [], [cols[0]]
-        for cz in cols[1:]:
-            if cz[1] - cur[-1][1] > 64:
-                groups.append(cur)
-                cur = [cz]
-            else:
-                cur.append(cz)
-        groups.append(cur)
-        for g in groups:
-            if len(g) < n * n * COVER:
-                continue
-            zs = sorted(z for _c, z in g)
-            fz = zs[len(zs) // 2]
-            tiles[(ti, tj, round(fz / 64))] = {'cols': {c: z for c, z in g}, 'floor': fz, 'ti': ti, 'tj': tj}
+
+    def tiling(oi, oj):
+        # columns into tiles, one per storey a tile has, the grid shifted by (oi, oj) columns
+        by_tile = {}
+        for (i, j), z in floor:
+            by_tile.setdefault(((i - oi) // n, (j - oj) // n), []).append(((i, j), z))
+        tiles = {}
+        for (ti, tj), cols in by_tile.items():
+            cols.sort(key=lambda cz: cz[1])
+            groups, cur = [], [cols[0]]
+            for cz in cols[1:]:
+                if cz[1] - cur[-1][1] > 64:
+                    groups.append(cur)
+                    cur = [cz]
+                else:
+                    cur.append(cz)
+            groups.append(cur)
+            for g in groups:
+                if len(g) < n * n * COVER:
+                    continue
+                zs = sorted(z for _c, z in g)
+                fz = zs[len(zs) // 2]
+                tiles[(ti, tj, round(fz / 64))] = {'cols': {c: z for c, z in g}, 'floor': fz, 'ti': ti, 'tj': tj}
+        return tiles
+    # (shift: the grid laid where most of the floor falls in whole tiles. A one-piece Nord hut's floor straddled
+    # the fixed grid lines and came out as 10 part tiles with holes in a 4x4; the furnisher cleared every hole's
+    # edge like a doorway and found no spot for a table or a bed. The game's own huts of that shell read as 12
+    # whole tiles only because they happen to stand on the grid. Estmorevale, 2026-11-04. A place laid partly in
+    # kit tiles keeps the fixed grid, so its traced tiles meet the kit's)
+    oi = oj = 0
+    tiles = None
+    if shift:
+        best = None
+        for a in range(n):
+            for b in range(n):
+                tl = tiling(a, b)
+                full = sum(1 for t in tl.values() if len(t['cols']) >= n * n * 0.9)
+                score = (full, len(tl), sum(len(t['cols']) for t in tl.values()))
+                if best is None or score > best[0]:
+                    best = (score, a, b, tl)
+        _s, oi, oj, tiles = best
+    else:
+        tiles = tiling(0, 0)
     if not tiles:
         _cache[key] = (sig, None)
         return None
@@ -234,16 +256,16 @@ def trace(db, m, key=None):
     STEP = {'N': (0, 1), 'E': (1, 0), 'S': (0, -1), 'W': (-1, 0)}
     for tk, t in tiles.items():
         ti, tj, fz = t['ti'], t['tj'], t['floor']
-        x, y = (ti + 0.5) * T, (tj + 0.5) * T
+        x, y = (ti + 0.5) * T + oi * G, (tj + 0.5) * T + oj * G
         pat = {'cover': {}, 'offset': {}}
         for s, (dx, dy) in STEP.items():
             # open where the floor runs on over the tile's edge at about this height
             crossings = 0
             for k in range(n):
                 if dx:
-                    a = (ti * n + (n - 1 if dx > 0 else 0), tj * n + k)
+                    a = (ti * n + oi + (n - 1 if dx > 0 else 0), tj * n + oj + k)
                 else:
-                    a = (ti * n + k, tj * n + (n - 1 if dy > 0 else 0))
+                    a = (ti * n + oi + k, tj * n + oj + (n - 1 if dy > 0 else 0))
                 b = (a[0] + dx, a[1] + dy)
                 za = t['cols'].get(a)
                 if za is None:
@@ -257,7 +279,7 @@ def trace(db, m, key=None):
             if pat[s] == 'wall':
                 # the wall's face: as far as the floor reaches that way in this tile, then by rays at the
                 # heights furniture stands against (the nearest of three across the side)
-                reach_ = max(((c[0] - ti * n + 0.5 if dx else c[1] - tj * n + 0.5) * G - T / 2) * (dx + dy) + G / 2
+                reach_ = max(((c[0] - ti * n - oi + 0.5 if dx else c[1] - tj * n - oj + 0.5) * G - T / 2) * (dx + dy) + G / 2
                              for c in t['cols']) if t['cols'] else T / 2
                 if sc is None:
                     sc = seethrough.place_scene(db, dict(m, refs=[r for r in m['refs'] if r['type'] != 'DOOR']))

@@ -5,7 +5,7 @@
 // there's an obvious one (set it down, pull it out of the wall, remove it). Nothing changes until a fix
 // is clicked; one Undo takes a fix back.
 const PC = {cell: null, issues: [], res: null, panel: null, marks: null, shut: {}};
-const PC_COLOR = {wall: '#ff5a3c', floating: '#ffb347', chair: '#ffd166', nowall: '#c77dff', light: '#6aa0ff', tall: '#ff5a3c',
+const PC_COLOR = {purpose: '#ff8fa3', nobed: '#ff8fa3', bare: '#d9a66c', deaddoor: '#ff5a3c', sizefit: '#9fd3c7', wall: '#ff5a3c', floating: '#ffb347', chair: '#ffd166', nowall: '#c77dff', light: '#6aa0ff', tall: '#ff5a3c',
   counter: '#e2b3ff', book: '#9be7a6', gap: '#ff5a3c', doorway: '#ff5a3c', ceiling: '#6aa0ff', post: '#ff5a3c', hole: '#c77dff',
   clip: '#ff8c69', zfight: '#ff8c69', joint: '#ffd98a'};
 

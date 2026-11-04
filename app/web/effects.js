@@ -159,7 +159,7 @@ function mxDoesRow(d, n){
     // (2026-10-25, the user: "don't want all the furniture and whatnot flying off the shelves")
     inner = `<span class="msg">the ground shakes within</span>${mxNum('feet', n, d.feet || 30, 70)}<span class="msg">feet, strength</span>${mxNum('strength', n, d.strength || 5, 60)}
       <span class="msg">(1 a tremor, 10 a hard quake), for</span>${mxNum('seconds', n, d.seconds || 10, 60)}<span class="msg">seconds</span>
-      <span class="msg" style="width:100%">Where it lands is the middle of it (cast on Self: around you). Your view shakes if you're near, the game's rumble plays, people and creatures stagger and some fall, and up to 50 small loose things (cups, books, candles, small baskets) hop and settle a few units from where they lay. Furniture, building pieces, plants and anything hung stay put.</span>`;
+      <span class="msg" style="width:100%">Centred where it lands (on Self: around you). The view shakes, the rumble plays, people stagger, and small loose things hop a little; furniture and buildings stay put.</span>`;
   } else if (d.kind === 'calm' || d.kind === 'frenzy' || d.kind === 'swap'){
     inner = `<span class="msg">${esc(K.what || '')}</span>`;
   } else if (d.kind === 'cast'){

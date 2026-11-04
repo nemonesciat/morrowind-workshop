@@ -589,5 +589,6 @@ def quest_map(db, qkey):
             rows.append({'topic': k, 'tid': 'Greeting' if k in GREETINGS else name, 'inam': d['inam'], 'text': d['text'],
                          'who': who, 'actor': d['actor'], 'needs': needs, 'sets': sets, 'other': other,
                          'mine': db.recs[ii][3] == db.proj_pidx, 'src': db.plugins[db.recs[ii][3]]['name'],
-                         'learns': fx['learns'], 'choices': fx['choices'], 'gives': fx['gives'], 'takes': fx['takes']})
+                         'learns': fx['learns'], 'choices': fx['choices'], 'gives': fx['gives'], 'takes': fx['takes'],
+                         'also': [x for x in fx['sets'] if x['quest'] != low]})
     return {'quest': q, 'lines': rows[:600], 'more': max(0, len(rows) - 600)}

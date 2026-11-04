@@ -324,8 +324,7 @@ async function renderSettings(){
       <button class="btn sm" data-open="openmw">Open OpenMW's settings folder</button></div></section>
 
   <section class="card setsec"><h3>AI assistant</h3>
-    <p class="msg">Optional. It uses Claude, Anthropic's AI, with your own Anthropic API key; each request is billed to your Anthropic account
-      (usually a few cents, up to about half a dollar for a big job). What you ask, and details about the place and records it works with, are sent to Anthropic.</p>
+    <p class="msg" title="Usually a few cents a request, up to about half a dollar for a big job. What you ask and the place and records it works with are sent to Anthropic.">Optional. Claude, with your own Anthropic API key, billed to your account.</p>
     <div class="setrow"><span>API key</span><b>${st.ai_configured ? `saved, ends in …${esc(st.ai_key_end)}${st.ai_from_env ? ' (from the ANTHROPIC_API_KEY setting on this PC)' : ''}` : 'none'}</b></div>
     <div class="actions"><input class="inp" id="st-key" type="password" placeholder="Paste a new key: sk-ant-…" style="max-width:320px" autocomplete="off">
       <button class="btn sm" id="st-savekey">Save key</button>${st.ai_configured && !st.ai_from_env ? '<button class="btn sm danger" id="st-delkey">Remove key</button>' : ''}
@@ -386,8 +385,7 @@ function reportModal(){
   const pg = reportPage(), n = pg.errors.length + pg.problems.length;
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>Report a problem</h2>
-    <div class="msg">This makes a report with what's needed to look into it: the Workshop and OpenMW versions, your setup, ${n ? `<b>the ${n} problem${n === 1 ? '' : 's'} the page showed since it opened</b>, ` : ''}the page you were on, and the end of both logs.
-      Your Windows user name is left out, and your API key is never included.</div>
+    <div class="msg">A report with the versions, your setup, ${n ? `<b>the ${n} problem${n === 1 ? '' : 's'} the page showed</b>, ` : ''}the page you were on and the end of the logs. No user name, never your API key.</div>
     <label>What happened? What did you do just before?</label>
     <textarea class="inp" id="rp-what" style="min-height:90px" placeholder="e.g. I pressed Auto-furnish in a Dres house and nothing appeared."></textarea>
     <div id="rp-out"></div>
