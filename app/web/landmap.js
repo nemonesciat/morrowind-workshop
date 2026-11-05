@@ -234,6 +234,9 @@ function lmViewHtml(i){
   const D = LM.data, n = D ? D.marks.length : 0;
   const counts = {};
   if (D) for (const k of D.marks){ const c = D.cells[k]; const lv = c ? c[0] : D.own[k] ? 'yours' : 'none'; counts[lv] = (counts[lv] || 0) + 1; }
+  // (the raise-into-land sliders stand open only when a marked cell has no land or is sea bed; on land they read as
+  // the next step before the shapes and folded away, 2026-11-04)
+  const bare = Object.keys(counts).some(k => k === 'none' || /sea/i.test(k));
   const what = Object.entries(counts).map(([lv, m]) => `${m} ${lv === 'none' ? 'with no land yet' : lv === 'yours' ? 'of your own land' : LM_LEVELS[lv].label.toLowerCase()}`).join(', ');
   // (one button pinned at the top for everything drawn: the ground shapes into the marked cells, then each town built
   // on it. Shape them shaped only the ground and a town needed its own Make it, found only with the town selected:
@@ -247,10 +250,12 @@ function lmViewHtml(i){
     towns.length ? `🏘 ${towns.length === 1 ? esc(towns[0].p.name || (LM.towns && LM.towns[towns[0].id] && LM.towns[towns[0].id].plan && LM.towns[towns[0].id].plan.name) || 'a town') : towns.length + ' towns'}${tReady ? '' : ' (planning…)'}` : '',
     castles.length ? `🏰 ${castles.length === 1 ? esc(castles[0].p.name || (LM.castles && LM.castles[castles[0].id] && LM.castles[castles[0].id].plan && LM.castles[castles[0].id].plan.name) || 'a castle') : castles.length + ' castles'}${cReady ? '' : ' (planning…)'}` : ''].filter(Boolean).join('<br>');
   const whatBuilt = !built ? '' : built > 1 ? `${built} ${towns.length && castles.length ? 'towns and castles' : towns.length ? 'towns' : 'castles'}` : towns.length ? 'the town' : 'the castle';
-  const label = ng && built ? 'Shape, then build' : ng ? 'Shape the ground' : `Build ${whatBuilt}`;
-  const can = (!ng || n) && tReady && cReady;
+  // (built once, the button says so and waits: a second press built the town again on top of the first, 2026-11-04)
+  const allBuilt = built && !ng && towns.every(L => (LM.towns || {})[L.id] && LM.towns[L.id].built) && castles.every(L => (LM.castles || {})[L.id] && LM.castles[L.id].built);
+  const label = allBuilt ? '✓ Built' : ng && built ? 'Shape, then build' : ng ? 'Shape the ground' : `Build ${whatBuilt}`;
+  const can = (!ng || n) && tReady && cReady && !allBuilt;
   const bar = (ng || built) ? `<div class="ls-pin"><span class="msg">${pinWhat}</span>
-    <button class="btn sm primary" id="ls-apply-top" ${can ? '' : 'disabled'} title="${ng && built ? 'The ground first, then each town and castle on it' : ng ? 'The ground shapes into the marked cells' : 'Every town and castle drawn, as planned'}. Nothing changes the mod before this. One Undo a step">${label}</button></div>` : '';
+    <button class="btn sm primary" id="ls-apply-top" ${can ? '' : 'disabled'} title="${allBuilt ? 'Built. Change the outline or a setting to plan it anew; ✕ Remove the town takes it away' : `${ng && built ? 'The ground first, then each town and castle on it' : ng ? 'The ground shapes into the marked cells' : 'Every town and castle drawn, as planned'}. Nothing changes the mod before this. One Undo a step`}">${label}</button></div>` : '';
   return `${bar}<h3>Land shaping${lsGuide('Land shaping: how it works')}</h3>
     <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lm-show" ${LM.show ? 'checked' : ''}> Show the land map</label>
     <label class="msg" style="display:flex;gap:6px;align-items:center" title="The way the rain runs over the marked cells: thicker where more ground drains through, brighter where Stream beds would texture it. On the plan's preview when there are shapes, else on the land as it is"><input type="checkbox" id="lm-flow" ${LM.flowOn ? 'checked' : ''}> Show where water runs</label>
@@ -262,14 +267,14 @@ function lmViewHtml(i){
       <span title="No land in any plugin yet, next to land: room to grow"><i style="border:1px dashed rgba(140,200,255,0.8)"></i>Room to grow</span></div>
     <div class="actions" style="margin-top:6px"><button class="btn sm" id="lm-mark">⛰ Mark cells…</button><button class="btn sm" id="lm-clear" ${n ? '' : 'disabled'}>Clear marks</button><button class="btn sm" id="lm-revert" ${n ? '' : 'disabled'} title="Put the land in the marked cells back as it was before your mod: heights, ground textures and grass. Your objects stay. Undo brings it back">↶ Undo my land</button><button class="btn sm" id="lm-dress" ${n || lmDressRings().length ? '' : 'disabled'} title="The marked cells' land (or a ▢ Dress area's) dressed as the game dresses its region: rocks and cliffs turned to their slopes, trees, plants and logs laid as the region's own land has them. One Undo">🪨 Dress…</button></div>
     <div class="msg" style="font-size:11.5px">${n ? `${n} cell${n === 1 ? '' : 's'} marked${what ? ': ' + esc(what) : ''}.` : 'Mark the cells to shape on the map.'}</div>
-    ${n ? `<div class="lm-raise">
+    ${n && !bare ? '<details class="lm-raise-fold"><summary class="msg" style="cursor:pointer;font-size:11.5px" title="Plain rolling land at one height in the marked cells, with no shapes drawn">Plain land instead of shapes</summary>' : ''}${n ? `<div class="lm-raise">
       <label>Height <input type="range" id="lm-h" min="0" max="6000" step="50" value="${LM.height}"><span>${LM.height}</span></label>
       <label title="How far in from the edge of the marked cells the land reaches its height">Coast width <input type="range" id="lm-c" min="2048" max="16384" step="256" value="${LM.coast}"><span>${LM.coast}</span></label>
       <label title="Rolling ground on top, as rough as the game's land (1) or smoother or rougher">Roughness <input type="range" id="lm-r" min="0" max="2" step="0.1" value="${LM.rough}"><span>${LM.rough}</span></label>
       <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lm-p" ${LM.paint ? 'checked' : ''}> Texture it the way the region's land is</label>
       <div class="actions"><button class="btn sm primary" id="lm-raise">Raise the marked cells into land</button></div>
-      <div class="msg" style="font-size:11.5px">Cells with no land get some first (the sea bed). The edges with unmarked cells stay as they are. One Undo takes it back; then shape it further with ⛰ Ground in 3D.</div></div>` : ''}
-    ${n || (LM.plan && LM.plan.layers && LM.plan.layers.length) ? lsHtml() : ''}
+      <div class="msg" style="font-size:11.5px">Cells with no land get some first (the sea bed). The edges with unmarked cells stay as they are. One Undo takes it back; then shape it further with ⛰ Ground in 3D.</div></div>` : ''}${n && !bare ? '</details>' : ''}
+    ${lsHtml()}
     <h3>Height maps${lsGuide('Height maps')}</h3>
     <div class="actions"><button class="btn sm" id="lm-export" ${n ? '' : 'disabled'} title="The marked cells (the box round them) as a 16-bit greyscale PNG, a pixel a point of the land">⬇ Save marked as a height map</button>
       <button class="btn sm" id="lm-import">⬆ Bring in a height map…</button><input type="file" id="lm-file" accept=".png,image/png" style="display:none"></div>
@@ -414,6 +419,9 @@ const LS_KINDS = {
   cliff:   {icon: '🪨', label: 'Cliff', color: '#d8a878', how: 'Click along the edge of the drop, double-click to finish. The rocks the region makes its cliffs of are chained along it, facing the lower side.'},
   // (an outline that shapes nothing: pick it, and 🪨 Dress… keeps to it; landshapes leaves it out)
   area:    {icon: '▢', label: 'Dress area', color: '#9be37a', closed: true, how: 'Click round a part of the land, then the first point to close. It changes no ground: 🪨 Dress… can dress only inside it.'},
+  // (a farm or an orchard laid on the outline, storydress.lay_field; the longest edge is the gate side. No ground shaped)
+  farm:    {icon: '🌾', label: 'Farm', color: '#e0c060', closed: true, how: 'Click round the farm, then the first point to close. Fields of the region\'s own crop fill it, the culture\'s farm fence round them; the longest side has the gate.'},
+  orchard: {icon: '🍐', label: 'Orchard', color: '#a0d070', closed: true, how: 'Click round the orchard, then the first point to close. A loose grid of the region\'s fruit tree fills it.'},
   // (a town's outline: its streets and buildings planned in a culture's way, townplan.py; it shapes no ground itself)
   town:    {icon: '🏘', label: 'Town', color: '#ffb86b', closed: true, how: 'Click round where the town goes, then the first point to close. Its streets and buildings are planned the way a culture\'s towns are.'},
   // (a keep or castle: its walls, towers, keep and rooms planned the way a culture builds its forts, castle.py, web/castle.js)
@@ -424,12 +432,13 @@ const LS_KINDS = {
   wall:    {icon: '🧱', label: 'Wall', color: '#b08a60', closed: true, town: true, how: 'Click round the town: the wall keeps to a grid of its pieces from your first point, its corners square. The town fills it.'},
 };
 const LS_ZONES = {residential: ['Houses', '#7fbf7f'], business: ['Business', '#5aa0dc'], noble: ['Noble', '#c85a8c']};
-const lsNoShape = k => k === 'area' || k === 'town' || k === 'castle' || k === 'cliff' || !!(LS_KINDS[k] && LS_KINDS[k].town);
+const lsNoShape = k => k === 'area' || k === 'town' || k === 'castle' || k === 'cliff' || k === 'farm' || k === 'orchard' || !!(LS_KINDS[k] && LS_KINDS[k].town);
+const lsIsField = k => k === 'farm' || k === 'orchard';
 // sliders per kind: [param, label, min, max, step, tip]
 const LS_PARAMS = {
   area: [],
   cliff: [['height', 'Height', 200, 3000, 50, 'About how tall the face stands: the rocks are scaled to it within the sizes the game uses them at'], ['amount', 'Loose rocks', 0, 2, 0.25, 'Boulders at the foot and pieces on the crest: 1 as the game has them, 0 the face alone']],
-  town: [], castle: [], street: [], zone: [], wall: [],
+  town: [], castle: [], street: [], zone: [], wall: [], farm: [], orchard: [],
   coast: [['height', 'Height', 0, 6000, 50, 'How high the land stands a coast width in from the water'], ['width', 'Coast width', 1024, 16384, 256, 'How far it takes to rise out of the sea'], ['wander', 'Wander', 0, 2, 0.1, 'Small bays and headlands along the waterline (a few hundred units either side of the line drawn)']],
   ridge: [['height', 'Crest', 500, 12000, 100, 'The crest\'s height (lower at the ends)'], ['width', 'Width', 1024, 24576, 256, 'From the crest out to its foot'], ['sharp', 'Sharp', 0, 1, 0.05, '0 rounded hills, 1 a knife-edge crest'], ['spurs', 'Spurs', 0, 2, 0.1, 'How much its width wanders, in spurs and gullies'],
     ['crags', 'Crags', 0, 2, 0.1, 'Sharp crags and arêtes near the crest (0: smooth)']],
@@ -442,7 +451,7 @@ const LS_PARAMS = {
   stamp: [['radius', 'Radius', 1024, 32768, 256, 'How far it reaches'], ['height', 'Height', -6000, 12000, 50, 'Its height (a crater: its depth); for the game\'s land, 0 keeps it as it is'], ['stretch', 'Stretch', 1, 4, 0.1, 'An oval: so many times longer one way (1: round)'], ['turn', 'Turn', 0, 359, 1, 'Which way its long side points (0: east, 90: north); the game\'s land turns with it']],
 };
 const LS_SHAPES = [['volcano', 'Volcano'], ['cone', 'Cone'], ['caldera', 'Caldera'], ['crater', 'Crater'], ['dome', 'Dome'], ['mesa', 'Mesa'], ['game', 'The game\'s own land']];
-const LS_DEFAULTS = {area: {}, cliff: {height: 600, side: 0, amount: 1, raise: 0, seed: 1}, town: {culture: '', seed: 1}, castle: {style: 'Imperial', size: 'medium', seed: 1, rooms: 'furnished'}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
+const LS_DEFAULTS = {area: {}, cliff: {height: 600, side: 0, amount: 1, raise: 0, seed: 1}, town: {culture: '', seed: 1}, farm: {culture: '', seed: 1, built: ''}, orchard: {culture: '', seed: 1, built: ''}, castle: {style: 'Imperial', size: 'medium', seed: 1, rooms: 'furnished'}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
   valley: {depth: 900, width: 4096, round: 0.6}, plateau: {height: 2000, width: 768, terraces: 0}, lake: {depth: 400, width: 1536},
   stamp: {shape: 'volcano', radius: 8192, height: 4000, turn: 0, stretch: 1, src: null}, spring: {rise: 800, wander: 1, depth: 256, width: 256, banks: 2048, canyon: 0}};
 
@@ -509,6 +518,9 @@ async function lsPreset(kind){
 
 function lsHtml(){
   const P = LM.plan || {layers: []}, sel = P.layers[LM.sel];
+  // (the ground sections only when a ground shape is drawn: a town or castle alone showed Protection, the passes,
+  // Dressing and Shape the marked cells, none of which touch it, 2026-11-04)
+  const ng = P.layers.filter(L => L.on !== false && !lsNoShape(L.kind)).length;
   const row = (L, i) => `<div class="ls-row${i === LM.sel ? ' on' : ''}" data-i="${i}"><input type="checkbox" data-on="${i}" ${L.on !== false ? 'checked' : ''} title="Use this shape">
       <span style="color:${LS_KINDS[L.kind].color}">${LS_KINDS[L.kind].icon}</span><span class="ls-n">${esc(L.name || LS_KINDS[L.kind].label)}</span>
       <button class="xbtn" data-up="${i}" title="Earlier (later shapes act on what earlier ones made)">↑</button><button class="xbtn" data-dn="${i}" title="Later">↓</button><button class="xbtn" data-dup="${i}" title="Duplicate (a copy beside it)">⧉</button><button class="xbtn" data-del="${i}" title="Remove">✕</button></div>`;
@@ -516,6 +528,7 @@ function lsHtml(){
   if (sel){
     const p = sel.p || {};
     if (sel.kind === 'town') params += lsTownHtml(sel);
+    if (lsIsField(sel.kind)) params += lsFieldHtml(sel);
     if (LS_KINDS[sel.kind].town) params += lsTownPartHtml(sel);
     if (sel.kind === 'castle' && typeof csHtml === 'function') params += csHtml(sel);
     if (sel.kind === 'stamp') params += `<label>Shape <select class="inp" id="ls-shape">${LS_SHAPES.map(([v, t]) => `<option value="${v}" ${p.shape === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
@@ -551,10 +564,10 @@ function lsHtml(){
     <div class="ls-add">${Object.entries(LS_KINDS).filter(([k, K]) => !K.town).map(([k, K]) => `<button class="btn sm" data-add="${k}" title="${esc(K.how)}"><span style="color:${K.color}">${K.icon}</span> ${K.label}</button>`).join('')}</div>
     <label title="A whole plan laid out over the marked cells (or the 4 x 4 cells round the view), in place of the shapes there; ↶ takes it back" style="margin-top:6px">Start from <select class="inp" id="ls-preset"><option value="">a ready plan…</option>${LS_PRESETS.map(([v, t, tip]) => `<option value="${v}" title="${esc(tip)}">${t}</option>`).join('')}</select></label>
     ${P.layers.length ? `<div class="ls-list">${P.layers.map(row).join('')}</div>
-      <div class="actions"><button class="btn sm" id="ls-clearall" title="Take every shape off the map (the land already shaped stays as it is)">Clear shapes</button></div>` : '<div class="msg" style="font-size:11.5px">Draw coasts, ridges, rivers, valleys, plateaus, lakes and stamps on the marked cells. Each acts on what the ones above it made.</div>'}
+      <div class="actions"><button class="btn sm" id="ls-clearall" title="Take every shape off the map (the land already shaped stays as it is)">Clear shapes</button></div>` : '<div class="msg" style="font-size:11.5px">Pick a shape and draw it on the map. Towns, castles, farms and orchards need no marked cells.</div>'}
     ${sel ? `<div class="lm-raise">${params}</div>` : ''}
-    ${P.layers.length ? lsPassesHtml(P) : lsTexHtml(P)}
-    ${P.layers.length ? `<div class="lm-raise">
+    ${ng ? lsPassesHtml(P) : lsTexHtml(P)}
+    ${ng ? `<div class="lm-raise">
       <label title="Rolling ground on the new land, as rough as the region's (1)">Roughness <input type="range" data-g="rough" min="0" max="2" step="0.1" value="${P.rough}"><span>${P.rough}</span></label>
       <label title="How far in from the marked cells' edge the shapes fade in (the edges with other cells never move)">Edge fade <input type="range" data-g="fade" min="256" max="8192" step="256" value="${P.fade}"><span>${P.fade}</span></label>
       ${lsHereRegions().length > 1 || (P.only || []).length ? `<label title="Shape only the marked cells in one region; the rest stay as they are" style="white-space:nowrap">Only in ${lsRegionSel('ls-ponly', (P.only || [])[0] || '', 'all marked cells', lsHereRegions())}</label>` : ''}
@@ -649,7 +662,7 @@ function lsGuide(section){ return typeof guideLink === 'function' ? guideLink('s
 function lsShapeCells(L){
   const C = 8192, p = Object.assign({}, LS_DEFAULTS[L.kind], L.p || {}), fade = (LM.plan && LM.plan.fade) || 1024;
   const reach = {coast: Math.min(1536, p.width * 0.25) + 1024, plateau: 1024, ridge: p.width * 1.5, river: p.width + p.banks,
-    valley: p.width, lake: p.width + 512, stamp: p.radius, spring: 2 * C, area: 0}[L.kind] + fade;
+    valley: p.width, lake: p.width + 512, stamp: p.radius, spring: 2 * C, area: 0, farm: 0, orchard: 0}[L.kind] + fade;
   const pts = L.pts, closed = !!LS_KINDS[L.kind].closed, half = C * Math.SQRT2 / 2;
   const segDist = (x, y, a, b) => {
     const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
@@ -771,6 +784,7 @@ function lsBind(){
   // there began a land shape of a kind there is none of, PIN2/the user 2026-10-31)
   const root = lsRoot();
   lsTownBind();
+  lsFieldBind();
   if (typeof csBind === 'function') csBind();
   const zs = $('#ls-zone'); if (zs){ const S_ = P.layers[LM.sel]; zs.onchange = () => { S_.p.zone = zs.value; lsChanged(true); }; }
   if (P.layers.some(L => L.kind === 'town' && !(LM.towns && LM.towns[L.id]))) lsTownsSoon();
@@ -854,6 +868,76 @@ function lsChanged(rerender){
   drawMap();
 }
 
+// ---------- farms and orchards (storydress.lay_field): an outline laid as fields of the region's own crop in the
+// culture's farm fence, or as a loose grid of its fruit tree, the way the game's farms and orchards are; the outline's
+// longest edge is the gate side. Make it lays it as one Undo; the card remembers what it laid (LM.fields, by shape id)
+function lsLongEdge(pts){
+  if (!pts || pts.length < 2) return null;
+  let best = null;
+  for (let k = 0; k < pts.length; k++){
+    const a = pts[k], b = pts[(k + 1) % pts.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!best || L > best[0]) best = [L, a, b];
+  }
+  return [best[1], best[2]];
+}
+function lsFieldKey(L){ return JSON.stringify([L.pts, (L.p || {}).culture || '', (L.p || {}).seed || 1]); }
+function lsFieldHash(s){ let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+// (what Make it laid, kept in the plan as p.built 'things/plants/culture/hash': built while the outline, Like and seed
+// are as they were; a change to any of them offers Make it again)
+function lsFieldBuilt(L){
+  const b = String((L.p || {}).built || '').split('/');
+  if (b.length < 4 || b[b.length - 1] !== lsFieldHash(lsFieldKey(L))) return null;
+  return {things: +b[0] || 0, plants: +b[1] || 0, culture: b.slice(2, -1).join('/')};
+}
+function lsFieldHtml(sel){
+  const p = sel.p || (sel.p = {}), K = LS_KINDS[sel.kind], farm = sel.kind === 'farm';
+  const F = (LM.fields = LM.fields || {})[sel.id] || (LM.fields[sel.id] = {});
+  const cs = (LM.cultures || []).filter(c => !c.own);
+  if (!LM.cultures && !LM.culturesAsked) lsCultures().then(c => { if (c && PNL.isShown('world', 'land')) renderWside(); });
+  if (!p.culture) lsFieldNear(sel, F);
+  const B = lsFieldBuilt(sel), built = !!B;
+  const near = !p.culture && F.near ? ' (' + esc(F.near) + ')' : '';
+  return `<label title="${farm ? 'Whose farm fence, and whose crop where the region grows none of its own. Blank: the nearest game town\'s' : 'Whose orchards it is planted like where the region grows no fruit tree of its own. Blank: the nearest game town\'s'}">Like <select class="inp" id="ls-fcult"><option value="">the nearest town's${near}</option>${cs.map(c => `<option value="${esc(c.id)}" ${p.culture === c.id ? 'selected' : ''} title="${esc((c.examples || []).join(', '))}">${esc(c.id)}</option>`).join('')}</select></label>
+    <label title="The same outline laid another way"><span style="white-space:nowrap">Seed <input class="inp" id="ls-fseed" type="number" min="1" max="999999" value="${p.seed || 1}" style="width:76px"> <button class="btn sm" id="ls-freroll" title="Another seed">🎲</button></span></label>
+    <div class="actions"><button class="btn sm primary" id="ls-fmake" ${built ? 'disabled title="Built. Change the outline, Like or the seed to lay it anew; Undo takes it back"' : `title="${farm ? 'Fields of the region\'s own crop at the game\'s spacing, the culture\'s farm fence round them, the gate in the longest side' : 'A loose grid of the region\'s fruit tree at the game\'s spacing'}. One Undo takes it back"`}>${built ? '✓ Built' : K.icon + ' Make it'}</button>${lsGuide('Towns')}</div>
+    ${built ? `<div class="msg" style="font-size:11.5px">${B.plants} ${farm ? 'plants' : 'trees'}${B.things > B.plants ? `, ${B.things - B.plants} fence pieces` : ''}${B.culture ? ' · ' + esc(B.culture) : ''}</div>` : ''}`;
+}
+// (which culture a blank Like means here: the nearest game town's, asked once per outline. While the towns are still
+// being learnt the answer is blank: asked again at a render half a minute later, never by a render of its own)
+async function lsFieldNear(L, F){
+  const key = JSON.stringify(L.pts);
+  if (F.nearKey === key && (F.near || Date.now() - (F.nearAt || 0) < 30000)) return;
+  F.nearKey = key; F.nearAt = Date.now();
+  try {
+    const r = await post('/api/land/field', {pts: L.pts, look: true});
+    if (F.nearKey !== key) return;
+    F.near = r.culture || '';
+    if (F.near && PNL.isShown('world', 'land')) renderWside();
+  } catch (e){ F.near = ''; }
+}
+function lsFieldBind(){
+  const P = LM.plan, sel = P && P.layers[LM.sel]; if (!sel || !lsIsField(sel.kind)) return;
+  const c = $('#ls-fcult'); if (c) c.onchange = () => { sel.p.culture = c.value; lsChanged(true); };
+  const s = $('#ls-fseed'); if (s) s.onchange = () => { sel.p.seed = Math.max(1, Math.round(+s.value) || 1); lsChanged(true); };
+  const r = $('#ls-freroll'); if (r) r.onclick = () => { sel.p.seed = ((sel.p.seed || 1) % 100000) + 1 + Math.floor(Math.random() * 1000); lsChanged(true); };
+  const mk = $('#ls-fmake'); if (mk) mk.onclick = () => lsLayField(sel, mk);
+}
+async function lsLayField(L, btn){
+  if (!await needProject()) return;
+  const p = L.p || (L.p = {}), farm = L.kind === 'farm';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Laying…'; }
+  try {
+    const r = await post('/api/land/field', {pts: L.pts, culture: p.culture || '', what: L.kind, seed: p.seed || 1});
+    p.built = r.things ? [r.things, r.plants, String(r.culture || '').replace(/\//g, ' '), lsFieldHash(lsFieldKey(L))].join('/') : '';
+    lsChanged();                                   // (the plan keeps what was laid: Built after a reload too)
+    if (!r.things) toast(`Nothing laid: no room for ${farm ? 'a field' : 'a tree'} here.`, true);
+    else toast(`Laid ${farm ? 'a farm' : 'an orchard'}: ${r.plants} ${farm ? 'plants' : 'trees'}${r.things > r.plants ? `, ${r.things - r.plants} fence pieces` : ''}${r.culture ? ' (' + esc(r.culture) + ')' : ''}. Undo takes it back.`);
+    await afterChange();
+    for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
+    drawMap(); renderWside(); if (typeof v3Refresh === 'function' && V3.on) v3Refresh();
+  } catch (err){ toast(err.message, true); renderWside(); }
+}
+
 // ---------- towns (townplan.py): a town shape's streets and buildings, planned in a culture's way and drawn on the map
 // (the user, 2026-10-30: "learn to plan and build towns with previews, at least as nice as the dungeon generator")
 const LS_TOWN_COL = {house: '#c9a878', shop: '#5aa0dc', tavern: '#e6783c', temple: '#dcdc5a', guild: '#a06edc', manor: '#c85a8c', guard: '#8c8c8c'};
@@ -882,14 +966,14 @@ function lsTownHtml(sel){
     const Wl = T.plan.walls;
     const wtxt = !Wl ? '' : !Wl.pieces.length ? `<div class="msg warn" style="font-size:11.5px" title="${esc(Wl.faults.join('; '))}">No wall fits here</div>` :
       `<div class="msg" style="font-size:11.5px" title="${esc(Wl.family + (Wl.faults.length ? ': ' + Wl.faults.join('; ') : ''))}">Wall: ${Wl.pieces.length} pieces, ${Wl.gates} way${Wl.gates === 1 ? '' : 's'} in${(Wl.faults.find(f => /game's own buildings/.test(f)) || '').replace(/^(\d+) of the game's own buildings stand inside the wall$/, ' · $1 game buildings inside')}</div>`;
-    info = `<div class="msg" style="font-size:11.5px;line-height:1.5">${T.plan.plots.length} buildings${T.plan.streets.length ? `, ${T.plan.streets.length} streets` : ''}${T.plan.square ? ', a square' : ''}: ${kinds}</div>${wtxt}`;
+    info = `<div class="msg" style="font-size:11.5px;line-height:1.5">${T.plan.plots.length} buildings${T.plan.streets.length ? `, ${T.plan.streets.length} street${T.plan.streets.length === 1 ? '' : 's'}` : ''}${T.plan.square ? ', a square' : ''}: ${kinds}</div>${wtxt}`;
     // (a look with big buildings, Anvil's, in an outline too small for any: say so rather than show an empty town)
     if (!T.plan.plots.length) info = `<div class="msg" style="font-size:11.5px">No room for ${esc(T.plan.culture || 'its')} buildings here: draw the town bigger.</div>`;
   }
   const ws = LM.walls || [];
   return `<label title="Whose towns it is planned like: their streets, how close their buildings stand, how many shops and taverns. Blank: the nearest game town's">Like <select class="inp" id="ls-tcult"><option value="">the nearest town's${!p.culture && cult ? ' (' + esc(cult) + ')' : ''}</option>${cs.map(c => `<option value="${esc(c.id)}" ${p.culture === c.id ? 'selected' : ''} title="${esc((c.examples || []).join(', '))}">${esc(c.id)} (${c.towns} towns)</option>`).join('')}</select></label>
-    <label title="A wall round it, the game's own pieces joined as its walls are, with gates where the streets go out">Wall <select class="inp" id="ls-twall"><option value="">none</option><option value="auto" ${p.walls === 'auto' ? 'selected' : ''}>its culture's</option>${ws.map(w => `<option value="${esc(w.id)}" ${p.walls === w.id ? 'selected' : ''} title="${esc((w.towns || []).join(', '))}">${esc(w.id.replace(/^ex_|^t_/i, ''))}</option>`).join('')}</select></label>
-    <label title="The town's name: its interiors are called after it (Balmora, …). Blank: the one shown">Name <input class="inp" id="ls-tname" value="${esc(p.name || '')}" placeholder="${esc((T && T.plan && T.plan.name) || '')}" maxlength="40"></label>
+    <label title="A wall round it, the game's own pieces joined as its walls are, with gates where the streets go out">Wall <select class="inp" id="ls-twall"><option value="">none</option><option value="auto" ${p.walls === 'auto' ? 'selected' : ''}>its culture's</option>${ws.map(w => `<option value="${esc(w.id)}" ${p.walls === w.id ? 'selected' : ''} title="${esc((w.towns || []).join(', '))}">${esc(lsWallName(w.id))}</option>`).join('')}</select></label>
+    <label title="The town's name: its interiors are called after it (Balmora, …). Blank: the one shown">Name <input class="inp" id="ls-tname" value="${esc(p.name || '')}" placeholder="${esc((T && T.plan && T.plan.name) || '')}" maxlength="40" spellcheck="false"></label>
     <label title="How many buildings, against the culture's own towns of this size (1). Up for a city, down for a hamlet. A walled town fills its wall at 1 and over">Density <input type="range" id="ls-tdens" min="0.3" max="4" step="0.1" value="${p.density || 1}"><span>${p.density || 1}</span></label>
     <label title="How wide its streets are. A street is painted in whole ground squares, 512 across">Streets <select class="inp" id="ls-tstreets"><option value="">as its towns'</option><option value="narrow" ${p.streets === 'narrow' ? 'selected' : ''}>narrower</option><option value="lanes" ${p.streets === 'lanes' ? 'selected' : ''}>lanes</option></select></label>
     <div class="v3lrow" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center" title="Draw the town's own streets, quarters or wall inside it: the town follows them">Draw ${['street', 'zone', 'wall'].map(k => `<button class="btn sm" data-add="${k}" title="${esc(LS_KINDS[k].how)}">${LS_KINDS[k].icon} ${LS_KINDS[k].label}</button>`).join('')}</div>
@@ -899,10 +983,16 @@ function lsTownHtml(sel){
       <label title="Guards, sellers at their stalls and townsfolk in the streets, as many as the culture's towns have; and a household in each furnished house, owning its beds and chests. Takes a minute or two"><input type="checkbox" id="ls-tppl" ${p.nopeople ? '' : 'checked'}> People</label></div>
     <div class="actions"><button class="btn sm" id="ls-treroll" title="Another layout of the same town">🎲 Another</button>
       <button class="btn sm" id="ls-tremove" title="Take away what Make it built here: its buildings, wall, dressing and interiors. What you added later and the ground stay. One Undo">✕ Remove the town</button>
-      <button class="btn sm primary" id="ls-tmake" ${T && T.plan && T.plan.plots.length ? '' : 'disabled'} title="Build it: the game's own buildings of this culture on every plot, as shown. One Undo takes it back">🏘 Make it</button></div>${info}`;
+      <button class="btn sm primary" id="ls-tmake" ${T && T.built ? 'disabled title="Built. Change the outline or a setting to plan it anew; ✕ Remove the town takes it away"' : `${T && T.plan && T.plan.plots.length ? '' : 'disabled'} title="Build it: the game's own buildings of this culture on every plot, as shown. One Undo takes it back"`}>${T && T.built ? '✓ Built' : '🏘 Make it'}</button>${lsGuide('Towns')}</div>${info}`;
 }
 // (what goes behind a town's doors: '' furnished, 'shells' or 'none'; a town planned before kept noinside)
 function lsInside(p){ return p.inside || (p.noinside ? 'none' : ''); }
+// (a wall family's name as the panel shows it: the kit ids read "imp", "hlaalu", "stronghold", 2026-11-04)
+function lsWallName(id){
+  const n = String(id).replace(/^ex_|^t_/i, '').replace(/_/g, ' ');
+  const names = {imp: 'Imperial', hlaalu: 'Hlaalu', stronghold: 'Stronghold', velothi: 'Velothi', redoran: 'Redoran', nord: 'Nord', de: 'Dunmer', com: 'Common', telvanni: 'Telvanni'};
+  return names[n.toLowerCase()] || n.charAt(0).toUpperCase() + n.slice(1);
+}
 function lsTownBind(){
   const P = LM.plan, sel = P && P.layers[LM.sel]; if (!sel || sel.kind !== 'town') return;
   const c = $('#ls-tcult'); if (c) c.onchange = () => { sel.p.culture = c.value; lsChanged(true); };
@@ -973,10 +1063,13 @@ async function lsMakeTown(sel, bsel){
       for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
       W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload();
       ok = true;
+      const Tb = (LM.towns || {})[sel.id]; if (Tb) Tb.built = true;
+      // (the map centres on the town: built from a cell opened elsewhere, the view stayed there and 3D showed no town, 2026-11-04)
+      if (sel.pts && sel.pts.length && !V3.on && W.cam){ W.cam.x = sel.pts.reduce((a, p) => a + p[0], 0) / sel.pts.length; W.cam.y = sel.pts.reduce((a, p) => a + p[1], 0) / sel.pts.length; }
       drawMap(); renderWside(); if (typeof v3Refresh === 'function' && V3.on) v3Refresh();
     } catch (e){ toast(e.message, true); }
     const b = $(bsel);
-    if (b && bsel === '#ls-tmake'){ b.disabled = false; b.textContent = '🏘 Make it'; b.style.background = ''; b.title = 'Build it: the game\'s own buildings of this culture on every plot, as shown. One Undo takes it back'; }
+    if (b && bsel === '#ls-tmake' && !ok){ b.disabled = false; b.textContent = '🏘 Make it'; b.style.background = ''; b.title = 'Build it: the game\'s own buildings of this culture on every plot, as shown. One Undo takes it back'; }
     return ok;
 }
 // ----- a town's own streets, zones and wall (PIN2, 2026-11-01): shapes drawn from its panel, each belonging to the
@@ -1294,6 +1387,11 @@ function lsDrawShapes(g){
       line(L.pts, true, zc + a, on ? 3 : 2, [6, 4]);
     } else if (L.kind === 'street') line(L.pts, false, K.color + a, Math.max(on ? 4 : 3, 512 * W.cam.z));
     else if (L.kind === 'wall') line(L.pts, true, K.color + a, Math.max(on ? 5 : 4, 200 * W.cam.z));
+    else if (lsIsField(L.kind)){
+      // (the longest edge is the gate's side, the field's near edge: drawn heavier)
+      line(L.pts, true, K.color + a, on ? 3 : 2);
+      const e = lsLongEdge(L.pts); if (e) line(e, false, K.color + a, on ? 7 : 5);
+    }
     else line(L.pts, K.closed, K.color + a, on ? 3 : 2);
     const F = on && !LM.drawing ? lsFrame(L) : null;
     if (F){
@@ -1629,7 +1727,7 @@ async function lsLayCliff(L, btn){
 }
 function lmDressRings(){
   return (LM.plan && LM.plan.layers || []).map((L, i) => ({L, i}))
-    .filter(o => LS_KINDS[o.L.kind] && LS_KINDS[o.L.kind].closed && !LS_KINDS[o.L.kind].town && o.L.pts && o.L.pts.length >= 3);
+    .filter(o => LS_KINDS[o.L.kind] && LS_KINDS[o.L.kind].closed && !LS_KINDS[o.L.kind].town && !lsIsField(o.L.kind) && o.L.pts && o.L.pts.length >= 3);   // (never inside a farm or orchard)
 }
 // the cells an outline reaches (the server keeps to the outline itself)
 function lmRingCells(pts){

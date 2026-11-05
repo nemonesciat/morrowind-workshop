@@ -729,3 +729,739 @@ def report(db):
     for st, C in sorted(s['style_beds'].items(), key=lambda kv: -sum(kv[1].values())):
         out.append('style %-14s beds %s' % (st, C))
     return out
+
+
+# ======================================================================================================
+# ---- outdoors: the game's plant scenes round its buildings and on its farms (2026-11-04)
+# Read as whole scenes, not single pots: crop fields with their rows, spacing and fences; orchards and the
+# lines of trees along roads and walls; the trees that stand by houses; herb and flower beds beside houses
+# (and the mushroom beds of the Telvanni towns); planters at doors and on steps; vines and ivy on walls;
+# the flowers round shrines. From the game's towns (townsurvey: every building with its door and frame) and
+# from every outdoor cell that grows a crop or an orchard tree, with figures per culture and per region
+# (the region decides the species: a Bitter Coast house gets its own plants). storydress (yards, farms,
+# orchards) draws on outdoor_rule(); the figures are in packaging/test builds notes (2.6.12-test8).
+OUT_V = 'v1'
+CROP = re.compile(r'saltrice|marshmerrow|corkbulb|wickwheat|ash_yam|hackle-lo|spikerice|withwheat|drumpear\d|gorapple\d|bleakblh|flora_wheat|cabbage|grapevine|flora_corn')
+ORCHARD = re.compile(r'flora_fig\d|flora_apple\d|treeolive|gorappletree|drumpeartree')
+MUSHROOM = re.compile(r'shroom|mushroom|podbud|muckpod|templedom|sporec|russula|fung')
+VINE = re.compile(r'ivy|_vine|trellis')
+GRASSY = re.compile(r'grass|sedge|_fern|reed|moss|lichen|parasol')
+SHRUBBY = re.compile(r'bush|shrub|trama|holly|heather|comberry|roobrush|bittergreen|kreshweed|chokeweed|scathecraw|muckspunge|stoneflower|hackle|bc_fern|fire_fern')
+TREEISH = re.compile(r'tree|dlt_trees|stump')
+SHRINE = re.compile(r'shrine|altar|triolith|wayshrine')
+FENCEY = re.compile(r'fence|palisade|railing|trellis|hedge')
+NOT_PLANT = re.compile(r'rock|boulder|(^|_)stone_\d|marker|sound|_log|logpile|woodpile|kelp|coral|lily_?pad|seaweed|sack|barrel|crate|basket|bowl|bottle|ingred|pathspear')
+LINK_FIELD = 260          # crops this close stand in one field
+LINK_BED = 180            # small plants this close stand in one bed
+LINK_ORCH = 760           # orchard trees this close stand in one orchard
+LINK_LINE = 560           # trees this close may stand in one line
+NEAR_BLD = 600            # a plant this near a building's walls is the building's
+OUT_EX = 60               # examples kept per scene kind
+OUT_CELLS = 900           # crop and orchard cells read beyond the towns (the nearest-to-a-building first)
+
+
+def _out_disk(db):
+    import taste
+    return taste.cache_file('gardenout_%s_%s' % (taste.sig(db), OUT_V))
+
+
+def outdoor_ready(db):
+    """The outdoor scene survey if learnt (memory or disk); else None, and it learns in the background."""
+    import taste
+    key = 'outdoor'
+    if key in _cache and _cache[key][0] is db.recs:
+        return _cache[key][1]
+    try:
+        if os.path.isfile(_out_disk(db)):
+            return outdoor(db)
+    except Exception:
+        return None
+    if _thread.get('o') is None or not _thread['o'].is_alive():
+        import background
+        _thread['o'] = background.start('the game\'s gardens outdoors', lambda: outdoor(db), task=('gardensurvey', 'outdoor', []))
+    return taste.stale(_cache, key, db.recs, _out_disk(db))
+
+
+def outdoor(db):
+    key = 'outdoor'
+    if key in _cache and _cache[key][0] is db.recs:
+        return _cache[key][1]
+    path = None
+    try:
+        path = _out_disk(db)
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8') as f:
+                out = json.load(f)
+            _cache[key] = (db.recs, out)
+            return out
+    except Exception:
+        pass
+    out = _outdoor(db)
+    _cache[key] = (db.recs, out)
+    if path:
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(out, f)
+        except Exception:
+            pass
+    return out
+
+
+def plant_kind(low):
+    """'crop', 'orchard' (a fruit tree), 'vine', 'mushroom', 'tree', 'grass', 'shrub', 'flower' (a small plant or
+    herb), or None for what does not grow (a rock, a planter, a sound)."""
+    if NOT_PLANT.search(low) and 'stoneflower' not in low:
+        return None
+    if PLANTER.search(low):
+        return None
+    if CROP.search(low):
+        return 'crop'
+    if ORCHARD.search(low):
+        return 'orchard'
+    if VINE.search(low):
+        return 'vine'
+    if MUSHROOM.search(low):
+        return 'mushroom'
+    if TREEISH.search(low) and 'treehouse' not in low and 'root' not in low:
+        return 'tree'
+    if GRASSY.search(low):
+        return 'grass'
+    if SHRUBBY.search(low):
+        return 'shrub'
+    if low.startswith(('flora_', 't_cyr_flora', 't_sky_flora', 't_mw_flora', 't_glb_flora', 't_ham_flora', 't_rea_flora', 'tramaroot')) or PLANT.search(low):
+        return 'flower'
+    return None
+
+
+def plant_base(low):
+    """A plant's kind-name without its variant number: flora_saltrice_01 and _02 are one crop."""
+    return re.sub(r'_?\d+[a-z]?$', '', low)
+
+
+def _out_refs(db, ck, memo):
+    from project import ref_info
+    refs, _h = db.cell_refs(ck)
+    out = []
+    for ref in refs.values():
+        rid, pos, sc, dead = ref_info(ref['subs'])
+        if dead or not rid:
+            continue
+        low = rid.lower()
+        if low not in memo:
+            ri = db.resolve_id(rid)
+            memo[low] = (db.recs[ri][0], mapdata.object_bounds(db, ri)) if ri is not None else None
+        info = memo[low]
+        if not info:
+            continue
+        out.append({'id': low, 'type': info[0], 'p': list(pos), 's': sc or 1.0, 'b': info[1], 'cell': ck})
+    return out
+
+
+def _clusters(items, link, at=lambda r: (r['p'][0], r['p'][1])):
+    left = list(items)
+    out = []
+    while left:
+        grp = [left.pop()]
+        i = 0
+        while i < len(grp):
+            ax, ay = at(grp[i])
+            keep = []
+            for b in left:
+                bx, by = at(b)
+                if abs(ax - bx) <= link and abs(ay - by) <= link and math.hypot(ax - bx, ay - by) <= link:
+                    grp.append(b)
+                else:
+                    keep.append(b)
+            left = keep
+            i += 1
+        out.append(grp)
+    return out
+
+
+def _axes(pts):
+    """The main axis of a set of points (unit u), its normal v, and the extents along each."""
+    n = float(len(pts))
+    mx, my = sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n
+    sxx = sum((p[0] - mx) ** 2 for p in pts) / n
+    syy = sum((p[1] - my) ** 2 for p in pts) / n
+    sxy = sum((p[0] - mx) * (p[1] - my) for p in pts) / n
+    ang = 0.5 * math.atan2(2 * sxy, sxx - syy)
+    u = (math.cos(ang), math.sin(ang))
+    v = (-u[1], u[0])
+    pu = [(p[0] - mx) * u[0] + (p[1] - my) * u[1] for p in pts]
+    pv = [(p[0] - mx) * v[0] + (p[1] - my) * v[1] for p in pts]
+    return (mx, my), u, v, pu, pv
+
+
+def _rows(pv, pu, split=55.0):
+    """1-D rows: the points' coordinates across the main axis grouped where gaps are under `split`;
+    (rows: [[indices]], row gap percentiles, in-row gap percentiles, share of points in rows of three or more)."""
+    order = sorted(range(len(pv)), key=lambda i: pv[i])
+    rows, cur = [], [order[0]]
+    for a, b in zip(order, order[1:]):
+        if pv[b] - pv[a] > split:
+            rows.append(cur)
+            cur = []
+        cur.append(b)
+    rows.append(cur)
+    centres = [sum(pv[i] for i in r) / len(r) for r in rows]
+    rgaps = [b - a for a, b in zip(centres, centres[1:])]
+    igaps = []
+    for r in rows:
+        us = sorted(pu[i] for i in r)
+        igaps += [b - a for a, b in zip(us, us[1:])]
+    rowy = sum(len(r) for r in rows if len(r) >= 3) / float(len(pv))
+    return rows, rgaps, igaps, round(rowy, 2)
+
+
+def _align(rzs):
+    """How alike the turns are: 1 all the same, 0 every which way (the length of the mean unit vector)."""
+    if not rzs:
+        return 0.0
+    c = sum(math.cos(a) for a in rzs) / len(rzs)
+    s = sum(math.sin(a) for a in rzs) / len(rzs)
+    return round(math.hypot(c, s), 2)
+
+
+def _nn(pts):
+    out = []
+    for i, a in enumerate(pts):
+        d = min((math.hypot(a[0] - b[0], a[1] - b[1]) for j, b in enumerate(pts) if j != i), default=None)
+        if d is not None:
+            out.append(d)
+    return out
+
+
+def _box_dist(box, x, y):
+    """Distance from a point to an axis-aligned box's edge (0 inside)."""
+    dx = max(box[0] - x, 0, x - box[2])
+    dy = max(box[1] - y, 0, y - box[3])
+    return math.hypot(dx, dy)
+
+
+def _side_of(b, x, y):
+    """Where a point stands about a building whose door frame is known: 'front', 'back', 'side', or None."""
+    if b.get('face') is None:
+        return None
+    ang = b['face'] + math.pi
+    c, s = math.cos(ang), math.sin(ang)
+    dx, dy = x - b['x'], y - b['y']
+    lx = dx * c - dy * s
+    ly = dx * s + dy * c
+    fw = b.get('fw') or 400
+    fd = b.get('fd') or 400
+    if ly < 0 and abs(lx) <= fw / 2.0 + 120:
+        return 'front'
+    if ly > fd and abs(lx) <= fw / 2.0 + 120:
+        return 'back'
+    return 'side'
+
+
+def _door_frame(b, x, y):
+    """(lx, ly) of a point in a building's door frame: x to the right facing in, y inward from the door."""
+    ang = b['face'] + math.pi
+    c, s = math.cos(ang), math.sin(ang)
+    dx, dy = x - b['x'], y - b['y']
+    return dx * c - dy * s, dx * s + dy * c
+
+
+def _outdoor(db):
+    import townsurvey
+    import landscape
+    import taste
+    memo = {}
+    T = townsurvey.survey(db)
+    towns = T['towns']
+    town_cells = {}
+    for t in towns:
+        for gx, gy in t['cells']:
+            town_cells['#%d,%d' % (gx, gy)] = t
+    # the cells beyond the towns that grow a crop or an orchard tree (farms stand outside the game's towns)
+    cand = Counter()
+    for r in db.recs:
+        if r[0] not in ('STAT', 'ACTI', 'CONT'):
+            continue
+        low = r[1].lower()
+        if not (CROP.search(low) or ORCHARD.search(low)):
+            continue
+        for ci in db.used_in.get(low, ()):
+            rc = db.recs[ci]
+            if rc[0] == 'CELL' and rc[5] != 'interior' and rc[7] and rc[7].startswith('#') and rc[7] not in town_cells:
+                cand[rc[7]] += 1
+    mine = set((db.project.cells or {}).keys()) if getattr(db, 'project', None) else set()
+    cand = [k for k, _n in cand.most_common() if k not in mine][:OUT_CELLS]
+    groups = [{'cells': ['#%d,%d' % (gx, gy) for gx, gy in t['cells']], 'town': t} for t in towns]
+    for k in cand:
+        gx, gy = (int(v) for v in k[1:].split(','))
+        groups.append({'cells': ['#%d,%d' % (gx + dx, gy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)], 'keep': k, 'town': None})
+    ref_cache = {}
+    road_cache = {}
+
+    def refs_of(ck):
+        if ck not in ref_cache:
+            try:
+                ref_cache[ck] = _out_refs(db, ck, memo)
+            except Exception:
+                ref_cache[ck] = []
+        return ref_cache[ck]
+
+    def roads_of(ck):
+        if ck not in road_cache:
+            gx, gy = (int(v) for v in ck[1:].split(','))
+            pats = set()
+            try:
+                L = landscape.read(db, gx, gy)
+                if L.get('exists') and L.get('t'):
+                    tex = L.get('tex') or {}
+                    for n_, t_ in enumerate(L['t']):
+                        if t_ and townsurvey.ROAD.search((t_ + ' ' + (tex.get(t_) or '')).lower()):
+                            pats.add((gx * 16 + n_ % 16, gy * 16 + n_ // 16))
+            except Exception:
+                pass
+            road_cache[ck] = pats
+        return road_cache[ck]
+
+    def region_of(ck):
+        ci = mapdata.cell_info(db, ck)
+        return ((ci or {}).get('region') or '').lower()
+
+    def ground(x, y):
+        return mapdata.terrain_z(db, x, y)
+
+    def slope_at(x, y):
+        a, b, c, d = ground(x + 128, y), ground(x - 128, y), ground(x, y + 128), ground(x, y - 128)
+        if None in (a, b, c, d):
+            return None
+        return round(math.degrees(math.atan(math.hypot((a - b) / 256.0, (c - d) / 256.0))), 1)
+
+    def wet_at(x, y):
+        for dx, dy in ((0, 0), (512, 0), (-512, 0), (0, 512), (0, -512), (362, 362), (-362, 362), (362, -362), (-362, -362)):
+            g = ground(x + dx, y + dy)
+            if g is not None and g <= 0:
+                return True
+        return False
+    # the figures
+    F = {'fields': [], 'orchards': [], 'lines': [], 'planters': [], 'vines': [], 'beds': [], 'shrines': [], 'house_trees': [],
+         'buildings': Counter(), 'bld_regions': Counter(), 'loose': Counter(), 'seen_cells': 0}
+    for G in groups:
+        t = G['town']
+        cells = G['cells']
+        refs = []
+        for ck in cells:
+            for r in refs_of(ck):
+                refs.append(r)
+        if not refs:
+            continue
+        F['seen_cells'] += len(cells)
+        roads = set()
+        for ck in cells:
+            roads |= roads_of(ck)
+        # buildings: the town's (door, frame, style, kind) and the big pieces of architecture standing here
+        blds = []
+        if t:
+            for b in t['buildings']:
+                if b.get('box'):
+                    blds.append(dict(b, culture=t['culture'] or b.get('style') or ''))
+        for r in refs:
+            if r['type'] not in ('STAT', 'ACTI') or not r['b']:
+                continue
+            low = r['id']
+            if not (low.startswith('ex_') or kits.kit_prefix(low)):
+                continue
+            w = max(r['b'][3] - r['b'][0], r['b'][4] - r['b'][1]) * r['s']
+            if w < 300 or FENCEY.search(low) or re.search(r'wall|road|bridge|dock|pier|plat|stairs?|steps?|rock|tree|root', low):
+                continue
+            wb = fixit._world_box(r)
+            if any(_box_dist(b['box'], (wb[0] + wb[3]) / 2, (wb[1] + wb[4]) / 2) < 1 for b in blds):
+                continue
+            blds.append({'x': (wb[0] + wb[3]) / 2, 'y': (wb[1] + wb[4]) / 2, 'box': [wb[0], wb[1], wb[3], wb[4]], 'face': None, 'kind': 'other',
+                         'style': townsurvey.town_style(low), 'culture': (t['culture'] if t else '') or townsurvey.town_style(low) or '', 'fw': wb[3] - wb[0], 'fd': wb[4] - wb[1]})
+        keep_cell = G.get('keep')
+
+        def in_scope(x, y):
+            return keep_cell is None or ('#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0))) == keep_cell
+
+        def nearest_bld(x, y, reach=NEAR_BLD):
+            best = None
+            for b in blds:
+                d = _box_dist(b['box'], x, y)
+                if d <= reach and (best is None or d < best[0]):
+                    best = (d, b)
+            return best
+
+        def culture_at(x, y):
+            nb = nearest_bld(x, y, 1500)
+            if nb:
+                return nb[1].get('culture') or nb[1].get('style') or ''
+            return (t['culture'] if t else '') or ''
+
+        def road_near(x, y, within=1):
+            px, py = int(math.floor(x / 512.0)), int(math.floor(y / 512.0))
+            return any((px + i, py + j) in roads for i in range(-within, within + 1) for j in range(-within, within + 1))
+
+        def fence_near(pts, within=250):
+            n = 0
+            for r in refs:
+                if r['type'] in ('STAT', 'ACTI') and FENCEY.search(r['id']) and not VINE.search(r['id']):
+                    if any(math.hypot(r['p'][0] - x, r['p'][1] - y) <= within for x, y in pts):
+                        n += 1
+            return n
+        if t:
+            for b in blds:
+                if b.get('kind') != 'other':
+                    F['buildings'][b.get('culture') or '?'] += 1
+                    F['bld_regions'][region_of('#%d,%d' % (math.floor(b['x'] / 8192.0), math.floor(b['y'] / 8192.0)))] += 1
+        plants = []
+        for r in refs:
+            k = plant_kind(r['id'])
+            if k and r['type'] in ('STAT', 'ACTI', 'CONT') and r['b']:
+                r['kind'] = k
+                r['base'] = plant_base(r['id'])
+                plants.append(r)
+        if not plants:
+            continue
+        # (what stands inside a building's walls is set into it, not a scene)
+        for r in plants:
+            r['in_bld'] = any(_box_dist(b['box'], r['p'][0], r['p'][1]) < 1 and b['box'][0] + 16 < r['p'][0] < b['box'][2] - 16 and b['box'][1] + 16 < r['p'][1] < b['box'][3] - 16 for b in blds)
+        # ---- fields: the crops in rows
+        for grp in _clusters([r for r in plants if r['kind'] == 'crop' and not r['in_bld']], LINK_FIELD):
+            if len(grp) < 5:
+                continue
+            pts = [(r['p'][0], r['p'][1]) for r in grp]
+            (mx, my), u, v, pu, pv = _axes(pts)
+            if not in_scope(mx, my):
+                continue
+            kinds = Counter(r['base'] for r in grp)
+            dom, dn = kinds.most_common(1)[0]
+            rows, rgaps, igaps, rowy = _rows(pv, pu)
+            nb = nearest_bld(mx, my, 1200)
+            side = _side_of(nb[1], mx, my) if nb else None
+            gz = [ground(x, y) for x, y in pts]
+            gz = [g for g in gz if g is not None]
+            F['fields'].append({'cell': '#%d,%d' % (math.floor(mx / 8192.0), math.floor(my / 8192.0)), 'region': region_of('#%d,%d' % (math.floor(mx / 8192.0), math.floor(my / 8192.0))),
+                                'culture': culture_at(mx, my), 'n': len(grp), 'crop': dom, 'dom_share': round(dn / float(len(grp)), 2), 'kinds': len(kinds),
+                                'long': round(max(pu) - min(pu)), 'wide': round(max(pv) - min(pv)), 'rows': len(rows), 'per_row': round(len(grp) / float(len(rows)), 1),
+                                'row_gap': round(sum(rgaps) / len(rgaps)) if rgaps else None, 'in_gap': round(sum(igaps) / len(igaps)) if igaps else None,
+                                'rowy': rowy, 'align': _align([r['p'][5] for r in grp]), 'scale': round(sum(r['s'] for r in grp) / len(grp), 2),
+                                'scale_sd': round((sum((r['s'] - sum(q['s'] for q in grp) / len(grp)) ** 2 for r in grp) / len(grp)) ** 0.5, 2),
+                                'fence': fence_near(pts), 'bld': round(nb[0]) if nb else None, 'side': side, 'road': road_near(mx, my),
+                                'slope': slope_at(mx, my), 'wet': wet_at(mx, my) or (bool(gz) and min(gz) <= 32), 'nn': round(sum(_nn(pts)) / len(pts))})
+        # ---- orchards: fruit trees together
+        for grp in _clusters([r for r in plants if r['kind'] == 'orchard' and not r['in_bld']], LINK_ORCH):
+            if len(grp) < 3:
+                continue
+            pts = [(r['p'][0], r['p'][1]) for r in grp]
+            (mx, my), u, v, pu, pv = _axes(pts)
+            if not in_scope(mx, my):
+                continue
+            nn = _nn(pts)
+            mean = sum(nn) / len(nn)
+            cv = (sum((d - mean) ** 2 for d in nn) / len(nn)) ** 0.5 / mean if mean else 0
+            kinds = Counter(r['base'] for r in grp)
+            nb = nearest_bld(mx, my, 1500)
+            rows, rgaps, igaps, rowy = _rows(pv, pu, split=mean * 0.45)
+            F['orchards'].append({'cell': '#%d,%d' % (math.floor(mx / 8192.0), math.floor(my / 8192.0)), 'region': region_of('#%d,%d' % (math.floor(mx / 8192.0), math.floor(my / 8192.0))),
+                                  'culture': culture_at(mx, my), 'n': len(grp), 'tree': kinds.most_common(1)[0][0], 'kinds': len(kinds), 'nn': round(mean), 'cv': round(cv, 2),
+                                  'long': round(max(pu) - min(pu)), 'wide': round(max(pv) - min(pv)), 'rows': len(rows), 'rowy': rowy, 'row_gap': round(sum(rgaps) / len(rgaps)) if rgaps else None,
+                                  'fence': fence_near(pts, 300), 'bld': round(nb[0]) if nb else None, 'road': road_near(mx, my), 'slope': slope_at(mx, my),
+                                  'scale': round(sum(r['s'] for r in grp) / len(grp), 2), 'align': _align([r['p'][5] for r in grp])})
+        # ---- trees by the houses, and lines of trees along roads and walls
+        trees = [r for r in plants if r['kind'] in ('tree', 'orchard') and not r['in_bld']]
+        if t:
+            for r in trees:
+                nb = nearest_bld(r['p'][0], r['p'][1], 400)
+                if nb and nb[1].get('kind') != 'other':
+                    w = max(r['b'][3] - r['b'][0], r['b'][4] - r['b'][1]) * r['s']
+                    F['house_trees'].append({'culture': nb[1].get('culture') or '', 'region': region_of(r['cell']), 'd': round(nb[0]), 'side': _side_of(nb[1], r['p'][0], r['p'][1]),
+                                             'tree': r['base'], 'w': round(w), 'road': road_near(r['p'][0], r['p'][1])})
+        near_trees = [r for r in trees if road_near(r['p'][0], r['p'][1]) or nearest_bld(r['p'][0], r['p'][1], 900)]
+        for grp in _clusters(near_trees, LINK_LINE):
+            if len(grp) < 3:
+                continue
+            pts = [(r['p'][0], r['p'][1]) for r in grp]
+            (mx, my), u, v, pu, pv = _axes(pts)
+            if not in_scope(mx, my):
+                continue
+            dev = max(pv) - min(pv)
+            order = sorted(pu)
+            gaps = [b - a for a, b in zip(order, order[1:])]
+            mg = sum(gaps) / len(gaps)
+            even = (max(gaps) - min(gaps)) <= 0.5 * mg
+            if dev > 140 or not even or mg < 150:
+                continue
+            kinds = Counter(r['base'] for r in grp)
+            along_road = sum(1 for x, y in pts if road_near(x, y, 0)) >= 0.67 * len(pts)
+            along_wall = sum(1 for x, y in pts if nearest_bld(x, y, 260)) >= 0.67 * len(pts)
+            F['lines'].append({'region': region_of('#%d,%d' % (math.floor(mx / 8192.0), math.floor(my / 8192.0))), 'culture': culture_at(mx, my), 'n': len(grp),
+                               'gap': round(mg), 'same': round(kinds.most_common(1)[0][1] / float(len(grp)), 2), 'tree': kinds.most_common(1)[0][0],
+                               'road': along_road, 'wall': along_wall, 'dev': round(dev)})
+        # ---- planters outdoors: at doors, on steps and sills, flanking in pairs; what grows in them
+        pl = [r for r in refs if r['type'] in ('STAT', 'ACTI', 'CONT') and r['b'] and is_planter(r) and not r['id'].startswith(('in_', 'ex_'))]
+        for p in pl:
+            if not in_scope(p['p'][0], p['p'][1]):
+                continue
+            wb = fixit._world_box(p)
+            g = ground(p['p'][0], p['p'][1])
+            if g is None:
+                continue
+            up = wb[2] - g
+            if up > 900 or up < -60:
+                continue
+            nb = nearest_bld(p['p'][0], p['p'][1], 500)
+            if nb and _box_dist(nb[1]['box'], p['p'][0], p['p'][1]) < 1 and nb[1]['box'][0] + 40 < p['p'][0] < nb[1]['box'][2] - 40 and nb[1]['box'][1] + 40 < p['p'][1] < nb[1]['box'][3] - 40 and up < 60:
+                continue                      # (inside the building's footprint on the ground: an interior's, or set into a wall)
+            cont = [o for o in plants if wb[0] - 16 <= o['p'][0] <= wb[3] + 16 and wb[1] - 16 <= o['p'][1] <= wb[4] + 16 and wb[2] - 30 <= o['p'][2] <= wb[5] + 160]
+            by_door = pair = False
+            lx = ly = None
+            if nb and nb[1].get('face') is not None:
+                lx, ly = _door_frame(nb[1], p['p'][0], p['p'][1])
+                by_door = abs(lx) <= 320 and -300 <= ly <= 80
+                if by_door:
+                    for q in pl:
+                        if q is p:
+                            continue
+                        qx, qy = _door_frame(nb[1], q['p'][0], q['p'][1])
+                        if abs(qx + lx) <= 70 and abs(qy - ly) <= 70 and q['id'] == p['id']:
+                            pair = True
+            F['planters'].append({'culture': (nb[1].get('culture') if nb else None) or culture_at(p['p'][0], p['p'][1]), 'region': region_of(p['cell']), 'model': p['id'], 's': round(p['s'], 2),
+                                  'up': round(up), 'stand': 'ground' if up < 40 else 'step' if up < 150 else 'high', 'bld': round(nb[0]) if nb else None, 'by_door': by_door, 'pair': pair,
+                                  'lx': round(lx) if lx is not None else None, 'ly': round(ly) if ly is not None else None, 'n': len(cont), 'grows': [o['base'] for o in cont][:6],
+                                  'kind': (nb[1].get('kind') if nb else None) or '?', 'road': road_near(p['p'][0], p['p'][1], 0)})
+        # ---- vines and ivy: on which walls, how high
+        for r in plants:
+            if r['kind'] != 'vine' or not in_scope(r['p'][0], r['p'][1]):
+                continue
+            wb = fixit._world_box(r)
+            g = ground(r['p'][0], r['p'][1])
+            if g is None:
+                continue
+            nb = nearest_bld(r['p'][0], r['p'][1], 400)
+            # (its turn against the wall it hangs on: the wall's outward normal as a yaw, atan2(nx, ny), and the
+            # vine's rz less that, to the nearest quarter turn; 0 = its local +y points out from the wall)
+            turn = None
+            if nb and nb[0] <= 80:
+                bx = nb[1]['box']
+                px_, py_ = r['p'][0], r['p'][1]
+                edges = [(abs(px_ - bx[0]), (-1, 0)), (abs(bx[2] - px_), (1, 0)), (abs(py_ - bx[1]), (0, -1)), (abs(bx[3] - py_), (0, 1))]
+                nx_, ny_ = min(edges)[1]
+                turn = int(round(((r['p'][5] - math.atan2(nx_, ny_)) % (2 * math.pi)) / (math.pi / 2))) % 4
+            F['vines'].append({'culture': (nb[1].get('culture') if nb else None) or culture_at(r['p'][0], r['p'][1]), 'region': region_of(r['cell']), 'model': r['id'], 'turn': turn,
+                               'bottom': round(wb[2] - g), 'top': round(wb[5] - g), 'wall': round(nb[0]) if nb else None, 'on_wall': bool(nb and nb[0] <= 80),
+                               'side': _side_of(nb[1], r['p'][0], r['p'][1]) if nb else None, 'kind': (nb[1].get('kind') if nb else None) or '?', 's': round(r['s'], 2)})
+        # ---- beds: small plants beside the houses (flowers, herbs, shrubs, mushrooms; grass as filler)
+        small = [r for r in plants if r['kind'] in ('flower', 'shrub', 'mushroom', 'grass') and not r['in_bld'] and nearest_bld(r['p'][0], r['p'][1], NEAR_BLD)]
+        for grp in _clusters(small, LINK_BED):
+            pts = [(r['p'][0], r['p'][1]) for r in grp]
+            mx, my = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+            if not in_scope(mx, my):
+                continue
+            nb = nearest_bld(mx, my, NEAR_BLD + 200)
+            if not nb:
+                continue
+            b = nb[1]
+            cult = b.get('culture') or culture_at(mx, my)
+            reg = region_of('#%d,%d' % (math.floor(mx / 8192.0), math.floor(my / 8192.0)))
+            if len(grp) == 1:
+                F['loose'][cult] += 1
+                continue
+            kinds = Counter(r['base'] for r in grp)
+            green = Counter(r['kind'] for r in grp)
+            wall = min(_box_dist(b['box'], x, y) for x, y in pts)
+            members = []
+            if b.get('face') is not None:
+                for r in grp[:12]:
+                    lx, ly = _door_frame(b, r['p'][0], r['p'][1])
+                    members.append([r['base'], round(lx), round(ly), round(r['s'], 2)])
+            planter_near = any(math.hypot(p['p'][0] - mx, p['p'][1] - my) < 200 for p in pl)
+            F['beds'].append({'culture': cult, 'region': reg, 'n': len(grp), 'kinds': len(kinds), 'one_kind': round(kinds.most_common(1)[0][1] / float(len(grp)), 2),
+                              'top': kinds.most_common(1)[0][0], 'mix': dict(green), 'wall': round(wall), 'side': _side_of(b, mx, my), 'bld_kind': b.get('kind') or '?',
+                              'fence': fence_near(pts, 200), 'planter': planter_near, 'nn': round(sum(_nn(pts)) / len(pts)), 'road': road_near(mx, my, 0),
+                              'spread': round(max(max(p[0] for p in pts) - min(p[0] for p in pts), max(p[1] for p in pts) - min(p[1] for p in pts))),
+                              'members': members, 'mushroom': green.get('mushroom', 0) >= 0.5 * len(grp)})
+        # ---- shrines and their flowers
+        for r in refs:
+            if r['type'] not in ('STAT', 'ACTI') or not r['b'] or not SHRINE.search(r['id']) or not in_scope(r['p'][0], r['p'][1]):
+                continue
+            wb = fixit._world_box(r)
+            near = [o for o in plants if o['kind'] not in ('tree', 'orchard', 'crop') and _box_dist((wb[0], wb[1], wb[3], wb[4]), o['p'][0], o['p'][1]) <= 300]
+            F['shrines'].append({'culture': culture_at(r['p'][0], r['p'][1]), 'region': region_of(r['cell']), 'shrine': r['id'], 'n': len(near),
+                                 'kinds': dict(Counter(o['base'] for o in near).most_common(4)), 'd': _pcts([round(_box_dist((wb[0], wb[1], wb[3], wb[4]), o['p'][0], o['p'][1])) for o in near]) if near else None,
+                                 'town': bool(t)})
+    return _out_summary(F)
+
+
+def _share(items, key):
+    n = len(items)
+    return round(sum(1 for i in items if i.get(key)) / float(n), 3) if n else None
+
+
+def _by(items, key, f):
+    out = {}
+    for k in sorted({i.get(key) or '?' for i in items}):
+        sub = [i for i in items if (i.get(key) or '?') == k]
+        if len(sub) >= 3:
+            out[k] = f(sub)
+    return out
+
+
+def _out_summary(F):
+    fields, orchards, lines, planters, vines, beds, shrines, ht = (F[k] for k in ('fields', 'orchards', 'lines', 'planters', 'vines', 'beds', 'shrines', 'house_trees'))
+    B = F['buildings']
+    nb = float(sum(B.values()) or 1)
+
+    def field_fig(fs):
+        return {'n': len(fs), 'plants': _pcts([f['n'] for f in fs]), 'crops': dict(Counter(f['crop'] for f in fs).most_common(8)), 'one_crop': round(sum(f['dom_share'] for f in fs) / len(fs), 2),
+                'rows': _pcts([f['rows'] for f in fs]), 'per_row': _pcts([f['per_row'] for f in fs]), 'row_gap': _pcts([f['row_gap'] for f in fs if f['row_gap']]),
+                'in_gap': _pcts([f['in_gap'] for f in fs if f['in_gap']]), 'nn': _pcts([f['nn'] for f in fs]), 'rowy': _pcts([f['rowy'] for f in fs]), 'align': _pcts([f['align'] for f in fs]),
+                'long': _pcts([f['long'] for f in fs]), 'wide': _pcts([f['wide'] for f in fs]), 'scale': _pcts([f['scale'] for f in fs]), 'scale_sd': _pcts([f['scale_sd'] for f in fs]),
+                'fenced': round(sum(1 for f in fs if f['fence']) / float(len(fs)), 2), 'fence_pieces': _pcts([f['fence'] for f in fs if f['fence']]),
+                'by_building': round(sum(1 for f in fs if f['bld'] is not None) / float(len(fs)), 2), 'bld_d': _pcts([f['bld'] for f in fs if f['bld'] is not None]),
+                'side': dict(Counter(f['side'] for f in fs if f['side'])), 'road': _share(fs, 'road'), 'wet': _share(fs, 'wet'), 'slope': _pcts([f['slope'] for f in fs if f['slope'] is not None])}
+
+    def orch_fig(os_):
+        return {'n': len(os_), 'trees': _pcts([o['n'] for o in os_]), 'kinds': dict(Counter(o['tree'] for o in os_).most_common(8)), 'nn': _pcts([o['nn'] for o in os_]), 'cv': _pcts([o['cv'] for o in os_]),
+                'rows': _pcts([o['rows'] for o in os_]), 'rowy': _pcts([o['rowy'] for o in os_]), 'row_gap': _pcts([o['row_gap'] for o in os_ if o['row_gap']]),
+                'fenced': round(sum(1 for o in os_ if o['fence']) / float(len(os_)), 2), 'by_building': round(sum(1 for o in os_ if o['bld'] is not None) / float(len(os_)), 2),
+                'bld_d': _pcts([o['bld'] for o in os_ if o['bld'] is not None]), 'road': _share(os_, 'road'), 'slope': _pcts([o['slope'] for o in os_ if o['slope'] is not None]),
+                'scale': _pcts([o['scale'] for o in os_]), 'align': _pcts([o['align'] for o in os_])}
+
+    def line_fig(ls):
+        return {'n': len(ls), 'len': _pcts([l['n'] for l in ls]), 'gap': _pcts([l['gap'] for l in ls]), 'same': _pcts([l['same'] for l in ls]), 'road': _share(ls, 'road'), 'wall': _share(ls, 'wall'),
+                'trees': dict(Counter(l['tree'] for l in ls).most_common(8))}
+
+    def planter_fig(ps):
+        return {'n': len(ps), 'stand': {k: round(v / float(len(ps)), 2) for k, v in Counter(p['stand'] for p in ps).items()}, 'by_door': _share(ps, 'by_door'), 'pair': _share(ps, 'pair'),
+                'models': dict(Counter(p['model'] for p in ps).most_common(8)), 'scale': {m: _med([p['s'] for p in ps if p['model'] == m]) for m, _n in Counter(p['model'] for p in ps).most_common(6)},
+                'planted': round(sum(1 for p in ps if p['n']) / float(len(ps)), 2), 'grows': _pcts([p['n'] for p in ps if p['n']]), 'lx': _pcts([abs(p['lx']) for p in ps if p['by_door']]),
+                'ly': _pcts([p['ly'] for p in ps if p['by_door']]), 'up_step': _pcts([p['up'] for p in ps if p['stand'] == 'step']), 'bld_d': _pcts([p['bld'] for p in ps if p['bld'] is not None]),
+                'kinds': dict(Counter(p['kind'] for p in ps).most_common(6)), 'road': _share(ps, 'road'), 'what': dict(Counter(g for p in ps for g in p['grows']).most_common(8))}
+
+    def vine_fig(vs):
+        return {'n': len(vs), 'on_wall': _share(vs, 'on_wall'), 'bottom': _pcts([v['bottom'] for v in vs]), 'top': _pcts([v['top'] for v in vs]), 'models': dict(Counter(v['model'] for v in vs).most_common(6)),
+                'side': dict(Counter(v['side'] for v in vs if v['side'])), 'kinds': dict(Counter(v['kind'] for v in vs).most_common(5)), 'scale': _pcts([v['s'] for v in vs]),
+                'turn': {m: dict(Counter(v['turn'] for v in vs if v['model'] == m and v['turn'] is not None)) for m, _n in Counter(v['model'] for v in vs if v['on_wall']).most_common(6)},
+                'wall_bottom': _pcts([v['bottom'] for v in vs if v['on_wall']])}
+
+    def bed_fig(bs):
+        return {'n': len(bs), 'plants': _pcts([b['n'] for b in bs]), 'kinds': _pcts([b['kinds'] for b in bs]), 'one_kind': _pcts([b['one_kind'] for b in bs]), 'wall': _pcts([b['wall'] for b in bs]),
+                'side': {k: round(v / float(sum(1 for b in bs if b['side'])), 2) for k, v in Counter(b['side'] for b in bs if b['side']).items()},
+                'fenced': round(sum(1 for b in bs if b['fence']) / float(len(bs)), 2), 'planter': _share(bs, 'planter'), 'nn': _pcts([b['nn'] for b in bs]), 'spread': _pcts([b['spread'] for b in bs]),
+                'top': dict(Counter(b['top'] for b in bs).most_common(10)), 'mix': dict(sum((Counter(b['mix']) for b in bs), Counter()).most_common()), 'mushroom': _share(bs, 'mushroom'),
+                'road': _share(bs, 'road'), 'bld_kind': dict(Counter(b['bld_kind'] for b in bs).most_common(6))}
+
+    def shrine_fig(ss):
+        with_ = [s for s in ss if s['n']]
+        return {'n': len(ss), 'with_plants': round(len(with_) / float(len(ss)), 2), 'plants': _pcts([s['n'] for s in with_]) if with_ else None,
+                'kinds': dict(sum((Counter(s['kinds']) for s in with_), Counter()).most_common(8)), 'd': _pcts([d for s in with_ if s['d'] for d in s['d'][2:3]]) if with_ else None,
+                'shrines': dict(Counter(s['shrine'] for s in ss).most_common(6))}
+
+    def ht_fig(ts):
+        return {'n': len(ts), 'd': _pcts([t['d'] for t in ts]), 'side': dict(Counter(t['side'] for t in ts if t['side'])), 'trees': dict(Counter(t['tree'] for t in ts).most_common(8)),
+                'w': _pcts([t['w'] for t in ts]), 'road': _share(ts, 'road')}
+    # (a farm: a field by a building, fenced, or in rows; the Grazelands' wild wickwheat patches are fields by the
+    # count but nobody's farm, and they would make every Dunmer farm a wickwheat one)
+    farms = [f for f in fields if (f['bld'] is not None and f['bld'] <= 700) or f['fence'] or (f['rowy'] >= 0.8 and f['rows'] >= 2 and f['align'] >= 0.5)]
+    out = {'cells': F['seen_cells'], 'buildings': dict(B), 'bld_regions': dict(F['bld_regions']),
+           'fields': {'all': field_fig(fields) if fields else None, 'by_culture': _by(fields, 'culture', field_fig), 'by_region': _by(fields, 'region', field_fig),
+                      'farms': field_fig(farms) if farms else None, 'farms_by_culture': _by(farms, 'culture', field_fig), 'farms_by_region': _by(farms, 'region', field_fig),
+                      'crops_by_region': {r: dict(Counter(f['crop'] for f in farms if f['region'] == r).most_common(6)) for r in sorted({f['region'] for f in farms})},
+                      'crops_by_culture': {c: dict(Counter(f['crop'] for f in farms if f['culture'] == c).most_common(6)) for c in sorted({f['culture'] for f in farms})},
+                      'wild_crops_by_region': {r: dict(Counter(f['crop'] for f in fields if f['region'] == r).most_common(6)) for r in sorted({f['region'] for f in fields})},
+                      'examples': farms[:OUT_EX]},
+           'orchards': {'all': orch_fig(orchards) if orchards else None, 'by_culture': _by(orchards, 'culture', orch_fig), 'by_region': _by(orchards, 'region', orch_fig),
+                        'trees_by_region': {r: dict(Counter(o['tree'] for o in orchards if o['region'] == r).most_common(4)) for r in sorted({o['region'] for o in orchards})},
+                        'examples': orchards[:OUT_EX]},
+           'lines': {'all': line_fig(lines) if lines else None, 'by_culture': _by(lines, 'culture', line_fig), 'examples': lines[:OUT_EX]},
+           'house_trees': {'all': ht_fig(ht) if ht else None, 'by_culture': _by(ht, 'culture', ht_fig),
+                           'per_building': {c: round(sum(1 for t in ht if t['culture'] == c) / float(B.get(c) or 1), 3) for c in B},
+                           'trees_by_region': {r: dict(Counter(t['tree'] for t in ht if t['region'] == r).most_common(5)) for r in sorted({t['region'] for t in ht})}},
+           'planters': {'all': planter_fig(planters) if planters else None, 'by_culture': _by(planters, 'culture', planter_fig),
+                        'per_building': {c: round(sum(1 for p in planters if p['culture'] == c) / float(B.get(c) or 1), 3) for c in B},
+                        'examples': [p for p in planters if p['by_door']][:OUT_EX]},
+           'vines': {'all': vine_fig(vines) if vines else None, 'by_culture': _by(vines, 'culture', vine_fig),
+                     'per_building': {c: round(sum(1 for v in vines if v['culture'] == c) / float(B.get(c) or 1), 3) for c in B}},
+           'beds': {'all': bed_fig(beds) if beds else None, 'by_culture': _by(beds, 'culture', bed_fig), 'by_region': _by(beds, 'region', bed_fig),
+                    'per_building': {c: round(sum(1 for b in beds if b['culture'] == c) / float(B.get(c) or 1), 3) for c in B},
+                    'loose_per_building': {c: round(F['loose'].get(c, 0) / float(B.get(c) or 1), 3) for c in B},
+                    'kinds_by_region': {r: dict(Counter(b['top'] for b in beds if b['region'] == r).most_common(8)) for r in sorted({b['region'] for b in beds})},
+                    'kinds_by_culture': {c: dict(Counter(b['top'] for b in beds if b['culture'] == c).most_common(8)) for c in sorted({b['culture'] for b in beds})},
+                    'examples': [b for b in beds if b['members']][:OUT_EX]},
+           'shrines': {'all': shrine_fig(shrines) if shrines else None, 'by_culture': _by(shrines, 'culture', shrine_fig)}}
+    return out
+
+
+def outdoor_rule(db, what, culture=None, region=None):
+    """The outdoor figures for one kind of scene ('fields', 'orchards', 'lines', 'house_trees', 'planters', 'vines',
+    'beds', 'shrines'): the region's own where it has three or more, else the culture's, else every place's;
+    None until surveyed."""
+    s = outdoor_ready(db)
+    if what == 'farms':
+        W = (s or {}).get('fields') or {}
+        for key, val in (('farms_by_region', (region or '').lower()), ('farms_by_culture', culture)):
+            if val and W.get(key, {}).get(val):
+                return W[key][val]
+        return W.get('farms') or None
+    if not s or not s.get(what):
+        return None
+    W = s[what]
+    for key, val in (('by_region', (region or '').lower()), ('by_culture', culture)):
+        if val and W.get(key, {}).get(val):
+            return W[key][val]
+    return W.get('all')
+
+
+def per_building(db, what, culture, least=25):
+    """How many of these scenes ('planters', 'vines', 'beds', 'house_trees'; 'loose' for the single plants by a
+    house) the game stands a building in towns of this culture; the mean over every culture when fewer than
+    `least` of the culture's buildings were read; None until surveyed."""
+    s = outdoor_ready(db)
+    if not s:
+        return None
+    B = s.get('buildings') or {}
+    key = 'loose_per_building' if what == 'loose' else 'per_building'
+    W = s.get('beds' if what == 'loose' else what) or {}
+    rates = W.get(key) or {}
+    if culture in rates and (B.get(culture) or 0) >= least:
+        return rates[culture]
+    tot = float(sum(B.values()) or 1)
+    return round(sum(rates.get(c, 0) * n for c, n in B.items()) / tot, 3)
+
+
+def region_species(db, what, region, culture=None, least=2):
+    """What the game grows in scenes of this kind in this region ({base id: n}; what: 'fields' crops, 'orchards'
+    trees, 'beds' plants, 'house_trees'), the culture's where the region has under `least` kinds, else every
+    place's; {} until surveyed."""
+    s = outdoor_ready(db)
+    if not s or not s.get(what):
+        return {}
+    W = s[what]
+    key = {'fields': 'crops_by_region', 'orchards': 'trees_by_region', 'beds': 'kinds_by_region', 'house_trees': 'trees_by_region'}.get(what)
+    own = (W.get(key) or {}).get((region or '').lower()) if key else None
+    if own and sum(own.values()) >= least:
+        return dict(own)
+    ck = {'fields': 'crops_by_culture', 'beds': 'kinds_by_culture'}.get(what)
+    own = (W.get(ck) or {}).get(culture) if ck and culture else None
+    if own and sum(own.values()) >= least:
+        return dict(own)
+    A = W.get('all') or {}
+    return dict(A.get('crops') or A.get('kinds') or A.get('top') or A.get('trees') or {})
+
+
+def outdoor_report(db):
+    s = outdoor(db)
+    out = ['%d outdoor cells read; buildings by culture %s' % (s['cells'], s['buildings'])]
+    for what in ('fields', 'orchards', 'lines', 'house_trees', 'planters', 'vines', 'beds', 'shrines'):
+        W = s.get(what) or {}
+        out.append('== %s: all %s' % (what, json.dumps(W.get('all'))))
+        for c, fig in sorted((W.get('by_culture') or {}).items()):
+            out.append('   %-14s %s' % (c, json.dumps(fig)))
+        if W.get('farms'):
+            out.append('   farms %s' % json.dumps(W['farms']))
+            for c, fig in sorted((W.get('farms_by_culture') or {}).items()):
+                out.append('   farms %-14s %s' % (c, json.dumps(fig)))
+        for k in ('per_building', 'loose_per_building', 'crops_by_region', 'trees_by_region', 'kinds_by_region', 'crops_by_culture', 'kinds_by_culture', 'wild_crops_by_region'):
+            if W.get(k):
+                out.append('   %s %s' % (k, json.dumps(W[k])))
+        for c, fig in sorted((W.get('by_region') or {}).items())[:40]:
+            out.append('   region %-26s %s' % (c, json.dumps(fig)))
+    return out

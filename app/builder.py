@@ -219,7 +219,12 @@ def _pick(kp, need, family=None):
     ledges step up and down along the corridor)."""
     best = None
     for p in kp['pieces']:
-        if not _storey_ok(p, need):
+        off = not _storey_ok(p, need)
+        # (a base set's piece on the roof storey only where it closes every wall and the roof set has no piece that
+        # does: the game's thatch houses stand in_c_plain_endcap, _corner and _3way under their roofs, 3 of 36
+        # places, where the Workshop stacked two roof pieces on the spot, their floors and roofs flickering through
+        # each other; the user put the end cap there by hand, 2026-11-04)
+        if off and not (need.get('_top') and p.get('storey') == 'lower'):
             continue
         for q in range(4):
             pat = kits.rotate(p['pattern'], q)
@@ -229,6 +234,8 @@ def _pick(kp, need, family=None):
                    (need[s] == 'wall' and pat[s] == 'door') for s in kits.SIDES):
                 continue
             missing = [s for s in kits.SIDES if need[s] == 'wall' and pat[s] != 'wall']
+            if off and missing:
+                continue
             # a doorway where the room should just carry on leaves bits of wall and posts standing in it
             stubs = sum(1 for s in kits.SIDES if need[s] == 'open' and pat[s] == 'door')
             clutter = sum(pat['cover'].get(s, 0) for s in kits.SIDES if need[s] == 'open')
@@ -236,7 +243,7 @@ def _pick(kp, need, family=None):
             # (a missing wall can be closed with a loose wall piece, when the style has them)
             # (and a piece with its own ceiling over one without: some styles have both)
             score = ((stubs, len(missing)) if kp['walls'] else (len(missing), stubs)) + \
-                (p['uses'] == 0, bool(family) and _family(p['id']) != family, not pat.get('ceiling'), round(clutter, 1), -p['uses'])
+                (off, p['uses'] == 0, bool(family) and _family(p['id']) != family, not pat.get('ceiling'), round(clutter, 1), -p['uses'])
             if best is None or score < best[0]:
                 best = (score, p, q, missing, pat)
     if best is None:
@@ -1581,6 +1588,28 @@ def _grid(rooms):
     return grid, names
 
 
+def _square_roof(kp, grid):
+    """A roof kit's top storey squared off: the game's thatch roofs are rectangles (hip corners, sides and
+    centres, 2 to 4 tiles across) and the set has no piece for a re-entrant corner, so an L-shaped top floor
+    got two hip corners facing each other across the notch and the ridge opened on the void there (the user's
+    Estmorevale, 2026-11-04). The notch's tiles join the room nearest them; a top floor missing more than
+    half of its box (a thin L) is left alone. Changes `grid` in place."""
+    if not kp or not kp.get('roof_kit') or not grid:
+        return
+    top = max(t[2] for t in grid)
+    tiles = {(t[0], t[1]): r for t, r in grid.items() if t[2] == top}
+    if len(tiles) < 4:
+        return
+    xs, ys = [t[0] for t in tiles], [t[1] for t in tiles]
+    box = [(x, y) for x in range(min(xs), max(xs) + 1) for y in range(min(ys), max(ys) + 1)]
+    missing = [t for t in box if t not in tiles]
+    if not missing or len(missing) > len(box) / 2:
+        return
+    for x, y in missing:
+        near = min(tiles, key=lambda t: abs(t[0] - x) + abs(t[1] - y))
+        grid[(x, y, top)] = tiles[near]
+
+
 def _connected(tiles):
     tiles = set(tiles)
     if not tiles:
@@ -1732,7 +1761,9 @@ def _alcove(grid, used, piece, shape, s0, up, f, g):
         for s in STEP:
             n_ = nb(t, s)
             if n_[:2] == sxy:
-                setn(t, s, 'wall' if pat[s] == 'wall' else 'open')
+                # (the foot and the head open onto the flight whatever the template's piece there has: a wall
+                # across either is never right, see build_interior)
+                setn(t, s, 'wall' if pat[s] == 'wall' and t not in (lo, hi) else 'open')
                 continue
             if n_ in block:
                 setn(t, s, pat[s] if pat[s] in ('wall', 'door') else 'open')
@@ -2139,6 +2170,7 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
         except Exception:
             stacked_ids = set()
     whole = [p for p in info['pieces'] if abs(p['rise'] - H) < 8 and p.get('len', 1) == 1]
+    top = max(t[2] for t in grid) if grid else g
     ctx = _carve_ctx(grid, doors_)
     corridor = _corridors(grid)
     # (a stairwell of the game's pieces stands within two tiles of the rooms it is carved from)
@@ -2158,8 +2190,18 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
         # (under a roof storey, a stair that stops short of the roof's top leaves the void showing over
         # it from upstairs: Common thatch's own in_c_stair_thatch_pend_01/02 reach the ridge, 620 tall;
         # the family's in_c_stair_plain_tall_01, 498, stops 122 short. Two see-through holes measured)
-        if kp.get('roof_kit') and piece.get('height', 1e9) < H + kp.get('roof_height', kp['height']) - 16:
-            wedge += 6
+        if kp.get('roof_kit') and g == top and piece.get('height', 1e9) < H + kp.get('roof_height', kp['height']) - 16:
+            # (dear enough to take the roof set's own stair with its ring and a wall or two cut into the room over a
+            # flight that leaves two holes in the roof: at 6, a two-by-four thatch roof took the holes, 2026-11-04)
+            wedge += 24
+        # (a roof kit's own stair carries the roof: Common thatch's in_c_stair_thatch_pend_01/02 climb 256 and go on up
+        # as a gable end to the ridge, 620 tall. So only for the flight that comes out on the roof storey, and only with
+        # the game's own ring of pieces round it, the hip corners at either end of the gable and the sides beyond. On a
+        # lower flight of a three-floor house its gable stood up through the floor above and the roof, and at the edge
+        # of a room with no corner beside it the ridge opened on the void; the user's Estmorevale, 2026-11-04)
+        own_roof = bool(kp.get('roof_kit')) and kp['prefix'].lower().split('_')[-1] in piece['id'].lower().split('_')
+        if own_roof and g != top:
+            continue
         # a piece several tiles long climbs the whole storey on its own
         L = piece.get('len', 1)
         if L > 1 and n != 1:
@@ -2168,12 +2210,15 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
         # (how the game stands this stair, floor by floor, when its places show it)
         shape = _alcove_shape(kp, piece, stairtemplate.floors(db, style, piece['id'], piece['z_low'], piece['rise']),
                               stairtemplate.voids(db, style, piece['id'], piece['z_low'], piece['rise'])) \
-            if ALCOVES and n == 1 and L == 1 and 'cx' not in piece and not stack else None
+            if ALCOVES and n == 1 and L == 1 and 'cx' not in piece and (not stack or own_roof) else None
+        if own_roof and not shape:
+            continue                     # (no places to learn its ring from: in_c_stair_thatch_pend_02 stands in three)
         # (a stacked flight: each of its starts, several the same way up beside a stair taller than its storey)
         for up, sx0 in (starts if stack else [(aup, None)] if at else [(sd, None) for sd in kits.SIDES]):
             down = OPPOSITE[up]
             for bx in ([sx0[0]] if stack else [ax] if at else range(min(xs) - span - 2, max(xs) + span + 3)):
-                for by in ([sx0[1]] if stack else [ay] if at else range(min(ys) - span - 2, max(ys) + span + 3)):
+                # (a roof kit's own stair only with its ring, below)
+                for by in ([] if own_roof else [sx0[1]] if stack else [ay] if at else range(min(ys) - span - 2, max(ys) + span + 3)):
                     st = [nb((bx, by, f), up, i) for i in range(span)]
                     cost = 0
                     carve = []
@@ -2272,6 +2317,26 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
                             alc = _alcove(grid, used, piece, shape, s0, up, f, g)
                             if not alc:
                                 continue
+                            if own_roof:
+                                # (the whole of the game's ring next to the gable on the roof storey, or the roof opens)
+                                q_ = (kits.SIDES.index(OPPOSITE[up]) - kits.SIDES.index(piece['low'])) % 4
+                                ring = [(bx + k[0], by + k[1], g) for k in shape['_turned'][q_]['tiles']
+                                        if k[2] == 1 and max(abs(k[0]), abs(k[1])) <= 1]
+                                if len(ring) < 2 or any(t not in alc['block'] for t in ring):
+                                    continue
+                                # (the ring's tiles take the room's own walls, not the template's: the game has a hip
+                                # corner at either end of the gable where the roof ends there and a side where it goes
+                                # on (pcorner 4, pside 1 of 6 at one end); the corner pattern forced into a two-by-four
+                                # roof cut the far row off behind a wall and left base-set pieces and a hole there.
+                                # Only the sides facing the flight keep the template's say)
+                                alc['needs'] = {t: {s_: v_ for s_, v_ in d_.items() if nb(t, s_)[:2] == (bx, by)} for t, d_ in alc['needs'].items()}
+                                alc['needs'] = {t: d_ for t, d_ in alc['needs'].items() if d_}
+                                alc['vcarve'], alc['cuts'], alc['ways'] = list(alc['carve']), 0, []
+                                # (and its foot and head in the room the flight stands in: a head tile in the next room got
+                                # the rooms' doorway across the top of the stairs, a door frame nobody could pass)
+                                lo_, hi_ = alc['lo'], alc['hi']
+                                if (hi_ in grid and (bx, by, g) in grid and grid[hi_] != grid[(bx, by, g)]) or                                         (lo_ in grid and (bx, by, f) in grid and grid[lo_] != grid[(bx, by, f)]):
+                                    continue
                             carve, land, lo, hi = alc['carve'], alc['land'], alc['lo'], alc['hi']
                             # (no nook cost: the dead ends the block leaves are the game's own, Hlaalu's
                             # closet under the upper landing is a hall_end piece; the rooms must still
@@ -2315,6 +2380,7 @@ def stair_spots(db, style, rooms, stairs=None, doors=None, budget=2.5):
     if not info:
         return {'pairs': []}
     grid, names = _grid(rooms)
+    _square_roof(kp, grid)
     wanted = _wanted_stairs(rooms, names, stairs)
     doors_ = _door_pairs(rooms, names, doors)
     floors = sorted({t[2] for t in grid})
@@ -2820,11 +2886,11 @@ def _stairs_fit(kp, grid, st, lo, hi, up, carve, land, extra=None):
         need = {s: 'open' if g.get(nb(t, s)) == g[t] else 'wall' for s in STEP}
         if kp.get('roof_kit'):
             need['_top'] = t[2] == top
+        need.update((extra or {}).get(t, {}))
         if t == lo:
-            need[up] = 'open'
+            need[up] = 'open'                  # (the ends open onto the flight, whatever the block says)
         if t == hi:
             need[OPPOSITE[up]] = 'open'
-        need.update((extra or {}).get(t, {}))
         # (sides facing the stairs may stay open: stairs standing free, a railing round the stairwell)
         facing = [s for s in STEP if (nb(t, s)[0], nb(t, s)[1]) in stair_xy and need[s] == 'wall']
         if _stair_need(kp, need, facing) is None:
@@ -2892,6 +2958,7 @@ def plan(db, style, rooms, stairs=None, floors_as='auto', doors=None):
     if not kp or not kp['pieces']:
         raise EditError('Unknown building style "%s".' % style)
     grid, names = _grid(rooms)
+    _square_roof(kp, grid)
     st_info = kits.stairs(db, style)
     use_stairs = bool(st_info) and (floors_as == 'stairs' or (floors_as == 'auto' and st_info.get('proper', True)))
     if len({t[2] for t in grid}) > 1 and not use_stairs:
@@ -2959,6 +3026,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         dressing = 'plain'
     # ---- the grid
     grid, names = _grid(rooms)
+    _square_roof(kp, grid)
     # ---- two-storey halls: a room marked 'tall' is open to the storey above wherever no room is drawn
     # over it. The game builds such a hall (Anvil's guild of mages, the conservatory of Saint Laeca, the
     # bazaar) as a column with no tile on either storey: a floor sheet at the bottom (the 'well'), a
@@ -3049,6 +3117,12 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             if t in need:
                 need[t].update(sides)
                 alcove_tiles.add(t)
+        # (and never a wall across the flight's foot or head, whatever the block's pieces say: a stair learnt with
+        # its ends the wrong way round had the game's end cap laid across its real foot, and the table went there;
+        # the user's Estmorevale house, 2026-11-04)
+        for t, s in ((x['lo'], x['up']), (x['hi'], OPPOSITE[x['up']])):
+            if t in need and need[t][s] == 'wall':
+                need[t][s] = 'open'
     # tiles beside the stairs that have no piece walling them off: open towards the stairs, and on
     # the floor above a railing along the edge of the stairwell
     rail_edges = []                     # (tile, side) on an upper floor

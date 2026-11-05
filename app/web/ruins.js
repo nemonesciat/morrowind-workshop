@@ -21,6 +21,8 @@ const RUIN_KINDS = [
     'An old Chimer keep of the in_stronghold pieces, joined the way the game\'s own are: corridors that turn round its rooms, each room off a side passage behind a door, stairs a storey up, tiki lamps and candles, and the bandits who often hide out in them.'],
   ['tower', 'Velothi tower', 'Shishara', 'Towers have old Velothi names: Shishara, Hanud, Odirniran, Mababi.',
     'A mage\'s tower of the small Velothi pieces: halls and rooms climbing from the door to the tower itself, a two-storey room with steps up its sides under a dome, dressed and lived in as the game\'s 64 towers are: sorcerers, mages, necromancers.'],
+  ['fort', 'Imperial fort', 'Fort Vanvuld', 'Forts are named Fort and a word: Fort Moonmoth, Fort Buckmoth.',
+    'A Legion fort of the in_impsmall pieces the way the game\'s 150 forts are put together: corridors, stairs and rooms off them, door frames with their doors, lit and furnished as the game\'s own, with the bandits who hole up in the abandoned ones.'],
 ];
 const RUIN_OPTS = {
   kind: RUIN_KINDS.map(k => [k[0], k[1]]),
@@ -40,7 +42,7 @@ const DT = {kind: 'dwemer', seed: null, lay: null, view: null, seq: 0, hover: nu
   // (the plan flat, or a rough 3D sketch of blocks at their heights, turned by dragging; the user asked for both)
   mode: (() => { try { return localStorage.getItem('ws-dt-mode') === '3d' ? '3d' : '2d'; } catch (e){ return '2d'; } })(), yaw: 0.6, pitch: 0.75};
 const DT_ZX = 1.6;          // (heights drawn taller than they are in 3D, so the levels read)
-const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆', cave_lava: '◆', tomb: '⚱', daedric: '✴', stronghold: '♜', tower: '♖'};
+const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆', cave_lava: '◆', tomb: '⚱', daedric: '✴', stronghold: '♜', tower: '♖', fort: '⚔'};
 const DT_ROCK = {cave_mold: '#8c8f93', cave_mud: '#8a6d4f', cave_py: '#c9c1ad', cave_lava: '#3b3533'};
 const DT_SEG = {
   size: [['tiny', 'Tiny', 'about 10 pieces, one hall: a lair'], ['small', 'Small', 'about 20 pieces, one hall'], ['medium', 'Medium', 'about 45 pieces, two halls'],

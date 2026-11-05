@@ -39,10 +39,14 @@ from editing import EditError, commit, _require_project
 # (town: an outline a town is planned in, townplan.py; it shapes nothing either)
 # (street, zone, wall: drawn in a town, its streets, quarters and wall, townplan.plan_once's opts; they shape nothing)
 # (castle: an outline a keep or castle is planned in, castle.py; it shapes nothing)
-KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff')
-NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff')
+# (farm, orchard: an outline a farm or an orchard is laid on, storydress.lay_field; its longest edge is the gate side)
+KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff',
+         'farm', 'orchard')
+NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff', 'farm', 'orchard')
 DEFAULTS = {
     'area': {},
+    # (built: what Make it laid on the outline as drawn, 'things/plants/culture/hash of outline+settings'; '' before)
+    'farm': {'culture': '', 'seed': 1, 'built': ''}, 'orchard': {'culture': '', 'seed': 1, 'built': ''},
     # (cliff: a line the region's cliff rocks are chained along, cliffline.py; it shapes no ground itself)
     'cliff': {'height': 600, 'side': 0, 'amount': 1, 'raise': 0, 'seed': 1},
     'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'inside': '', 'noinside': False, 'nopeople': False,
@@ -144,7 +148,7 @@ def _clean(L):
     if kind not in KINDS:
         raise EditError('Unknown shape "%s".' % kind)
     pts = [[float(a), float(b)] for a, b in (L.get('pts') or [])][:400]
-    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town', 'zone', 'wall', 'castle') else 2
+    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town', 'zone', 'wall', 'castle', 'farm', 'orchard') else 2
     if len(pts) < need:
         raise EditError('A %s needs at least %d point%s.' % (kind, need, '' if need == 1 else 's'))
     prm = dict(DEFAULTS[kind])

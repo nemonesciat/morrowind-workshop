@@ -329,8 +329,20 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   they are.
 - **Yards:** the ground behind each house is its yard, fenced in the culture's own fence (Imperial rails, Nord and
   Breton farm fences, Dunmer wooden fences), with one kind of life in it: a kitchen yard (barrels, sacks, a chicken
-  cage), a garden (rows of the culture's crops), a workshop yard behind a shop (crates, a wheelbarrow), or a pen (hay
-  and a trough). A planter stands by some doors. Nothing is laid where a building, a street or the dressing stands.
+  cage), a garden (a kitchen garden: rows of the region's own crop at the spacing the game's farms use), a workshop
+  yard behind a shop (crates, a wheelbarrow), or a pen (hay and a trough).
+- **What grows round the houses** is learnt from the game's towns, culture by culture, with the region's own
+  species: a bed of two to six flowers or herbs of one kind at a side wall (the mushroom beds of a Telvanni town, the
+  lilies and goldenrod of an Imperial one), a tree by the house where its towns have them, a planter at the door or
+  along a wall with the game's own garden in it (a tenth of them by the door, as in the game; none in the cultures
+  that stand none), and ivy on the walls where the culture grows it (two or three a house on the Gold Coast, none in
+  Dunmer towns). Each at the game's rate a building. Nothing grows in a door's way, on the arrival spot in front of
+  it, on a street or in a plot.
+- **🌾 Farm and 🍐 Orchard** are shapes of their own on the Land panel, for fields away from a town: draw the outline
+  (its longest side is the gate side) and **Make it**. A farm is fields of the region's own crop at the spacing of the
+  game's farms, tiled over the outline with paths between, the culture's farm fence round them and the gate's way
+  left open; an orchard is a loose grid of the region's fruit tree at the game's spacing. **Like** picks whose fence
+  and orchards (blank: the nearest game town's), the seed lays the same outline another way. One Undo takes it back.
 - **People:** outdoors, guards of the culture's own at the gates, the great doors and on the streets, sellers at their
   stalls (they barter; their wares and stock are theirs), and townsfolk about the streets and doors, as many a
   building as its towns have. With Furnished, a household in each too, owning its beds and chests. This takes a minute
@@ -362,6 +374,15 @@ anything is built.
   - **Dunmer stronghold:** the old Chimer keep on its stepped platform, with its ways in to the upper and lower
     levels, the dome and the propylon chamber. **Small** is a keep without the platform.
   - **Redoran stronghold:** a house stronghold of manor, tower, services and a house, inside a Redoran wall and gate.
+- **Rooms: Made anew** builds the keep's insides the Workshop's own way instead of copying a game keep's rooms: a set
+  of linked interiors the way the game's big keeps are laid out (a great hall, chambers, a garrison, a prison, a tower
+  or two, an undercroft under them; a large keep adds a household, a library, a chapel and a treasure chamber), in
+  chains with a ring or two, every door paired both ways. The keep's ground door leads into the lowest of them, the
+  arches where the walk runs in to those above, a roof door to a tower's hatch. Each run of wall towers is one
+  interior of passages and spiral stairs with a door out at every arch on the walk and a hatch at each crown. The
+  layouts turn as the game's do (corners as often as straights, junctions, ring corridors, stairs over several floor
+  heights, big halls for a great hall or library, spiral towers with a room at each landing) and are dressed, lit and
+  peopled by the Workshop; nothing inside is copied from a game interior.
 - **The yard has jobs:** a smithy along the gate's wall (forge, anvil, bellows, grindstone), stables on the longest
   free wall (hay, a trough), stores on the next (crates, barrels, a wheelbarrow), a shrine by the keep, a drill ring
   with dummies and targets to one side of the way in, and a brazier in each corner — then the game's own bailey

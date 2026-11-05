@@ -174,9 +174,11 @@ def openings(lay, S, K):
             side = _dir_of(*_rot(*SIDES[ps], p['p'][5]))
             pts.append((k, p['p'][0] + wx, p['p'][1] + wy, p['p'][2] + pz, side))
     e = lay.get('entrance') or {}
+    # (a keep's other ways out are closed by their doors as the way in is, dwemer._exits)
+    ways = [e] + list(lay.get('exits') or [])
     out = []
     for k, x, y, z, side in pts:
-        if 'x' in e and abs(e['x'] - x) < 24 and abs(e['y'] - y) < 24 and abs(e['z'] - z) < 24:
+        if any('x' in w and abs(w['x'] - x) < 24 and abs(w['y'] - y) < 24 and abs(w['z'] - z) < 24 for w in ways):
             continue
         if any(j != k and abs(x2 - x) < 24 and abs(y2 - y) < 24 and abs(z2 - z) < 24 and s2 == OPP[side] for j, x2, y2, z2, s2 in pts):
             continue
@@ -247,9 +249,11 @@ def scene(db, lay):
         for p in lay['pieces']:
             if p.get('id') in K['framed'] and not p.get('gone'):
                 sc.add_model(jt, (p['p'][0], p['p'][1], p['p'][2], 0, 0, p['p'][5]), 1.0)
-    # (the front door closes the way in: a wall across it, as the door and its frame stand there)
-    e = lay.get('entrance') or {}
-    if 'side' in e:
+    # (the front door closes the way in: a wall across it, as the door and its frame stand there; a keep's other ways
+    # out the same, dwemer._exits)
+    for e in [lay.get('entrance') or {}] + list(lay.get('exits') or []):
+        if 'side' not in e:
+            continue
         dx, dy = SIDES[e['side']]
         cx, cy, z0, z1, w = e['x'] + dx * 8, e['y'] + dy * 8, e['z'] - 300, e['z'] + 600, 400
         a = (cx - dy * w, cy + dx * w)

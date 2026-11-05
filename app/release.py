@@ -340,6 +340,43 @@ def _all_my_script_text(db):
     return '\n'.join(parts)
 
 
+def undecided_rolls(db):
+    """The buildings whose Roll the interior card was left open: [{'door', 'cell', 'ref', 'name', 'n', 'picked', 'text'}]."""
+    import rollinside
+    out = []
+    for k, st in sorted((getattr(db.project, 'rolls', None) or {}).items()):
+        try:
+            dcell, dk = k.split('|', 1)
+            n = len(st.get('rolls') or [])
+            picked = st.get('picked')
+            what = 'the old interior' if picked == st.get('old') else rollinside._name_of(db, picked) if picked else 'nothing'
+            out.append({'door': k, 'cell': dcell, 'ref': dk, 'name': st.get('name') or k, 'n': n, 'picked': picked,
+                        'text': '%s: %d roll%s in limbo, the door leads to %s' % (st.get('name') or k, n, '' if n == 1 else 's', what)})
+        except Exception as e:
+            print('undecided rolls:', k, e)
+    return out
+
+
+def keep_rolls(db):
+    """Every open card settled the way its door leads: a roll the door leads to is kept (the old interior's people move in, the
+    rest go), a door leading to the old interior puts it back. {'kept', 'restored', 'errors'}"""
+    import rollinside
+    kept, restored, errors = [], [], []
+    for x in undecided_rolls(db):
+        st = (getattr(db.project, 'rolls', None) or {}).get(x['door']) or {}
+        try:
+            if x['picked'] and x['picked'] in (st.get('rolls') or []):
+                rollinside.keep(db, x['cell'], x['ref'], x['picked'])
+                kept.append(x['name'])
+            else:
+                rollinside.cancel(db, x['cell'], x['ref'])
+                restored.append(x['name'])
+        except Exception as e:
+            errors.append('%s: %s' % (x['name'], e))
+    return {'kept': kept, 'restored': restored, 'errors': errors,
+            'text': 'Kept %d, put the old one back for %d%s.' % (len(kept), len(restored), (', %d failed' % len(errors)) if errors else '')}
+
+
 def leftovers(db):
     """What a place taken out leaves behind (rollinside.py's reason): the mod's own people placed in no cell, the lines
     whose speaker they are, routine rows for people who no longer exist, and mod-made interiors no door leads to
@@ -821,6 +858,12 @@ def checks(db):
                     'items': [{'label': f['text']} for f in vf[:40]]})
     else:
         out.append({'id': 'records', 'sev': 'ok', 'title': 'Every record passes the game\'s own checks', 'detail': '', 'items': []})
+    ud = undecided_rolls(db)
+    if ud:
+        out.append({'id': 'rolls', 'sev': 'warning', 'title': '%d building%s with rolled interiors left undecided' % (len(ud), '' if len(ud) == 1 else 's'),
+                    'detail': 'Roll the interior left these in limbo: the old interior and every roll are still in the mod, and only the one the door '
+                              'leads to is reachable. Keep one on each card, or put the old one back; this keeps the one each door leads to.',
+                    'items': [{'label': x['text']} for x in ud[:40]], 'fix': {'action': 'keeprolls', 'label': 'Keep the ones the doors lead to'}})
     lo = leftovers(db)
     if lo['items']:
         out.append({'id': 'leftovers', 'sev': 'warning', 'title': 'Leftovers: %s' % ', '.join(lo['summary']),
@@ -864,6 +907,8 @@ def fix(db, action):
     p = db.project
     if action == 'sweep':
         return sweep(db)
+    if action == 'keeprolls':
+        return keep_rolls(db)
     if action == 'clean':
         ident = _identical(db)
         tiny = _tiny_moves(db)

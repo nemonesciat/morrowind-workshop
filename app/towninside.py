@@ -496,6 +496,9 @@ TRADE_KIND = (('smith|armorer|armourer|weaponsmith', 'smithy'), ('alchem|apothec
               ('bookseller|scribe', 'bookseller'), ('clothier|tailor|outfitter', 'clothier'), ('pawn', 'pawnbroker'),
               ('publican|innkeeper|barkeep', 'tavern'), ('priest|monk|healer', 'shrine'))
 STOREY = 200                    # (a room's floor this far over the front door's is an upper storey: bedrooms)
+# a kind named by its trade, with no head cast: (the kind the furnisher knows, a stand-in class for the trade)
+STAND_IN = {'smith': ('shop', 'Smith'), 'shop': ('shop', 'Trader'), 'tavern': ('tavern', 'Publican'), 'temple': ('temple', 'Priest'),
+            'alchemist': ('shop', 'Alchemist'), 'clothier': ('shop', 'Clothier'), 'bookseller': ('shop', 'Bookseller')}
 SMITH_PLOT = 1000000            # (a smith's building: at least this footprint, w x d, for a ground room that takes a forge)
 
 
@@ -505,6 +508,11 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
     'guild:thieves' names the guild (from the sign outside); plain 'guild' goes by the head's class."""
     import re as _re
     kind, _sep, gtype = (kind or '').partition(':')
+    # (a kind that names a trade with nobody cast yet, the roll card's "a smithy" / "a shop" / "a tavern" / "a temple":
+    # furnished for a stand-in of that trade, else the trade room never came, since the trade is read off the head's
+    # class: the user's smith in a hut, rolled eight times and never a forge, 2026-11-04)
+    if not head_cls and kind in STAND_IN:
+        kind, head_cls = STAND_IN[kind]
     m = mapdata.cellmap(db, key)
     fronts = [r for r in m.get('refs') or () if r['type'] == 'DOOR' and r.get('to') and not r['to'].get('cell')]
     z0 = min((r['p'][2] for r in fronts), default=None)

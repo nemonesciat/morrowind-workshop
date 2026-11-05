@@ -600,7 +600,57 @@ def kit_pieces(db, prefix):
         k['height'] = kb['height']
         k['roof_kit'] = True
         k['roof_of'] = base
+        # (a roof piece with an open side the game never meets with the set's own pieces is left out: see _void_sides)
+        void = _void_sides(db, k['pieces'], tile)
+        k['pieces'] = [p for p in k['pieces'] if not (p.get('storey') == 'top' and p['id'].lower() in void)]
     return k
+
+
+def _void_sides(db, pieces, tile):
+    """The sides of a roof set's pieces that the game leaves open to nothing: {piece id, lower: {side}}, the sides
+    its pattern calls open beyond which no piece of the set stands in nine of ten of the game's places that have
+    the piece (ten at least). Common thatch's in_c_thatch_room_pendside measures as a corner, walls north and west,
+    so the builder laid it at any corner of a hip roof, where its gable end left the ridge open on the void. The
+    game stands it as one half of a pend: a pside south of it and, east, nothing of the set in 24 of its 26 places
+    but Tamriel Data's plainr1pendsid_01 or a plain corner, pieces the builder has no rule for; its east side is
+    open (closed as a wall it still leaked). Such a piece is left out of the roof set (the user's Estmorevale
+    thatch holes, 2026-11-04)."""
+    from mapdata import ref_info
+    ids = {p['id'].lower() for p in pieces}
+    want = {p['id'].lower(): p for p in pieces if p.get('storey') == 'top' and any(p['pattern'][s] == 'open' for s in SIDES)}
+    cells = set()
+    for low in want:
+        for ci in db.used_in.get(low, ()):
+            if db.recs[ci][0] == 'CELL' and game_made(db, db.recs[ci][7]):
+                cells.add(db.recs[ci][7])
+    have, cases = {}, {}
+    for ck in sorted(cells):
+        try:
+            refs, _h = db.cell_refs(ck)
+        except Exception:
+            continue
+        items = [(rid.lower(), pos) for rid, pos, _s, dead in (ref_info(x['subs']) for x in refs.values())
+                 if not dead and pos and rid.lower() in ids]
+        for rid, p in items:
+            if rid not in want:
+                continue
+            cases[rid] = cases.get(rid, 0) + 1
+            c, s = math.cos(p[5]), math.sin(p[5])
+            for side, (dx, dy) in (('N', (0, 1)), ('E', (1, 0)), ('S', (0, -1)), ('W', (-1, 0))):
+                # (the piece's own side out in the world: the game's yaw turns clockwise, as stairtemplate reads it)
+                tx, ty = p[0] + (dx * c + dy * s) * tile, p[1] + (-dx * s + dy * c) * tile
+                if any(p2 is not p and abs(p2[0] - tx) < tile * 0.15 and abs(p2[1] - ty) < tile * 0.15 and abs(p2[2] - p[2]) < tile * 0.15
+                       for _r, p2 in items):
+                    have[(rid, side)] = have.get((rid, side), 0) + 1
+    out = {}
+    for rid, p in want.items():
+        n = cases.get(rid, 0)
+        if n < 10:
+            continue
+        for s in SIDES:
+            if p['pattern'][s] == 'open' and have.get((rid, s), 0) <= n * 0.1:
+                out.setdefault(rid, set()).add(s)
+    return out
 
 
 _family_walls = {}
@@ -941,7 +991,8 @@ def _stairs_path(db):
     os.makedirs(folder, exist_ok=True)
     # (v2: the mesh reader now ignores a model's root transform as the game does, and the two-storey hall
     # pieces are kept apart from a kit's tiles: both change what a stair is learnt against, 2026-10-22)
-    return os.path.join(folder, 'stairs_%s_v2.json' % taste.sig(db))
+    # (v3: a stair's low end as its model's treads have it, 2026-11-04)
+    return os.path.join(folder, 'stairs_%s_v3.json' % taste.sig(db))
 
 
 _stairs_disk_cache = {}
@@ -1098,6 +1149,14 @@ def _stairs_learn(db, prefix, k):
         if not best:
             continue
         _sc, low, z_low, rise = best
+        # (which end is low: the model's own treads say, where they can be read (stair_shape). The floors round
+        # the game's places said N for in_c_stair_thatch_pend_01, whose treads climb from S like its siblings': its
+        # origin is half way up, and the roof storey's pieces at its head outnumbered the floor at its foot. The
+        # planner then laid the flight backwards, the game's end cap across its real foot, and the foot's own
+        # opening was lost: the user's Estmorevale house, 2026-11-04)
+        g = stair_shape(db, ri, T, k['height'])
+        if g and g['low'] != low and g['rise'] >= T * 0.4:
+            low, z_low, rise = g['low'], -k['zmin'] + g['bottom'] + 2, g['rise']
         high = SIDES[(SIDES.index(low) + 2) % 4]
         open_ = [s for s in SIDES if s not in (low, high) and opening.get(_VEC[s], 0) > seen * 0.3]
         post = max(posts, key=posts.get) if posts else None
@@ -1111,12 +1170,17 @@ def _stairs_learn(db, prefix, k):
                     # what closes in the stairwell: [(id, height over the stairs, quarter turns)]
                     'cap': _stair_cap(db, prefix, sid, T)})
     res = None
-    if not out and MEASURED_STAIRS:
+    if MEASURED_STAIRS:
         # the game never puts these stairs beside the kit's own floor tiles where they could be learnt
-        # from: measure them instead
+        # from: measure them instead (every kit stair the places didn't teach, 2026-11-04: in_c_stair_thatch_pend_01
+        # stands in six game places but beside no Common tile often enough, and a flight the builder put in
+        # the user's town could not be checked: the stair walk did not know the piece)
         z0 = -k['zmin']
+        learnt_ids = {p['id'].lower() for p in out}
         for ri in _stair_ris(db, k):
             sid = db.recs[ri][1].lower()
+            if sid in learnt_ids:
+                continue
             if is_stair(sid):
                 g = stair_shape(db, ri, T, k['height'])
                 if g:

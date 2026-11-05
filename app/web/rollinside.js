@@ -82,7 +82,8 @@ function riRender(){
     ${c ? `<div class="ristat"><b>${c.rooms} room${c.rooms === 1 ? '' : 's'}</b> on ${c.floors} floor${c.floors === 1 ? '' : 's'} · <b>${c.things}</b> things${c.people ? ` · ${c.people} people` : ''}${has ? ` · ${esc(has)}` : ''}<br>
       <span class="${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓ ' : '✗ '}${esc(c.verdict)}</span>${faults ? `<br><span class="msg">${esc(faults)}</span>` : ''}</div>` : ''}
     <div class="rirow">Furnish as <select id="ri-kind" title="What the rolled interior is for">${RI_KINDS.map(([k, t]) => `<option value="${k}" ${k === (v.kind || '') ? 'selected' : ''}>${t}</option>`).join('')}</select>
-      <select id="ri-level" title="How well off">${RI_LEVELS.map(([k, t]) => `<option value="${k}" ${k === (v.level || '') ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <select id="ri-level" title="How well off">${RI_LEVELS.map(([k, t]) => `<option value="${k}" ${k === (v.level || '') ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <select id="ri-cellar" title="A cellar under it, the usual size for the style or a big one, with a trap door down. A hut the game has a ready-made interior for is planned anew to get one">${[['', 'no cellar'], ['usual', 'a cellar'], ['big', 'a big cellar']].map(([k, t]) => `<option value="${k}" ${k === (v.cellar || '') ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div class="rirow" title="Rolls again on its own, up to eight times, until the interior has these">Roll until it has
       ${[['forge', 'a forge'], ['bed', 'a bed'], ['floors', '2 floors'], ['clean', 'no fault']].map(([k, t]) => `<label><input type="checkbox" data-riuntil="${k}" ${RI.until[k] ? 'checked' : ''}> ${t}</label>`).join('')}</div>
     <div class="actions" style="margin:8px 0 0;gap:6px;flex-wrap:wrap">
@@ -96,10 +97,10 @@ function riRender(){
   P.querySelectorAll('[data-ripick]').forEach(el => el.onclick = () => riAct('/api/roll/pick', {key: el.dataset.ripick}));
   P.querySelectorAll('[data-riuntil]').forEach(el => el.onchange = () => { RI.until[el.dataset.riuntil] = el.checked; });
   P.querySelector('#ri-roll').onclick = () => riAct('/api/roll', {kind: P.querySelector('#ri-kind').value, level: P.querySelector('#ri-level').value,
-    until: Object.keys(RI.until).filter(k => RI.until[k])});
+    cellar: P.querySelector('#ri-cellar').value, until: Object.keys(RI.until).filter(k => RI.until[k])});
   const w = P.querySelector('#ri-walk'); if (w) w.onclick = () => { if (typeof worldOpen === 'function') worldOpen(c.key); };
   const k = P.querySelector('#ri-keep'); if (k) k.onclick = () => riKeep(v.picked);
-  const x = P.querySelector('#ri-cancel'); if (x) x.onclick = () => riAct('/api/roll/cancel', {});
+  const x = P.querySelector('#ri-cancel'); if (x) x.onclick = () => riAct('/api/roll/cancel', {}).then(() => { if (RI.v && RI.v.old && RI.v.old.key && typeof worldOpen === 'function') worldOpen(RI.v.old.key, true); });
   const f = P.querySelector('#ri-find'); if (f) f.onclick = e => { e.preventDefault(); riFind(); };
   P.querySelectorAll('[data-riroll]').forEach(el => el.onclick = () => riOpen(RI.cell, el.dataset.riroll));
 }
@@ -111,6 +112,10 @@ async function riAct(path, body){
     RI.v = await post(path, Object.assign({cell: RI.cell, ref: RI.ref}, body));
     if (path === '/api/roll'){ const c = riCard(RI.v); toast(c ? `Rolled: ${c.rooms} rooms, ${c.things} things. ${c.verdict}` : 'Rolled'); }
     await afterChange();
+    // (standing in the old interior or in one of the rolls: taken into the one just rolled or picked, where the door
+    // now leads. Before, the view stayed where it was and a roll looked as if nothing had happened; the user, 2026-11-04)
+    if ((path === '/api/roll' || path === '/api/roll/pick') && RI.v && RI.v.picked && typeof W !== 'undefined' && W.key && W.key !== RI.v.picked
+        && [RI.v.old && RI.v.old.key, ...(RI.v.rolls || []).map(x => x.key)].includes(W.key) && typeof worldOpen === 'function') worldOpen(RI.v.picked, true);
   } catch (e){ toast(e.message, true); }
   RI.busy = false; riRender();
 }
@@ -120,8 +125,12 @@ async function riKeep(key){
   RI.busy = true; riRender();
   try {
     const r = await post('/api/roll/keep', {cell: RI.cell, ref: RI.ref, key});
-    toast(`Kept ${r.name}${r.moved ? `, ${r.moved} people moved in` : ''}. One Undo takes it back.`);
+    toast(`Kept as ${r.name}${r.moved ? `, ${r.moved} people moved in` : ''}: you are in it now. One Undo takes it back.`, false, 6000);
     await afterChange();
+    // (the kept place has the building's own name now and the roll's key is gone: the view goes into it, never left on a
+    // place that no longer exists. The user furnished a roll by hand, kept it and found "the interior doesn't exist":
+    // it was there under the house's name, 2026-11-04)
+    if (typeof worldOpen === 'function' && r.key) worldOpen(r.key, true);
     RI.busy = false;
     const faulty = RI.faulty;
     await riOpen(RI.cell, RI.ref);

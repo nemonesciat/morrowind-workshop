@@ -29,7 +29,11 @@ def _disk(db, prefix):
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
     # (v2: the clips and z-fights of the style's places, 'clash')
-    return os.path.join(folder, 'gapsurvey_%s_%s_v2.json' % (taste.sig(db), prefix.replace('/', '_')))
+    # (v2r for a roof kit: the finder measures its top-storey pieces at their own height since 2026-11-04 (fixit._tiles),
+    # so the game's thatch rate is learnt anew, 36 places; the other styles' surveys stand)
+    kp = kits.kit_pieces(db, prefix)
+    ver = 'v2r' if kp and kp.get('roof_kit') else 'v2'
+    return os.path.join(folder, 'gapsurvey_%s_%s_%s.json' % (taste.sig(db), prefix.replace('/', '_'), ver))
 
 
 def cells_for(db, prefix, limit=PLACES):

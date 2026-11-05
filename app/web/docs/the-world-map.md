@@ -34,6 +34,8 @@ the place. **+ −** at the bottom right zoom.
 ## Selecting
 
 - **Click** a thing to select it. **Shift+click** adds or takes one away.
+- **Shift+right-click** keeps what is selected and adds that thing; the menu's **Add all the … here to the selection**
+  then adds every one of its kind.
 - **Drag a box** on an empty spot to select many (in 3D; **Shift+drag** on the flat map).
 - **Esc** deselects. **Right-click** anything for what you can do with it.
 - **H** hides what's selected (to get at what's behind), **Shift+H** everything else, **Alt+H** shows it all

@@ -176,12 +176,14 @@ function cfKeysModal(){
 }
 
 // ---------------------------------------------------------------- selecting more
-function cfPickMany(list){
-  W.multi.clear();
+// add: what is selected stays selected and these join it (Shift held on the right-click that opened the menu)
+function cfPickMany(list, add){
+  if (!add) W.multi.clear();
+  else if (W.sel && !W.multi.size) W.multi.set(mkey(W.sel.cell, W.sel.k), {cell: W.sel.cell, k: W.sel.k});
   for (const [ck, r] of list) W.multi.set(mkey(ck, r.k), {cell: ck, k: r.k});
-  if (!list.length){ W.sel = null; toast('Nothing to select.'); }
-  else if (list.length === 1){ W.multi.clear(); selectRef(list[0][0], list[0][1].k); return; }
-  else { const l = list[list.length - 1]; W.sel = {cell: l[0], k: l[1].k}; W.tab = 'sel'; toast(`Selected ${list.length} objects.`); }
+  if (!list.length){ if (!add) W.sel = null; toast('Nothing to select.'); }
+  else if (list.length === 1 && !add){ W.multi.clear(); selectRef(list[0][0], list[0][1].k); return; }
+  else { const l = list[list.length - 1]; W.sel = {cell: l[0], k: l[1].k}; W.tab = 'sel'; toast(`Selected ${W.multi.size} objects.`); }
   renderWside(); drawMap(); if (V3.on) v3Refresh();
 }
 function cfSelectAll(){ cfPickMany(visibleRefs().filter(([ck, r]) => !(r.arch && W.lockArch) && (W.ext || ck === W.key))); }
@@ -202,7 +204,7 @@ async function cfSelectBuilding(ck, r){
   cfPickMany(b.refs.map(x => [x.cell, {k: x.ref}]));
   if (b.refs.length > 1) toast(`Selected the building: ${b.refs.length} pieces${b.how === 'joined' ? ' (those joined to this one)' : ''}. Move it with the arrows; its doors take their interiors' ways out along.`);
 }
-function cfSelectLike(r){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLowerCase() === r.id.toLowerCase() && (W.ext || ck === W.key))); }
+function cfSelectLike(r, add){ cfPickMany(visibleRefs().filter(([ck, x]) => x.id.toLowerCase() === r.id.toLowerCase() && (W.ext || ck === W.key)), add); }
 
 // ---------------------------------------------------------------- right-click menus
 // a small window over the 3D view moved by dragging its title (handle: a selector inside it), kept inside
@@ -260,7 +262,16 @@ function cfMenuAt(e, hit, at, locked){
       {label: 'Clear the selection', act: () => cfRun('clearsel')}, {label: 'Delete all of them', act: () => groupDo('delete')});
   } else if (hit){
     const [ck, r] = hit;
-    if (!(W.sel && W.sel.cell === ck && W.sel.k === r.k)) selectRef(ck, r.k);
+    const same = W.sel && W.sel.cell === ck && W.sel.k === r.k;
+    // (Shift held: what was selected stays selected and this joins it, so "Select all the X here" adds to the selection
+    // instead of replacing it; the user's recording, 2026-11-04)
+    const add = !!(e.shiftKey && (W.sel || W.multi.size) && !same);
+    if (add){
+      if (W.sel && !W.multi.size) W.multi.set(mkey(W.sel.cell, W.sel.k), {cell: W.sel.cell, k: W.sel.k});
+      W.multi.set(mkey(ck, r.k), {cell: ck, k: r.k});
+      selectRef(ck, r.k, true); drawMap(); if (V3.on) v3Refresh();
+    }
+    else if (!same) selectRef(ck, r.k);
     head(r.name || r.id);
     items.push({label: '⌖ Look at it', act: () => cfRun('focus')});
     if (typeof owOpen === 'function') items.push({label: '🪟 Open its window', act: () => owOpen(ck, r.k)});
@@ -285,7 +296,7 @@ function cfMenuAt(e, hit, at, locked){
       {label: '🫳 Settle it, tipping it over if it can\'t stand', act: () => cfSettle({cell: ck, refs: [r.k], tip: true}, r.name || r.id)});
     items.push({label: '⇄ Swap for something else…', act: () => { PNL.show('world', 'sel'); setTimeout(() => { const s = $('#w-swap'); if (s) s.focus(); }, 50); }});
     items.push({label: `⇄ Replace every ${r.name || r.id} here…`, act: () => qolReplace(r.id)});
-    items.push({label: `Select all the ${r.name || r.id} here`, act: () => cfSelectLike(r)});
+    items.push({label: `${add ? 'Add' : 'Select'} all the ${r.name || r.id} here${add ? ' to the selection' : ''}`, act: () => cfSelectLike(r, add)});
     if (r.tb || r.arch || r.type === 'DOOR') items.push({label: '▣ Select the whole building', act: () => cfSelectBuilding(ck, r)});
     // a shelf, a table, a counter, a crate: it and everything standing on it, in one go (the Workshop reads
     // the geometry, the same way it reads the game's dressed shelves)
@@ -627,3 +638,22 @@ function cfPalette(){
   bg.onclick = e => { if (e.target === bg) close(); };
   draw(); inp.focus();
 }
+
+// ---- no browser autofill. Edge (2026) offers to save what you type into a field as a "Known Traveler Number" or the like when
+// the field is rebuilt right after a request (its rule for a form submitted without a form tag), and the Workshop's panels
+// rebuild their fields after every change. A field marked as a one-time code is one the browser never fills or offers to
+// save (the user, 2026-11-04: "it never did before and now it's always popping up"); the fields that say otherwise keep it.
+function cfNoFill(root){
+  const els = [];
+  if (root.matches && root.matches('input,textarea')) els.push(root);
+  if (root.querySelectorAll) els.push(...root.querySelectorAll('input:not([autocomplete]),textarea:not([autocomplete])'));
+  for (const el of els){
+    if (el.getAttribute('autocomplete')) continue;
+    const t = (el.type || 'text').toLowerCase();
+    if (['checkbox', 'radio', 'range', 'file', 'button', 'submit', 'reset', 'hidden', 'color', 'image', 'password'].includes(t)) continue;
+    el.setAttribute('autocomplete', el.tagName === 'TEXTAREA' ? 'off' : 'one-time-code');
+  }
+}
+cfNoFill(document.documentElement);
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) cfNoFill(n); })
+  .observe(document.documentElement, {childList: true, subtree: true});

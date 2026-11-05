@@ -260,14 +260,16 @@ function qolEmptyMap(){
     ${v && v.key ? `<button class="btn primary" id="q-reopen">↺ Back to ${esc(v.name || v.key)}</button>` : ''}
     ${recent.length ? `<div class="me-h">Lately</div><div class="me-places">${recent.map(p => `<button class="btn sm" data-mei="${WP.places.indexOf(p)}">${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</button>`).join('')}</div>` : ''}
     <div class="me-h">Or make a new one</div>
-    <div class="me-places"><button class="btn sm" data-mek="build">🏠 Build a house</button><button class="btn sm" data-mek="ruin">⚒ Make a dungeon</button></div>
+    <div class="me-places"><button class="btn sm" data-mek="build">🏠 Build a house</button><button class="btn sm" data-mek="ruin">⚒ Make a dungeon</button><button class="btn sm" data-mek="town" title="A town or castle is drawn on open land: open the outdoor place first, then draw it in the ⛰ Land panel">🏘 A town or castle</button></div>
     <div class="msg me-foot">Ctrl+K finds any place too, and every cell in Browse has "Open on map".</div></div>`;
   ddSearch('me-goto', 'CELL', r => worldOpenIndex(r.i));
   const rb = $('#q-reopen'); if (rb) rb.onclick = e => { e.stopPropagation(); qolReopen(); };
   box.querySelectorAll('[data-mei]').forEach(b => b.onclick = () => wpPlaceOpen(+b.dataset.mei));
   box.querySelectorAll('[data-mek]').forEach(b => b.onclick = () => {
-    showView('createv');
     const k = b.dataset.mek;
+    // (a town or castle needs a place open to draw on: say so and put the cursor in the place box, 2026-11-04)
+    if (k === 'town'){ toast('Open the outdoor place first (type its name here), then draw the town or castle in the ⛰ Land panel.'); const g = $('#me-goto'); if (g) g.focus(); return; }
+    showView('createv');
     setTimeout(() => { const c = document.querySelector(`[data-ck="${k}"]`); if (c) c.click(); }, 50);
   });
 }

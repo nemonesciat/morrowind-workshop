@@ -66,7 +66,12 @@ function coachHouse(){
     if (b.dataset.coach === 'skip' || b.dataset.coach === 'end') coachEnd();
     else coachNext();
   });
-  showView('guide');
+  // (on the World map the pages come up as windows over it, stacked; the tour's buttons hid behind them and
+  // pageOn counted a Create window under the Home one as open. The tour runs on the pages, as it was written: the
+  // windows are closed, nothing in them is lost, 2026-11-04)
+  if (typeof VW !== 'undefined' && typeof vwClose === 'function') for (const v of Object.keys(VW.wins)) vwClose(v);
+  if (typeof VW !== 'undefined'){ VW.nav = true; try { showView('guide'); } finally { VW.nav = false; } }
+  else showView('guide');
   coachNext();
   COACH.timer = setInterval(coachTick, 250);
   window.addEventListener('resize', coachPlace);
@@ -126,6 +131,15 @@ function coachPlace(){
   const el = COACH.busy ? null : s.at && s.at(), tip = COACH.tip, ring = COACH.ring;
   if (el && el !== COACH.seen && el.offsetParent !== null){ COACH.seen = el; el.scrollIntoView({block: 'nearest'}); }
   const r = el && el.offsetParent !== null ? el.getBoundingClientRect() : null;
+  // (a button in a window over the map comes to the front; a window lying over a button outside any is moved aside)
+  if (r && typeof vwTop === 'function'){
+    const own = el.closest('.vwin'), top = vwTop();
+    if (own && top !== own && typeof vwFront === 'function') vwFront(own);
+    else if (!own && top && top.classList.contains('vwin')){
+      const c = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (c && !el.contains(c) && top.contains(c) && VW.wins[top.dataset.vw]){ const w = VW.wins[top.dataset.vw]; w.pos = {x: w.pos.x, y: Math.max(0, r.bottom + 24 - vwBox().getBoundingClientRect().top)}; vwPlace(w); }
+    }
+  }
   const tw = tip.offsetWidth, th = tip.offsetHeight, W0 = innerWidth, H0 = innerHeight;
   if (!r || r.width === 0 || r.bottom < 0 || r.top > H0){
     ring.className = 'coach-ring none'; Object.assign(ring.style, {left: '50%', top: '50%', width: '0px', height: '0px'});

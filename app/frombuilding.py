@@ -942,6 +942,14 @@ def plan(db, b, kit=None, floors=None, tiles=None, tolerance='usual'):
         except EditError as e:
             why = str(e)
             continue
+        if len(pl['floors']) < want and band:
+            # (fewer floors than the building has because the stairs don't fit on a ground floor this small, while the
+            # game's own interiors for this building are bigger than its walls: grown out to the game's size, where the
+            # stairs do fit. ex_common_house_tall_01: three storeys outside, 4 tiles and one floor inside, where the
+            # game lays 1.65 to 1.94 of the area inside the walls; the user, 2026-11-04)
+            g = _grown(db, b, kit, pl, want, band, ch)
+            if g is not None:
+                return g
         if pl['out'] > lim + 0.02:
             pl['notes'].append('About %d%% of the ground floor lies outside the walls, more than the game\'s own interiors for this '
                                'building take (up to %d%%): the stairs need the room.' % (round(pl['out'] * 100), round(lim * 100)))
@@ -954,6 +962,50 @@ def plan(db, b, kit=None, floors=None, tiles=None, tolerance='usual'):
         return pl
     pl0['problem'] = why
     return pl0
+
+def _grown(db, b, kit, pl, want, band, ch):
+    """The plan with its ground floor grown outwards, a tile at a time, from the game's typical size for this building
+    (the ratio band's median) up to the biggest it makes (its p90), every floor over it, until the builder can put the
+    stairs in for `want` floors: that plan, with a note; or None. New tiles join where they touch most tiles and lie
+    most over the walls, never in front of the door."""
+    T = pl['tile']
+    area = float(ch['outline']['area'] or 0)
+    if not area or not pl['tiles']:
+        return None
+    ground = {(int(t[0]), int(t[1])) for t in pl['tiles'] if int(t[2]) == 0}
+    g_cells = set(map(tuple, ch['outline']['cells']))
+    n_med, n_max = int(round(band[2] * area / (T * T))), int(round(band[4] * area / (T * T)))
+    if n_max <= len(ground):
+        return None
+    tried = 0
+    while len(ground) < n_max and tried < 10:
+        cands = {}
+        for (i, j) in ground:
+            for n in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+                if n in ground or n[1] < 0:
+                    continue
+                touch = sum(1 for m in ((n[0] + 1, n[1]), (n[0] - 1, n[1]), (n[0], n[1] + 1), (n[0], n[1] - 1)) if m in ground)
+                cands[n] = (touch, round(_cover(g_cells, n[0] * T, (n[1] + 0.5) * T, T), 2), -abs(n[0]), -n[1])
+        if not cands:
+            return None
+        ground.add(max(cands, key=cands.get))
+        if len(ground) < n_med:
+            continue
+        tried += 1
+        tiles = [[i, j, k] for k in range(want) for (i, j) in sorted(ground)]
+        try:
+            p2 = _plan(db, b, kit=kit, floors=want, ch=ch, tiles=tiles, force=True)
+            builder.plan(db, p2['style'], p2['rooms'], None, 'auto', p2['doors'])
+        except EditError as e:
+            print('grown plan (%d tiles): %s' % (len(ground), e))
+            continue
+        if len(p2['floors']) < want:
+            continue
+        p2['notes'].append('Grown to %d tiles so the stairs fit for %d floors: %.2f of the area inside the walls, as the game\'s own '
+                           'interiors for this building are (%.2f to %.2f).' % (len(ground), want, p2['ratio'], band[1], band[3]))
+        return p2
+    return None
+
 
 # The game's cellars, measured on 472 of its interiors behind buildings (scratchpad cellarlab.py, 2026-10-27): the
 # share of a style's houses with a floor below the one their door is on, and that floor's size against the ground
@@ -1375,7 +1427,7 @@ def upper_ways(db, b, out, idoor):
 # ---------------------------------------------------------------- building it
 
 def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None,
-          seed=0, lighting='normal', lights=True, route=None, layout=None):
+          seed=0, lighting='normal', lights=True, route=None, layout=None, variant=0):
     """Plan, build, link the doors both ways and put the northmarker in."""
     import release
     b = building_at(db, cell_key, ref_key, door_key)
@@ -1392,7 +1444,7 @@ def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, til
         out = None
         if pods_:
             try:
-                out = podtwins.build(db, b, name)
+                out = podtwins.build(db, b, name, variant)
             except EditError as e:
                 # (the twin exists as a model but the game never furnished it with a door to copy, in_nord_house_05:
                 # the plot was skipped and its door led nowhere, under a guild sign; Estmorevale, 2026-11-04. Planned

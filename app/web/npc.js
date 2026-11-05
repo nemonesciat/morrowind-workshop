@@ -116,10 +116,12 @@ function cBind(box){
 function cSelect(path, list, cur, opts){
   opts = opts || {};
   const has = list.some(x => x.id.toLowerCase() === (cur || '').toLowerCase());
+  // (two with one name, "Healer" and "Healer Service", read as one entry twice: the id tells them apart, 2026-11-04)
+  const twice = {}; for (const x of list) twice[(x.name || x.id).toLowerCase()] = (twice[(x.name || x.id).toLowerCase()] || 0) + 1;
   return `<select class="inp" data-cf="${path}" ${opts.re ? 'data-re="1"' : ''} ${opts.calc ? 'data-calc="1"' : ''}>
     ${opts.none ? `<option value="">${opts.none}</option>` : ''}
     ${!has && cur ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ''}
-    ${list.map(x => `<option value="${esc(x.id)}" ${x.id.toLowerCase() === (cur || '').toLowerCase() ? 'selected' : ''}>${esc(x.name || x.id)}</option>`).join('')}</select>`;
+    ${list.map(x => `<option value="${esc(x.id)}" ${x.id.toLowerCase() === (cur || '').toLowerCase() ? 'selected' : ''}>${esc(x.name || x.id)}${twice[(x.name || x.id).toLowerCase()] > 1 && x.name && x.name !== x.id ? ` (${esc(x.id)})` : ''}</option>`).join('')}</select>`;
 }
 function cSlider(path, val, min, max, label, hint){
   return `<label class="cfield"><span>${label} <output>${val}</output></span><input type="range" min="${min}" max="${max}" value="${val}" data-cf="${path}" data-num>${hint ? `<small>${hint}</small>` : ''}</label>`;

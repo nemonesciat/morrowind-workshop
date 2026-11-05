@@ -21,6 +21,11 @@ Open an interior on the World map and press **🪑 Auto-furnish rooms…** (Plac
 It all goes in as **one change**: one Undo takes it back. The furniture comes from similar places in your load
 order: beds and shelves against the walls, tables with chairs, things on the tables.
 
+**Plants** come the game's way too: as many floor planters as the game's rooms of that kind and size hold, at its
+spots (a post's foot, under a window, beside a doorway, a corner, by a seat), with one of the game's own gardens in
+each; pots on tables and shelves and hanging planters at its rates. When a room is too full for a floor planter by
+the time the planting comes, a pot stands on the furniture instead.
+
 The first time, Auto-furnish waits for the Workshop to finish learning from your game's places, and shows a bar
 while it does.
 
@@ -106,8 +111,10 @@ the game stands there, most often first. Rest the mouse on one to see it in plac
 - the gaps Find gaps looks for;
 - and whether the place **serves its purpose**: a smith with no forge, a tavern with no bar or tables, a temple
   with no shrine, a shop with nothing to sell from, a home with no bed, people with nowhere to sleep, bare rooms,
-  doors inside that lead nowhere, an interior that reaches outside its building. These have no button: the fixes are
-  **Auto-furnish rooms** (pick the kind), the door's **Leads to**, and *Interior from a building*.
+  doors inside that lead nowhere, an interior that reaches outside its building, and stairs nobody can use (every
+  flight is walked from its foot to its head: a wall across either end, a piece closing over it). These have no
+  button: the fixes are **Auto-furnish rooms** (pick the kind), the door's **Leads to**, *Interior from a building*
+  and *Roll the interior*.
 
 Where there's an obvious fix (set it down, pull it out of the wall, remove it), it has a button. Nothing changes
 until you click a fix, and one Undo takes a fix back.

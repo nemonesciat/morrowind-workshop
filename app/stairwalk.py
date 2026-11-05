@@ -50,7 +50,13 @@ def walk(db, cell_key, sc=None, m=None):
                 for h in (KNEE, CHEST):
                     hit = _hit(sc, (prev[0], prev[1], prev[2] + h), (ddx / L, ddy / L, ddz / L), L, skip)
                     if hit is not None:
-                        res.update(ok=False, where='run', by=_owner(sc, m, hit), at=(round(px), round(py), round(gz + h)))
+                        by = _owner(sc, m, hit)
+                        if by and 'stair' in by.lower():
+                            # (the next flight of a pair in line stands where this one's head tile would be: the way
+                            # goes on up it, not into it. Hlaalu's Stairs_H_01 over H_02, 12 of 146 game flights, 2026-11-04)
+                            hit = 'chained'
+                            break
+                        res.update(ok=False, where='run', by=by, at=(round(px), round(py), round(gz + h)))
                         break
             if hit is None:
                 hit = _hit(sc, (px, py, gz + 16), (0.0, 0.0, 1.0), HEAD, skip)
@@ -74,13 +80,29 @@ def _ends(db, r):
         SP = stairwellsurvey._stair_pieces(db)
         _SP.update(recs=db.recs, sp=SP)
     sp = SP.get(r['id'].lower())
+    if not sp and r.get('ri') is not None and r['id'].lower().startswith('in_'):
+        # (a kit stair no style's learning lists: measured from its model, a 256 tile)
+        g = kits.stair_shape(db, r['ri'], 256, 200)
+        sp = SP[r['id'].lower()] = {'id': r['id'], 'low': g['low'], 'z_low': g['bottom'] + 2, 'rise': g['rise'], 'tile': 256,
+                                    'len': g.get('len', 1)} if g else None
     if not sp or sp.get('len', 1) != 1 or abs(r['p'][3]) > 0.05 or abs(r['p'][4]) > 0.05:
         return None
     q = int(round(r['p'][5] / (math.pi / 2))) % 4
     down = kits.SIDES[(kits.SIDES.index(sp['low']) + q) % 4]
     st = {'N': (0, 1), 'E': (1, 0), 'S': (0, -1), 'W': (-1, 0)}[down]
-    T, lower = sp['tile'], r['p'][2] + sp['z_low']
+    # (z_low is where the floor piece's origin stands: its floor lies zmin under that, 128 for Hlaalu's mid-height
+    # origins; walked from the origin's height, the way up ran 125 too high and hit the landing's pieces at the head:
+    # 3 of 146 game flights, 2026-11-04)
+    T, lower = sp['tile'], r['p'][2] + sp['z_low'] + (sp.get('zmin') or 0)
     ox, oy = r['p'][0], r['p'][1]
+    if sp.get('cx') is not None:
+        # (a stair whose origin is at one end of its model: the builder stands the model's middle on the tile
+        # (builder._centred), so the tile's middle is the model's middle, not the origin. Telvanni (small)'s
+        # in_t_stairs_strt_256 stood 136 off its origin, the walk started inside the wall of the tile before its
+        # foot, and 9 flights of 9 read "closed over" in the lab, 2026-11-05)
+        c_, s_ = math.cos(r['p'][5]), math.sin(r['p'][5])
+        cx_, cy_ = sp['cx'], sp.get('cy') or 0.0
+        ox, oy = ox + cx_ * c_ + cy_ * s_, oy - cx_ * s_ + cy_ * c_
     return (ox + st[0] * T, oy + st[1] * T, lower), (ox - st[0] * T, oy - st[1] * T, lower + sp['rise'])
 
 

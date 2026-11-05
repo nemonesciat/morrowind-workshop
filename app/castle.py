@@ -24,7 +24,7 @@ import math
 import random
 import re
 import zlib
-from collections import Counter
+from collections import Counter, defaultdict
 
 import castlesurvey as cs
 import mapdata
@@ -960,10 +960,11 @@ class _Writer:
         return key, rk, pos
 
 
-def _pair_dead(db, cells, links):
+def _pair_dead(db, cells, links, load_only=()):
     """The doors of these rooms that lead nowhere (no link set, not a trap door) paired two by two, each to the
     other's room at the other's spot (face_arrivals then sets the arrival at the door's face); an odd one left
-    leads out where the room's first way out does. The number of doors linked."""
+    leads out where the room's first way out does. The number of doors linked. load_only: cells whose doors that
+    only swing in their frames are left alone (a made keep's in_impsmall_door_01 are not ways anywhere)."""
     import doors
     linked = {(ck, rk) for ck, rk, _d, _p in links}
     dead = []
@@ -972,6 +973,8 @@ def _pair_dead(db, cells, links):
         nm = (mapdata.cell_info(db, ck) or {}).get('name') or ck
         for r in m.get('refs') or ():
             if r['type'] == 'DOOR' and not r.get('to') and (ck, r['k']) not in linked and not re.search(r'trap|hatch', r['id'], re.I):
+                if ck in load_only and not re.search(r'loaddoor', r['id'], re.I):
+                    continue
                 dead.append((ck, nm, r))
     if not dead:
         return 0
@@ -1140,14 +1143,14 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
                     walk_cand.setdefault(mi, []).append(dd)
                 continue                         # (a door out onto the game fort's walk or bridge, not here: its room
                                                  # leads out by the keep's front door instead)
-            if rooms != 'none' and dd.get('to') and (dd['to'] not in m['network'] or not db.by_key.get(('CELL', dd['to']))):
+            if rooms not in ('none', 'made') and dd.get('to') and (dd['to'] not in m['network'] or not db.by_key.get(('CELL', dd['to']))):
                 continue                         # (a door into a room the castle hasn't: it led nowhere, an
                                                  # ex_nord_door_01 on a Redoran manor, lab c01)
             got = wr.put(dd['id'], (x, y, Z + dd['p'][2], 0.0, 0.0, M['rz'] + dd['p'][3]), dd.get('s') or 1.0)
             if got:
                 mdoors.append((mi, dd, got))
     if W is not None:
-        mdoors += _walk_doors(db, wr, P, W, walk_cand)
+        mdoors += _walk_doors(db, wr, P, W, walk_cand, every=(rooms == 'made'))
     if W is not None:
         _say('Setting out the bailey', 0.45)
         try:
@@ -1163,7 +1166,14 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     keys = {}
     to_towers = []                               # (cell, rk) inside doors the game led to its towers
     loose = []                                   # inside doors that led out where this castle has no door
-    for mi, M in enumerate(P['modules']) if rooms != 'none' else ():
+    made = None
+    if rooms == 'made':
+        # (the keep's interiors made anew, several of them linked door to door, and one interior for each run of wall
+        # towers: keepmaker.py, the keep study of 2026-11-05)
+        _say('Making the keep\'s interiors', 0.55)
+        made = _made_inside(db, P, W, mdoors, tdoors, name, size, seed, people, free, lambda what, frac: _say(what, 0.55 + 0.3 * frac))
+        links += made['links']
+    for mi, M in enumerate(P['modules']) if rooms not in ('none', 'made') else ():
         m = M['m']
         net = [g for g in m['network'] if db.by_key.get(('CELL', g))]
         for g in net:
@@ -1216,7 +1226,7 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
             links.append((ck, rk, '', _out_of(db, P['modules'][mi]['pose'], dd, got, P['modules'][mi])))
     # ---- the towers: a spiral-stair room for each, in one place
     tower_key = None
-    if P['towers'] and tdoors and rooms != 'none':
+    if P['towers'] and tdoors and rooms not in ('none', 'made'):
         _say('Making the tower rooms', 0.7)
         tname = free('%s, Towers' % name)
         tower_key, tl = _tower_rooms(db, S, P, tname, tdoors, to_towers, names, keys, rng)
@@ -1232,7 +1242,8 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     # (the copied rooms' doors into rooms this castle hasn't, left plain: 7 in a keep, 6 in a hall, the user's Fort
     # Estmoth. Paired across the castle's own rooms so each opens somewhere, the odd one out by the way in)
     try:
-        n_dead = _pair_dead(db, [k for k in keys.values()] + ([tower_key] if tower_key else []), links)
+        n_dead = _pair_dead(db, [k for k in keys.values()] + ([tower_key] if tower_key else []) + (made['cells'] if made else []), links,
+                            load_only=set(made['cells']) if made else ())
         if n_dead:
             print('castle: %d door(s) that led nowhere paired within %s' % (n_dead, name))
     except Exception as e:
@@ -1260,14 +1271,16 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     if people and rooms == 'furnished':
         _say('Placing the people', 0.9)
         folks = _people(db, keys, names, seed)
-    n_in = len(keys) + (1 if tower_key else 0)
+    n_in = len(keys) + (1 if tower_key else 0) + (len(made['cells']) if made else 0)
+    if made:
+        folks = made.get('people', 0)
     if len(stack) > n0:
         editing.fold(db, len(stack) - n0, 'Built %s, a %s: %d pieces outside, %d interiors%s' % (
             name, STYLES[style]['label'], len(wr.refs), n_in, (', %d people' % folks) if folks else ''))
     return {'name': name, 'pieces': len(wr.refs), 'cells': sorted(wr.cells), 'interiors': n_in, 'people': folks, 'furnished': placed,
             'sources': [[k, g] for (mi, g), k in sorted(keys.items())],
-            'rooms': sorted(set(names.values())) + ([tname] if tower_key else []), 'links': len(links), 'fig': P['fig'], 'game': P['game'],
-            'faults': P['faults'][:6]}
+            'rooms': sorted(set(names.values())) + ([tname] if tower_key else []) + (made['names'] if made else []), 'links': len(links), 'fig': P['fig'], 'game': P['game'],
+            'faults': P['faults'][:6], 'made': {k: v for k, v in made.items() if k in ('cells', 'names', 'keep', 'walls', 'unpaired')} if made else None}
 
 
 # ------------------------------------------------------------------------------------------------ the bailey
@@ -1610,11 +1623,12 @@ def _keep_scene(db, M):
     return M['scene']
 
 
-def _walk_doors(db, wr, P, W, cand):
+def _walk_doors(db, wr, P, W, cand, every=False):
     """Where the wall walk runs into a keep: an arch and a door in the keep's face at the walk, as the round towers have
     theirs, leading into the room the keep's own upper door led to (the game's keep doors opened onto its fort's walk on
     other sides; the user 2026-11-03: "the wall tops have doors leading into towers and keeps"). [(module index, door
-    entry with walk_out, (cell, rk, pos))]."""
+    entry with walk_out, (cell, rk, pos))]. every: a door wherever the walk runs in (a keep made anew has an interior
+    behind each: the game's keeps open at every arch along their walls, the keep study of 2026-11-05)."""
     T = TOWER
     out = []
     for mi, M in enumerate(P['modules']):
@@ -1622,7 +1636,7 @@ def _walk_doors(db, wr, P, W, cand):
             continue
         # (only into the room its own upper door led to, on the walk's floor: never a door that doesn't match its
         # inside, the user 2026-11-03)
-        into = list(cand.get(mi) or [])
+        into = list(cand.get(mi) or []) if not every else [{'id': T['door'], 'to': None, 'walk': True} for _k in range(12)]
         if not into:
             continue
         sc = _keep_scene(db, M)
@@ -1907,6 +1921,143 @@ def _tower_rooms(db, S, P, tname, tdoors, to_towers, names, keys, rng):
         else:
             out.append((ck, rk, dest, pos))
     return key, out
+
+
+def _tower_runs(P, W):
+    """The castle's round towers grouped by the wall side they stand on, each run in order along it: [[tower index]].
+    (A run of wall towers is one interior in the game: Firewatch's Wall Towers, Old Ebonheart's West Curtain Towers.)"""
+    T = P.get('towers') or []
+    if not T:
+        return []
+    poly = [tuple(q) for q in (W or {}).get('outline') or []]
+    if len(poly) < 3:
+        return [list(range(len(T)))]
+    runs = defaultdict(list)
+    for i, t in enumerate(T):
+        k = min(range(len(poly)), key=lambda j: _seg_dist(t['x'], t['y'], poly[j], poly[(j + 1) % len(poly)]))
+        a, b = poly[k], poly[(k + 1) % len(poly)]
+        along = (t['x'] - a[0]) * (b[0] - a[0]) + (t['y'] - a[1]) * (b[1] - a[1])
+        runs[k].append((along, i))
+    return [[i for _a, i in sorted(v)] for k, v in sorted(runs.items())]
+
+
+def _run_name(P, W, run, n_runs):
+    """What a run of wall towers' interior is called: by its side of the castle when there are several."""
+    if n_runs <= 1:
+        return 'Wall Towers'
+    T = P['towers']
+    cx, cy = P['frame']['x'], P['frame']['y']
+    mx = sum(T[i]['x'] for i in run) / len(run) - cx
+    my = sum(T[i]['y'] for i in run) / len(run) - cy
+    side = ('East', 'North', 'West', 'South')[int(((math.atan2(my, mx) + math.pi / 4) % (2 * math.pi)) // (math.pi / 2))]
+    return '%s Wall Towers' % side
+
+
+def _made_inside(db, P, W, mdoors, tdoors, name, size, seed, people, free, say):
+    """The castle's interiors made anew rather than copied (ROOMS 'made'): the keep's set of linked interiors from
+    keepmaker (a great hall, chambers, a garrison, a prison, towers, an undercroft, in chains and rings), its doors to the
+    outside paired with the keep's own doors by height (the ground door to the lowest, the walk doors above, a roof door
+    to a tower's hatch); and for each run of wall towers one interior of passages and spiral stairs with a door out at
+    every arch on the walk and a hatch at each crown, as the game's big keeps have them (docs/keep-study-2026-11.md).
+    {'cells', 'names', 'links': [(cell, rk, dest, pos)], 'people', 'keep', 'walls', 'unpaired'}."""
+    import dwemer
+    import keepmaker
+    links, cells, names, unpaired = [], [], [], 0
+    # ---- the keep's doors outside, lowest first; one high on the keep is its roof door
+    kd = []
+    for mi, dd, got in mdoors:
+        M = P['modules'][mi]
+        out = dd['walk_out'] if dd.get('walk_out') else _out_of(db, M['pose'], dd, got, M)
+        if callable(out):
+            out = out()
+        if not out:
+            continue
+        kd.append((got[2][2], dd, got, [float(v) for v in out[:6]], mi))
+    kd.sort(key=lambda t: t[0])
+    roof = [t for t in kd if 'pose' in P['modules'][t[4]] and t[0] - P['modules'][t[4]]['pose'][2] > 400 and not t[1].get('walk')]
+    keep_doors = [t for t in kd if t not in roof]
+    R = keepmaker.make(db, name, size, seed=seed, outs=max(1, len(keep_doors)), people=people, commit=False, progress=lambda w, f: say(w, 0.6 * f))
+    if R.get('learning'):
+        raise EditError('The Workshop is still learning the game\'s forts; try again in a minute.')
+    cells += R['cells']
+    names += [m['name'] for m in R['interiors']]
+    kout = sorted([o for o in R['outs'] if o['kind'] != 'trap'], key=lambda o: o['z'])
+    hatches = [o for o in R['outs'] if o['kind'] == 'trap']
+    for (z, dd, got, out, mi), o in zip(keep_doors, kout):
+        links.append((got[0], got[1], o['name'], o['arrive']))
+        links.append((o['cell'], o['k'], '', out))
+    for (z, dd, got, out, mi), o in zip(roof, hatches):
+        links.append((got[0], got[1], o['name'], o['arrive']))
+        links.append((o['cell'], o['k'], '', out))
+    # (a keep door more than the set has ways in: into the great hall by its first door, one way; a way in more than the
+    # keep has doors: out by the ground door's spot)
+    spare_out = keep_doors[len(kout):] + roof[len(hatches):]
+    spare_in = kout[len(keep_doors):] + hatches[len(roof):]
+    for z, dd, got, out, mi in spare_out:
+        if kout:
+            links.append((got[0], got[1], kout[0]['name'], kout[0]['arrive']))
+            unpaired += 1
+    for o in spare_in:
+        if keep_doors:
+            links.append((o['cell'], o['k'], '', keep_doors[0][3]))
+            unpaired += 1
+    # ---- the wall towers: one interior a run, a door out at every arch, a hatch at each crown
+    want = defaultdict(list)
+    for i, kind, got, arr in tdoors:
+        want[i].append((kind, got, arr))
+    runs = _tower_runs(P, W)
+    walls = []
+    cx, cy = P['frame']['x'], P['frame']['y']
+    for r_i, run in enumerate(runs):
+        walks = [(i, got, arr) for i in run for kind, got, arr in want.get(i, []) if kind == 'walk']
+        traps = [(i, got, arr) for i in run for kind, got, arr in want.get(i, []) if kind == 'trap']
+        if not walks and not traps:
+            continue
+        say('Making the %s' % _run_name(P, W, run, len(runs)).lower(), 0.6 + 0.4 * r_i / max(1, len(runs)))
+        nm = free('%s, %s' % (name, _run_name(P, W, run, len(runs))))
+        n_doors = max(1, len(walks))
+        I = {'label': nm, 'size': 'large' if n_doors > 5 else 'medium', 'levels': 'some', 'way': 'up', 'seed': zlib.crc32(('%s|%s|walls%d' % (name, seed, r_i)).encode()),
+             'doors': n_doors, 'keep': {'exits': n_doors - 1, 'spirals': min(len(run), 3), 'turns': [2, 3], 'traps': True, 'big': 0.0, 'nostories': True}}
+        try:
+            seed_, _lay = keepmaker._layout_with_doors(db, I)
+            rr = dwemer.build(db, nm, I['size'], I['levels'], 'branching', seed=seed_, kind='fort', way='up', keep=I['keep'], occupants='none', commit=True)
+        except EditError as e:
+            print('castle wall towers:', e)
+            continue
+        if rr.get('learning'):
+            continue
+        cells.append(rr['key'])
+        names.append(nm)
+        doors = rr.get('doors') or []
+        ins = [d for d in doors if d['kind'] in ('front', 'exit')]
+        # (the arches in their order round the castle, the doors inside in theirs across the place: neighbours stay
+        # neighbours as far as they can)
+        walks.sort(key=lambda w: math.atan2(w[2][1] - cy, w[2][0] - cx))
+        ins.sort(key=lambda d: (d['pos'][0], d['pos'][1]))
+        for (i, got, arr), d in zip(walks, ins):
+            links.append((got[0], got[1], nm, d['arrive']))
+            links.append((rr['key'], d['k'], '', arr))
+        tr_in = [d for d in doors if d['kind'] == 'trap']
+        for (i, got, arr), d in zip(traps, tr_in):
+            links.append((got[0], got[1], nm, d['arrive']))
+            links.append((rr['key'], d['k'], '', arr))
+        # (an arch or a crown more than the place has doors: in by the first door, one way; a door more: out at the first arch)
+        for i, got, arr in walks[len(ins):] + traps[len(tr_in):]:
+            if ins:
+                links.append((got[0], got[1], nm, ins[0]['arrive']))
+                unpaired += 1
+        for d in ins[len(walks):] + tr_in[len(traps):]:
+            if walks:
+                links.append((rr['key'], d['k'], '', walks[0][2]))
+                unpaired += 1
+        walls.append({'name': nm, 'key': rr['key'], 'towers': len(run), 'arches': len(walks), 'hatches': len(traps), 'doors': len(ins), 'rings': rr.get('rings', 0), 'spirals': rr.get('spirals', 0)})
+    folks = R.get('people', 0)
+    if people and walls:
+        try:
+            folks += keepmaker._people(db, [{'role': 'walls', 'key': w['key'], 'name': w['name']} for w in walls], seed)
+        except Exception as e:
+            print('castle wall people:', e)
+    return {'cells': cells, 'names': names, 'links': links, 'people': folks, 'keep': R, 'walls': walls, 'unpaired': unpaired}
 
 
 def _name_of(db, ck, names, keys, tname):
@@ -2416,7 +2567,7 @@ def wall_keeps(db, refs, outline, town, taken, rng, rooms='furnished'):
 # can't just copy them wholesale ... the interior decor and furnishing at least has to be unique"). ROOMS: None (no
 # rooms), shells (the architecture and doors only, for furnishing by hand) or furnished (the same shells, furnished by
 # the Workshop's own furnisher by each room's kind; the source's choices steer only the kind, never where things go).
-ROOMS = ('none', 'shells', 'furnished')
+ROOMS = ('none', 'shells', 'furnished', 'made')
 # (a building piece that is furnishing all the same: kit tables and beds, rugs, banners, altars, racks)
 NOT_SHELL = re.compile(r'rug|carpet|banner|tapestry|table|chair|bench|stool|_bed|bed_|bunk|hammock|shelf|bookcase|crate|barrel|'
                        r'sack|basket|rack|mannequin|statue|altar|shrine|planter|flora|tree|cushion|pillow|painting|candle|lantern|'

@@ -331,6 +331,7 @@ def main():
     # the readme and the third-party notices (licences of everything bundled)
     shutil.copy2(os.path.join(HERE, 'README.md'), os.path.join(STAGE, 'README.txt'))
     sys.path.insert(0, os.path.join(STAGE, 'app'))
+    sys.dont_write_bytecode = True        # (no __pycache__ in the staged app: it would be packaged)
     import helpinfo
     with open(os.path.join(STAGE, 'THIRD_PARTY_NOTICES.txt'), 'w', encoding='utf-8') as f:
         f.write(helpinfo.notices_text())

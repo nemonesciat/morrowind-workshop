@@ -5880,6 +5880,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             gap_p = ((_gsv2.ready(db) or {}).get('pairs') or {}).get('spacing') or [120, 140, 170, 220, 300]
             gap_r = ((_gsv2.ready(db) or {}).get('rows') or {}).get('gap') or [100, 120, 140, 170, 220]
             tries_ = 0
+            missed_ = 0                   # (floor planters the game's rooms of this size hold that found no spot here)
             while laid_ < n_ and tries_ < n_ + 3:
                 tries_ += 1
                 cls = (big_first[0] if laid_ == 0 and tries_ == 1 and big_first else draw(classes_)) or 'pot'
@@ -5942,6 +5943,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                         done, face = planter_at(mode, pb, front)
                     if not done:
                         last_trace.append((room['name'], 'planter', pid, 'no free spot (%s): left out' % ', '.join(sorted(tried_))))
+                        missed_ += 1
                         continue
                     pw_ = max(pb[3] - pb[0], pb[4] - pb[1])
                     # (the partners' spots first: a pot that would stand alone at a plain wall is not stood
@@ -5985,6 +5987,15 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             # tabletop pots on the room's tables and shelves, at the game's rate for the kind of room
             e_s = (G.get('furniture_pots_per_9') or 0) * area_f * dens_      # (the game's pots on tables and shelves; not its sills and ledges)
             n_s = int(e_s) + (1 if rng.random() < e_s - int(e_s) else 0)
+            # (a floor planter the game's rooms of this size hold, with no corner, doorway, window, post or seat left
+            # free by the time the planting comes, stands on the furniture instead, once a room: the game's small rooms
+            # keep a pot on the table as often as on the floor, and the made houses came out at half the game's planting
+            # for want of free wall, the lab's 40 rooms of 2026-11-04)
+            if missed_ and laid_ < n_ and not n_s:
+                n_s = 1
+                last_trace.append((room['name'], 'planter', '-', 'a tabletop pot in place of the floor planter that found no spot (%d hosts)' % sum(
+                    1 for p in placed if p.get('room') == room['name'] and not p.get('arch') and p['type'] in ('STAT', 'ACTI', 'CONT')
+                    and roomsurvey.family_of(db, p['id'], p['type']) in ('table', 'counter', 'shelf', 'cupboard', 'chest', 'bookshelf'))))
             n_s = min(n_s, 3)
             if n_s:
                 # (the pots the game stands on tables and shelves in places of this style, the small pot of
@@ -5999,30 +6010,51 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 hosts_ = [p for p in placed if p.get('room') == room['name'] and not p.get('arch') and p['type'] in ('STAT', 'ACTI', 'CONT')
                           and roomsurvey.family_of(db, p['id'], p['type']) in ('table', 'counter', 'shelf', 'cupboard', 'chest', 'bookshelf')]
                 n_done = 0
-                for _k in range(n_s * 4):
+                # (the pot that stands in for a floor planter with no spot tries every host's top at its ends and
+                # middle, in turn: four random throws at dressed tables landed one in five, the lab's 40 rooms)
+                order_ = []
+                if missed_:
+                    for h_ in rng.sample(hosts_, len(hosts_)):
+                        order_ += [(h_, fx_, fy_) for fx_, fy_ in ((0.5, 0.5), (0.15, 0.5), (0.85, 0.5), (0.5, 0.15), (0.5, 0.85), (0.2, 0.2), (0.8, 0.8))]
+                for _k in range(max(n_s * 4, len(order_))):
                     if n_done >= n_s or not pots_ or not hosts_:
                         break
                     pid = rng.choice(pots_[:4])
                     pb = mapdata.object_bounds(db, db.resolve_id(pid))
-                    h_ = rng.choice(hosts_)
+                    h_, fx_, fy_ = order_[_k] if _k < len(order_) else (rng.choice(hosts_), None, None)
                     if not pb:
                         continue
                     hb_ = _footprint([v * (h_.get('s') or 1.0) for v in h_['b']], h_['p'][5], h_['p'][0], h_['p'][1])
                     pw_ = max(pb[3] - pb[0], pb[4] - pb[1])
                     if hb_[2] - hb_[0] < pw_ + 16 or hb_[3] - hb_[1] < pw_ + 16:
+                        if missed_:
+                            last_trace.append((room['name'], 'planter', pid, 'tabletop: %s too small' % h_['id']))
                         continue
                     # (towards one end of the top, as the game's pots stand, not dead centre on a table)
-                    x_ = rng.uniform(hb_[0] + pw_ / 2 + 6, hb_[2] - pw_ / 2 - 6)
-                    y_ = rng.uniform(hb_[1] + pw_ / 2 + 6, hb_[3] - pw_ / 2 - 6)
+                    if fx_ is None:
+                        x_ = rng.uniform(hb_[0] + pw_ / 2 + 6, hb_[2] - pw_ / 2 - 6)
+                        y_ = rng.uniform(hb_[1] + pw_ / 2 + 6, hb_[3] - pw_ / 2 - 6)
+                    else:
+                        x_ = hb_[0] + pw_ / 2 + 6 + fx_ * (hb_[2] - hb_[0] - pw_ - 12)
+                        y_ = hb_[1] + pw_ / 2 + 6 + fy_ * (hb_[3] - hb_[1] - pw_ - 12)
                     top_ = surface_on(h_, x_, y_)
-                    if top_ is None or top_ < fl + 64 or top_ > fl + 200:
+                    # (a low chest's top reads as the floor; a low table's is a table's still: the Common round
+                    # table stands 55 high, and its pot was refused)
+                    low_ok = 48 if roomsurvey.family_of(db, h_['id'], h_['type']) in ('table', 'counter') else 64
+                    if top_ is None or top_ < fl + low_ok or top_ > fl + 200:
+                        if missed_:
+                            last_trace.append((room['name'], 'planter', pid, 'tabletop: %s top %s' % (h_['id'], None if top_ is None else round(top_ - fl))))
                         continue              # (on the piece's real top by its mesh, never on its box; not on a low chest, where it reads as a pot on the floor)
                     fp_ = _footprint(pb, h_['p'][5], x_, y_)
                     if any(p_.get('room') == room['name'] and p_.get('b') and p_['type'] in THING_TAGS_ON_TOP and abs(p_['p'][2] - (top_ - pb[2])) < 60
                            and _overlaps(fp_, _footprint([v * (p_.get('s') or 1.0) for v in p_['b']], p_['p'][5], p_['p'][0], p_['p'][1]), -2) for p_ in placed if p_ is not h_):
+                        if missed_:
+                            last_trace.append((room['name'], 'planter', pid, 'tabletop: %s dressed there' % h_['id']))
                         continue              # (not into the dressing already on the table)
                     prec = put(pid, x_, y_, h_['p'][5], at_z=top_ - pb[2], room=room['name'], on_ref=h_.get('k'))
                     if not prec:
+                        if missed_:
+                            last_trace.append((room['name'], 'planter', pid, 'tabletop: %s refused by put' % h_['id']))
                         continue
                     n_done += 1
                     grow(prec, x_, y_, h_['p'][5])

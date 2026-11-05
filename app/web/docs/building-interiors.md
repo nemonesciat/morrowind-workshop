@@ -90,8 +90,8 @@ linked both ways.
 - The rooms are cut the way the game's own storeys are: a big room and smaller ones round it. **🎲** gives
   other rooms in the same space.
 - **Furnish** (Bare, or how well off), **Light** and **Lanterns**: it is furnished and lit as it is made.
-- A building with a shell the game makes a ready-made interior for (a shack, a hut, a tent, a Telvanni pod) offers
-  two ways. **Ready-made per shell** makes a place for each such shell with a door outside, copied from the game's
+- A building with a shell the game makes a ready-made interior for (a shack, a hut, a tent, a Telvanni pod, the
+  one-piece houses and barns of the Gold Coast's poor villages and the Nord log cabins) offers two ways. **Ready-made per shell** makes a place for each such shell with a door outside, copied from the game's
   own. The list shows each place and which game interior it is like (**⌖** shows the piece). **Planned to fit**
   plans one interior for the whole building instead, floor by floor.
 
@@ -110,14 +110,28 @@ forge, a home with no bed…); the picked one's plan (its rooms, where the forge
 holds, and its faults.
 
 - **🎲 Roll** plans and furnishes another interior for the building, in its style, and the building's door leads
-  into it. Four rolls are kept at a time; click a chip to look at another, **👁 Walk in** to see it in place.
-- **Furnish as** picks what it is for (a home, a smithy, a tavern, a Mages' hall…) and how well off.
+  into it. Each roll is another layout of the rooms: a shell the same as one on the card already (or as the old
+  interior's) is thrown away and rolled again; only a building so small that there is one way to cut it gets the
+  same shell, furnished anew. A building the game has one ready-made interior for (a hut, a pod) takes turns: the
+  ready-made one fitted out from another of the game's examples, then a layout planned from the footprint, and so
+  on. Four rolls are kept at a time; click a chip to look at another, **👁 Walk in** to see it in place. The verdict
+  counts stairs nobody can use with the purpose faults.
+- **Furnish as** picks what it is for (a home, a smithy, a tavern, a Mages' hall…) and how well off, and whether it
+  gets **a cellar** (the usual size for the style, or a big one) with a trap door down. A hut the game has a
+  ready-made interior for is planned anew to get one; a ready-made interior never carries the game's own hatch to a
+  cellar that isn't there.
 - **Roll until it has** a forge, a bed, two floors or no fault rolls again on its own, up to eight times, and stops at
   the first that passes.
 - **✓ Keep this one** locks it in: the door leads there, the old interior's people move in (their records, lines and
   daily routines untouched; where they stand and what they own follow the new rooms), the old interior and the other
   rolls go, the walking paths are made, and the place takes the old name. One Undo takes it all back.
 - **↶ Put the old one back** takes every roll out.
+- A building whose ground floor comes out too small for its stairs (a tall, narrow house) is grown outwards to the
+  size the game gives its own interiors for that building, every floor over it, until the stairs fit; the plan's notes
+  say so.
+- Until you do one or the other, the old interior and every roll stay in the mod, all of them real places, and only
+  the one the door leads to can be reached. The Health check lists cards left open under *rolled interiors left
+  undecided*, with **Keep the ones the doors lead to** to settle them all at once.
 - **Find the faulty interiors in this town** lists every mod-made interior in the cell the purpose check faults, each
   with a 🎲 to roll it.
 
@@ -219,5 +233,6 @@ Each is one change.
 ## After building
 
 - **Auto-furnish rooms…**, **Find gaps…** and **Check place…** in the Place panel: see *Furnishing and checking*.
+  Under a thatch roof Find gaps looks up to the ridge, so a gable open on the void beside the stair is listed.
 - The interior's lighting, fog and water are in the **Sky** panel.
 - **Play here** to walk round it in the game: see *Playing and testing*.

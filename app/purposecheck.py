@@ -152,7 +152,15 @@ def issues(db, cell_key, m=None):
     def floor_at(x, y, z):
         return any(abs(x - tx) <= T * 0.6 and abs(y - ty) <= T * 0.6 and -80 <= z - tz <= 240 for tx, ty, tz in tiles)
     for r in refs:
-        if r['type'] == 'DOOR' and not r.get('to') and not re.search(r'trap|hatch|marker', r['id'], re.I):
+        if r['type'] == 'DOOR' and not r.get('to') and not re.search(r'marker', r['id'], re.I):
+            flat = abs(r['p'][3]) > 1.2 or abs(r['p'][4]) > 1.2 or re.search(r'trap|hatch', r['id'], re.I)
+            below = tiles and r['p'][2] < min(tz for _x, _y, tz in tiles) - 60
+            if flat or below:
+                # (a hatch in the floor with nothing under it: the game's own cellar door copied with a ready-made hut,
+                # the user's Nord hut, 2026-11-04)
+                rm = _room_of(rooms, r['p'], T)
+                out.append(issue('deaddoor', '%s is a trap door to nowhere' % (r.get('name') or r['id']), [r['p'][0], r['p'][1], r['p'][2] + 60], (rm or {}).get('name') or '', r['k'], r['id']))
+                continue
             if not tiles:
                 continue
             rz = r['p'][5] if len(r['p']) > 5 else 0.0
@@ -171,6 +179,24 @@ def issues(db, cell_key, m=None):
             out.append(issue('sizefit', f.get('text') or 'Sticks out of its building', centre))
     except Exception:
         pass
+    # every kit stair walked from its foot to its head (stairwalk.py): a wall across the flight, a piece closing over
+    # it. (The user's Estmorevale house, 2026-11-04: the game's end cap laid across the foot and a table in front of
+    # it, and the card said the house served its purpose)
+    try:
+        import stairwalk
+        for w in stairwalk.walk(db, cell_key, m=m):
+            if w['ok']:
+                continue
+            by = (w.get('by') or {}).get('id') if isinstance(w.get('by'), dict) else w.get('by')
+            if w.get('where') == 'over' and by and re.search(r'win|wall|beam|rail|post|pillar|column', by, re.I):
+                continue                  # (a window, wall or beam set over a flight: the game's own places have them; a floor closing over it is the fault)
+            how = 'closed over' if w.get('where') == 'over' else 'blocked'
+            at = list(w.get('at') or [0, 0, 0])
+            rm = _room_of(rooms, at, T)
+            out.append(issue('stairend', 'The stairs are %s%s: nobody can use them' % (how, (' by %s' % by) if by else ''), at,
+                             (rm or {}).get('name') or '', w.get('ref') or '', w.get('id') or ''))
+    except Exception as e:
+        print('purpose stairs:', cell_key, e)
     return out
 
 
@@ -179,5 +205,6 @@ KINDS = [
     ('nobed', 'People with no bed', 'Someone lives here and there is no bed to sleep in.'),
     ('bare', 'Bare rooms', 'A room of six tiles or more with next to nothing in it.'),
     ('deaddoor', 'Doors that lead nowhere', 'A door inside with no place behind it.'),
+    ('stairend', 'Stairs nobody can use', 'A wall across the foot or the head of a flight, or a piece closing over it.'),
     ('sizefit', 'Bigger than its building', 'The interior reaches well outside the building it stands in.'),
 ]

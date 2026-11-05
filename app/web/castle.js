@@ -2,7 +2,7 @@
 // drawn on the map before anything is built; Make it builds it, rooms and all, as one Undo.
 // (the user, 2026-11-01: "better keep and castle generation, with rooms inside towers, keeps and curtain walls")
 const CS_SIZES = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['drawn', 'As drawn']];
-const CS_ROOMS = [['none', 'None'], ['shells', 'Empty shells'], ['furnished', 'Furnished']];
+const CS_ROOMS = [['none', 'None'], ['shells', 'Empty shells'], ['furnished', 'Furnished'], ['made', 'Made anew']];
 const CS_COL = {wall: '#8a7a66', corner: '#5a4a3a', tower: '#5a4a3a', bigtower: '#4a3a2a', gate: '#4caf50', end: '#4caf50', keep: '#b0623a'};
 
 async function csStyles(){
@@ -28,10 +28,10 @@ function csHtml(sel){
   return `<div style="display:flex;align-items:center;gap:4px;font-size:12px"><b>Castle</b>${help}</div>
     <label title="Whose forts it is built like: their walls, towers and keep, and the rooms behind their doors">Like <select class="inp" id="cs-style">${(st.length ? st : [{id: 'Imperial', label: 'Imperial fort'}]).map(s => `<option value="${esc(s.id)}" ${(p.style || 'Imperial') === s.id ? 'selected' : ''} title="${esc((s.examples || []).join(', '))}">${esc(s.label)}</option>`).join('')}</select></label>
     <label title="How big its walls are, against the game's own of its kind. As drawn: the outline you drew">Size <select class="inp" id="cs-size">${CS_SIZES.map(([v, t]) => `<option value="${v}" ${(p.size || 'medium') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-    <label title="Its name: its rooms are called after it. Blank: the one shown">Name <input class="inp" id="cs-name" value="${esc(p.name || '')}" placeholder="${esc((C && C.plan && C.plan.name) || '')}" maxlength="40"></label>
+    <label title="Its name: its rooms are called after it. Blank: the one shown">Name <input class="inp" id="cs-name" value="${esc(p.name || '')}" placeholder="${esc((C && C.plan && C.plan.name) || '')}" maxlength="40" spellcheck="false"></label>
     <label title="Which way its gate opens. By itself: the low side that's dry land and not a cliff. Or click an arrow on the map">Gate <select class="inp" id="cs-gate">${csGateOpts(p.gate)}</select></label>
-    <label title="What lies behind its doors. Shells: the rooms' walls, stairs and doors only, to furnish yourself. Furnished: the same, furnished by the Workshop">Rooms <select class="inp" id="cs-rooms">${CS_ROOMS.map(([v, t]) => `<option value="${v}" ${(p.rooms || 'furnished') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-    <label title="Its people, cast as the game's own rooms of its kind have them (furnished rooms only)"><input type="checkbox" id="cs-ppl" ${(p.rooms || 'furnished') !== 'furnished' ? 'disabled' : ''} ${p.nopeople || (p.rooms || 'furnished') !== 'furnished' ? '' : 'checked'}> People</label>
+    <label title="What lies behind its doors. Shells: the game keep's rooms as bare walls, stairs and doors, to furnish yourself. Furnished: the same, furnished by the Workshop. Made anew: a keep of the Workshop's own, several interiors linked door to door (halls, a garrison, a prison, towers, an undercroft) and one for each run of wall towers, a door at every arch">Rooms <select class="inp" id="cs-rooms">${CS_ROOMS.map(([v, t]) => `<option value="${v}" ${(p.rooms || 'furnished') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+    <label title="Its people, cast as the game's own rooms of its kind have them (furnished or made rooms only)"><input type="checkbox" id="cs-ppl" ${['furnished', 'made'].includes(p.rooms || 'furnished') ? '' : 'disabled'} ${p.nopeople || !['furnished', 'made'].includes(p.rooms || 'furnished') ? '' : 'checked'}> People</label>
     <div class="actions"><button class="btn sm" id="cs-reroll" title="Another layout of the same castle">🎲 Another</button>
       <button class="btn sm" id="cs-remove" title="Take away what Make it built here, rooms and all. What you added later and the ground stay. One Undo">✕ Remove</button>
       <button class="btn sm primary" id="cs-make" ${C && C.plan ? '' : 'disabled'} title="Build it as shown, its rooms behind its doors. One Undo takes it back">🏰 Make it</button></div>${info}`;

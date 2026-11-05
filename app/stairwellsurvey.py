@@ -68,7 +68,8 @@ def _stair_pieces(db):
         for p in info['pieces']:
             o = out.setdefault(p['id'].lower(), {'id': p['id'], 'styles': [], 'storey': info['storey'], 'rise': p['rise'],
                                                  'z_low': p['z_low'], 'low': p['low'], 'tile': kp['tile'],
-                                                 'height': p.get('height', 0), 'len': p.get('len', 1)})
+                                                 'height': p.get('height', 0), 'len': p.get('len', 1),
+                                                 'zmin': kp.get('zmin') or 0})     # (the floor's height under a floor piece's origin)
             if style not in o['styles']:
                 o['styles'].append(style)
     return out

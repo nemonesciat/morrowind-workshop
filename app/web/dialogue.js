@@ -158,7 +158,7 @@ function dRenderNpc(){
   const all = [];
   let h = `<div class="dhead"><div><div class="dt-type">${c.type === 'CREA' ? 'Creature' : 'Character'}</div><h2>${esc(c.name || c.id)}</h2>
     <div class="msg">${esc([c.race, c.cls, c.faction].filter(Boolean).join(' · '))} · <span class="lnk" data-drec="${c.i}">record</span> · ID ${esc(c.id)}</div></div>
-    <div class="actions" style="margin:0"><button class="btn primary" id="d-addgreet">+ Greeting</button><button class="btn" id="d-addtopic">+ Topic line</button><button class="btn" id="d-aiquest" title="Ask the assistant to write a quest for this character">✦ Quest idea…</button><button class="btn" data-qgo="${esc(c.id)}" style="display:none" title="Go to them in your running game">🎮 Go to</button></div></div>`;
+    <div class="actions" style="margin:0"><button class="btn primary" id="d-addgreet">+ Greeting</button><button class="btn" id="d-addtopic">+ Topic line</button><button class="btn" id="d-aiquest" title="Ask the assistant to write a quest for this character (uses your API key)">✦ Quest idea…</button><button class="btn" data-qgo="${esc(c.id)}" style="display:none" title="Go to them in your running game">🎮 Go to</button></div></div>`;
   h += cvTabs();
   if (CV.tab !== 'lines'){
     $('#dmain').innerHTML = `<div class="dwrap cvwide">${h}<div id="cvbody"></div></div>`;
@@ -263,7 +263,7 @@ function dRenderQuest(){
   let h = `<div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b> (used in conditions and scripts; players never see it)</div></div>
     <div class="actions" style="margin:0"><button class="btn primary" id="q-save">Save quest</button></div></div>
     ${qtabs}<div id="q-test"></div>
-    <label class="dlabel">Title, as shown in the journal</label><div class="ai-row"><input class="inp" id="q-title" value="${esc(q.title)}"><button class="btn sm" data-ai="title" title="Suggest with AI">✦</button></div>
+    <label class="dlabel">Title, as shown in the journal</label><div class="ai-row"><input class="inp" id="q-title" value="${esc(q.title)}"><button class="btn sm" data-ai="title" title="Suggest with AI (uses your API key)">✦</button></div>
     <label class="dlabel">Stages <span class="msg">(the journal entries, by number; the game shows them as the player reaches them)</span></label>
     <div id="q-stages"></div>
     <div class="actions"><button class="btn sm" id="q-add">+ Add stage</button></div>`;
@@ -277,7 +277,7 @@ function dRenderQuest(){
     $('#q-stages').innerHTML = D.qstages.map((s, n) => `<div class="qstage" data-qs="${n}"><input class="inp" type="number" value="${s.index}" data-qf="index" title="Stage number">
       <textarea class="inp" data-qf="text" placeholder="What the player writes in their journal, e.g. 'Fenas asked me to find her ring.'">${esc(s.text)}</textarea>
       <div class="qside"><label title="The quest is complete at this stage"><input type="checkbox" data-qf="finished" ${s.finished ? 'checked' : ''}> Finished</label>
-      <button class="btn sm" data-ai="stage" title="Suggest with AI">✦</button><button class="btn sm danger" data-qdel title="Remove stage">✕</button></div></div>`).join('')
+      <button class="btn sm" data-ai="stage" title="Suggest with AI (uses your API key)">✦</button><button class="btn sm danger" data-qdel title="Remove stage">✕</button></div></div>`).join('')
       || '<div class="msg">No stages yet.</div>';
     $('#q-stages').querySelectorAll('[data-qf]').forEach(el => el.oninput = el.onchange = () => {
       const s = D.qstages[+el.closest('[data-qs]').dataset.qs], f = el.dataset.qf;
@@ -381,7 +381,7 @@ async function dEditLine(topicKey, line, isNew){
         <span>Disposition ≥</span><input class="inp" id="le-disp" type="number" value="${L.disp || 0}"></div></details></div>
     <label>They say</label>
     <div class="lefield"><textarea class="inp" id="le-text" placeholder="What they say. You can use %PCName, %PCRace, %PCClass.">${esc(L.text || '')}</textarea>
-      <div class="actions" style="margin-top:4px"><button class="btn sm" id="le-ai">✦ Suggest with AI</button><span class="msg" id="le-count"></span></div></div>
+      <div class="actions" style="margin-top:4px"><button class="btn sm" id="le-ai" title="Uses your API key">✦ Suggest with AI</button><span class="msg" id="le-count"></span></div></div>
     <label>Only when <span class="msg">(all of these must be true; leave empty for always)</span></label>
     <div id="le-conds"></div><button class="btn sm" id="le-addc">+ Condition</button>
     <label>Then do <span class="msg">(result script: runs after the line is said)</span></label>

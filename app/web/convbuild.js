@@ -138,7 +138,7 @@ function cbVersion(v, i, gid){
       <div class="cbtools"><button class="btn sm" data-cbaddc="${vid}">+ Only when…</button>
         <select class="inp" data-cbadda="${vid}" style="width:auto;font-size:11.5px;padding:2px 6px"><option value="">+ Then…</option>${Object.entries(CB_ACTS).map(([k, A]) => `<option value="${k}">${A[0]}</option>`).join('')}<option value="script">⌨ Script of your own</option>${v.disp ? '' : '<option value="disp_need">♥ Only if they like the player enough</option>'}</select>
         <button class="btn sm" data-cbaddans="${vid}" title="Let the player answer; each answer leads on">+ Answer</button>
-        <button class="btn sm" data-cbai="${vid}" title="Suggest the words with AI">✦</button></div>
+        <button class="btn sm" data-cbai="${vid}" title="Suggest the words with AI (uses your API key)">✦</button></div>
     </div>${v.answers.length ? `<div class="cbans">${ans}</div>` : ''}</div>`;
 }
 function cbNewVersion(){ return {inam: null, text: '', conds: [], disp: 0, actions: [], script: '', answers: [], mine: true, keep: {}}; }

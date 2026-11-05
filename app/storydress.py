@@ -1,6 +1,10 @@
 """The story layer of a made town's dressing: the ground between its houses given owners. Each house plot's back and
 sides are its yard, fenced in the culture's own fence; the yard gets one kind of life (a kitchen yard, a garden, a
-workshop yard, a pen) as a set of the Workshop's own, laid against the house's back; a planter or two by the door.
+workshop yard, a pen) as a set of the Workshop's own, laid against the house's back; and round every house what the
+game grows round its own, at the game's rates for the culture and with the region's own species (gardensurvey's
+outdoor survey, 2026-11-04): a bed of flowers or herbs at the side wall, a tree by the house, a planter at the door or
+along a wall with its garden in it, ivy on the walls of the cultures that grow it, a kitchen garden of the region's
+crop in rows at the game's spacing. Farms and orchards for the land (farm, orchard, lay_field) stand on their own.
 
 The survey dressing (towndress, townlife) lays what the game lays at the game's rates: scenes before doors, groups along
 streets, stalls and storage. It never decides what a patch of ground is FOR, so the ground between houses read as a
@@ -8,9 +12,11 @@ lawn (the user, 2026-11-03: "fill the empty space in between homes and roads wit
 stalls, trees, more crates and boxes"; the brainstorm: "fences that divide the grass into yards, then one yard kind per
 house"). Sets here are hand-written in a frame: x across the house's back (right-handed, facing the back fence),
 y into the yard from the house's back wall, z over the ground. Things that would stand in something are left out.
+Nothing grows in a walking line: the doors' ways and the arrival spots in front of them, the streets, the plots.
 """
 import math
 import random
+import re
 
 import mapdata
 
@@ -28,7 +34,18 @@ FENCES = {
     'Redoran': {'runs': [('t_de_set_x_woodfence_02', 257), ('t_de_set_x_woodfence_02_128', 128)], 'post': None},
     'Dunmer common': {'runs': [('t_de_set_x_woodfence_01', 257), ('t_de_set_x_woodfence_01_128', 128)], 'post': None},
 }
-FENCE_KIN = {'Anvil': 'Imperial', 'Imperial Legion': 'Imperial', 'Indoril': 'Velothi', 'Mournhold': 'Velothi'}
+# (the town survey's culture names that have no fence of their own borrow a kin's: a Nordic town got no fences at all
+# before, its key being 'Nordic' and the fence's 'Nord')
+FENCE_KIN = {'Anvil': 'Imperial', 'Imperial Legion': 'Imperial', 'Indoril': 'Velothi', 'Mournhold': 'Velothi', 'Nordic': 'Nord', 'Reach': 'Nord',
+             'Dunmer': 'Dunmer common', 'Stronghold': 'Dunmer common', 'Telvanni': 'Dunmer common'}
+# the game's farm fences (t_imp_setfarm, t_nor_setfarm, the Common towns' furn_com_fence), for farms and kitchen gardens
+FARM_FENCES = {
+    'Imperial': {'runs': [('t_imp_setfarm_fencestrt_01', 390)], 'post': 't_imp_setfarm_fencepost_01'},
+    'Gold Coast': {'runs': [('t_imp_setfarm_fencestrt_01', 390)], 'post': 't_imp_setfarm_fencepost_01'},
+    'Anvil': {'runs': [('t_imp_setfarm_fencestrt_01', 390)], 'post': 't_imp_setfarm_fencepost_01'},
+    'Common': {'runs': [('furn_com_fence_02', 264)], 'post': 'furn_com_fence_01'},
+    'Nord': {'runs': [('t_nor_setfarm_x_fencelent_01', 380), ('t_nor_setfarm_x_fencelent_02', 380)], 'post': 't_nor_setfarm_x_fencepost_01'},
+}
 FENCE_IN = 24                  # a fence stands this far inside the plot's edge (two plots' fences never meet)
 FENCE_GAP = 6                  # (and pieces this far apart along the run)
 FENCE_SHARE = 0.8              # (a run is laid when this share of its pieces fit, else none of it: no stray stakes)
@@ -36,8 +53,30 @@ YARD_D = 440                   # a yard reaches this far behind the house's back
                                # smaller than the house, so the plot's own back is no guide)
 YARD_MIN = 320                 # a yard with less than this behind the house gets no set, only its fence
 THING = 44                     # a set thing's own room on the ground (half a side)
-PLANTERS = ['furn_planter_01', 'furn_planter_02', 'furn_planter_03', 'furn_com_planter']
+ARRIVE = (112, 330)            # the way out of a door kept clear of everything that grows: half-width and depth (the
+                               # arrival spot stands 110 to 300 out of the door, doors.outside_spot)
+PLANTERS = ['furn_planter_01', 'furn_planter_02', 'furn_planter_03', 'furn_com_planter']   # (the fallback, unsurveyed)
+TREE_TRUNK = 60                # a tree's own room on the ground (its trunk; the game's canopies overhang walls and roofs)
+TREE_MIN_D = 100               # a tree's trunk never nearer a wall than this (and never nearer than 0.3 of its crown)
 
+# the game's figures baked in for a load order the outdoor survey has not read yet (its own figures, 2026-11-04:
+# 149 towns, 8364 outdoor cells; see gardensurvey.outdoor). Percentile sketches are [10th, 25th, 50th, 75th, 90th].
+GAME = {
+    'beds': {'plants': [2, 2, 3, 4, 6], 'nn': [41, 56, 84, 125, 152], 'wall': [12, 62, 193, 365, 475], 'side': {'side': 0.62, 'front': 0.24, 'back': 0.14}, 'one_kind': 0.6},
+    'house_trees': {'d': [25, 84, 178, 274, 339], 'side': {'side': 0.61, 'back': 0.22, 'front': 0.16}},
+    'planters': {'by_door': 0.10, 'lx': [122, 174, 238, 283, 293], 'ly': [-197, -121, -77, -38, -31], 'planted': 0.9, 'stand': {'ground': 0.56, 'step': 0.09, 'high': 0.35}},
+    'vines': {'bottom': [69, 124, 215, 336, 412], 'side': {'side': 0.56, 'front': 0.39, 'back': 0.05}},
+    'farms': {'row_gap': [92, 114, 136, 167, 214], 'in_gap': [36, 68, 128, 208, 235], 'rows': [1, 2, 2, 3, 4], 'per_row': [2.5, 2.8, 3.5, 6, 11], 'align': [0.16, 0.24, 0.43, 0.65, 0.78],
+              'plants': [5, 6, 8, 11, 16], 'fenced': 0.14},
+    'orchards': {'nn': [47, 85, 140, 217, 379], 'cv': [0.06, 0.15, 0.49, 0.81, 1.02], 'trees': [3, 3, 4, 5, 6]},
+    'rate': {'beds': 0.55, 'house_trees': 0.3, 'planters': 0.2, 'vines': 0.25},
+}
+# a garden's rows: the culture's own crops when the survey has none for the region (the region's come first)
+CROPS = {'Dunmer': ['flora_saltrice', 'flora_marshmerrow', 'flora_corkbulb', 'flora_ash_yam'],
+         'Imperial': ['t_cyr_flora_spikerice', 't_cyr_flora_wheat', 'flora_wickwheat'],
+         'Nord': ['t_sky_flora_withwheat', 't_glb_flora_cabbage', 'flora_wickwheat'],
+         'Breton': ['flora_wickwheat', 't_glb_flora_cabbage'],
+         'Redguard': ['flora_wickwheat', 'flora_ash_yam']}
 # the yard kinds: [(id, x, y, dz, rz)] in the yard frame, y from the house's back wall; alternatives by id prefix are
 # tried in order and the first the load order has is used
 KINDS = {
@@ -50,15 +89,11 @@ KINDS = {
     'pen': [('t_com_setfarm_haybale_01', -120, 200, 0, 0.3), ('t_com_setfarm_haybale_01', -40, 220, 0, 1.2), ('t_imp_setfarm_foodtrough_01', 100, 120, 0, 1.571),
             ('t_com_setfarm_haypile_01', 150, 260, 0, 0.0)],
 }
-# a garden's rows: the culture's own crops, three rows of them, three to a row
-CROPS = {'Dunmer': ['flora_saltrice_01', 'flora_marshmerrow_01', 'flora_comberry_01'],
-         'Imperial': ['flora_wickwheat_01', 'flora_comberry_01', 'flora_green_lichen_01'],
-         'Nord': ['flora_wickwheat_01', 'flora_heather_01', 'flora_comberry_01'],
-         'Breton': ['flora_wickwheat_01', 'flora_comberry_01', 'flora_heather_01'],
-         'Redguard': ['flora_wickwheat_01', 'flora_comberry_01', 'flora_ash_yam_01']}
 KIND_BY = {'house': ['kitchen', 'garden', 'kitchen', 'pen'], 'manor': ['garden', 'kitchen'], 'shop': ['workshop', 'kitchen'],
            'tavern': ['kitchen', 'workshop'], 'farm': ['pen', 'garden'], 'shack': ['kitchen', 'garden']}
 LAST = {}                      # (the last town's figures, for the checks)
+WHY = {}                       # (why scenes were left out in the last town, for the lab)
+_VAR = {}                      # (every growing thing's ids by kind-name, per load order)
 
 
 def _unit(x, y):
@@ -70,6 +105,18 @@ def _rect(cx, cy, dx, dy, half_x, half_y):
     """The corners of a box half_x along (dx, dy) and half_y across it, at (cx, cy)."""
     nx, ny = -dy, dx
     return [(cx + dx * sx * half_x + nx * sy * half_y, cy + dy * sx * half_x + ny * sy * half_y) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+
+
+def _footprint(bb, x, y, rz, s=1.0, pad=0.0):
+    """A thing's footprint on the ground as the game turns it (clockwise about its origin): the bounds' corners in the
+    world, pad units wider. A set thing's room was a square about its ORIGIN before, and a thing whose mesh stands
+    off its origin (a chicken cage, a wheelbarrow) overlapped the house behind it: an eighth of a town's yard things
+    stood into a plot, the lab's 191 plots of 2026-11-04."""
+    c, sn = math.cos(rz), math.sin(rz)
+    out = []
+    for lx, ly in ((bb[0] - pad, bb[1] - pad), (bb[3] + pad, bb[1] - pad), (bb[3] + pad, bb[4] + pad), (bb[0] - pad, bb[4] + pad)):
+        out.append((x + (lx * c + ly * sn) * s, y + (-lx * sn + ly * c) * s))
+    return out
 
 
 def _inside(poly, x, y):
@@ -88,10 +135,13 @@ def _overlap(a, b):
 
 
 class _Space:
-    def __init__(self, polys):
+    def __init__(self, polys, strict=()):
         self.polys = [list(p) for p in polys]
+        self.strict = [list(p) for p in strict]      # (kept clear of what grows: the streets' whole width)
 
-    def free(self, pts):
+    def free(self, pts, grows=False):
+        if grows and any(_overlap(pts, p) for p in self.strict):
+            return False
         return not any(_overlap(pts, p) for p in self.polys)
 
     def take(self, pts):
@@ -113,18 +163,174 @@ def _first(db, *ids):
     return None
 
 
-def _ground_z(db, b, x, y):
+def _ground_z(db, b, x, y, s=1.0):
     g = mapdata.terrain_z(db, x, y)
     if g is None:
         return None
     # (the piece's foot on the ground: most statics stand at their origin; one with its mesh starting over it is sunk)
-    return g - (b[2] if b and b[2] > 0 else 0.0)
+    return g - (b[2] * s if b and b[2] > 0 else 0.0)
 
 
-def _fence_run(db, space, memo, F, a, b, inward):
+def _pct(rng, pcts, lo=None, hi=None):
+    """A value drawn from a percentile sketch [10th, 25th, 50th, 75th, 90th] (straight between the marks, the tails
+    held at the 10th and 90th), clamped to [lo, hi]."""
+    if not pcts:
+        return lo if lo is not None else 0.0
+    marks = [(0.1, pcts[0]), (0.25, pcts[1]), (0.5, pcts[2]), (0.75, pcts[3]), (0.9, pcts[4])]
+    u = rng.random()
+    v = marks[0][1] if u <= 0.1 else marks[-1][1]
+    for (ua, va), (ub, vb) in zip(marks, marks[1:]):
+        if ua <= u <= ub:
+            v = va + (vb - va) * (u - ua) / (ub - ua)
+            break
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
+    return v
+
+
+def _draw(rng, dist):
+    """One key of {key: weight} by weight; None for an empty one."""
+    tot = float(sum(dist.values())) if dist else 0.0
+    if tot <= 0:
+        return None
+    r = rng.random() * tot
+    for k, w in dist.items():
+        r -= w
+        if r <= 0:
+            return k
+    return list(dist)[-1]
+
+
+def _count(rng, rate, cap=3):
+    """How many at a rate per building: the whole part, and the rest by chance."""
+    if not rate or rate <= 0:
+        return 0
+    n = int(rate) + (1 if rng.random() < rate - int(rate) else 0)
+    return min(cap, n)
+
+
+def _survey(db):
+    try:
+        import gardensurvey
+        return gardensurvey.outdoor_ready(db)
+    except Exception:
+        return None
+
+
+def _fig(db, what, culture, region):
+    """The game's figures for a kind of scene, the region's own, else the culture's, else all; the baked ones when
+    the survey has not run."""
+    try:
+        import gardensurvey
+        f = gardensurvey.outdoor_rule(db, what, culture, region)
+    except Exception:
+        f = None
+    out = dict(GAME.get(what) or {})
+    if f:
+        out.update({k: v for k, v in f.items() if v not in (None, [], {})})
+    return out
+
+
+def _rate(db, what, culture):
+    """How many of these the game stands a building in towns of this culture (gardensurvey.per_building), else the
+    baked mean."""
+    try:
+        import gardensurvey
+        r = gardensurvey.per_building(db, what, culture)
+        if r is not None:
+            return r
+    except Exception:
+        pass
+    return GAME['rate'].get(what, 0.0)
+
+
+def _variants(db):
+    """{kind-name: [ids]}: every growing thing in the load order by its name without the variant number
+    (flora_saltrice: flora_saltrice_01, _02), so a species the survey names comes with all its models."""
+    key = id(db.recs)
+    if key in _VAR:
+        return _VAR[key]
+    import gardensurvey
+    out = {}
+    for r in db.recs:
+        if r[0] not in ('STAT', 'ACTI', 'CONT'):
+            continue
+        low = r[1].lower()
+        if 'unique' in low or low.startswith('colony '):
+            continue                          # (a quest's own stump, a colony's own tree: never ours)
+        if gardensurvey.plant_kind(low) and db.resolve_id(r[1]) is not None:
+            out.setdefault(gardensurvey.plant_base(low), []).append(r[1])
+    _VAR.clear()
+    _VAR[key] = out
+    return out
+
+
+def _region_at(db, x, y, memo):
+    k = '#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0))
+    if k not in memo:
+        ci = mapdata.cell_info(db, k)
+        memo[k] = ((ci or {}).get('region') or '').lower()
+    return memo[k]
+
+
+def _wild_trees(db, region):
+    """The trees of the region's own wild land ({kind-name: n}, landdecor's squares), for a region whose towns the
+    survey saw no trees by."""
+    try:
+        import landdecor
+        from collections import Counter
+        import gardensurvey
+        lib = landdecor.learn(db, region)
+        C = Counter()
+        for sqs in lib['squares'].values():
+            for sq in sqs:
+                for it in sq:
+                    low = it[0].lower()
+                    if landdecor.kind_of(low) == 'trees' and not re.search(r'log|stump|dead|fallen|branch', low):
+                        C[gardensurvey.plant_base(low)] += 1
+        return dict(C.most_common(6))
+    except Exception:
+        return {}
+
+
+def _species(db, what, region, culture, fallback=()):
+    """{kind-name: weight} of what the game grows in scenes of this kind in this region (gardensurvey.region_species:
+    the region's, else the culture's, else every place's), kept to the names this load order has; the fallback names
+    when the survey has nothing."""
+    V = _variants(db)
+    pool = {}
+    try:
+        import gardensurvey
+        pool = gardensurvey.region_species(db, what, region, culture) or {}
+    except Exception:
+        pool = {}
+    out = {b: n for b, n in pool.items() if V.get(b)}
+    if what in ('house_trees', 'orchards'):
+        # (a tree by the house is a tree: the survey's tree kinds take in the game's logs and stumps by the same name,
+        # and a Gold Coast yard got a fallen log for its tree, the 3D look of 2026-11-05)
+        out = {b: n for b, n in out.items() if not re.search(r'log|stump|dead|fallen|branch', b)}
+    if not out and what == 'house_trees':
+        out = {b: n for b, n in _wild_trees(db, region).items() if V.get(b)}
+    if not out:
+        out = {b: 1 for b in fallback if V.get(b)}
+    return out
+
+
+def _pick(db, rng, pool):
+    """One model id of a species pool: a kind-name by weight, then one of its variants."""
+    V = _variants(db)
+    base = _draw(rng, pool)
+    if not base or not V.get(base):
+        return None
+    return rng.choice(V[base])
+
+
+def _fence_run(db, space, memo, F, a, b, inward, gap_at=None):
     """A fence from a to b along a plot's edge, FENCE_IN inside it (inward: the unit normal into the plot): pieces of
-    the culture's lengths, longest first, a post at each end. [(id, (x, y, z, 0, 0, rz), 1.0)] or [] when the run
-    could not be laid mostly whole."""
+    the culture's lengths, longest first, a post at each end. gap_at: (t0, t1) along the run left open (a gate's
+    way). [(id, (x, y, z, 0, 0, rz), 1.0)] or [] when the run could not be laid mostly whole."""
     dx, dy = _unit(b[0] - a[0], b[1] - a[1])
     ax, ay = a[0] + inward[0] * FENCE_IN, a[1] + inward[1] * FENCE_IN
     bx, by = b[0] + inward[0] * FENCE_IN, b[1] + inward[1] * FENCE_IN
@@ -142,12 +348,12 @@ def _fence_run(db, space, memo, F, a, b, inward):
         bb = _bounds(db, memo, rid)
         if not bb:
             break
+        if gap_at and t < gap_at[1] and t + n > gap_at[0]:
+            t += n + FENCE_GAP               # (the gate's way: no piece across it)
+            continue
         mx, my = ax + dx * (t + n / 2.0), ay + dy * (t + n / 2.0)
         # (the piece's bounds centre on the run's middle: its origin may sit at an end)
         cx_, cy_ = (bb[0] + bb[3]) / 2.0, (bb[1] + bb[4]) / 2.0
-        ox = mx - (cx_ * dx + cy_ * (-dy) * 0) - 0  # placeholder, replaced below
-        c, s = math.cos(rz), math.sin(rz)
-        # world offset of the local bounds centre under the turn (local x along (dx, dy), local y along inward-ish)
         wx = cx_ * dx - cy_ * dy
         wy = cx_ * dy + cy_ * dx
         px, py = mx - wx, my - wy
@@ -166,7 +372,10 @@ def _fence_run(db, space, memo, F, a, b, inward):
     post = F.get('post')
     if post and db.resolve_id(post) is not None:
         pb = _bounds(db, memo, post)
-        for ex, ey in ((ax, ay), (ax + dx * min(L, t), ay + dy * min(L, t))):
+        ends = [(ax, ay), (ax + dx * min(L, t), ay + dy * min(L, t))]
+        if gap_at:
+            ends += [(ax + dx * gap_at[0], ay + dy * gap_at[0]), (ax + dx * gap_at[1], ay + dy * gap_at[1])]
+        for ex, ey in ends:
             z = _ground_z(db, pb, ex, ey)
             if z is not None:
                 laid.append((post, (ex, ey, z, 0.0, 0.0, rz), 1.0))
@@ -185,7 +394,7 @@ def _lay_set(db, space, memo, things, ox, oy, X, Y, kind):
     """A set's things in the yard frame at (ox, oy) with x along X and y along Y, each on free ground; the set is laid
     when most of it fits."""
     placed, rects = [], []
-    rz0 = math.atan2(-Y[1] * 0 + X[0] * 0 + Y[0], Y[1]) if False else math.atan2(Y[0], Y[1])
+    rz0 = math.atan2(Y[0], Y[1])
     for rid, lx, ly, dz, rz in things:
         if db.resolve_id(rid) is None:
             continue
@@ -194,12 +403,13 @@ def _lay_set(db, space, memo, things, ox, oy, X, Y, kind):
             continue
         wx = ox + X[0] * lx + Y[0] * ly
         wy = oy + X[1] * lx + Y[1] * ly
-        half = max(THING, (bb[3] - bb[0]) / 2.0, (bb[4] - bb[1]) / 2.0)
-        rect = _rect(wx, wy, X[0], X[1], half, half)
+        rzw = (rz + rz0) % (2 * math.pi)
+        pad = max(0.0, THING - max(bb[3] - bb[0], bb[4] - bb[1]) / 2.0)
+        rect = _footprint(bb, wx, wy, rzw, 1.0, pad)
         z = _ground_z(db, bb, wx, wy)
         if z is None or not space.free(rect):
             continue
-        placed.append((rid, (wx, wy, z + dz, 0.0, 0.0, (rz + rz0) % (2 * math.pi)), 1.0))
+        placed.append((rid, (wx, wy, z + dz, 0.0, 0.0, rzw), 1.0))
         rects.append(rect)
     if len(placed) < 0.5 * max(1, sum(1 for t in things if db.resolve_id(t[0]) is not None)):
         return []
@@ -208,117 +418,709 @@ def _lay_set(db, space, memo, things, ox, oy, X, Y, kind):
     return placed
 
 
-def _garden_rows(db, space, memo, cult, ox, oy, X, Y, width, depth, rng):
-    crops = CROPS.get(cult) or CROPS['Imperial']
-    crop = _first(db, *rng.sample(crops, len(crops)))
-    if not crop:
+def _crop_rows(db, space, memo, rng, crop_pool, ox, oy, X, Y, width, depth, fig, cap=None, path=False, role='crop', gaps=None):
+    """Furrows of one crop: rows across the width (x) at the game's row gap, plants along each row (y) at its in-row
+    gap, each turned about the field's line as much as the game's are (align), at scale 1; a path left through the
+    middle of a wide field. The frame's origin is the near edge's middle. [(id, pose, s)]."""
+    import gardensurvey
+    V = _variants(db)
+    base = _draw(rng, crop_pool)
+    if not base or not V.get(base):
         return []
-    bb = _bounds(db, memo, crop)
+    ids = V[base]
+    bb0 = _bounds(db, memo, ids[0])
+    pw = max(bb0[3] - bb0[0], bb0[4] - bb0[1]) if bb0 else 100
+    row_gap = gaps[0] if gaps else _pct(rng, fig.get('row_gap'), max(90, pw * 0.7), 240)
+    in_gap = gaps[1] if gaps else _pct(rng, fig.get('in_gap'), max(60, pw * 0.6), 240)
+    rows = max(1, min(8, int(round(width / row_gap))))
+    per = max(2, int(round(depth / in_gap)))
+    align = _pct(rng, fig.get('align'), 0.1, 0.95)
+    jitter = (1.0 - align) * math.pi
+    base_rz = math.atan2(Y[0], Y[1]) + rng.uniform(0, 2 * math.pi)
+    skip = rows // 2 if (path and rows >= 4) else None
     out, rects = [], []
-    rows = max(1, min(3, int(depth // 110)))
-    per = max(2, min(5, int(width // 100)))
+    x0 = -(rows - 1) * row_gap / 2.0
     for r in range(rows):
-        ly = 70 + r * 100
+        if r == skip:
+            continue
         for k in range(per):
-            lx = -width / 2.0 + 50 + k * (width - 100) / max(1, per - 1)
+            if cap and len(out) >= cap:
+                break
+            lx = x0 + r * row_gap + rng.uniform(-8, 8)
+            ly = in_gap / 2.0 + k * in_gap + rng.uniform(-in_gap * 0.1, in_gap * 0.1)
             wx, wy = ox + X[0] * lx + Y[0] * ly, oy + X[1] * lx + Y[1] * ly
-            rect = _rect(wx, wy, X[0], X[1], 36, 36)
+            rid = rng.choice(ids)
+            bb = _bounds(db, memo, rid)
+            rect = _rect(wx, wy, X[0], X[1], 30, 30)
             z = _ground_z(db, bb, wx, wy)
-            if z is None or not space.free(rect):
+            if z is None or not space.free(rect, grows=True):
                 continue
-            out.append((crop, (wx, wy, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), rng.uniform(0.85, 1.1)))
+            out.append((rid, (wx, wy, z, 0.0, 0.0, (base_rz + rng.uniform(-jitter, jitter)) % (2 * math.pi)), round(rng.uniform(0.96, 1.04), 3)))
             rects.append(rect)
+    if len(out) < 3:
+        return []
     for r in rects:
         space.take(r)
     return out
 
 
+class _House:
+    """A plot's house in its own frame: X across (right, facing in from the street), Y inward, the footprint's
+    back/front/left/right lines relative to (cx, cy), and the door's x."""
+
+    def __init__(self, q):
+        self.q = q
+        self.X, self.Y = _plot_frame(q)
+        self.cx, self.cy = q['x'], q['y']
+        ys = [(p[0] - self.cx) * self.Y[0] + (p[1] - self.cy) * self.Y[1] for p in q['rect']]
+        xs = [(p[0] - self.cx) * self.X[0] + (p[1] - self.cy) * self.X[1] for p in q['rect']]
+        self.back, self.front, self.xl, self.xr = max(ys), min(ys), min(xs), max(xs)
+        self.w = self.xr - self.xl
+        self.d = self.back - self.front
+        self.dlx = ((q['door'][0] - self.cx) * self.X[0] + (q['door'][1] - self.cy) * self.X[1]) if q.get('door') else None
+
+    def at(self, lx, ly):
+        return self.cx + self.X[0] * lx + self.Y[0] * ly, self.cy + self.X[1] * lx + self.Y[1] * ly
+
+    def wall_point(self, side, t, d):
+        """A point d outside the wall `side` ('left', 'right', 'back', 'front'), t (0..1) along it, with the wall's
+        outward normal in the world and the point's (lx, ly); None when the front wall has no room off the door."""
+        X, Y = self.X, self.Y
+        if side == 'left':
+            lx, ly = self.xl - d, self.front + 50 + t * max(0.0, self.d - 100)
+            n = (-X[0], -X[1])
+        elif side == 'right':
+            lx, ly = self.xr + d, self.front + 50 + t * max(0.0, self.d - 100)
+            n = (X[0], X[1])
+        elif side == 'back':
+            lx, ly = self.xl + 50 + t * max(0.0, self.w - 100), self.back + d
+            n = (Y[0], Y[1])
+        else:
+            # (the front wall, either side of the door's way: a plant in it stands in the walking line)
+            if self.dlx is None:
+                lx = self.xl + 50 + t * max(0.0, self.w - 100)
+            else:
+                room_l = (self.dlx - ARRIVE[0] - 40) - (self.xl + 40)
+                room_r = (self.xr - 40) - (self.dlx + ARRIVE[0] + 40)
+                if room_l < 40 and room_r < 40:
+                    return None
+                if room_l >= 40 and (room_r < 40 or t < 0.5):
+                    lx = self.xl + 40 + (t * 2 % 1.0) * room_l
+                else:
+                    lx = self.dlx + ARRIVE[0] + 40 + (t * 2 % 1.0) * room_r
+            ly = self.front - d
+            n = (-Y[0], -Y[1])
+        wx, wy = self.at(lx, ly)
+        return wx, wy, n, lx, ly
+
+    def side_for(self, which):
+        """'side' → left or right by chance; 'front', 'back' as they are."""
+        return which
+
+    def arrival(self):
+        """The way out of the door, ARRIVE deep, kept clear of plants."""
+        if not self.q.get('door'):
+            return None
+        return self.at_rect(self.dlx, self.front - ARRIVE[1] / 2.0 + 20, ARRIVE[0], ARRIVE[1] / 2.0 + 20)
+
+    def at_rect(self, lx, ly, half_x, half_y):
+        wx, wy = self.at(lx, ly)
+        return _rect(wx, wy, self.X[0], self.X[1], half_x, half_y)
+
+
+def _side(rng, shares, h):
+    s = _draw(rng, shares) or 'side'
+    if s == 'side':
+        return rng.choice(('left', 'right'))
+    return s
+
+
+def _lay_bed(db, space, memo, rng, h, pool, fig):
+    """A bed of flowers or herbs by the house as the game's: two to six plants of one kind (two now and then), a
+    clump at the game's spacing, at the side wall mostly, the game's distance out from it. [(id, pose, s)]."""
+    n = int(round(_pct(rng, fig.get('plants'), 2, 7)))
+    one = rng.random() < (fig.get('one_kind') if isinstance(fig.get('one_kind'), float) else 0.6)
+    kinds = []
+    for _k in range(1 if one else 2):
+        b = _draw(rng, pool)
+        if b and b not in kinds:
+            kinds.append(b)
+    if not kinds:
+        return []
+    V = _variants(db)
+    nn = _pct(rng, fig.get('nn'), 36, 150)
+    # (the spot: the game's side and distance from the wall; a spot in a street, a neighbour's plot or a door's way
+    # is tried again elsewhere, four times)
+    for _try in range(6):
+        side = _side(rng, fig.get('side') or GAME['beds']['side'], h)
+        d = _pct(rng, fig.get('wall'), 24, 440)
+        wp = h.wall_point(side, rng.random(), d)
+        if not wp:
+            WHY['bed: no wall room'] = WHY.get('bed: no wall room', 0) + 1
+            continue
+        wx, wy, nrm, lx, ly = wp
+        pts = [(wx, wy)]
+        out, rects = [], []
+        tries = 0
+        while len(out) < n and tries < n * 4:
+            tries += 1
+            if out:
+                ax, ay = rng.choice(pts)
+                ang = rng.uniform(0, 2 * math.pi)
+                dd = nn * rng.uniform(0.75, 1.3)
+                px, py = ax + math.cos(ang) * dd, ay + math.sin(ang) * dd
+            else:
+                px, py = wx, wy
+            rid = rng.choice(V[kinds[len(out) % len(kinds)]])
+            bb = _bounds(db, memo, rid)
+            prz = rng.uniform(0, 2 * math.pi)
+            if bb and max(bb[3] - bb[0], bb[4] - bb[1]) <= 90:
+                rect = _footprint(bb, px, py, prz, 1.0, 4.0)
+            else:
+                half = max(18.0, min(40.0, (max(bb[3] - bb[0], bb[4] - bb[1]) / 2.0) if bb else 24.0))
+                rect = _rect(px, py, h.X[0], h.X[1], half, half)   # (a shrub's fronds may hang over the fence: its root's room)
+            z = _ground_z(db, bb, px, py)
+            if z is None or not space.free(rect, grows=True):
+                if not out:
+                    break                     # (the spot itself is taken: another)
+                continue
+            out.append((rid, (px, py, z, 0.0, 0.0, prz), round(rng.uniform(0.95, 1.08), 3)))
+            rects.append(rect)
+            pts.append((px, py))
+        if len(out) >= 2:
+            for r in rects:
+                space.take(r)
+            return out
+        WHY['bed: spot taken'] = WHY.get('bed: spot taken', 0) + 1
+    return []
+
+
+def _lay_tree(db, space, memo, rng, h, pool, fig):
+    """A tree by the house as the game stands them: at the side or back mostly, the game's distance from the wall,
+    one of the region's own trees. [(id, pose, s)]."""
+    rid = _pick(db, rng, pool)
+    if not rid:
+        return []
+    bb = _bounds(db, memo, rid)
+    if not bb:
+        return []
+    # (a big tree keeps its trunk further out than a sapling: the game's median 178 is of all its trees, and a
+    # wide-crowned one stood with its trunk at the wall and its crown through the roof, the 3D look of 2026-11-05)
+    crown = max(bb[3] - bb[0], bb[4] - bb[1])
+    least = max(TREE_MIN_D, 0.3 * crown)
+    for _try in range(6):
+        side = _side(rng, fig.get('side') or GAME['house_trees']['side'], h)
+        d = _pct(rng, fig.get('d'), least, max(360.0, least + 40))
+        wp = h.wall_point(side, rng.random(), d)
+        if not wp:
+            continue
+        wx, wy, nrm, lx, ly = wp
+        rect = _rect(wx, wy, h.X[0], h.X[1], TREE_TRUNK, TREE_TRUNK)
+        s = round(rng.uniform(0.9, 1.15), 3)
+        z = _ground_z(db, bb, wx, wy, s)
+        if z is None or not space.free(rect, grows=True):
+            continue
+        space.take(rect)
+        return [(rid, (wx, wy, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), s)]
+    WHY['tree: no spot'] = WHY.get('tree: no spot', 0) + 1
+    return []
+
+
+def _garden_of(db, rng, rid, px, py, pz, prz, scale, own=()):
+    """What grows in a planter stood outdoors: one of the game's own gardens of that model (gardensurvey.dressing),
+    each thing at its offset in the planter's frame; of a few draws, the one with most of the region's own plants in
+    it (own: kind-names), so a Gold Coast planter doesn't come up full of Bitter Coast mushrooms. [(id, pose, s)]."""
+    things = None
+    try:
+        import gardensurvey
+        best = None
+        for _k in range(5 if own else 1):
+            g = gardensurvey.dressing(db, rid, rng, min_n=gardensurvey.usual(db, rid) or 1, scale=scale)
+            if not g:
+                break
+            share = sum(1 for t in g if gardensurvey.plant_base(t['id'].lower()) in own) / float(len(g))
+            if best is None or share > best[0]:
+                best = (share, g)
+            if share >= 0.99:
+                break
+        things = best[1] if best else None
+    except Exception:
+        things = None
+    if not things:
+        return []
+    c, s = math.cos(prz), math.sin(prz)
+    out = []
+    for t in things:
+        if db.resolve_id(t['id']) is None:
+            continue
+        wx = px + t['x'] * c + t['y'] * s
+        wy = py - t['x'] * s + t['y'] * c
+        out.append((t['id'], (wx, wy, pz + t['z'], t.get('rx', 0.0), t.get('ry', 0.0), (prz + t['rz']) % (2 * math.pi)), t.get('s', 1.0)))
+    return out
+
+
+def _lay_planter(db, space, memo, rng, h, fig, culture, own=()):
+    """A planter by the house: the culture's own model at its scale, by the door (the game's one in ten: the game's
+    offset off the door and out from the wall) or along a side wall, with the game's garden in it nine times in
+    ten. [(id, pose, s, role)]."""
+    models = {m: n for m, n in (fig.get('models') or {}).items() if db.resolve_id(m) is not None}
+    if not models:
+        models = {m: 1 for m in PLANTERS if db.resolve_id(m) is not None}
+    rid = _draw(rng, models)
+    if not rid:
+        return []
+    scale = float((fig.get('scale') or {}).get(rid) or 1.0)
+    bb = _bounds(db, memo, rid)
+    if not bb:
+        return []
+    pw = max(bb[3] - bb[0], bb[4] - bb[1]) * scale
+    by_door = h.dlx is not None and rng.random() < max(0.1, float(fig.get('by_door') or 0.1))
+    spots = []
+    if by_door:
+        sgn = rng.choice((-1, 1))
+        lx = h.dlx + sgn * max(ARRIVE[0] + pw / 2.0 + 10, _pct(rng, fig.get('lx'), 120, 300))
+        ly = h.front + _pct(rng, fig.get('ly'), -200, -30)
+        if h.xl + pw / 2.0 <= lx <= h.xr - pw / 2.0:
+            wx, wy = h.at(lx, ly)
+            spots.append((wx, wy, (-h.Y[0], -h.Y[1])))
+    for _k in range(3):
+        side = rng.choice(('left', 'right', 'back'))
+        wp = h.wall_point(side, rng.random(), pw / 2.0 + rng.uniform(20, 90))
+        if wp:
+            spots.append((wp[0], wp[1], wp[2]))
+    for wx, wy, nrm in spots:
+        prz = math.atan2(nrm[0], nrm[1]) % (2 * math.pi)
+        rect = _footprint(bb, wx, wy, prz, scale, 6.0)
+        z = _ground_z(db, bb, wx, wy, scale)
+        if z is None or not space.free(rect, grows=True):
+            continue
+        space.take(rect)
+        out = [(rid, (wx, wy, z, 0.0, 0.0, prz), scale, 'planter')]
+        if rng.random() < float(fig.get('planted') or 0.9):
+            out += [(i, p, s, 'planter plant') for i, p, s in _garden_of(db, rng, rid, wx, wy, z, prz, scale, own)]
+        return out
+    WHY['planter: no spot'] = WHY.get('planter: no spot', 0) + 1
+    return []
+
+
+def _lay_vine(db, space, memo, rng, h, fig, height):
+    """Ivy or a vine on a wall of the house, as the game hangs them: the culture's model, its bottom at the game's
+    height up the wall, turned the way the game turns that model against a wall, on the side or front wall.
+    [(id, pose, s)]."""
+    models = {m: n for m, n in (fig.get('models') or {}).items() if db.resolve_id(m) is not None}
+    if not models:
+        return []
+    rid = _draw(rng, models)
+    bb = _bounds(db, memo, rid)
+    if not bb:
+        return []
+    turns = (fig.get('turn') or {}).get(rid) or {}
+    rel = int(max(turns, key=turns.get)) if turns else 0
+    s = round(_pct(rng, fig.get('scale'), 0.85, 1.4), 3) if fig.get('scale') else 1.0
+    along_x = (bb[3] - bb[0]) >= (bb[4] - bb[1])
+    thin = min(bb[3] - bb[0], bb[4] - bb[1]) * s
+    long_ = max(bb[3] - bb[0], bb[4] - bb[1]) * s
+    top_room = max(120.0, (height or 420) * 0.75 - (bb[5] - bb[2]) * s)
+    for _try in range(4):
+        side = _side(rng, fig.get('side') or GAME['vines']['side'], h)
+        wp = h.wall_point(side, rng.random(), 0.0)
+        if not wp:
+            continue
+        wx, wy, nrm, lx, ly = wp
+        yaw = math.atan2(nrm[0], nrm[1]) + rel * math.pi / 2.0
+        c, sn = math.cos(yaw), math.sin(yaw)
+        # (the bounds' centre under the turn, so the vine's thin side lies against the wall, its length along it)
+        cxl, cyl = (bb[0] + bb[3]) / 2.0 * s, (bb[1] + bb[4]) / 2.0 * s
+        ox, oy = cxl * c + cyl * sn, -cxl * sn + cyl * c
+        off = thin / 2.0 + 3
+        ccx, ccy = wx + nrm[0] * off, wy + nrm[1] * off
+        px, py = ccx - ox, ccy - oy
+        bottom = _pct(rng, fig.get('wall_bottom') or fig.get('bottom'), 40, top_room)
+        g = mapdata.terrain_z(db, wx, wy)
+        if g is None:
+            continue
+        along = (-nrm[1], nrm[0])
+        rect = _rect(ccx, ccy, along[0], along[1], long_ / 2.0, thin / 2.0 + 2)
+        # (a vine hangs over whatever stands at the wall's foot: only another vine is in its way)
+        if any(_overlap(rect, p) for p in getattr(space, 'vines', [])):
+            continue
+        space.vines = getattr(space, 'vines', []) + [rect]
+        return [(rid, (px, py, g + bottom - bb[2] * s, 0.0, 0.0, yaw % (2 * math.pi)), s)]
+    WHY['vine: no wall'] = WHY.get('vine: no wall', 0) + 1
+    return []
+
+
+def _house_height(db, q):
+    try:
+        import townbuild
+        C = townbuild.by_uid(townbuild.catalog(db))
+        e = townbuild.built(C, q.get('b')) or {}
+        return float(e.get('height') or 0) or None
+    except Exception:
+        return None
+
+
+STANDING = 60                  # a thing of the land this wide (a rock, a tree, a ruin) is ground nothing is laid on
+
+
+def _standing(db, plan, memo, cells=None):
+    """The footprints of what already stands on the town's ground and is not the town's own: the game's rocks, trees,
+    ruins and anything 60 wide or more, by their turned bounds, in the cells the plots lie in (or `cells`)."""
+    cells = set(cells or ())
+    for q in (plan or {}).get('plots') or ():
+        if q.get('rect'):
+            for p in q['rect']:
+                cells.add('#%d,%d' % (math.floor(p[0] / 8192.0), math.floor(p[1] / 8192.0)))
+    out = []
+    for ck in cells:
+        try:
+            m = mapdata.cellmap(db, ck)
+        except Exception:
+            continue
+        for r in m.get('refs') or ():
+            if r.get('mine') or not r.get('b') or r['type'] not in ('STAT', 'ACTI', 'CONT'):
+                continue
+            s = r.get('s') or 1.0
+            b = r['b']
+            if max(b[3] - b[0], b[4] - b[1]) * s < STANDING or 'marker' in r['id'].lower():
+                continue
+            out.append(_footprint(b, r['p'][0], r['p'][1], r['p'][5], s, 0.0))
+    return out
+
+
 def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0):
-    """[{'id', 'p', 's', 'role'}]: fences, yard sets, garden rows and planters for a made town (plan as townbuild.fit
-    left it). blocked: polygons kept clear (the wall); also: [(id, p)] things laid already (the dressing's), kept
-    clear of."""
+    """[{'id', 'p', 's', 'role'}]: fences, yard sets, garden rows, beds, trees, planters and vines for a made town
+    (plan as townbuild.fit left it). blocked: polygons kept clear (the wall); also: [(id, p)] things laid already
+    (the dressing's), kept clear of."""
     import towndress
     cult = plan.get('culture') or 'Imperial'
     F = FENCES.get(cult) or FENCES.get(FENCE_KIN.get(cult, ''), None)
     rng = random.Random('%s|%s|story' % (seed, cult))
     memo = {}
+    rmemo = {}
     rects = [[tuple(p) for p in q['rect']] for q in plan['plots'] if q.get('rect') and q.get('b')]
     polys = list(blocked) + rects + [[tuple(p) for p in o] for o in plan.get('obstacles') or ()]
+    houses = {}
     for q in plan['plots']:
         if q.get('door') and q.get('b'):
             polys.append(towndress._door_clear(q['door'][0], q['door'][1], q['face']))
+        if q.get('b') and q.get('rect'):
+            h = _House(q)
+            houses[id(q)] = h
+            a = h.arrival()
+            if a:
+                polys.append(a)
     polys += towndress._street_polys(plan, towndress.STREET_BLOCK_SHARE)
     for rid, p in also:
         bb = _bounds(db, memo, rid)
         half = max(24.0, (bb[3] - bb[0]) / 2.0 if bb else 24.0, (bb[4] - bb[1]) / 2.0 if bb else 24.0)
         polys.append(_rect(p[0], p[1], 1.0, 0.0, half, half))
-    space = _Space(polys)
+    # (and the land's own rocks, trees and ruins standing in the town's cells: a bed of lilies came up inside a Gold
+    # Coast boulder, the 3D look of 2026-11-05; the dressing's `also` list holds only what the town laid)
+    polys += _standing(db, plan, memo)
+    # (what grows keeps off the pavement's whole width: a bed at the kerb's edge is a bed on the road)
+    space = _Space(polys, strict=towndress._street_polys(plan, 1.0))
     out = []
-    n = {'fences': 0, 'posts': 0, 'sets': 0, 'things': 0, 'crops': 0, 'planters': 0, 'yards': 0, 'no room': 0}
-    crop_cult = 'Dunmer' if cult in ('Hlaalu', 'Velothi', 'Redoran', 'Dunmer common', 'Indoril', 'Mournhold', 'Telvanni') else cult
+    n = {'fences': 0, 'posts': 0, 'sets': 0, 'things': 0, 'crops': 0, 'planters': 0, 'planter plants': 0, 'beds': 0, 'bed plants': 0, 'trees': 0, 'vines': 0,
+         'yards': 0, 'no room': 0, 'species': set()}
+    crop_cult = 'Dunmer' if cult in ('Hlaalu', 'Velothi', 'Redoran', 'Dunmer common', 'Dunmer', 'Indoril', 'Mournhold', 'Telvanni', 'Ashlander', 'Stronghold') \
+        else 'Nord' if cult in ('Nordic', 'Reach') else cult
+    S = _survey(db)
+    WHY.clear()
+    # the game's rates a building for the culture (gardensurvey.per_building); planters on balconies and walls
+    # ('high', a third of the game's) have no home on the ground, so that share is left out
+    r_beds = _rate(db, 'beds', cult) * amount
+    r_trees = _rate(db, 'house_trees', cult) * amount
+    pf0 = _fig(db, 'planters', cult, None)
+    r_planters = _rate(db, 'planters', cult) * (1.0 - float((pf0.get('stand') or {}).get('high') or 0)) * amount
+    r_vines = _rate(db, 'vines', cult) * amount
+    figs = {}
+
+    def fig(what, region):
+        k = (what, region)
+        if k not in figs:
+            figs[k] = _fig(db, what, cult, region)
+        return figs[k]
+    pools = {}
+
+    def pool(what, region):
+        k = (what, region)
+        if k not in pools:
+            fb = CROPS.get(crop_cult) or CROPS['Imperial'] if what == 'fields' else ()
+            pools[k] = _species(db, what, region, cult, fallback=fb)
+        return pools[k]
+
+    def add(laid, role, kind=None):
+        for item in laid:
+            rid, p, s = item[0], item[1], item[2]
+            rec = {'id': rid, 'p': [round(v, 4) if i >= 3 else round(v, 2) for i, v in enumerate(p)], 's': round(float(s), 3), 'role': (item[3] if len(item) > 3 else role)}
+            if kind:
+                rec['kind'] = kind
+            out.append(rec)
     for q in plan['plots']:
         if not q.get('b') or not q.get('rect') or rng.random() > amount:
             continue
-        X, Y = _plot_frame(q)
-        cx, cy = q['x'], q['y']
-        # the house's back and sides in the plot frame, from its own footprint
-        ys = [(p[0] - cx) * Y[0] + (p[1] - cy) * Y[1] for p in q['rect']]
-        xs = [(p[0] - cx) * X[0] + (p[1] - cy) * X[1] for p in q['rect']]
-        back, front, xl, xr = max(ys), min(ys), min(xs), max(xs)
-        w = xr - xl
+        h = houses[id(q)]
+        X, Y = h.X, h.Y
+        cx, cy = h.cx, h.cy
+        back, front, xl, xr, w = h.back, h.front, h.xl, h.xr, h.w
+        region = _region_at(db, cx, cy, rmemo)
         depth = YARD_D
         n['yards'] += 1
         # the fence: the yard's back edge, YARD_D behind the house, and its two sides from the house's back corners
         if F:
-            at = lambda lx, ly: (cx + X[0] * lx + Y[0] * ly, cy + X[1] * lx + Y[1] * ly)
-            far = {-1: at(xl, back + depth), 1: at(xr, back + depth)}
-            near_ = {-1: at(xl, back + 30), 1: at(xr, back + 30)}
+            far = {-1: h.at(xl, back + depth), 1: h.at(xr, back + depth)}
+            near_ = {-1: h.at(xl, back + 30), 1: h.at(xr, back + 30)}
             runs = [(far[-1], far[1], (-Y[0], -Y[1])), (near_[-1], far[-1], (X[0], X[1])), (far[1], near_[1], (-X[0], -X[1]))]
             for a, b, inward in runs:
                 laid = _fence_run(db, space, memo, F, a, b, inward)
-                for rid, p, s in laid:
-                    out.append({'id': rid, 'p': [round(v, 2) for v in p], 's': s, 'role': 'fence'})
+                add(laid, 'fence')
+                for rid, _p, _s in laid:
                     n['posts' if rid == F.get('post') else 'fences'] += 1
         # the yard's kind, laid against the house's back
         if depth >= YARD_MIN:
             kinds = KIND_BY.get(q.get('kind') or 'house') or KIND_BY['house']
             kind = rng.choice(kinds)
             laid = []
+            ox = oy = None
             # (against the middle of the back wall, else to one side: a porch or the dressing's own things may stand
             # in the middle)
             for off in (0.0, w / 4.0, -w / 4.0):
-                ox, oy = cx + X[0] * ((xl + xr) / 2.0 + off) + Y[0] * back, cy + X[1] * ((xl + xr) / 2.0 + off) + Y[1] * back
+                ox, oy = h.at((xl + xr) / 2.0 + off, back)
                 laid = _lay_set(db, space, memo, KINDS[kind], ox, oy, X, Y, kind)
                 if laid:
                     break
             if kind == 'garden':
-                laid += _garden_rows(db, space, memo, crop_cult, ox, oy, X, Y, min(w, 480.0), depth - 60, rng)
+                # a kitchen garden: rows of the region's crop at the game's row and plant spacing (its farms'), behind
+                # the house in its fenced yard; the yard's fence is its border
+                ox, oy = h.at((xl + xr) / 2.0, back + 40)
+                rows_ = _crop_rows(db, space, memo, rng, pool('fields', region), ox, oy, X, Y, min(w, 520.0), depth - 90, fig('farms', region), cap=14)
+                laid += rows_
+                for rid, _p, _s in rows_:
+                    n['species'].add(rid.lower())
             if laid:
                 n['sets'] += 1
-                n['things'] += sum(1 for r, _p, _s in laid if not r.startswith('flora'))
-                n['crops'] += sum(1 for r, _p, _s in laid if r.startswith('flora'))
-                out += [{'id': rid, 'p': [round(v, 2) for v in p], 's': round(s, 3), 'role': 'yard', 'kind': kind} for rid, p, s in laid]
+                n['things'] += sum(1 for r, _p, _s in laid if not (r.lower().startswith(('flora', 't_cyr_flora', 't_sky_flora', 't_mw_flora', 't_glb_flora'))))
+                n['crops'] += sum(1 for r, _p, _s in laid if r.lower().startswith(('flora', 't_cyr_flora', 't_sky_flora', 't_mw_flora', 't_glb_flora')))
+                add(laid, 'yard', kind)
             else:
                 n['no room'] += 1
-        # a planter by the door, the way the game's towns stand them by Imperial and Hlaalu doors
-        if q.get('door') and rng.random() < 0.45:
-            pl = _first(db, *rng.sample(PLANTERS, len(PLANTERS)))
-            if pl:
-                bb = _bounds(db, memo, pl)
-                # (beside the door, against the house's front line: the footprint reaches past the door, porch and all)
-                dlx = (q['door'][0] - cx) * X[0] + (q['door'][1] - cy) * X[1]
-                side = rng.choice((-1, 1))
-                px = cx + X[0] * (dlx + side * 175) + Y[0] * (front - 55)
-                py = cy + X[1] * (dlx + side * 175) + Y[1] * (front - 55)
-                rect = _rect(px, py, X[0], X[1], 40, 40)
-                z = _ground_z(db, bb, px, py)
-                if z is not None and space.free(rect):
-                    space.take(rect)
-                    out.append({'id': pl, 'p': [round(px, 2), round(py, 2), round(z, 2), 0.0, 0.0, round(math.atan2(Y[0], Y[1]) % (2 * math.pi), 4)], 's': 1.0, 'role': 'planter'})
-                    n['planters'] += 1
+        # beds of flowers and herbs by the walls, at the game's rate for the culture, of the region's own kinds
+        for _k in range(_count(rng, r_beds)):
+            laid = _lay_bed(db, space, memo, rng, h, pool('beds', region), fig('beds', region))
+            if laid:
+                n['beds'] += 1
+                n['bed plants'] += len(laid)
+                n['species'].update(r.lower() for r, _p, _s in laid)
+                add(laid, 'bed')
+        # a tree by the house
+        for _k in range(_count(rng, r_trees, cap=2)):
+            laid = _lay_tree(db, space, memo, rng, h, pool('house_trees', region), fig('house_trees', region))
+            if laid:
+                n['trees'] += 1
+                n['species'].update(r.lower() for r, _p, _s in laid)
+                add(laid, 'tree')
+        # a planter at the door or along a wall, with the game's garden in it
+        for _k in range(_count(rng, r_planters, cap=2)):
+            own_ = set(pool('beds', region)) | set(pool('fields', region))
+            laid = _lay_planter(db, space, memo, rng, h, fig('planters', region), cult, own_)
+            if laid:
+                n['planters'] += 1
+                n['planter plants'] += sum(1 for it in laid if it[3] == 'planter plant')
+                n['species'].update(it[0].lower() for it in laid if it[3] == 'planter plant')
+                add(laid, 'planter')
+        # ivy on the walls, where the culture grows it (the Gold Coast's two and a half a building; none in Dunmer towns)
+        if r_vines > 0:
+            height = _house_height(db, q)
+            for _k in range(_count(rng, r_vines, cap=4)):
+                laid = _lay_vine(db, space, memo, rng, h, fig('vines', region), height)
+                if laid:
+                    n['vines'] += 1
+                    add(laid, 'vine')
+    n['species'] = len(n['species'])
+    n['why'] = dict(WHY)
     LAST.clear()
     LAST.update(n)
     return out
+
+
+# ------------------------------------------------------------------ farms and orchards on the land
+# (no home in the Workshop's UI yet: a Land panel shape kind 'farm' / 'orchard' drawn as an outline, with the culture
+# picked as for a town, would call lay_field. See the 2.6.12-test8 notes.)
+
+def _field_frame(pts):
+    """A drawn outline as a field: its centre, the facing of its longest edge (the near edge, where the gate is), and
+    its width across and depth along that facing."""
+    n = len(pts)
+    cx, cy = sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n
+    best = None
+    for k in range(n):
+        a, b = pts[k], pts[(k + 1) % n]
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        if best is None or L > best[0]:
+            best = (L, a, b)
+    _L, a, b = best
+    dx, dy = _unit(b[0] - a[0], b[1] - a[1])
+    # (the near edge's outward normal points away from the centre)
+    nx, ny = -dy, dx
+    if (cx - a[0]) * nx + (cy - a[1]) * ny > 0:
+        nx, ny = -nx, -ny
+    face = math.atan2(nx, ny)
+    X, Y = (dx, dy), (-nx, -ny)
+    xs = [(p[0] - cx) * X[0] + (p[1] - cy) * X[1] for p in pts]
+    ys = [(p[0] - cx) * Y[0] + (p[1] - cy) * Y[1] for p in pts]
+    return cx, cy, face, (max(xs) - min(xs)), (max(ys) - min(ys))
+
+
+def farm(db, cx, cy, face, w, d, culture, region=None, seed=1, space=None, memo=None, fence=True):
+    """A farm plot w across and d deep whose near edge faces `face` (the gate side): furrows of one of the region's
+    own crops (the game's farms of the region, else the culture's) at the game's row and plant spacing, turned as
+    unevenly as the game's, a path through the middle of a wide field, and the culture's farm fence round it with
+    the gate's way left open in the near edge. [{'id', 'p', 's', 'role'}]."""
+    rng = random.Random('%s|farm|%s' % (seed, culture))
+    memo = memo if memo is not None else {}
+    space = space or _Space([])
+    region = region or _region_at(db, cx, cy, {})
+    fx, fy = math.sin(face), math.cos(face)
+    Y = (-fx, -fy)
+    X = (Y[1], -Y[0])
+    crop_cult = 'Dunmer' if culture in ('Hlaalu', 'Velothi', 'Redoran', 'Dunmer common', 'Dunmer', 'Indoril', 'Mournhold', 'Telvanni', 'Ashlander') \
+        else 'Nord' if culture in ('Nordic', 'Reach') else culture
+    pool = _species(db, 'fields', region, culture, fallback=CROPS.get(crop_cult) or CROPS['Imperial'])
+    fig = _fig(db, 'farms', culture, region)
+    out = []
+    if fence:
+        FF = FARM_FENCES.get(culture) or FARM_FENCES.get(FENCE_KIN.get(culture, '')) or FENCES.get(culture) or FENCES.get(FENCE_KIN.get(culture, ''))
+        if FF:
+            hx, hy = w / 2.0, d / 2.0
+            c = lambda lx, ly: (cx + X[0] * lx + Y[0] * ly, cy + X[1] * lx + Y[1] * ly)
+            # (the near edge from left to right has the gate's way in its middle)
+            edges = [(c(-hx, -hy), c(hx, -hy), (Y[0], Y[1]), (w / 2.0 - 130, w / 2.0 + 130)), (c(hx, -hy), c(hx, hy), (-X[0], -X[1]), None),
+                     (c(hx, hy), c(-hx, hy), (-Y[0], -Y[1]), None), (c(-hx, hy), c(-hx, -hy), (X[0], X[1]), None)]
+            for a, b, inward, gap in edges:
+                for rid, p, s in _fence_run(db, space, memo, FF, a, b, inward, gap_at=gap):
+                    out.append({'id': rid, 'p': [round(v, 4) if i >= 3 else round(v, 2) for i, v in enumerate(p)], 's': s, 'role': 'fence'})
+    # (the game's fields are small: 5 to 16 plants, 2 rows of 3 or 4 at the median, 500 long and 200 across. A plot
+    # drawn bigger is worked as several such fields side by side and end to end, a path between them)
+    V = _variants(db)
+    base = _draw(rng, pool)
+    inner_w, inner_d = max(120.0, w - 140), max(120.0, d - 150)
+    PATH = 160
+    y = -d / 2.0 + 70
+    while y < d / 2.0 - 120:
+        # (the in-row gap no wider than a third of the plot's depth: three plants a row at the least, whatever the
+        # game's gap for a shallow plot; a 600-deep Redoran plot got fences and no crop)
+        in_gap = min(_pct(rng, fig.get('in_gap'), 60, 230), inner_d / 2.6)
+        per = max(3, int(round(_pct(rng, fig.get('per_row'), 3, 11))))
+        fl = min(inner_d, per * in_gap)
+        if y + fl > d / 2.0 - 60:
+            fl = d / 2.0 - 60 - y
+        if fl < 2.0 * in_gap:
+            break
+        x = -inner_w / 2.0
+        while x < inner_w / 2.0 - 80:
+            row_gap = _pct(rng, fig.get('row_gap'), 90, 220)
+            nrows = max(1, int(round(_pct(rng, fig.get('rows'), 1, 4))))
+            fw = min(inner_w, nrows * row_gap)
+            if x + fw > inner_w / 2.0:
+                fw = inner_w / 2.0 - x
+            if fw < 0.9 * row_gap:
+                break
+            # (one crop a field; a neighbouring field the same crop two times in three)
+            fpool = pool if rng.random() < 0.35 else ({base: 1} if base and V.get(base) else pool)
+            ox, oy = cx + X[0] * (x + fw / 2.0) + Y[0] * y, cy + X[1] * (x + fw / 2.0) + Y[1] * y
+            rows = _crop_rows(db, space, memo, rng, fpool, ox, oy, X, Y, fw, fl, fig, path=False, gaps=(row_gap, in_gap))
+            for rid, p_, s_ in rows:
+                out.append({'id': rid, 'p': [round(v, 4) if i >= 3 else round(v, 2) for i, v in enumerate(p_)], 's': s_, 'role': 'crop'})
+            x += fw + PATH
+        y += fl + PATH
+    return out
+
+
+def orchard(db, cx, cy, face, w, d, culture, region=None, seed=1, space=None, memo=None):
+    """An orchard w across and d deep: a loose grid of one kind of tree (the region's fruit trees, else the trees the
+    game stands by the region's houses, else its wild trees) at the game's orchard spacing, each tree a little off
+    its mark and turned at random, as unevenly spaced as the game's. [{'id', 'p', 's', 'role'}]."""
+    rng = random.Random('%s|orchard|%s' % (seed, culture))
+    memo = memo if memo is not None else {}
+    space = space or _Space([])
+    region = region or _region_at(db, cx, cy, {})
+    fx, fy = math.sin(face), math.cos(face)
+    Y = (-fx, -fy)
+    X = (Y[1], -Y[0])
+    V = _variants(db)
+    pool = {}
+    try:
+        import gardensurvey
+        S = gardensurvey.outdoor_ready(db) or {}
+        O = S.get('orchards') or {}
+        own = (O.get('trees_by_region') or {}).get((region or '').lower()) or {}
+        if not own:
+            # (the culture's orchards, where its towns have any: the game's fruit trees are few, and every Dunmer
+            # region took the one orchard tree of one far-off region before)
+            own = {o['tree']: 1 for o in (O.get('examples') or []) if o.get('culture') == culture}
+        pool = {b: n for b, n in own.items() if V.get(b)}
+    except Exception:
+        pool = {}
+    pool = pool or _species(db, 'house_trees', region, culture)
+    base = _draw(rng, pool)
+    if not base or not V.get(base):
+        return []
+    ids = V[base]
+    bb0 = _bounds(db, memo, ids[0])
+    tw = max(bb0[3] - bb0[0], bb0[4] - bb0[1]) if bb0 else 300
+    fig = _fig(db, 'orchards', culture, region)
+    nn = _pct(rng, fig.get('nn'), max(120.0, tw * 0.6), 420)
+    cv = _pct(rng, fig.get('cv'), 0.1, 0.8)
+    cols = max(1, int(w // nn))
+    rows = max(1, int(d // nn))
+    out = []
+    x0, y0 = -(cols - 1) * nn / 2.0, -(rows - 1) * nn / 2.0
+    for r in range(rows):
+        for k in range(cols):
+            if rng.random() < 0.15:
+                continue                      # (a gap in the grid: the game's orchards are loose)
+            lx = x0 + k * nn + rng.gauss(0, nn * cv * 0.7)
+            ly = y0 + r * nn + rng.gauss(0, nn * cv * 0.7)
+            wx, wy = cx + X[0] * lx + Y[0] * ly, cy + X[1] * lx + Y[1] * ly
+            rid = rng.choice(ids)
+            bb = _bounds(db, memo, rid)
+            rect = _rect(wx, wy, X[0], X[1], TREE_TRUNK, TREE_TRUNK)
+            s = round(rng.uniform(0.88, 1.15), 3)
+            z = _ground_z(db, bb, wx, wy, s)
+            if z is None or not space.free(rect):
+                continue
+            space.take(rect)
+            out.append({'id': rid, 'p': [round(wx, 2), round(wy, 2), round(z, 2), 0.0, 0.0, round(rng.uniform(0, 2 * math.pi), 4)], 's': s, 'role': 'tree'})
+    return out
+
+
+def lay_field(db, pts, culture, what='farm', seed=None, commit=True):
+    """A farm or an orchard on an outline drawn on the map (world points, three or more): the outline's longest edge
+    is the near side (the gate's), and the field fills the outline's box in that frame. Placed into the mod as one
+    Undo step. {'things', 'plants', 'kind', 'seed'}."""
+    import editing
+    import cliffrocks
+    editing._require_project(db)
+    pts = [(float(p[0]), float(p[1])) for p in (pts or [])]
+    if len(pts) < 3:
+        raise editing.EditError('Draw the field as an outline first.')
+    seed = int(seed) if seed is not None else random.randrange(1, 1 << 30)
+    cx, cy, face, w, d = _field_frame(pts)
+    if w < 200 or d < 200:
+        raise editing.EditError('That outline is too small for a field.')
+    # (round what stands there already: an orchard went through a ruin's pillars, the 3D look of 2026-11-05)
+    cells = {'#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0)) for x, y in pts} | {'#%d,%d' % (math.floor(cx / 8192.0), math.floor(cy / 8192.0))}
+    space = _Space(_standing(db, None, {}, cells))
+    items = (farm if what == 'farm' else orchard)(db, cx, cy, face, w, d, culture, seed=seed, space=space)
+    # (only within the outline itself, not its box's corners)
+    items = [it for it in items if _inside(pts, it['p'][0], it['p'][1]) or it['role'] == 'fence']
+    placed = cliffrocks.place(db, [{'id': it['id'], 'x': it['p'][0], 'y': it['p'][1], 'z': it['p'][2], 'rx': it['p'][3], 'ry': it['p'][4], 'rz': it['p'][5], 's': it['s']} for it in items])
+    db.sync_project()
+    plants = sum(1 for it in items if it['role'] in ('crop', 'tree'))
+    if commit and placed:
+        editing.commit(db, 'Laid %s of %d %s' % ('a farm' if what == 'farm' else 'an orchard', plants, 'plants' if what == 'farm' else 'trees'))
+    return {'things': placed, 'plants': plants, 'kind': what, 'seed': seed}
 
 
 # ------------------------------------------------------------------ the fort's yard

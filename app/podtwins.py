@@ -31,7 +31,7 @@ import outside
 from editing import EditError
 from project import b64, set_ref_pos, zs
 
-VERSION = 3
+VERSION = 4                    # (4: Tamriel Data's one-piece houses too, T_Imp_SetGCPoor_I_House_01: see survey)
 TWIN_KINDS = re.compile(r'housepod|manor|turret|councilhall')
 # (and the pieces beside a home that learnt its interior from it: a snow drift on a longhouse, a pod's stem, a
 # tunnel, a silt strider at a camp: a second place each, else)
@@ -68,6 +68,16 @@ def survey(db):
         pass
     import shellsurvey as ss
     known = kits.kits(db)
+    # (a kit's own tiles, halves and two-storey pieces: a one-piece shell is none of them. Tamriel Data files its
+    # Gold Coast poor houses' shells under the cistern kit's name, T_Imp_SetGCPoor_I_House_01 beside the kit's
+    # 3Way and 4Way, and names them t_, not in_: every poor house and barn in the Gold Coast was planned from the
+    # rich Gold Coast tiles instead, a two-storey villa behind a thatched hut; the user's Rathendis, 2026-11-05)
+    tile_ids = set()
+    for k_ in known:
+        kp_ = kits.kit_pieces(db, k_) or {}
+        for lst_ in (kp_.get('pieces'), kp_.get('halves'), kp_.get('tall'), kp_.get('floorless')):
+            tile_ids.update(p_['id'].lower() for p_ in (lst_ or []))
+    is_tile = lambda r: r['id'].lower() in tile_ids
     memo, bm = {}, {}
     twins_ = defaultdict(Counter)
     modules = {}
@@ -81,12 +91,15 @@ def survey(db):
         outs = [r for r in m['refs'] if r['type'] == 'DOOR' and r.get('to') and not r['to']['cell']]
         if not outs:
             continue
-        big = [r for r in m['refs'] if r['type'] == 'STAT' and r.get('b') and r['id'].lower().startswith('in_')
-               and kits.kit_prefix(r['id']) not in known and not NOT_SHELL.search(r['id'].lower())]
+        big = [r for r in m['refs'] if r['type'] == 'STAT' and r.get('b') and not is_tile(r) and not NOT_SHELL.search(r['id'].lower())
+               and (r['id'].lower().startswith('in_') or (re.search(r'^t_[a-z]+_set[a-z]*_i_', r['id'].lower()) and
+                                                           re.search(r'house|barn|shack|hut|tent|cabin|hovel|cottage|shed', r['id'].lower())))]
         if not big:
             continue
         shell = max(big, key=vol)
-        if area(shell) < 400 * 400 or sum(1 for r in m['refs'] if r['type'] == 'STAT' and kits.kit_prefix(r['id']) in known) > 3:
+        # (Tamriel Data's smallest named house, T_Imp_SetGCPoor_I_House_02, is 392 by 402: a house by name may be smaller)
+        least = 300 * 300 if not shell['id'].lower().startswith('in_') else 400 * 400
+        if area(shell) < least or sum(1 for r in m['refs'] if r['type'] == 'STAT' and is_tile(r)) > 3:
             continue
         to = outs[0]['to']
         items = ss.near_items(db, to['x'], to['y'], memo, bm)
@@ -246,7 +259,7 @@ def fit_set(db, twin, variant=0):
     def central(i):
         return sum(len(sets_[i] & o) / float(len(sets_[i] | o) or 1) for j, o in enumerate(sets_) if j != i)
     order = sorted(range(len(found)), key=lambda i: (-round(central(i), 3), -len(found[i]['members'])))
-    best = dict(found[order[variant % len(order)]])
+    best = dict(found[order[variant % min(len(order), 3)]])     # (one of the three most typical: the rest are the odd ones)
     best['examples'] = len(found)
     _sets[(twin, variant)] = (db.recs, best)
     return best
@@ -280,7 +293,7 @@ def _ambi(lit):
         return struct.pack('<IIIf', 60 | (50 << 8) | (70 << 16), 80 | (70 << 8) | (90 << 16), 40 | (35 << 8) | (45 << 16), 1.0)
 
 
-def build(db, b, name):
+def build(db, b, name, variant=0):
     """A place per pod that has a door outside, each the pod's twin fitted out the game's way, linked both
     ways, northmarker in. Returns {'cells': [{key, name, pod, door}], 'notes', 'key'} (key: the front pod's)."""
     import doors
@@ -307,7 +320,7 @@ def build(db, b, name):
     for is_front, _dd, d, (pod, twin) in claims:
         if pod['k'] in used_pods or d['k'] in used_doors:
             continue
-        S = fit_set(db, twin)
+        S = fit_set(db, twin, variant)          # (variant: another of the game's examples to fit it out from)
         if not S:
             notes.append('The game has no interior of %s with a door to copy: %s is left as it is.' % (twin, pod['id']))
             continue
@@ -330,6 +343,11 @@ def build(db, b, name):
         refs = [(twin, (0.0, 0.0, 0.0, 0.0, 0.0, rz), [], 1.0)]
         exit_at = None
         for k_, (mid, mtype, lx, ly, dz, turn, ms, rx, ry, *_rest) in enumerate(S['members']):
+            if mtype == 'DOOR' and k_ != S['exit']:
+                # (the game's own hatch to a cellar, or door to an upper room, copied without the place it led to: a
+                # trap door in the floor leading nowhere, the user's Nord hut, 2026-11-04. A cellar is the planner's:
+                # Roll the interior with a cellar plans the hut anew)
+                continue
             wx, wy = outside._world(lx, ly, rz)
             pos = (round(wx, 2), round(wy, 2), round(dz, 2), rx, ry, round((rz + turn) % (2 * math.pi), 5))
             if k_ == S['exit']:

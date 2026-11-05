@@ -36,9 +36,18 @@ def _tiles(db, m):
         if abs(r['p'][5] - q * math.pi / 2) > 0.1 and abs(r['p'][5] - q * math.pi / 2 - 2 * math.pi) > 0.1:
             continue                                      # (turned at an odd angle: not part of a grid)
         floor = r['p'][2] + piece['zmin']
+        H = kp['height']
+        if piece.get('storey') == 'top' and kp.get('roof_height') and piece['height'] > H * 1.2:
+            # (a roof kit's top-storey piece carries the roof itself: Common thatch's pieces are 364 tall over the plain
+            # set's 236 storey. Measured against the storey, the rays stopped under the ridge, and a ridge open on the
+            # void beside the gable stair was never reported, nor the slits where a gable meets the next piece: the
+            # user's Estmorevale houses, 2026-11-04. The piece's own height is the room's here. Measured on the game's
+            # 36 thatch places: 9 -> 21 holes (0.021 -> 0.048 a tile, 12 places of 36 with one), every new one at a
+            # pside's or pcenter's open end; the game's other styles unchanged, 81 holes in 100 places either way)
+            H = piece['height']
         out.append({'ref': r['k'], 'id': r['id'], 'piece': piece, 'kit': kp, 'q': q,
                     'pat': kits.rotate(piece['lower'] if tall else piece['pattern'], q), 'x': r['p'][0], 'y': r['p'][1], 'z': r['p'][2],
-                    'floor': floor, 'T': kp['tile'], 'H': kp['height'], 'tall': bool(tall)})
+                    'floor': floor, 'T': kp['tile'], 'H': H, 'tall': bool(tall)})
         votes[prefix] = votes.get(prefix, 0) + 1
     # the game often stacks two pieces on one spot (two walls turned differently make a corner): a spot
     # has every wall any of its pieces has
@@ -2104,6 +2113,43 @@ def _cover_fixes(db, sc, hole, t, spots):
     return [best[1]] if best else []
 
 
+def _wide(sc, hole, need=4):
+    """Whether the spot a floor or ceiling ray got out through is open straight up and down as well: a real opening,
+    not a seam between a piece's own floor strips, which lets a ray through at one slant and nothing else. Vivec
+    (small)'s corner and wall pieces have two such seams across every tile (14 of 961 slanting rays pass a lone
+    piece, none straight down): 128 "holes in the floor" in 133 lab builds, none in the game's own places by eye
+    (2026-11-05). Each escaping ray's crossing of the floor's (or ceiling's) plane is tried again vertically from
+    60 away; the hole stands when `need` of them (or all, when fewer) are open that way too."""
+    t = hole['tile']
+    rays = hole.get('rays') or ()
+    up = hole['kind'] == 'ceiling'
+    plane = t['floor'] + t['H'] + 4 if up else t['floor'] - 4
+    # (and not under a wall's foot: Vivec (small)'s walls stand 2 units over a floor that stops at their inner face, and
+    # a ray sloping down from a tile away slips under the wall into the strip behind it, where no floor is. A crack the
+    # eye can't see; the game's own places have it at every such wall and show nothing. The strip is within 40 of the
+    # walled side's line)
+    pat = t.get('spot') or t['pat']
+    h = t['T'] / 2.0
+    walled = [s for s in kits.SIDES if pat[s] == 'wall']
+    n = 0
+    for o, d, tm in rays:
+        if abs(d[2]) < 1e-6 or (d[2] > 0) != up:
+            continue
+        k = (plane - o[2]) / d[2]
+        if k <= 0 or k > tm + 400:
+            continue
+        px, py = o[0] + d[0] * k, o[1] + d[1] * k
+        if not up and any((s == 'E' and px > t['x'] + h - 40) or (s == 'W' and px < t['x'] - h + 40) or
+                          (s == 'N' and py > t['y'] + h - 40) or (s == 'S' and py < t['y'] - h + 40) for s in walled):
+            continue
+        o2 = (px, py, plane - 60 if up else plane + 60)
+        if not sc.blocked(o2, (0.0, 0.0, 1.0 if up else -1.0), 100.0):
+            n += 1
+            if n >= need:
+                return True
+    return n >= min(need, len(rays))
+
+
 def _hole_issues(db, m, tiles, floors, issues, cell_key):
     import seethrough
     seen, spots = set(), []
@@ -2145,6 +2191,8 @@ def _hole_issues(db, m, tiles, floors, issues, cell_key):
         t = hole['tile']
         # (the fix for a hole next to it closes this one too: one post for a corner seen from two sides)
         if planned and hole['kind'] == 'wall' and seethrough.closes(db, sc, hole, planned) >= 0.9:
+            continue
+        if hole['kind'] in ('floor', 'ceiling') and not _wide(sc, hole):
             continue
         if hole['kind'] == 'ceiling':
             if t['ref'] in ceilings or learned(db, t['id'], cell_key).get('open_top'):

@@ -1555,6 +1555,10 @@ class Handler(BaseHTTPRequestHandler):
                 # (a request still running when a reload began reads files the reload closed: the crawl test's
                 # "ValueError: mmap closed or invalid" from Grow grass during Undo my changes. Say "still loading")
                 return self._json({'error': 'Still loading, try again in a moment.'}, 503)
+            # (a record index the page kept from before an Undo or a reload: "IndexError: list index out of range" said
+            # nothing a modder could act on, the usability round 2026-11-04)
+            if isinstance(e, IndexError) and 'index out of range' in str(e):
+                return self._json({'error': "That record isn't there any more (undone, or the data was read again): find it again."}, 404)
             import traceback
             traceback.print_exc()
             self._json({'error': '%s: %s' % (type(e).__name__, e)}, 500)
@@ -2120,6 +2124,23 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(cliffline.lay(db, body.get('pts') or [], int(body.get('side') or 0), float(body.get('height') or 600),
                                                         body.get('like') or '', body.get('seed'), body.get('pieces') or None,
                                                         bool(body.get('raise')), float(body.get('amount') or 1.0)))
+                if u.path == '/api/land/field':
+                    # a farm or an orchard on a drawn outline (storydress.lay_field): fields of the region's crop in
+                    # the culture's farm fence, or a loose grid of its fruit tree; one Undo. A blank culture is the
+                    # nearest game town's; {look: true} only says which that is
+                    import storydress
+                    import learning
+                    pts = body.get('pts') or []
+                    culture = str(body.get('culture') or '')[:64]
+                    if not culture and len(pts) >= 3 and not learning.town_pending(db):
+                        import townplan
+                        culture = townplan.nearest_culture(db, pts)
+                    if body.get('look'):
+                        return self._json({'culture': culture})
+                    with editing.operation('field'):
+                        r = storydress.lay_field(db, pts, culture or 'Hlaalu', 'orchard' if body.get('what') == 'orchard' else 'farm', body.get('seed'))
+                    r['culture'] = culture or 'Hlaalu'
+                    return self._json(r)
                 if u.path == '/api/land/revert':
                     # everything the mod changed in the marked cells taken back, as one step
                     return self._json(editing.revert_cells(db, body.get('cells') or []))
@@ -2595,7 +2616,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(questmake.new_quest(db, body.get('id') or '', body.get('title') or '', body.get('first') or ''))
                 if u.path == '/api/roll':
                     import rollinside
-                    return self._json(rollinside.roll(db, body.get('cell', ''), body.get('ref', ''), body.get('kind'), body.get('level'), body.get('until') or None))
+                    return self._json(rollinside.roll(db, body.get('cell', ''), body.get('ref', ''), body.get('kind'), body.get('level'), body.get('until') or None,
+                                                      body.get('cellar')))
                 if u.path == '/api/roll/pick':
                     import rollinside
                     return self._json(rollinside.pick(db, body.get('cell', ''), body.get('ref', ''), body.get('key', '')))
@@ -2848,6 +2870,10 @@ class Handler(BaseHTTPRequestHandler):
                 # (a request still running when a reload began reads files the reload closed: the crawl test's
                 # "ValueError: mmap closed or invalid" from Grow grass during Undo my changes. Say "still loading")
                 return self._json({'error': 'Still loading, try again in a moment.'}, 503)
+            # (a record index the page kept from before an Undo or a reload: "IndexError: list index out of range" said
+            # nothing a modder could act on, the usability round 2026-11-04)
+            if isinstance(e, IndexError) and 'index out of range' in str(e):
+                return self._json({'error': "That record isn't there any more (undone, or the data was read again): find it again."}, 404)
             import traceback
             traceback.print_exc()
             self._json({'error': '%s: %s' % (type(e).__name__, e)}, 500)

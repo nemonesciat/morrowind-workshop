@@ -187,7 +187,7 @@ async function fixitVariants(cell, ref, id, grid){
   let r;
   try { r = await api('/api/fixit/variants?cell=' + encodeURIComponent(cell) + '&ref=' + encodeURIComponent(ref)); }
   catch (e){ return toast(e.message, true); }
-  if (!r.variants.length) return toast(r.note || 'No other pieces of this style fit here.', true);
+  if (!r.variants.length) return toast(r.note || 'No other pieces of this style fit here.');     // (a hint, not a fault)
   // (in 3D: tried on the spot, one after another, so you can see which stops a clip; the user, 2026-10-31:
   // "swap out candidate pieces easily so I can use my eyes to find the right one")
   if (!grid && typeof V3 !== 'undefined' && V3.on && V3.objs && V3.objs.get(cell + '|' + ref)) return fixitCycle(cell, ref, id, r);
