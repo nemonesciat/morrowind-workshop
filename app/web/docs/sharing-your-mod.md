@@ -83,5 +83,5 @@ from wherever they are. Everyone sees every change within a second or so, in the
 
 ## Backups
 
-The Workshop backs your mod up when you open it and regularly while you work (**Settings → Backups**: how often and
-how many). **Restore** puts it back to a backup, after backing up how it is now.
+The Workshop backs your mod up when you open it and regularly while you work (**Settings → Backups**: how often, how
+many, how much space they may take and whether they are stored compressed, about a tenth of the size). **Restore** puts it back to a backup, after backing up how it is now.

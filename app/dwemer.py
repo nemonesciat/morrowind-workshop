@@ -1003,6 +1003,8 @@ class _Layout:
         self.way = 'down'                     # ('up': a place that climbs from its way in, nothing under it)
         self.too_deep = 0                     # (pieces refused for going deeper than the game's own go)
         self.last_loops = 0                   # (how many open openings the last piece laid closed a loop with)
+        self.bound = None                     # ((dx, dy) the way in from the door, half width, depth): a keep's footprint
+        self.too_wide = 0                     # (pieces refused for standing outside it)
 
     def bounds(self, pid):
         if pid not in self._b:
@@ -1027,7 +1029,17 @@ class _Layout:
 
     def fits(self, boxes, ignore=()):
         """None of the boxes runs into a piece laid already (but the one being joined: the game's joined
-        pieces overlap at the join, a hall's exit piece over its corridor by 128)."""
+        pieces overlap at the join, a hall's exit piece over its corridor by 128); and within the footprint, when one
+        is set (a keep's interior under the mass that stands outside: its rooms "veered off where there's nothing
+        outside", the user 2026-11-06)."""
+        if self.bound:
+            (dx, dy), hw, depth = self.bound
+            for b in boxes:
+                cx, cy = (b[0] + b[3]) / 2, (b[1] + b[4]) / 2
+                along, across = cx * dx + cy * dy, abs(-cx * dy + cy * dx)
+                if along < -320 or along > depth or across > hw:
+                    self.too_wide += 1
+                    return False
         return not any(self._hit(nb, p['box']) for nb in boxes for n, p in enumerate(self.pieces) if n not in ignore)
 
     def ports_of(self, pid, x, y, z, rz):
@@ -1972,6 +1984,10 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
                 L.ez = o['z']
             else:
                 L.open.append(dict(o, owner=first, depth=1))
+    if keep.get('box') and entrance and entrance.get('side'):
+        # (the footprint from the door in: the keep's mass outside, a little over for the pieces' own reach)
+        dx, dy = SIDES[OPP[entrance['side']]]
+        L.bound = ((dx, dy), float(keep['box'][0]) + 128, float(keep['box'][1]) + 128)
     # (the halls on the way, spread evenly through the growth, the last one at the far end: two halls put the middle
     # one at 45%, three at 30% and 60%, as before; any number now, for the Halls choice and the huge size)
     # (a keep's rooms sooner, K['spread']: laid later, the corridors had filled the ground round every T beside one)
@@ -2177,7 +2193,7 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     pieces = [p for p in L.pieces if not p.get('gone')]
     halls = len({p['hall'] for p in pieces if p.get('hall') is not None})
     return {'seed': seed, 'grown_from': seed, 'pieces': L.pieces, 'seams': L.seams, 'entrance': entrance, 'halls': halls, 'final': final,
-            'open_left': len(L.open) + left[0], 'tunnels': sum(1 for p in pieces if p['hall'] is None), 'too_deep': L.too_deep, 'way': way,
+            'open_left': len(L.open) + left[0], 'tunnels': sum(1 for p in pieces if p['hall'] is None), 'too_deep': L.too_deep, 'too_wide': L.too_wide, 'way': way,
             'rings': rings_closed, 'spirals': sum(1 for p in pieces if p.get('role') == 'spiral' and p.get('of') is None),
             'ring_debug': getattr(L, 'ring_debug', None)}
 

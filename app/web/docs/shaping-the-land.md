@@ -369,8 +369,10 @@ anything is built.
     is a Legion gatehouse: the wall arch, the gate passage with its door, and a guard tower either side. The corners
     are the wall's own corner pieces (a large fort has round towers at its back corners), the yard inside is one level.
     The keep stands square in the wall line at the back, rising over the wall, its door facing the gate; where the
-    wall walk runs into a keep with an upper room, an arched door on the walk leads in. A large fort has a second hall
-    in the side wall.
+    wall walk runs into a keep with an upper room, an arched door on the walk leads in. The game's forts stand
+    halls in their walls besides the keep (Frostmoth's armoury, barracks and chapel; a prison), and a made fort
+    stands them at the same rate to its ground: a medium fort one, beside the keep as its wing where the back wall
+    is long enough, else in a side wall.
   - **Dunmer stronghold:** the old Chimer keep on its stepped platform, with its ways in to the upper and lower
     levels, the dome and the propylon chamber. **Small** is a keep without the platform.
   - **Redoran stronghold:** a house stronghold of manor, tower, services and a house, inside a Redoran wall and gate.
@@ -387,8 +389,26 @@ anything is built.
   free wall (hay, a trough), stores on the next (crates, barrels, a wheelbarrow), a shrine by the keep, a drill ring
   with dummies and targets to one side of the way in, and a brazier in each corner — then the game's own bailey
   things in what is left.
-- **Size:** small, medium or large, against the game's own forts of that kind; **As drawn** fills your outline.
-  A large Imperial fort has a second hall beside the keep (a chapel or an armoury).
+- **Size:** small, medium or large, against the game's own forts of that kind. **As drawn** builds the outline you
+  drew, any shape with square corners: an L, a T, a stepped side, a slanting side made a step. It is squared to the
+  wall's pieces, so a short jog is merged away; its gate on the longest side facing the way in, its keep in the
+  longest side at the back. A big outline is split into **wards** by cross walls, each with its gate and a round
+  tower where it meets the side walls (two wards from about six lengths of yard before the keep's, three from
+  sixteen): the keep's ward at the back holds the keep's **court**, a walled yard of its own with the keep in its
+  back wall, its wings beside it, halls in its side walls and round towers at its corners; the lower wards are
+  built as **quarters** of the castle's town, streets and houses of the fort's culture planned round the walls,
+  towers and halls once they stand, with their own interiors and people. **Great** is a castle a cell across built
+  the same way, square to where you drew. A large fort has a second hall beside the keep (a chapel or an armoury).
+  A castle with wards or a court stands tall, as the game's great keeps do: its round towers rise storeys over the
+  walk (the court's highest, then the junctions and corners). Its **keep is one mass** of the kit's keep pieces grown as the game's
+  great keeps are composed: every join between keep pieces in the game's own keeps was read (a pyramid-roofed keep
+  beside another so their roofs run into one, one keep on another, a keep beside a roofed one), and the castle's
+  keep grows from its own doored block by those joins, each piece resting on the ground or on one under it, flush
+  at the back wall. Round towers stand at the roofed keeps' corners and rise out of the top keep's deck; the keep's
+  windows follow the game keeps' patterns; doors open from the upper walls onto the decks they meet. No two keeps are
+  alike, and the mass stands for the castle's halls too: nothing else is built into the keep's ward's walls. A
+  large fort's keep is a smaller mass. Its rooms are **made anew to its size** (Rooms: Furnished or Made anew), several storeys and halls
+  linked door to door, the deck doors leading in above the ground door; Empty shells keeps the game keep's own.
 - **Gate:** **By itself**, the gate goes on the low side that's dry land, never out onto the sea or over a cliff.
   Or pick **North**, **East**, **South** or **West**, or click an arrow inside a side of the castle on the map. The keep's
   door turns to face it. **🎲 Another** keeps it.

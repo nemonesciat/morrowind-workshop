@@ -16,7 +16,7 @@ HOLY = re.compile(r'\b(god|gods|tribunal|almsivi|vivec|temple|divine|divines|sai
                   r'daedra|aedra|akatosh|arkay|stendarr|azura|faith|cult|worship|monomyth|nirn|cantatas|consolations)\b', re.I)
 SHRINE = re.compile(r'^shrine of|altar', re.I)
 DAEDRIC = re.compile(r'sound|velothi_altar|daedr|mephala|boethia|molag|malacath|sheogorath|dagon|vaermina|hircine|peryite|namira|'
-                     r'clavicus|hermaeus|sanguine|meridia|nocturnal|jyggalag|bal|dark_?brotherhood', re.I)
+                     r'clavicus|hermaeus|sanguine|meridia|nocturnal|jyggalag|bal\b|dark_?brotherhood', re.I)
 NINE = re.compile(r'imp_altar|setchapel_altar|legion_altar|nine divines', re.I)
 NORTH = re.compile(r'sheogorad|solstheim|felsaad|moesring|hirstaang|isinfier|brodir|thirsk|skyrim|reaver|falkheim|druadach|pale|frost', re.I)
 ASH = re.compile(r'ashlands|molag amur|red mountain|armun', re.I)

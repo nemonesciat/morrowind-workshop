@@ -1058,11 +1058,16 @@ let S = {q:'', types:[], plugin:'', rows:[], total:0, offset:0, loadingMore:fals
 // under the Place panel's buttons while one runs, so a slow first build or a plainer first furnish is explained
 function surveyNote(sv){
   const box = $('#w-surveys'); if (!box) return;
-  if (!sv || !sv.running){ box.style.display = 'none'; return; }
-  const left = (sv.queued || []).length;
-  const m = Math.floor((sv.since || 0) / 60);
+  if (sv === undefined) return;                 // (a status without the surveys: leave the line as it is)
+  // (several surveys run at once; between two in the main slot the status names none as running while others
+  // still run, and the line went on and off with every poll, the user 2026-11-06: show the first still running)
+  const queued = (sv && sv.queued) || [];
+  const run = sv && (sv.running || queued[0]);
+  if (!run){ box.style.display = 'none'; return; }
+  const left = queued.filter(n => n !== run).length;
+  const m = sv.running ? Math.floor((sv.since || 0) / 60) : 0;
   box.style.display = 'block';
-  box.textContent = `Learning from the game's places: ${sv.running}${m ? ' (' + m + ' min so far)' : ''}${left ? ', ' + left + ' more to come' : ''}. This runs beside the Workshop, once; Auto-furnish waits for what it needs and says so.`;
+  box.textContent = `Learning from the game's places: ${run}${m ? ' (' + m + ' min so far)' : ''}${left ? ', ' + left + ' more to come' : ''}. This runs beside the Workshop, once; Auto-furnish waits for what it needs and says so.`;
 }
 // The learning, on every page: a button in the top bar while any survey runs ("📚 Learning 7 of 26" with a thin bar),
 // and under it what is being learnt, how far, what waits for it and why. (The user, 2026-10-27: people new to the

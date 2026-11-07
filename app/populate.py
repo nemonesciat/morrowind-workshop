@@ -26,7 +26,9 @@ from project import join_subs, zs
 DENSITY = {'quiet': 0.55, 'usual': 1.0, 'busy': 1.7}
 MAX_PEOPLE = 30
 HOUSEHOLDS = ('house', 'manor', 'shop', 'tavern', 'camp')        # (places whose people are a household: one family name, owned beds)
-OWNED = ('bed', 'chest', 'cupboard', 'barrel', 'crate', 'sack', 'drawer', 'dresser', 'desk', 'closet', 'wardrobe', 'urn')
+OWNED = ('bed', 'chest', 'cupboard', 'barrel', 'crate', 'sack', 'drawer', 'dresser', 'desk', 'closet', 'wardrobe', 'urn',
+         'basket', 'pot_', 'cookpot', 'hamper', 'bag', 'box')   # (a house's baskets and pots too: 22 food baskets stood free in
+                                                               # the lab's Sketh, the in-game walk 2026-11-06)
 MATERIALS = ('daedric', 'ebony', 'glass', 'dwemer', 'dwarven', 'orcish', 'adamantium', 'indoril', 'her_hand', 'bonemold', 'chitin',
              'netch', 'imperial', 'steel', 'iron', 'silver', 'nordic', 'fur', 'leather', 'dreugh', 'riverwatch', 'redoran', 'hlaalu',
              'telvanni', 'templar', 'colovian', 'ringmail', 'chain', 'kagouti', 'molecrab', 'newtscale', 'goblin', 'bear', 'wolf')
@@ -542,6 +544,19 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
                 cls = _w(rng, [[c, n] for c, n in classes if castsurvey.role_of(c) == role])
                 if cls:
                     want.append(cls)
+    # (a tavern keeps a publican, as a shop keeps a seller: the game's tavern groups are read from the room with the
+    # bar and from its other rooms alike, so half of them show no publican, and four of a made town's eight taverns
+    # had a scout and a smuggler, or an agent and two guards, behind the bar; Sketh, 2026-11-07)
+    if setting == 'tavern' and not keep and not only:
+        i_ = next((i for i, c in enumerate(want) if castsurvey.role_of(c) == 'publican'), None)
+        if i_ is None:
+            pubs = [[c, n] for c, n in classes if castsurvey.role_of(c) == 'publican'] or \
+                [[c, B['n']] for c, B in S['classes'].items() if castsurvey.role_of(c) == 'publican' and B['n'] >= 3]
+            pc = _w(rng, pubs)
+            if pc:
+                want.insert(0, pc)
+        elif i_:
+            want.insert(0, want.pop(i_))        # (the publican keeps the house: its head, who owns its beds and chests)
     if band_D:
         classes = [[c, n] for c, n in band_D['classes'] if c in S['classes']] or classes
         # (the band's people come from places like it: its races and factions)

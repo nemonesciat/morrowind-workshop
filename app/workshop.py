@@ -998,7 +998,7 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/castle/styles':
                 # the keep and castle styles there are game forts of (castle.py), once the walls are learnt
                 import learning
-                lp = learning.town_pending(db)
+                lp = learning.castle_plan_pending(db)
                 if lp:
                     return self._json({'learning': lp})
                 import castle
@@ -1698,6 +1698,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not where:
                     return self._json({'error': 'Unknown folder.'}, 400)
                 return self._json(open_folder(where))
+            if u.path == '/api/backups/clear':
+                # (all but the newest few of this mod's backups deleted: the user's 30 copies of a 28 MB mod, 2026-11-06)
+                if not db.project:
+                    return self._json({'error': 'No mod is open.'}, 400)
+                return self._json({'gone': backups.clear_old(db.project, int(body.get('keep') or 3))})
             if u.path == '/api/backups/restore':
                 if not db.project:
                     return self._json({'error': 'No mod is open.'}, 400)
@@ -2561,7 +2566,8 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path in ('/api/castle/plan', '/api/castle/make'):
                     # a keep or castle in a culture's way (castle.py): planned for the map, or built as one change
                     import learning
-                    lp = learning.town_pending(db, u.path == '/api/castle/make' and body.get('people') is not False)
+                    # (the plan waits for the walls' and keeps' surveys alone; Make it for the quarters' too)
+                    lp = learning.town_pending(db, body.get('people') is not False) if u.path == '/api/castle/make' else learning.castle_plan_pending(db)
                     if lp:
                         return self._json({'learning': lp})
                     import castle

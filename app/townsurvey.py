@@ -28,7 +28,7 @@ PATCH = 512
 ROAD = re.compile(r'road|cobble|path|street|pave|brick|flagstone|walkway|stone_?floor|plaza')
 KINDS = [('tavern', r'tavern|cornerclub|club|tradehouse|hostel|\binn\b'), ('temple', r'temple|shrine|chapel|cult'),
          ('guild', r'guild|fighters|mages|thieves'),
-         ('shop', r'smith|trader|pawnbroker|outfitter|clothier|alchemist|apothecary|bookseller|enchanter|store|shop|merchant|goods|market|tailor'),
+         ('shop', r'smith|trader|pawnbroker|outfitter|clothier|alchemist|apothecary|bookseller|enchanter|store|shop|merchant|goods|market|tailor|baker'),
          ('manor', r'manor|council|palace|villa|hall\b'), ('guard', r'fort|keep|garrison|barracks|guard|tower|watch'),
          ('house', r'house|home|shack|hut|residence|hovel|cottage|lodge|apartment|yurt')]
 STREET = [('lamp', r'lamppost|streetlight|light_.*(post|pole|street)|lantern.*post|lamp_?post|_lamp_|light_com_lantern'),

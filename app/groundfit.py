@@ -26,7 +26,9 @@ SINK = 32            # the ground at least this far up over the building's botto
 EDGE = 64            # (a ground point outside the building this near its edge shows a gap under it)
 STEP = 52            # the landing in front of the door: this far under its sill (the game's median)
 LANDING_MAX = 160    # (a landing lower than this under the sill is raised, unless stairs or a ladder lead up to the door)
-CLIMB = re.compile(r'stair|step|ramp|ladder|platform|walkway|bridge|dock|pier')
+CLIMB = re.compile(r'stair|step|ramp|ladder|platform|walkway|bridge|dock|pier|entrance|porch|stoop')   # (an entrance piece
+                     # carries its own steps: landed a step under the sill, the ground buried them and the door stood "sunk
+                     # into the dirt", the user's Nargorewatch 2026-11-06; the ground meets the steps' foot instead)
 BLEND = 256          # changes fade back to the ground as it was over this far, or BLEND_RISE times their height
 BLEND_RISE = 3.0     # (a 200 drop to a landing faded over 256 left a trench of 50-70 degrees, the town practice of 2026-11-01;
                      # a smooth fade is steepest at its middle, 1.5 times its mean: 3x keeps that under 30 degrees)

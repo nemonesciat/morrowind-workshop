@@ -248,6 +248,7 @@ def get_settings(db):
     s = load_settings()
     key = s.get('anthropic_api_key') or os.environ.get('ANTHROPIC_API_KEY') or ''
     keep, minutes = backups.settings()
+    b_mb, b_zip = backups.more_settings()
     cfg = db.config or {}
     return {'openmw_install': cfg.get('install'), 'openmw_chosen': s.get('openmw_install'),
             'openmw_cfg': cfg.get('user_cfg'), 'openmw_userdir': cfg.get('userdir'),
@@ -255,6 +256,7 @@ def get_settings(db):
                 os.environ.get('ANTHROPIC_API_KEY') and not s.get('anthropic_api_key')),
             'ai_ack': bool(s.get('ai_ack')),
             'backup_keep': keep, 'backup_minutes': minutes, 'backups_folder': backups.BACKUP_DIR,
+            'backup_mb': b_mb, 'backup_zip': b_zip,
             'guide_on_start': s.get('guide_on_start', False), 'guide_seen': bool(s.get('guide_seen')),
             'theme': s.get('theme') if isinstance(s.get('theme'), dict) else None,
             'projects_folder': PROJECTS_DIR, 'app_folder': APP_DIR, 'version': version()}
@@ -266,6 +268,10 @@ def set_settings(body):
         s['backup_keep'] = max(1, min(500, int(body['backup_keep'])))
     if 'backup_minutes' in body:
         s['backup_minutes'] = max(1, min(240, int(body['backup_minutes'])))
+    if 'backup_mb' in body:
+        s['backup_mb'] = max(0, min(100000, int(body['backup_mb'] or 0)))
+    if 'backup_zip' in body:
+        s['backup_zip'] = bool(body['backup_zip'])
     for k in ('guide_on_start', 'guide_seen', 'ai_ack'):
         if k in body:
             s[k] = bool(body[k])

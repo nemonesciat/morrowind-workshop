@@ -1,7 +1,7 @@
 // Keeps and castles on the Land panel (castle.py): a 🏰 Castle shape drawn like a town, planned in a culture's way and
 // drawn on the map before anything is built; Make it builds it, rooms and all, as one Undo.
 // (the user, 2026-11-01: "better keep and castle generation, with rooms inside towers, keeps and curtain walls")
-const CS_SIZES = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['drawn', 'As drawn']];
+const CS_SIZES = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['great', 'Great'], ['drawn', 'As drawn']];
 const CS_ROOMS = [['none', 'None'], ['shells', 'Empty shells'], ['furnished', 'Furnished'], ['made', 'Made anew']];
 const CS_COL = {wall: '#8a7a66', corner: '#5a4a3a', tower: '#5a4a3a', bigtower: '#4a3a2a', gate: '#4caf50', end: '#4caf50', keep: '#b0623a'};
 
@@ -27,12 +27,12 @@ function csHtml(sel){
   const help = typeof guideLink === 'function' ? guideLink('shaping-the-land.md', 'Keeps and castles', 'How castles are made') : '';
   return `<div style="display:flex;align-items:center;gap:4px;font-size:12px"><b>Castle</b>${help}</div>
     <label title="Whose forts it is built like: their walls, towers and keep, and the rooms behind their doors">Like <select class="inp" id="cs-style">${(st.length ? st : [{id: 'Imperial', label: 'Imperial fort'}]).map(s => `<option value="${esc(s.id)}" ${(p.style || 'Imperial') === s.id ? 'selected' : ''} title="${esc((s.examples || []).join(', '))}">${esc(s.label)}</option>`).join('')}</select></label>
-    <label title="How big its walls are, against the game's own of its kind. As drawn: the outline you drew">Size <select class="inp" id="cs-size">${CS_SIZES.map(([v, t]) => `<option value="${v}" ${(p.size || 'medium') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+    <label title="How big its walls are, against the game's own of its kind. Great: a cell across, as the game's great castles, in wards with the keep's court and quarters of houses. As drawn: the outline you drew, any shape with square corners; a big one is split into wards by cross walls, the keep in its own court at the back, the lower wards built as quarters of streets and houses">Size <select class="inp" id="cs-size">${CS_SIZES.map(([v, t]) => `<option value="${v}" ${(p.size || 'medium') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <label title="Its name: its rooms are called after it. Blank: the one shown">Name <input class="inp" id="cs-name" value="${esc(p.name || '')}" placeholder="${esc((C && C.plan && C.plan.name) || '')}" maxlength="40" spellcheck="false"></label>
     <label title="Which way its gate opens. By itself: the low side that's dry land and not a cliff. Or click an arrow on the map">Gate <select class="inp" id="cs-gate">${csGateOpts(p.gate)}</select></label>
     <label title="What lies behind its doors. Shells: the game keep's rooms as bare walls, stairs and doors, to furnish yourself. Furnished: the same, furnished by the Workshop. Made anew: a keep of the Workshop's own, several interiors linked door to door (halls, a garrison, a prison, towers, an undercroft) and one for each run of wall towers, a door at every arch">Rooms <select class="inp" id="cs-rooms">${CS_ROOMS.map(([v, t]) => `<option value="${v}" ${(p.rooms || 'furnished') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <label title="Its people, cast as the game's own rooms of its kind have them (furnished or made rooms only)"><input type="checkbox" id="cs-ppl" ${['furnished', 'made'].includes(p.rooms || 'furnished') ? '' : 'disabled'} ${p.nopeople || !['furnished', 'made'].includes(p.rooms || 'furnished') ? '' : 'checked'}> People</label>
-    <div class="actions"><button class="btn sm" id="cs-reroll" title="Another layout of the same castle">🎲 Another</button>
+    <div class="actions"><label title="The same outline, size and seed give the same castle; another seed, another castle">Seed <input class="inp" id="cs-seed" type="number" min="1" max="999999" value="${p.seed || 1}" style="width:76px"></label><button class="btn sm" id="cs-reroll" title="Another layout of the same castle">🎲 Another</button>
       <button class="btn sm" id="cs-remove" title="Take away what Make it built here, rooms and all. What you added later and the ground stay. One Undo">✕ Remove</button>
       <button class="btn sm primary" id="cs-make" ${C && C.plan ? '' : 'disabled'} title="Build it as shown, its rooms behind its doors. One Undo takes it back">🏰 Make it</button></div>${info}`;
 }
@@ -76,7 +76,7 @@ function csSummaryHtml(pl){
   const row = (k, a, b) => `<tr><td>${k}</td><td>${a}</td><td style="opacity:.7">${b == null ? '–' : b}</td></tr>`;
   return `<details class="cs-sum" ${LM.csOpen ? 'open' : ''}><summary title="This castle beside the game's own of its kind (their middle values)">${esc(pl.name)}: ${f.interiors} rooms, ${f.towers} towers</summary>
     <table style="font-size:11.5px;width:100%"><tr><td></td><td>This</td><td style="opacity:.7">Game</td></tr>
-    ${row('Walls', ws, gws)}${row('Towers', f.towers, g.towers)}${row('Rooms', f.interiors, g.interiors)}${row('Doors out', f.doors_out, g.doors_out)}</table>
+    ${row('Walls', ws, gws)}${row('Towers', f.towers, g.towers)}${row('Keep and halls', f.keeps, g.keeps)}${f.tiers > 1 ? row('Keep storeys', f.tiers, null) : ''}${f.wards > 1 ? row('Wards', f.wards, 1) : ''}${row('Rooms', f.interiors, g.interiors)}${row('Doors out', f.doors_out, g.doors_out)}</table>
     <div style="font-size:11.5px;margin-top:4px">${(pl.rooms || []).map(r => esc(r.name)).join('<br>')}</div>
     ${(pl.faults || []).length ? `<div class="msg warn" style="font-size:11.5px">${pl.faults.map(esc).join('<br>')}</div>` : ''}</details>`;
 }
@@ -91,6 +91,7 @@ function csBind(){
   const gt = $('#cs-gate'); if (gt) gt.onchange = () => { const w = CS_WAYS.find(w => w[0] === gt.value); if (gt.value !== 'map') csGatePick(sel, w ? w[2] : null); };
   const sm = document.querySelector('.cs-sum'); if (sm) sm.ontoggle = () => { LM.csOpen = sm.open; };
   const r = $('#cs-reroll'); if (r) r.onclick = () => { sel.p.seed = ((sel.p.seed || 1) % 100000) + 1 + Math.floor(Math.random() * 1000); lsChanged(true); };
+  const sd = $('#cs-seed'); if (sd) sd.onchange = () => { sel.p.seed = Math.max(1, parseInt(sd.value, 10) || 1); lsChanged(true); };
   const rm = $('#cs-remove'); if (rm) rm.onclick = async () => {
     if (!await needProject()) return;
     const C = (LM.castles || {})[sel.id], out = (C && C.plan && C.plan.preview && C.plan.preview.outline.length) ? C.plan.preview.outline : sel.pts;
@@ -193,7 +194,7 @@ async function csMake(sel){
         name: sel.p.name || '', people: !sel.p.nopeople, rooms: sel.p.rooms || 'furnished', gate: sel.p.gate ?? null});
     } finally { clearInterval(poll); }
     if (r.learning) throw new Error('Still learning ' + r.learning.join(', ') + ': try again in a minute.');
-    toast(`Built ${esc(r.name)}: ${r.pieces} pieces outside, ${r.interiors} rooms${r.people ? `, ${r.people} people` : ''}. One Undo takes it back.`);
+    toast(`Built ${esc(r.name)}: ${r.pieces} pieces outside${r.buildings ? `, ${r.buildings} buildings in its quarters` : ''}, ${r.interiors} rooms${r.people ? `, ${r.people} people` : ''}. One Undo takes it back.`);
     ok = true;
     await csShow();
   } catch (e){ toast(e.message, true); }

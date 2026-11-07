@@ -25,7 +25,7 @@ from collections import Counter, defaultdict
 import mapdata
 import townsurvey
 
-VERSION = 7                    # (2: people on buildings counted, storage away from the yards; 3: signs; 4: awnings, big towns; 5: by example;
+VERSION = 8                    # (2: people on buildings counted, storage away from the yards; 3: signs; 4: awnings, big towns; 5: by example;
                                # 6: storage set inside a building's pieces not counted; 7: and as the audit counts it)
 NEAR = 900                     # (a town's outdoor refs: within this of a building's box)
 SELL_NEAR = 320                # what stands this near an outdoor seller is their stall
@@ -38,7 +38,10 @@ DOOR_NEAR = 400
 SCENE_MAX = 30
 BARTER = 0x37FF                # (the services that are buying and selling: every item kind, magic items, potions)
 STALLY = re.compile(r'marketstand|market_?stand|stall|awning|canopy|overhang|table|counter|screen|shelf|rack|bench|stool|'
-                    r'crate|barrel|sack|basket|urn|keg|cart|lantern|lamp|_pot|pot_|bucket|bowl|platter|tray|cloth|rug', re.I)
+                    r'crate|barrel|sack|basket|urn|keg|cart|lantern|lamp|_pot|pot_|bucket|bowl|platter|tray|cloth|rug|'
+                    r'pole|post|pillar|beam|support|frame', re.I)   # (and the posts an awning hangs from: the Dunmer cloth
+                                                                     # overhangs came without them, "missing support
+                                                                     # posts", the user 2026-11-06)
 STALL_CORE = re.compile(r'marketstand|market_?stand|stall|awning|canopy|overhang|table|counter', re.I)
 CANOPY = re.compile(r'awning|canopy|overhang|tent', re.I)
 STORAGE = re.compile(r'crate|_box|box_|chest|barrel|keg|cask|sack|bag_|_bag|basket|bale|haypile|(^|_)urn|amphora|cart(?!ograph)|'
@@ -57,6 +60,7 @@ SEEN = {}                      # (the last town's figures, for the checks)
 BIG_TOWN = 25                  # (a town of this many buildings or more lives as the game's big towns do: their own rates)
 AWNING = re.compile(r'awning|canopy|overhang', re.I)
 AWNING_NEAR = (400, -300, 150)  # (an awning this near a door, sideways, out and in, in its frame, is the door's)
+LONE_MOST = 3                  # (a lone stall scene stands this often in a town at most, whatever the rate asks)
 AWNING_HEAD = 180              # (an awning whose underside is under this over the door's floor stands on posts, or hangs in the
                                # way: kept off the doors' ways)
 
@@ -128,6 +132,28 @@ def _in_box(box, x, y, pad=0.0):
 def _size(r):
     b, s = r['b'], r['s'] or 1.0
     return max(b[3] - b[0], b[4] - b[1]) * s
+
+
+POLE = re.compile(r'pole|post|pillar|beam|support|frame', re.I)
+CLOTH_THIN = 100               # (a canopy model under this tall is the cloth alone, with no poles of its own)
+CLOTH_HOLD = 320               # (it is kept in a scene only with a pole within this of it, or a wall it hangs from)
+
+
+def _held_cloth(things, refs):
+    """The scene's things less any cloth canopy that nothing holds up: a cloth-only overhang (Tamriel Data's
+    T_De_Furn_Overhang_03a and kin, 40 tall) with no pole, post or frame within CLOTH_HOLD in the scene. In the game
+    they hang from poles or a wall; set out alone they hung in the air, "missing support posts", the user 2026-11-06.
+    refs: the scene's game refs, in the things' order, for their bounds."""
+    by = {r['id'].lower(): r for r in refs if r.get('b')}
+    out = []
+    for t in things:
+        r = by.get(t['id'].lower())
+        if CANOPY.search(t['id']) and r is not None and (r['b'][5] - r['b'][2]) * (r['s'] or 1.0) < CLOTH_THIN:
+            held = any(POLE.search(o['id']) and math.hypot(o['x'] - t['x'], o['y'] - t['y']) <= CLOTH_HOLD for o in things if o is not t)
+            if not held:
+                continue
+        out.append(t)
+    return out
 
 
 def _stall_thing(r):
@@ -259,6 +285,7 @@ def _learn(db):
                 things.append(towndress._thing(q, x, y, ang, up, False))
                 core += bool(STALL_CORE.search(q['id']))
                 used.add(id(q))
+            things = _held_cloth(things, [q for q in loose if id(q) in used])
             D['n']['seller at stall' if core else 'seller alone'] += 1
             if core and 2 <= len(things) <= SCENE_MAX:
                 D['stalls'].append({'town': t['name'], 'things': things, 'up': round(r['p'][2] - gz, 1),
@@ -282,6 +309,7 @@ def _learn(db):
                     continue
                 things.append(towndress._thing(q2, x, y, ang, q2['p'][2] - g2, False))
                 used.add(id(q2))
+            things = _held_cloth(things, [q2 for q2 in loose if id(q2) in used])
             D['n']['lone stall'] += 1
             if 1 <= len(things) <= SCENE_MAX:
                 D['lone_stalls'].append({'town': t['name'], 'things': things})
@@ -590,10 +618,20 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
     for want, pool, kind in ((n_sell, scenes, 'sell'), (n_lone, lone, 'lone')):
         if not pool:
             continue
+        # (no scene over and over: a big town set the same two cloth overhangs out 28 times, "the same arrangement,
+        # used way too often", the user 2026-11-06. Each scene a few times at most, the lone ones fewer still)
+        if kind == 'lone':
+            want = min(want, LONE_MOST * len(pool))
+        cap = max(2, int(math.ceil(want / float(len(pool)))))
+        times = {}
         tries = 0
         while want > 0 and tries < STALL_TRIES:
             tries += 1
-            sc = rng.choice(pool)
+            open_ = [s_ for s_ in pool if times.get(id(s_), 0) < cap]
+            if not open_:
+                break
+            sc = rng.choice(open_)
+            times[id(sc)] = times.get(id(sc), 0) + 1
             if rng.random() < 0.5:
                 sc = {'things': [dict(t, x=-t['x'], rz=(-t['rz']) % (2 * math.pi)) for t in sc['things']], 'seller': sc.get('seller'), 'up': sc.get('up')}
             depth = _depth(sc) if kind == 'sell' else 0.0

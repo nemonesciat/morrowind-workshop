@@ -24,15 +24,18 @@ from editing import EditError
 # the interiors a keep may hold: how each is grown (dwemer.build's size, levels, way) and what it asks for (keep:
 # big halls' share, spiral towers and their turns, trap doors to the roof)
 ROLES = {
-    'hall': {'label': 'Great Hall', 'size': 'medium', 'levels': 'steep', 'big': 0.6},
-    'chambers': {'label': 'High Chambers', 'size': 'medium', 'levels': 'steep', 'big': 0.35},
-    'household': {'label': 'Household', 'size': 'medium', 'levels': 'steep', 'big': 0.2},
-    'library': {'label': 'Library', 'size': 'small', 'levels': 'some', 'big': 1.0},
-    'chapel': {'label': 'Chapel', 'size': 'small', 'levels': 'some', 'big': 1.0},
-    'garrison': {'label': 'Barracks', 'size': 'medium', 'levels': 'some', 'big': 0.15},
-    'prison': {'label': 'Dungeons', 'size': 'small', 'levels': 'some', 'big': 0.0},
-    'treasury': {'label': 'Treasure Chamber', 'size': 'small', 'levels': 'flat', 'big': 0.5},
-    'undercroft': {'label': 'Undercroft', 'size': 'medium', 'levels': 'some', 'big': 0.2},
+    # (the halls climb from their doors: a keep's rooms rise into the mass that stands outside; only the dungeons and
+    # the undercroft go down. Grown the generator's own way, down, "all the rooms sprawl downwards, there's no sense of
+    # going up into the rest of the castle from the ground floor": the user, 2026-11-06)
+    'hall': {'label': 'Great Hall', 'size': 'medium', 'levels': 'steep', 'big': 0.6, 'way': 'up'},
+    'chambers': {'label': 'High Chambers', 'size': 'medium', 'levels': 'steep', 'big': 0.35, 'way': 'up'},
+    'household': {'label': 'Household', 'size': 'medium', 'levels': 'steep', 'big': 0.2, 'way': 'up'},
+    'library': {'label': 'Library', 'size': 'small', 'levels': 'some', 'big': 1.0, 'way': 'up'},
+    'chapel': {'label': 'Chapel', 'size': 'small', 'levels': 'some', 'big': 1.0, 'way': 'up'},
+    'garrison': {'label': 'Barracks', 'size': 'medium', 'levels': 'some', 'big': 0.15, 'way': 'up'},
+    'prison': {'label': 'Dungeons', 'size': 'small', 'levels': 'some', 'big': 0.0, 'way': 'down'},
+    'treasury': {'label': 'Treasure Chamber', 'size': 'small', 'levels': 'flat', 'big': 0.5, 'way': 'up'},
+    'undercroft': {'label': 'Undercroft', 'size': 'medium', 'levels': 'some', 'big': 0.2, 'way': 'down'},
     'tower': {'label': '%s Tower', 'size': 'small', 'levels': 'some', 'way': 'up', 'big': 0.0, 'spirals': 1, 'turns': (3, 5), 'traps': True},
     # (one interior for a run of wall towers: passages and spiral stairs inside the wall with a door out at every arch,
     # Firewatch's Wall Towers, 13 doors over 7,197)
@@ -57,11 +60,13 @@ OUTS = {'hall': 3, 'garrison': 2, 'chambers': 2, 'household': 1, 'walls': 16, 'p
 OUT_ORDER = ('hall', 'garrison', 'chambers', 'household', 'prison', 'undercroft')
 
 
-def plan(size='medium', seed=1, outs=None):
+def plan(size='medium', seed=1, outs=None, box=None):
     """The set for a keep of this size: {'interiors': [{'i', 'role', 'label', 'size', 'levels', 'way', 'keep'}], 'links':
     [(i, j)], 'outs': {i: n}} with each interior's keep asks worked out from the doors it needs (one way out for each
     link, each door to the outside, and the front door counting as one). outs: how many doors to the outside the keep
-    has to take ({role: n} or a number spread over the halls first), None for the plan's own."""
+    has to take ({role: n} or a number spread over the halls first), None for the plan's own. box: [half width, depth]
+    of the keep's mass outside, from its door in; each hall keeps within it (the towers and the walls' passages stand
+    where their own pieces do)."""
     P = PLANS.get((size or 'medium').partition('+')[0], PLANS['medium'])
     rng = random.Random('keep|%s|%s' % (size, seed))
     roles = list(P['roles'])
@@ -102,6 +107,8 @@ def plan(size='medium', seed=1, outs=None):
                 'nostories': True}
         if R.get('turns'):
             keep['turns'] = list(R['turns'])
+        if box and role not in ('tower', 'walls') and R.get('way') != 'down':   # (underground may spread past the mass)
+            keep['box'] = [float(box[0]), float(box[1])]
         out.append({'i': i, 'role': role, 'label': label, 'size': R['size'], 'levels': R['levels'], 'way': R.get('way', 'down'),
                     'keep': keep, 'seed': rng.getrandbits(31), 'doors': doors})
     return {'size': size, 'seed': seed, 'interiors': out, 'links': links, 'outs': want_out}
@@ -139,7 +146,7 @@ def _layout_with_doors(db, I, tries=6):
     return best[1], best[2]
 
 
-def make(db, name, size='medium', seed=1, outs=None, people=True, commit=True, progress=None):
+def make(db, name, size='medium', seed=1, outs=None, people=True, commit=True, progress=None, box=None):
     """The keep's interiors built and linked. name: the keep's ("Fort Vanvuld": its interiors are "Fort Vanvuld, Great
     Hall" and so on). outs: the doors to the outside wanted, as plan(). Returns {'name', 'cells': [keys], 'interiors':
     [{role, label, key, name, doors: [...]}], 'links': n, 'outs': [{cell, k, name, arrive, role, z}] (the doors kept for
@@ -155,7 +162,7 @@ def make(db, name, size='medium', seed=1, outs=None, people=True, commit=True, p
     if S is None:
         import learning
         return {'learning': learning.ruin_pending(db, 'fort')}
-    PL = plan(size, seed, outs)
+    PL = plan(size, seed, outs, box)
     stack = getattr(p, 'undo_stack', [])
     n0 = len(stack)
     say = progress or (lambda what, frac: None)

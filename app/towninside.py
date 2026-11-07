@@ -104,31 +104,66 @@ def _possessive(name):
     return name + ("'" if name.endswith('s') else "'s")
 
 
-def _tavern(db, culture, rng):
-    """A tavern name from the words of the culture's game tavern names: "The <word> <word> Inn"."""
-    names = []
-    for t in townsurvey.survey(db)['towns']:
-        if t.get('culture') != culture:
-            continue
-        for b in t.get('buildings') or ():
-            if b.get('kind') == 'tavern' and b.get('name'):
-                names.append(_tail(b['name']))
-    words = [w for n in names for w in re.findall(r"[A-Z][a-z']+", TAVERN_WORDS.sub(' ', n)) if not w.endswith("'s")]
-    ends = [m.group(1) for n in names for m in [re.search(r'\b(Inn|Tavern|Tradehouse|Hostel|Cornerclub|Club)\b', n)] if m] or ['Inn']
+def _tavern(db, culture, rng, town='', taken=()):
+    """A tavern name from the words of the culture's game tavern names: "The <word> <word> Inn" (every culture's
+    words when the culture's own are few; never a word of two letters, "The St Black Hostel"; not a name the town
+    has, "The Halfway Black Hostel" beside "The Black Halfway Hostel"; Sketh, 2026-11-07)."""
+    def _words(cult):
+        names = []
+        for t in townsurvey.survey(db)['towns']:
+            if cult and t.get('culture') != cult:
+                continue
+            for b in t.get('buildings') or ():
+                if b.get('kind') == 'tavern' and b.get('name'):
+                    names.append(_tail(b['name']))
+        ws = [w for n in names for w in re.findall(r"[A-Z][a-z']+", TAVERN_WORDS.sub(' ', n)) if not w.endswith("'s") and len(w) > 2]
+        es = [m.group(1) for n in names for m in [re.search(r'\b(Inn|Tavern|Tradehouse|Hostel|Cornerclub|Club)\b', n)] if m]
+        return ws, es
+    words, ends = _words(culture)
+    if len(set(words)) < 8:
+        w2, e2 = _words(None)
+        words, ends = words + w2, ends + e2
+    ends = ends or ['Inn']
     if len(set(words)) < 2:
         return None
-    a = rng.choice(words)
-    b = rng.choice([w for w in words if w != a])          # ("The Iron Iron Tavern", lab jd3)
-    return 'The %s %s %s' % (a, b, rng.choice(ends))
+    name = None
+    for _try in range(12):
+        a = rng.choice(words)
+        b = rng.choice([w for w in words if w != a])          # ("The Iron Iron Tavern", lab jd3)
+        name = 'The %s %s %s' % (a, b, rng.choice(ends))
+        pre = ('%s, the ' % town).lower()
+        if not any(t.startswith(pre + ('%s %s ' % (a, b)).lower()) or t.startswith(pre + ('%s %s ' % (b, a)).lower()) for t in taken):
+            break                      # (the same two words with another end are the same name: "The Haven Tikil Inn", "... Tradehouse")
+    return name
 
 
-DWELLING = re.compile(r'(House|Shack|Hut|Lodge|Farmhouse|Cabin|Yurt|Tent|Manor|Hall|Apartment|Residence|Household|Tower|Farm)')
+DWELLING = re.compile(r'\b(House|Shack|Hut|Lodge|Farmhouse|Cabin|Yurt|Tent|Manor|Hall|Apartment|Residence|Household|Tower|Farm)\b')
 
 
-def interior_name(db, town, tmpl_name, kind, head, family, culture, rng):
+def interior_name(db, town, tmpl_name, kind, head, family, culture, rng, plot_kind=None, head_cls=None, taken=()):
     """The copy's name, after its head where the game's own is after a person, and always for a home (a house plot in a
-    farm's storage or a slave shack is somebody's: "Slave Shack Two" six times over, lab jtint1)."""
+    farm's storage or a slave shack is somebody's: "Slave Shack Two" six times over, lab jtint1). plot_kind: the
+    town's kind for the plot ('guild:mages' names the guild), which names the place when the template's differs."""
     tail = PART.sub('', _tail(tmpl_name)).strip(' :') or _tail(tmpl_name)
+    pk, _sep, gtype = (plot_kind or '').partition(':')
+    # (only the kinds this names well: a temple or a garrison plot keeps its template's name, "Chapel 2..8" and
+    # "Garrison 2..9" stood in one town when every such plot took the kind's one generic name)
+    if pk and pk != kind and (pk in ('shop', 'tavern', 'manor', 'temple', 'house', 'farm', 'shack') or (pk == 'guild' and gtype)) and \
+            (pk in GENERIC_KIND or kind in GENERIC_KIND):
+        # (the plot's kind names the place, never the template's, which lent its layout alone: a tavern plot given a
+        # trader's shop was "Rathain: Trader" with a bar inside and a warrior behind it, a manor plot "Gilas Ordinator:
+        # Trader" with a noble; a shop plot given a house, "Alds Rethan's House" with a Trader Service; Sketh, 2026-11-07)
+        kind = pk
+        if pk == 'guild' and gtype:
+            tail = {'mages': 'Mages Guild', 'fighters': 'Fighters Guild', 'thieves': 'Thieves Guild'}.get(gtype, 'Guild Hall')
+        elif pk == 'manor' and (family or head):
+            tail = '%s Manor' % (family or head.split()[-1])
+        elif pk == 'temple' and (family or head):
+            tail = '%s Chapel' % (family or head.split()[-1])      # (eight plain "Chapel N" in one town)
+        elif pk == 'shop' and head:
+            tail = '%s: %s' % (head, trade_label(head_cls))
+        else:
+            tail = GENERIC_KIND.get(pk) or ('%s House' % _possessive(head) if head else 'Hall')
     # ("Guar Farm: Erdlan Galelan's Shack": the person's part)
     if ': ' in tail and OWNED.match(tail.split(': ', 1)[1]):
         tail = tail.split(': ', 1)[1]
@@ -138,13 +173,18 @@ def interior_name(db, town, tmpl_name, kind, head, family, culture, rng):
     else:
         m = OWNED.match(tail)
         if m and head and not NOT_PERSON.search(m.group(1)):
-            tail = '%s %s' % (_possessive(head), m.group(2))
+            w = m.group(2)
+            if pk in ('house', 'farm', 'shack') and not DWELLING.search(w):
+                w = 'House'                                      # ("Shenk's Shovel" on a house plot: "X's Shovel")
+            tail = '%s %s' % (_possessive(head), w)
         else:
             m = FAMILY.match(tail)
             if m and (family or head):
                 tail = '%s %s' % (family or head.split()[-1], m.group(2))
             elif kind == 'tavern':
-                tail = _tavern(db, culture, rng) or tail
+                tail = _tavern(db, culture, rng, town, taken) or tail
+            elif kind == 'shop' and head and not TRADE.match(tail):
+                tail = '%s: %s' % (head, trade_label(head_cls))        # ("Beleth Bakery" seven times over: its keeper's)
             elif kind not in ('temple', 'guild', 'guard', 'tavern') and head:
                 w = DWELLING.findall(tail)
                 tail = '%s %s' % (_possessive(head), w[-1] if w else 'House')
@@ -152,6 +192,19 @@ def interior_name(db, town, tmpl_name, kind, head, family, culture, rng):
     if GENERIC.match(tail):
         tail = GENERIC_KIND.get(kind) or ('%s House' % _possessive(head) if head else 'Hall')
     return '%s, %s' % (town, tail)
+
+
+TRADE_LABEL = (('smith|armorer|armourer|weaponsmith', 'Smith'), ('alchem', 'Alchemist'), ('apothec', 'Apothecary'),
+               ('enchant', 'Enchanter'), ('bookseller|scribe', 'Bookseller'), ('clothier|tailor', 'Clothier'),
+               ('outfitter', 'Outfitter'), ('pawn', 'Pawnbroker'), ('baker', 'Baker'))
+
+
+def trade_label(cls):
+    """The game's way of naming a shop after its keeper's trade: "<Name>: Smith", "<Name>: Trader"."""
+    for rx, lab in TRADE_LABEL:
+        if re.search(rx, cls or '', re.I):
+            return lab
+    return 'Trader'
 
 
 GENERIC = re.compile(r'^(interior|entrance|main|ground floor|upper floor|lower floor|hall|building)$', re.I)
@@ -204,6 +257,11 @@ def _link_more_doors(db, q, done=()):
     for key, rk in q['more_doors']:
         if rk in done:
             continue                    # (linked as the game's led: copy_building)
+        # (a door that leads somewhere already keeps its place: a two-shell Nordic house's second door led into its own
+        # ready-made place, "<house>: Pod 2", and relinked here that place stood orphaned, the lab's Sketh 2026-11-06)
+        cur = next((r for r in mapdata.cellmap(db, key).get('refs') or () if r['k'] == rk), None)
+        if cur is not None and (cur.get('to') or {}).get('cell'):
+            continue
         try:
             c, refs = editing._cell(db, key)
         except EditError:
@@ -940,7 +998,11 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 # (the plot in the seed: by the template alone, six copies of one shack had one Drathyn Sarothril, lab jtint2)
                 # (cast for what the plot is, named as the building will be: a template read as a house by its name cast
                 # no keeper for a Bonesmith, the in-game walk 2026-11-03)
-                ask = {'setting': kind} if kind in ('shop', 'tavern', 'temple', 'guild', 'manor') else {}
+                # (the plot's kind rules the cast, the furnishing and the name alike; the template lends its layout: a
+                # house plot given a trader's shop was cast for the shop, and named "X: Trader" over a household's
+                # rooms; the lab's Sketh walked in game, 2026-11-06/07)
+                ask = {'setting': kind} if kind in ('shop', 'tavern', 'temple', 'guild', 'manor') else \
+                    {'setting': 'house'} if kind in ('house', 'farm', 'shack') else {}
                 if tname:
                     ask['name'] = tname
                 cast_ = populate.cast(db, t, ask, seed=zlib.crc32(('%s|%s|%s|%d' % (seed, town, t, made + skipped)).encode()))
@@ -967,7 +1029,8 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 head = h['name']
                 head_cls = h.get('cls')
                 family = castsurvey._split_name(h['name'], h.get('race') or '')[1] or None
-        name = _unique(db, interior_name(db, town, tname, townsurvey.kind_of(tname), head, family, culture, rng), taken)
+        name = _unique(db, interior_name(db, town, tname, townsurvey.kind_of(tname), head, family, culture, rng,
+                                         plot_kind=kind_in, head_cls=head_cls, taken=taken), taken)
         tried.add(name.lower())
         if kind == 'shop' and head_cls:
             try:

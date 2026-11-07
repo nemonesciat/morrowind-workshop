@@ -1432,6 +1432,18 @@ def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, til
     import release
     b = building_at(db, cell_key, ref_key, door_key)
     b['seed'] = int(seed or 0)
+    # (a town's building is the pieces the town set down as one (project.town_parts), not whatever touches them: in a
+    # dense town the group ran into the neighbours, and a Nordic house's neighbours' shells became "Pod 2..7" places
+    # of its own, with the neighbours' doors; those doors were relinked to the neighbours' own interiors later and the
+    # pods stood orphaned, 40 of them in a 226-house town, the user's Sketh 2026-11-06)
+    tp = getattr(db.project, 'town_parts', None) or {}
+    dk = (b.get('door') or {}).get('k')
+    if dk in tp:
+        gid = tp[dk]
+        own = [g for g in b['group'] if tp.get(g['k']) == gid]
+        if own:
+            b['group'] = own
+            b['doors'] = [d for d in b['doors'] if d['k'] == dk or tp.get(d['k']) == gid]
     if not tiles and not kit and route != 'plan' and not layout:
         # (a shell the game makes a ready-made interior for, a Telvanni pod, a shack, a hut, a tent: a place per\n        # shell, that piece turned to the door and fitted out as one of the game's own; podtwins.py)
         import podtwins

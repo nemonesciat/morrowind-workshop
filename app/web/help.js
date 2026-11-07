@@ -336,7 +336,9 @@ async function renderSettings(){
     <p class="msg">The Workshop copies your mod's project file when you open it and then regularly while you work, and keeps the newest ones.</p>
     <div class="setrow"><span>Make a backup every</span><span><input class="inp num" id="st-bmin" type="number" min="1" max="240" value="${st.backup_minutes}" style="width:70px"> minutes while you work</span></div>
     <div class="setrow"><span>Keep the newest</span><span><input class="inp num" id="st-bkeep" type="number" min="1" max="500" value="${st.backup_keep}" style="width:70px"> backups of each mod</span></div>
-    ${p ? `<h4 style="margin:14px 0 6px">Backups of ${esc(p.name)} (${bk.backups.length})</h4>
+    <div class="setrow"><span>Space for them</span><span><input class="inp num" id="st-bmb" type="number" min="0" max="100000" value="${st.backup_mb || 0}" style="width:80px" title="The oldest go first once a mod's backups take more. 0: no limit"> MB a mod at most (0: no limit)</span></div>
+    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="st-bzip" ${st.backup_zip ? 'checked' : ''}> Store them compressed <span title="About a tenth of the size; a backup takes a moment longer to make and to restore. Ones made before stay as they are">(about a tenth of the size)</span></label>
+    ${p ? `<h4 style="margin:14px 0 6px">Backups of ${esc(p.name)} (${bk.backups.length}${bk.total ? ` · ${fmtN(Math.round(bk.total / 1048576))} MB` : ''})${bk.backups.length > 3 ? ` <button class="btn sm" id="st-bclear" title="Delete all but the newest 3 backups of this mod">Clear old ones</button>` : ''}</h4>
       <div class="bklist">${bk.backups.map(b => `<div class="setrow"><span>${esc(when(b.time))}${b.why ? ` <span class="chip">${esc(b.why)}</span>` : ''}</span>
         <span><span class="msg">${fmtN(Math.round(b.size / 1024))} KB</span> <button class="btn sm" data-restore="${esc(b.file)}">Restore</button></span></div>`).join('')
         || '<div class="msg">None yet: the first is made a few minutes after you start working on it.</div>'}</div>` : '<p class="msg">Open a mod to see its backups.</p>'}
@@ -359,6 +361,13 @@ async function renderSettings(){
   const dk = $('#st-delkey'); if (dk) dk.onclick = async () => { if (!confirm('Remove the saved API key?')) return; await post('/api/ai/key', {key: ''}); AI.configured = false; aiBtnApply(); renderSettings(); };
   $('#st-bmin').onchange = e => save({backup_minutes: +e.target.value});
   $('#st-bkeep').onchange = e => save({backup_keep: +e.target.value});
+  $('#st-bmb').onchange = e => save({backup_mb: +e.target.value});
+  $('#st-bzip').onchange = e => save({backup_zip: e.target.checked});
+  const bc = $('#st-bclear'); if (bc) bc.onclick = async () => {
+    if (!confirm('Delete all but the newest 3 backups of this mod?')) return;
+    try { const r = await post('/api/backups/clear', {keep: 3}); toast(`${r.gone} backup${r.gone === 1 ? '' : 's'} deleted.`); renderSettings(); }
+    catch (e){ toast(e.message, true); }
+  };
   $('#st-guide').onchange = e => { homeStartSet(e.target.checked); toast('Saved.'); };
   w.querySelectorAll('[data-open]').forEach(b => b.onclick = () => post('/api/open_place', {what: b.dataset.open}).catch(e => toast(e.message, true)));
   w.querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {

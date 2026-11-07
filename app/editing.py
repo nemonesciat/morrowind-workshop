@@ -262,6 +262,12 @@ def commit(db, note=None, reverts=None):
             entry['op'] = _cur_op()
     trimmed = 0
     if before is not None:
+        # (the state from before an operation's first change, for fold: the undo stack keeps 100 steps, and a town's
+        # Make runs to 1,400, so its one Undo step covered the last 100 and left the rest of the town standing;
+        # the user's Sketh, 2026-11-07)
+        op_ = _cur_op()
+        if op_ and (p.__dict__.get('_op_before') or (None,))[0] != op_:
+            p._op_before = (op_, before)
         stack = p.__dict__.setdefault('undo_stack', [])
         was = len(stack)
         stack.append((before, note or 'change', entry['id'] if entry else None))
@@ -581,6 +587,12 @@ def fold(db, n, note):
     del stack[-n:]
     before = items[0][0]
     ids = {it[2] for it in items if len(it) > 2 and it[2]}
+    op_ = _cur_op()
+    ob = p.__dict__.get('_op_before')
+    if op_ and ob and ob[0] == op_:
+        before = ob[1]                               # (the whole operation, however many steps the stack kept)
+        ids |= {e.get('id') for e in p.log if e.get('op') == op_}
+        p._op_before = None
     p.log[:] = [e for e in p.log if e.get('id') not in ids]
     after = p.snapshot()
     entry = p.note(note, state_diff(before, after))
@@ -763,6 +775,7 @@ def _revert_diff(p, d):
         for rk, (b, _a) in cd['refs'].items():
             if b is None:
                 c['refs'].pop(rk, None)
+                (p.town_parts or {}).pop(rk, None)        # (a town's or castle's piece taken back leaves its parts list)
             else:
                 c['refs'][rk] = b
         if not c['refs'] and not c.get('props'):

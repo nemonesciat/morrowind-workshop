@@ -524,8 +524,31 @@ def lay(db, plan, family=None, cell=None):
             chain.append(p)
         units.append(chain)
     streets, roads = _street_crossings(plan, poly)
+    # (a crossing on a side too short to hold a gate between its corners is no way in: the island town's one crossing
+    # fell on a two-length jog of its outline and the wall closed with "0 ways in", the user 2026-11-06)
+    gate_ = _best(kit, 'gate')
+    span = gate_[1]['span'] if gate_ else 2 * kit['L']
+    ok_sides = set()
+    for k in range(n):
+        out_, in_ = units[k][-1], units[(k + 1) % n][0]
+        b, c_ = poly[k], poly[(k + 1) % n]
+        d = _unit(c_[0] - b[0], c_[1] - b[1])
+        if (in_.x - out_.x) * d[0] + (in_.y - out_.y) * d[1] >= span + 1.5 * kit['L']:
+            ok_sides.add(k)
+    if any(k not in ok_sides for k in streets):
+        kept = [(poly[k][0] + _unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1])[0] * h,
+                 poly[k][1] + _unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1])[1] * h)
+                for k, hs in streets.items() if k in ok_sides for h in hs]
+        streets = defaultdict(list, {k: v for k, v in streets.items() if k in ok_sides})
+        roads = [r for r in roads if any(math.hypot(r[1][0] - q[0], r[1][1] - q[1]) < 50 for q in kept)]
     if db is not None:
         streets, roads = _downhill_gates(db, poly, streets, roads)
+    if not any(streets.values()):
+        # (no street reaches the wall line: on a big drawn outline the main street ended far inside it and the town had
+        # "0 ways in", the user's island town of 2026-11-06. A gate all the same: at the main street's end carried on to
+        # the nearest side however far, else in the middle of a side; the side chosen as gates are kept, dry, no cliff,
+        # low; the road paved from the street's end to it)
+        streets, roads = _fallback_gate(db, plan, poly, roads, kit['L'], ok_sides)
     gates = 0
     for k in range(n):
         out_ = units[k][-1]
@@ -817,6 +840,33 @@ def wall_stairs(W, avoid=(), most=STAIRS_MAX, free=None, db=None):
 
 
 DOUBLED = 0.3                  # (a new wall piece over this share of whose footprint another wall already stands is left out)
+DOUBLED_SIDE = 0.3             # (or this share within WALL_KEEP beside a standing wall running the same way: a town's north wall
+                               # stood back to back with the castle's south wall, the outer hanging or buried; Sketh, 2026-11-07)
+PARALLEL = 25                  # (degrees: two wall pieces running the same way, for the side-by-side test)
+
+
+def _parallel(a, b):
+    """Whether two pieces' quads run the same way (their long edges within PARALLEL degrees)."""
+    def axis(q):
+        e01 = (q[1][0] - q[0][0], q[1][1] - q[0][1])
+        e12 = (q[2][0] - q[1][0], q[2][1] - q[1][1])
+        e = e01 if math.hypot(*e01) >= math.hypot(*e12) else e12
+        return math.degrees(math.atan2(e[1], e[0])) % 180.0
+    d = abs(axis(a) - axis(b)) % 180.0
+    return min(d, 180.0 - d) <= PARALLEL
+
+
+def _widen(cs, d):
+    """A piece's quad (corners as _box gives them) widened by d across its short axis."""
+    e01 = (cs[1][0] - cs[0][0], cs[1][1] - cs[0][1])
+    e12 = (cs[2][0] - cs[1][0], cs[2][1] - cs[1][1])
+    if math.hypot(*e01) <= math.hypot(*e12):
+        u = _unit(*e01)
+        return [(cs[0][0] - u[0] * d, cs[0][1] - u[1] * d), (cs[1][0] + u[0] * d, cs[1][1] + u[1] * d),
+                (cs[2][0] + u[0] * d, cs[2][1] + u[1] * d), (cs[3][0] - u[0] * d, cs[3][1] - u[1] * d)]
+    u = _unit(*e12)
+    return [(cs[0][0] - u[0] * d, cs[0][1] - u[1] * d), (cs[1][0] - u[0] * d, cs[1][1] - u[1] * d),
+            (cs[2][0] + u[0] * d, cs[2][1] + u[1] * d), (cs[3][0] + u[0] * d, cs[3][1] + u[1] * d)]
 
 
 def wall_models(db):
@@ -898,8 +948,9 @@ def drop_doubled(db, W, skip=()):
         cs, b = _box(db, p['id'], p['pose'], memo)
         if cs and p.get('kind') not in ('stairs',):
             A = _quad_area(cs) or 1.0
-            if any(_quad_area(_clip(cs, h[0]) or []) >= DOUBLED * A for h in have
-                   if abs(h[0][0][0] - cs[0][0]) < 1500 and abs(h[0][0][1] - cs[0][1]) < 1500):
+            if any(_quad_area(_clip(cs, h[0]) or []) >= DOUBLED * A or
+                   (_parallel(cs, h[0]) and _quad_area(_clip(cs, _widen(h[0], WALL_KEEP)) or []) >= DOUBLED_SIDE * A)
+                   for h in have if abs(h[0][0][0] - cs[0][0]) < 1500 and abs(h[0][0][1] - cs[0][1]) < 1500):
                 n += 1
                 continue
         keep.append(p)
@@ -1005,6 +1056,53 @@ def gate_blocked(db, x, y, nx, ny, z0=None, near=0.0):
     return False, steep
 
 
+def _fallback_gate(db, plan, poly, roads, L, sides=None):
+    """One gate for a wall no street crosses: ({side: [distance along]}, roads) as _street_crossings gives them. The
+    main street's end carried on to the side it faces (clear of the corners) when it has one, else a side's middle; among
+    the spots the dry ones first, then those no cliff bars, then a street's end over a side's middle, the nearest such
+    end, or the lowest middle."""
+    n = len(poly)
+    cx, cy = sum(p[0] for p in poly) / n, sum(p[1] for p in poly) / n
+    main = next((st for st in plan.get('streets') or () if not st.get('ring') and not st.get('court') and not st.get('len')
+                 and len(st.get('pts') or ()) >= 2), None)
+    ends = []
+    if main:
+        pts = [tuple(q) for q in main['pts']]
+        ends = [(pts[1], pts[0]), (pts[-2], pts[-1])]
+    cands = []
+    for k in range(n):
+        a, b = poly[k], poly[(k + 1) % n]
+        Lk = math.hypot(b[0] - a[0], b[1] - a[1])
+        if Lk < 3 * L or (sides is not None and k not in sides):
+            continue
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        nx, ny = -d[1], d[0]
+        mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+        if nx * (mx - cx) + ny * (my - cy) < 0:
+            nx, ny = -nx, -ny
+        spots = [(None, Lk / 2.0, 0.0)]
+        for _a, e in ends:
+            if not _inside(poly, e):
+                continue
+            h = (e[0] - a[0]) * d[0] + (e[1] - a[1]) * d[1]
+            if 1.5 * L <= h <= Lk - 1.5 * L:
+                spots.append((e, h, abs(-(e[0] - a[0]) * d[1] + (e[1] - a[1]) * d[0])))
+        for e, h, dist in spots:
+            x, y = a[0] + d[0] * h, a[1] + d[1] * h
+            z = mapdata.terrain_z(db, x, y) if db is not None else None
+            wet, steep = gate_blocked(db, x, y, nx, ny, z) if db is not None else (False, False)
+            key = (wet, steep, 0 if e is not None else 1, dist if e is not None else (z if z is not None else 0.0))
+            cands.append((key, k, h, (x, y), e))
+    out = defaultdict(list)
+    if not cands:
+        return out, roads
+    best = min(cands, key=lambda c: c[0])
+    out[best[1]].append(best[2])
+    if best[4] is not None:
+        roads = list(roads) + [(best[4], best[3], (main.get('w') if main else None) or 256)]
+    return out, roads
+
+
 def _downhill_gates(db, poly, streets, roads):
     n = len(poly)
     ring = []
@@ -1023,7 +1121,8 @@ def _downhill_gates(db, poly, streets, roads):
         for h in ds:
             x, y = a[0] + d[0] * h, a[1] + d[1] * h
             gs.append((mapdata.terrain_z(db, x, y), k, h, (x, y)))
-    gs = [g for g in gs if g[0] is not None]
+    # (a crossing where the wall line has no land at all, past the island's edge, is the most blocked of ways, not one
+    # to skip: skipped, three such gates stood on a cliff top over nothing, the user's Sketh 2026-11-06)
     if len(gs) < 2 or not ring:
         return streets, roads
     # (a gate out onto the sea or over a cliff goes first, whatever its height: a coast town's lowest gate faced the
@@ -1036,14 +1135,17 @@ def _downhill_gates(db, poly, streets, roads):
         nx, ny = -d[1], d[0]
         if nx * (g[3][0] - cx) + ny * (g[3][1] - cy) < 0:
             nx, ny = -nx, -ny
-        blocked[id(g)] = gate_blocked(db, g[3][0], g[3][1], nx, ny, g[0])
-    low = min(g[0] for g in gs if not blocked[id(g)][0]) if any(not blocked[id(g)][0] for g in gs) else min(g[0] for g in gs)
+        blocked[id(g)] = (True, True) if g[0] is None else gate_blocked(db, g[3][0], g[3][1], nx, ny, g[0])
+    zs_ = [g[0] for g in gs if g[0] is not None]
+    low = min(g[0] for g in gs if g[0] is not None and not blocked[id(g)][0]) if any(g[0] is not None and not blocked[id(g)][0] for g in gs) else (min(zs_) if zs_ else 0.0)
     drop = []
-    for g in sorted(gs, key=lambda g: (-blocked[id(g)][0], -blocked[id(g)][1], -g[0])):
+    for g in sorted(gs, key=lambda g: (-blocked[id(g)][0], -blocked[id(g)][1], -(g[0] if g[0] is not None else 1e9))):
         if len(gs) - len(drop) <= 1:
             break
         if blocked[id(g)][0] or blocked[id(g)][1]:
             drop.append(g)
+            continue
+        if g[0] is None:
             continue
         rank = sum(1 for z in ring if z < g[0] - 32) / float(len(ring))
         if rank > GATE_HIGH and g[0] > low + GATE_RISE:
@@ -1208,7 +1310,7 @@ LEVEL_FADE = 3.0               # (or this times the change, up to LEVEL_BLEND_MA
 LEVEL_BLEND_MAX = 1024         # degrees under the wall on a hill, the city round of 2026-11-01; 3x keeps it under 30)
 
 
-def level_ground(db, W, skip=(), tol=LEVEL_TOL):
+def level_ground(db, W, skip=(), tol=LEVEL_TOL, keep=()):
     """The ground along each straight run of the wall evened out towards the run's middle height, by at most tol, fading
     back into the land round it, before the wall is set on it: so a run stays one level, as the game's own do, rather
     than being cut into steps on a lumpy slope (the user, 2026-10-31: "allow the city planner to reshape land to
@@ -1241,7 +1343,7 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL):
             if near:
                 q = p['pose']
                 segs.append(((q.x, q.y), (q.x, q.y), sum(near) / len(near)))
-    return _shape_ground(db, segs, skip, CUT_TOL, RAISE_TOL)
+    return _shape_ground(db, segs, skip, CUT_TOL, RAISE_TOL, keep)
 
 
 FILL_MAX = 1024                # (a stretch sunk this far under its neighbours is raised to them, the ground filled under it)
@@ -1249,17 +1351,171 @@ LEVEL_AT = 0.7                 # (the ring's level stands at this share of its s
 DIP_MIN = 48
 
 
-def fill_ground(db, W, skip=()):
+def fill_ground(db, W, skip=(), keep=()):
     """The ground under the wall's raised stretches (grounded's W['fill']) filled up to their feet: a stretch whose ground
     had been cut to the ring's level stood lower than the walls either side, a dip in the walk with a trench under it
     (the user's Estmorevale, 2026-11-03: "a couple spots where the walls depress down"). The cells changed."""
     segs = W.pop('fill', None) or []
-    return _shape_ground(db, segs, skip, 0.0, FILL_MAX) if segs else 0
+    return _shape_ground(db, segs, skip, 0.0, FILL_MAX, keep) if segs else 0
 
 
-def _shape_ground(db, segs, skip, cut_tol, raise_tol):
+GATE_GRADE = math.tan(math.radians(16))     # (the way through a gate climbs at most this steeply, the game's gate roads at 8-15)
+GATE_RAMP = 1024                             # (graded this far in and out of the arch)
+GATE_HALF = 288                              # (level across this much either side of the gate's axis)
+
+
+def gate_ramps(db, W, skip=(), keep=()):
+    """(Not called yet: on the lab's Sketh it cut a 34-degree dip into the south gate, whose way stood at 17 degrees
+    before, the arch piece's foot read 480 too low; the two steep "gates" that asked for it were corners of the wall.
+    To be given each gate piece's true foot before it is used, 2026-11-07.)
+    The way through each gate graded: the ground along the gate's axis GATE_RAMP in and out, never steeper than
+    GATE_GRADE from the wall's foot there, level across the opening and fading sideways; the ground under the wall's
+    pieces and inside keep's footprints (building_guard) left as it is. The gates are where the wall's gate roads end
+    (W['roads'], each run to its opening's middle: an Imperial opening is a gap between two towers, no piece of its own).
+    (Inside a town's west gate the ground fell 440 over 500 at 37 to 59 degrees, and the checker slid down the banks by
+    the wall; the lab's Sketh walked 2026-11-06.) The cells changed."""
+    if not W or not W.get('pieces') or not W.get('roads'):
+        return 0
+    memo = {}
+    gates = []
+    for r in W['roads']:
+        if len(r) < 2 or not r[0] or not r[1]:
+            continue
+        (bx, by), (gx, gy) = r[0], r[1]
+        if any(math.hypot(gx - o[0], gy - o[1]) < 300 for o in gates):
+            continue
+        d = _unit(bx - gx, by - gy)                       # (the road runs from inside the town to the gate: in is towards it)
+        if d == (0.0, 0.0):
+            continue
+        gates.append((gx, gy, d))
+    segs = []
+    for gx, gy, (nx, ny) in gates:
+        feet = []
+        for p in W['pieces']:
+            q = p['pose']
+            if math.hypot(q.x - gx, q.y - gy) > 900:
+                continue
+            _cs, b = _box(db, p['id'], q, memo)
+            if b:
+                feet.append(q.z + b[2] + SINK + 8)
+        if not feet:
+            continue
+        foot = sum(feet) / len(feet)
+        ax, ay = -ny, nx
+        for s_ in range(-GATE_RAMP, GATE_RAMP + 1, 128):
+            x, y = gx + nx * s_, gy + ny * s_
+            z = mapdata.terrain_z(db, x, y)
+            if z is None:
+                continue
+            lim = GATE_GRADE * abs(s_)
+            t = foot + max(-lim, min(lim, z - foot))
+            segs.append(((x - ax * GATE_HALF, y - ay * GATE_HALF), (x + ax * GATE_HALF, y + ay * GATE_HALF), t))
+    if not segs:
+        return 0
+    # (the wall's pieces near a gate keep their ground: a ramp cut under a tower's foot would open the wall)
+    guard = list(keep)
+    for p in W['pieces']:
+        q = p['pose']
+        if not any(math.hypot(q.x - g[0], q.y - g[1]) < GATE_RAMP + GATE_HALF + LEVEL_R + LEVEL_BLEND_MAX for g in gates):
+            continue
+        cs_, _b = _box(db, p['id'], q, memo)
+        if cs_:
+            guard.append(cs_)
+    return _shape_ground(db, segs, skip, FILL_MAX, FILL_MAX, guard)
+
+
+WALL_KEEP = 160                # (a standing wall piece's footprint, this much wider, is kept from another make's ground work)
+
+
+def wall_guard(db, outline, reach=2000.0, mine=()):
+    """The footprints of the wall pieces already standing within reach of an outline's box (another make's: a castle's
+    wall beside a town, a town's beside a castle), each WALL_KEEP wider, for level_ground and fill_ground to keep off.
+    mine: ref keys of this make's own pieces, left out. (A town's level_ground raised the wall line it shared with the
+    castle built before it by 416, and 14 of the castle's pieces lay 480-720 deep; the user's Sketh, lab w109,
+    2026-11-07.) [[(x, y) x4]]"""
+    if not outline:
+        return []
+    try:
+        K = kits(db)
+        models = {m.lower() for k in K.values() for m in k.get('models') or ()}
+    except Exception:
+        models = set()
+    xs = [p[0] for p in outline]
+    ys = [p[1] for p in outline]
+    out, memo = [], {}
+    mine = set(mine or ())
+    for gx in range(int(math.floor((min(xs) - reach) / 8192.0)), int(math.floor((max(xs) + reach) / 8192.0)) + 1):
+        for gy in range(int(math.floor((min(ys) - reach) / 8192.0)), int(math.floor((max(ys) + reach) / 8192.0)) + 1):
+            try:
+                m = mapdata.cellmap(db, '#%d,%d' % (gx, gy))
+            except Exception:
+                continue
+            for r in m.get('refs') or ():
+                low = r['id'].lower()
+                if r.get('k') in mine or r['type'] != 'STAT' or not (low in models or WALLISH.search(low)) or GATEISH.search(low):
+                    continue
+                p = r['p']
+                if not (min(xs) - reach <= p[0] <= max(xs) + reach and min(ys) - reach <= p[1] <= max(ys) + reach):
+                    continue
+                cs_ = _box(db, r['id'], Pose(p[0], p[1], p[2], p[5], r['id']), memo)[0]
+                if cs_:
+                    cx, cy = sum(c[0] for c in cs_) / 4.0, sum(c[1] for c in cs_) / 4.0
+                    out.append([(x + (x - cx) / (math.hypot(x - cx, y - cy) or 1) * WALL_KEEP, y + (y - cy) / (math.hypot(x - cx, y - cy) or 1) * WALL_KEEP) for x, y in cs_])
+    return out
+
+
+def building_guard(db, outline, reach=2000.0):
+    """The footprints of the buildings a town built (project.town_parts) within reach of an outline's box, each a step
+    wider: ground shaping round a castle keeps its hands off them. (The west castle's fill buried a town house's entrance
+    327 deep beside its wall, the user's Sketh 2026-11-06.) [[(x, y) x4]]"""
+    tp = getattr(db.project, 'town_parts', None) or {}
+    if not tp or not outline:
+        return []
+    xs = [p[0] for p in outline]
+    ys = [p[1] for p in outline]
+    out, memo = [], {}
+    for gx in range(int(math.floor((min(xs) - reach) / 8192.0)), int(math.floor((max(xs) + reach) / 8192.0)) + 1):
+        for gy in range(int(math.floor((min(ys) - reach) / 8192.0)), int(math.floor((max(ys) + reach) / 8192.0)) + 1):
+            try:
+                m = mapdata.cellmap(db, '#%d,%d' % (gx, gy))
+            except Exception:
+                continue
+            for r in m.get('refs') or ():
+                if r.get('k') not in tp or re.search(r'_win|window|chimney|awning|sign|banner|marker', r['id'], re.I):
+                    continue
+                p = r['p']
+                if not (min(xs) - reach <= p[0] <= max(xs) + reach and min(ys) - reach <= p[1] <= max(ys) + reach):
+                    continue
+                if r['type'] == 'DOOR':
+                    # (and the ground before each door: a door's front buried 493 under a town wall's fill, 2026-11-06)
+                    out.append([(p[0] - 260, p[1] - 260), (p[0] + 260, p[1] - 260), (p[0] + 260, p[1] + 260), (p[0] - 260, p[1] + 260)])
+                    continue
+                cs_ = _box(db, r['id'], Pose(p[0], p[1], p[2], p[5], r['id']), memo)[0]
+                if cs_:
+                    cx, cy = sum(c[0] for c in cs_) / 4.0, sum(c[1] for c in cs_) / 4.0
+                    out.append([(x + (x - cx) / (math.hypot(x - cx, y - cy) or 1) * 128, y + (y - cy) / (math.hypot(x - cx, y - cy) or 1) * 128) for x, y in cs_])
+    return out
+
+
+def _in_poly(r, x, y):
+    sgn = None
+    for i in range(len(r)):
+        x1, y1 = r[i]
+        x2, y2 = r[(i + 1) % len(r)]
+        cr = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+        if abs(cr) < 1e-9:
+            continue
+        if sgn is None:
+            sgn = cr > 0
+        elif (cr > 0) != sgn:
+            return False
+    return True
+
+
+def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=()):
     """The ground along each ((x0, y0), (x1, y1), level) evened towards its level, cut by at most cut_tol and raised by at
-    most raise_tol, fading back into the land round it (LEVEL_R, LEVEL_BLEND). The cells changed."""
+    most raise_tol, fading back into the land round it (LEVEL_R, LEVEL_BLEND); the ground inside keep's footprints
+    (building_guard) left as it is. The cells changed."""
     import landscape
     if not segs:
         return 0
@@ -1305,6 +1561,8 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol):
                     want = max(z - cut_tol, min(z + raise_tol, best[1]))
                     nz = z + best[0] * (want - z)
                     if abs(nz - z) >= 1:
+                        if keep and any(_in_poly(k_, x, y) for k_ in keep):
+                            continue                     # (a town building's own ground: left to it)
                         h[n] = nz
                         changed = True
             if changed:
@@ -1319,9 +1577,10 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol):
 
 
 SHOW = 200                     # a wall stands at least this much of its height out of the highest ground along its run
-SHOW_SHARE = 0.5               # and at least this share of it: the game's straights stand 180-460 over the ground (0.64-0.94
+SHOW_SHARE = 0.64              # and at least this share of it: the game's straights stand 180-460 over the ground (0.64-0.94
                                # of ex_imp_wall_01 out); at SHOW alone a run down a slope was buried to 200 at its high end,
-                               # "far too short ... a lot of sunken wall", the user's Chillmorrow, test4
+                               # "far too short ... a lot of sunken wall", the user's Chillmorrow, test4; at 0.5 a stretch on a
+                               # hill stood buried to 460, showing half: the game's least, 0.64, 2026-11-07)
 def grounded(db, W):
     """The wall set on the ground the game's way: every straight run between corners one level, as the game's own town walls
     stand (120 of 120 neighbouring Imperial straights level, lab jwallz2), sunk so its foot is SINK under the lowest
@@ -1408,6 +1667,14 @@ def grounded(db, W):
         segs.append(seg)
     _one_level(segs, W, span, keep)
     _no_dips(segs, W)
+    _cap_steps(segs, W)
+    # (the ground brought up to every stretch's foot across the wall's width, not only under the raised ones: a level
+    # stretch sunk under the lowest ground along its line still hung over the slope falling away outside it, 60 of a
+    # town's 199 pieces with a corner over nothing in the game, the lab's Sketh walked 2026-11-06. fill_ground raises
+    # only, within FILL_MAX, and fades out)
+    fill_all = W.setdefault('fill', [])
+    for seg in segs:
+        _fill_under(fill_all, seg, seg[0]['pose'].z)
     St = STEP_PIECES.get(W.get('family'))
     if St and straight:
         for k in range(1, len(segs)):
@@ -1478,6 +1745,43 @@ def _one_level(segs, W, span, keep):
             p['pose'].z = z
         if z > hi:
             _fill_under(fill, seg, z)
+
+
+STEP_HIDE = 640                # (a tower hides a step between two stretches of this much at most: a bigger one raises
+                               # the lower stretch, the ground filled under it. A tower stood 1,072 over the corner beside
+                               # it and 34 of 167 neighbouring pieces stepped over 256 on the user's island town, "uneven
+                               # walls", 2026-11-06)
+
+
+def _cap_steps(segs, W):
+    """No step between neighbouring stretches taller than a tower hides (STEP_HIDE): the lower stretch is raised by the
+    rest, up to FILL_MAX over where its ground put it, and the ground is noted for fill_ground to bring up to its foot.
+    Round the ring until nothing moves, so a hill becomes a stair of steps a tower can hide."""
+    n = len(segs)
+    if n < 2:
+        return
+    fill = W.setdefault('fill', [])
+    base = {id(seg): seg[0]['pose'].z for seg in segs}
+
+    def top(seg):
+        return max(p['pose'].z + p['_b'][5] for p in seg)
+    for _round in range(n * 2):
+        changed = False
+        for k in range(1, n):
+            A, B = segs[k - 1], segs[k]
+            d = top(B) - top(A)
+            if abs(d) <= STEP_HIDE:
+                continue
+            low = A if d > 0 else B
+            z = min(low[0]['pose'].z + abs(d) - STEP_HIDE, base[id(low)] + FILL_MAX)
+            if z - low[0]['pose'].z < 1:
+                continue
+            for p in low:
+                p['pose'].z = z
+            _fill_under(fill, low, z)
+            changed = True
+        if not changed:
+            break
 
 
 def _no_dips(segs, W):

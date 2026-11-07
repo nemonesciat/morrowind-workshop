@@ -451,6 +451,8 @@ const LS_PARAMS = {
   stamp: [['radius', 'Radius', 1024, 32768, 256, 'How far it reaches'], ['height', 'Height', -6000, 12000, 50, 'Its height (a crater: its depth); for the game\'s land, 0 keeps it as it is'], ['stretch', 'Stretch', 1, 4, 0.1, 'An oval: so many times longer one way (1: round)'], ['turn', 'Turn', 0, 359, 1, 'Which way its long side points (0: east, 90: north); the game\'s land turns with it']],
 };
 const LS_SHAPES = [['volcano', 'Volcano'], ['cone', 'Cone'], ['caldera', 'Caldera'], ['crater', 'Crater'], ['dome', 'Dome'], ['mesa', 'Mesa'], ['game', 'The game\'s own land']];
+// (a new layer's own seed: every castle and town started at seed 1 and came out the same, the user 2026-11-06)
+function lsFresh(p){ if (p.seed != null) p.seed = 1 + Math.floor(Math.random() * 99999); return p; }
 const LS_DEFAULTS = {area: {}, cliff: {height: 600, side: 0, amount: 1, raise: 0, seed: 1}, town: {culture: '', seed: 1}, farm: {culture: '', seed: 1, built: ''}, orchard: {culture: '', seed: 1, built: ''}, castle: {style: 'Imperial', size: 'medium', seed: 1, rooms: 'furnished'}, street: {}, zone: {zone: 'residential'}, wall: {}, coast: {height: 600, width: 6144, wander: 1, sea: 0}, ridge: {height: 3500, width: 3072, sharp: 0.5, spurs: 1, crags: 0.6}, river: {depth: 256, width: 256, banks: 2048, canyon: 0},
   valley: {depth: 900, width: 4096, round: 0.6}, plateau: {height: 2000, width: 768, terraces: 0}, lake: {depth: 400, width: 1536},
   stamp: {shape: 'volcano', radius: 8192, height: 4000, turn: 0, stretch: 1, src: null}, spring: {rise: 800, wander: 1, depth: 256, width: 256, banks: 2048, canyon: 0}};
@@ -481,7 +483,7 @@ async function lsPreset(kind){
   // (a point t of the way along the long side from the middle, `off` across it)
   const along = (t, off) => long ? [Math.round(cx + t * Lg), Math.round(cy + off * S)] : [Math.round(cx + off * S), Math.round(cy + t * Lg)];
   const ring = (rx, ry, n, wob) => Array.from({length: n}, (_, i) => { const a = i / n * Math.PI * 2, k = 1 + (wob || 0) * Math.sin(a * 3 + 1); return [Math.round(cx + Math.cos(a) * rx * k), Math.round(cy + Math.sin(a) * ry * k)]; });
-  const lay = (k, pts, p) => ({id: String(Date.now()) + Math.random().toString(36).slice(2, 6), kind: k, name: '', on: true, pts, p: Object.assign({}, LS_DEFAULTS[k], p || {})});
+  const lay = (k, pts, p) => ({id: String(Date.now()) + Math.random().toString(36).slice(2, 6), kind: k, name: '', on: true, pts, p: lsFresh(Object.assign({}, LS_DEFAULTS[k], p || {}))});
   const W_ = (f, lo, hi) => Math.round(Math.max(lo, Math.min(hi, S * f)) / 128) * 128;
   let layers = [], passes = {};
   if (kind === 'island'){
@@ -981,7 +983,7 @@ function lsTownHtml(sel){
     <div class="v3lrow" style="display:flex;gap:10px;flex-wrap:wrap"><label title="Set out what the culture's towns set out: benches, signs, lamps, crates, a smith's forge, its own scenes"><input type="checkbox" id="ls-tdress" ${p.bare ? '' : 'checked'}> Dressed</label>
       <label title="Behind every door: none; the game building's own rooms and doors, empty, for you to furnish; or those rooms furnished by the Workshop">Inside <select class="inp" id="ls-tins"><option value="">furnished</option><option value="shells" ${lsInside(p) === 'shells' ? 'selected' : ''}>empty shells</option><option value="none" ${lsInside(p) === 'none' ? 'selected' : ''}>none</option></select></label>
       <label title="Guards, sellers at their stalls and townsfolk in the streets, as many as the culture's towns have; and a household in each furnished house, owning its beds and chests. Takes a minute or two"><input type="checkbox" id="ls-tppl" ${p.nopeople ? '' : 'checked'}> People</label></div>
-    <div class="actions"><button class="btn sm" id="ls-treroll" title="Another layout of the same town">🎲 Another</button>
+    <div class="actions"><label title="The same outline and seed give the same town; another seed, another town">Seed <input class="inp" id="ls-tseed" type="number" min="1" max="999999" value="${p.seed || 1}" style="width:76px"></label><button class="btn sm" id="ls-treroll" title="Another layout of the same town">🎲 Another</button>
       <button class="btn sm" id="ls-tremove" title="Take away what Make it built here: its buildings, wall, dressing and interiors. What you added later and the ground stay. One Undo">✕ Remove the town</button>
       <button class="btn sm primary" id="ls-tmake" ${T && T.built ? 'disabled title="Built. Change the outline or a setting to plan it anew; ✕ Remove the town takes it away"' : `${T && T.plan && T.plan.plots.length ? '' : 'disabled'} title="Build it: the game's own buildings of this culture on every plot, as shown. One Undo takes it back"`}>${T && T.built ? '✓ Built' : '🏘 Make it'}</button>${lsGuide('Towns')}</div>${info}`;
 }
@@ -1018,6 +1020,7 @@ function lsTownBind(){
   const ins = $('#ls-tins'); if (ins) ins.onchange = () => { sel.p.inside = ins.value; delete sel.p.noinside; lsChanged(false); renderWside(); };
   const pp = $('#ls-tppl'); if (pp) pp.onchange = () => { sel.p.nopeople = !pp.checked; lsChanged(false); };
   const r = $('#ls-treroll'); if (r) r.onclick = () => { sel.p.seed = ((sel.p.seed || 1) % 100000) + 1 + Math.floor(Math.random() * 1000); lsChanged(true); };
+  const sd = $('#ls-tseed'); if (sd) sd.onchange = () => { sel.p.seed = Math.max(1, parseInt(sd.value, 10) || 1); lsChanged(true); };
   const rm = $('#ls-tremove'); if (rm) rm.onclick = async () => {
     if (!await needProject()) return;
     let n; try { n = await post('/api/town/remove', {outline: sel.pts, look: true}); } catch (e){ return toast(e.message, true); }
@@ -1336,7 +1339,7 @@ function lsFinish(){
   while (LS_KINDS[D.kind].closed && pts.length > need && near(pts[pts.length - 1], pts[0])) pts.pop();
   if (pts.length < need){ toast(`A ${LS_KINDS[D.kind].label.toLowerCase()} needs ${need} point${need === 1 ? '' : 's'} at least.`, true); drawMap(); return; }
   const P = LM.plan;
-  const L = {id: String(Date.now()), kind: D.kind, name: '', on: true, pts, p: Object.assign({}, LS_DEFAULTS[D.kind])};
+  const L = {id: String(Date.now()), kind: D.kind, name: '', on: true, pts, p: lsFresh(Object.assign({}, LS_DEFAULTS[D.kind]))};
   P.layers.push(L);
   LM.sel = P.layers.length - 1;
   if (LS_KINDS[D.kind].town && !lsTownOf(L)) toast('Draw it inside a town: it belongs to the town it lies in.');

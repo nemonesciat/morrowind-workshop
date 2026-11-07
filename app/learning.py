@@ -92,6 +92,23 @@ def ruin_pending(db, kind='dwemer'):
 _TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('strays', 'ready'), ('towndress', 'ready'), ('townlife', 'ready')]
 
 
+def castle_plan_pending(db):
+    """Like town_pending(), for a castle's plan alone: the game's towns and how it puts buildings together, which the
+    walls and the keep go by. The quarters' surveys (the strays, the dressing, the life) are for Make it: a castle's
+    preview waited five minutes on the windows survey, the user 2026-11-06."""
+    before = _names()
+    missing = 0
+    for mod, fn in _TOWN[:2]:
+        try:
+            if getattr(__import__(mod), fn)(db) is None:
+                missing += 1
+        except Exception:
+            missing += 1
+    if not missing:
+        return []
+    return _names() or before or ["the game's towns"]
+
+
 def town_pending(db, people=False):
     """Like pending(), for towns: [] when everything a town is planned, built and dressed by is learnt (and with
     people, the game's people its households are cast from)."""

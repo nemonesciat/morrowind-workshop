@@ -227,6 +227,50 @@ def _drop_apart(db, m, memo):
     return m if len(keep) == len(m['fpieces']) else dict(m, fpieces=keep)
 
 
+PORCH = re.compile(r'entrance|porch|stoop', re.I)
+WINDOWISH = re.compile(r'_win|window|chimney', re.I)
+PORCH_DOOR = 72                # (a porch holds a door: the door's spot within this of the porch's box)
+OFF_SHELL = 96                 # (a window or a chimney this far outside every shell of the building is nobody's)
+
+
+def _explained(db, m, memo):
+    """The module with only the pieces the building explains: a porch or an entrance holds one of the building's own
+    doors; a window or a chimney sits on one of its shells (the pieces that are neither trim, doors, porches nor
+    windows). The reader took a building as every piece whose box touched the door's piece outward, so a neighbour's
+    porch pressed against the wall in the game example came with every copy: an entrance standing alone by a well,
+    440 from the hostel it came with, the user's Skethwall; 32 of the catalogue's 2,096 modules carried one
+    (2026-11-07)."""
+    fp = m['fpieces']
+    doors = [p for p in fp if p.get('door') or _rec_type(db, p['id']) == 'DOOR']
+    shells = [_pbox(db, p, memo) for p in fp if not p.get('trim') and not p.get('door') and not PORCH.search(p['id'])
+              and not WINDOWISH.search(p['id']) and _rec_type(db, p['id']) == 'STAT']
+    shells = [b for b in shells if b is not None]
+    if not shells:
+        return m
+
+    def near(x, y, b, pad):
+        return b[0] - pad <= x <= b[2] + pad and b[1] - pad <= y <= b[3] + pad
+    keep = []
+    for p in fp:
+        if p.get('door'):
+            keep.append(p)
+            continue
+        if PORCH.search(p['id']):
+            b = _pbox(db, p, memo)
+            if b is not None and not any(near(d['x'], d['y'], b, PORCH_DOOR) for d in doors):
+                continue
+        elif WINDOWISH.search(p['id']):
+            if not any(near(p['x'], p['y'], b, OFF_SHELL) for b in shells):
+                continue
+        keep.append(p)
+    return m if len(keep) == len(fp) else dict(m, fpieces=keep)
+
+
+def _rec_type(db, rid):
+    ri = db.resolve_id(rid)
+    return db.recs[ri][0] if ri is not None else None
+
+
 REPEAT_NEAR = 8                # (one model this near itself, the same way up, is the same piece twice)
 
 
@@ -574,6 +618,7 @@ def game_catalog(db):
         m = _trim_yard(db, m, memo)
         m = _no_repeats(m)
         m = _drop_apart(db, m, memo)
+        m = _explained(db, m, memo)          # (a porch holds a door of its own building; a window sits on its shell)
         m = _without_lone_doors(db, m, memo, tri)
         if m is None:
             continue
@@ -638,6 +683,10 @@ def game_catalog(db):
         # (a well is no house: Solstheim's, with its trapdoor, stood on ten house plots of a Nordic-led town)
         if NOT_BUILDING.search(m['main']):
             continue
+        # (a data file's one-of-a-kind landmark, made for one city (Tamriel Data's "_x_" sets: a chapel of Old Ebonheart's
+        # stood as a lone keep tower among a Common town's houses, the user 2026-11-06): not a town's building)
+        if re.search(r'_x_', m['main'], re.I):
+            continue
         out.append({'key': m['main'], 'culture': cult, 'kind': kind, 'w': round(w), 'd': round(d), 'fp': [round(v) for v in fp],
                     'uses': m.get('uses', 1), 'm': m, 'fort': fort, 'keep': keep,
                     # (by the game building it was learnt from, not its place in the list: the list changes when the
@@ -665,7 +714,7 @@ BASE_PART = re.compile(r'base|_bottom|foundation', re.I)
 WATERFRONT = re.compile(r'_wf|waterfront|dock|pier|quay|jetty|mooring|_ship|boat|cutter|shipwreck|shipwrk|wreck|lighthouse', re.I)
 # (and a stair, a deck, a plank or a chimney taken for a building: a log cabin's stairs alone lay flat on the snow as a
 # "house", the user's Nordic village, 2026-11-01)
-NOT_BUILDING = re.compile(r'well|stairs?|stairs?_|steps|_deck|plank|platform|truss|chimney|terrace', re.I)
+NOT_BUILDING = re.compile(r'well|stairs?\b|stairs?_|steps|_deck|plank|platform|truss|chimney|terrace', re.I)
 OPEN_REACH = 100               # a window's or door's middle stands at most this far from one of its building's walls
 FORT_HEIGHT = 600              # a wall kit's piece this tall is a town wall's, not a yard's (ex_imp_wall_01 921)
 KEEP_DROP = 480                # a keep whose pieces reach further than this under its door stood down a hill or a cliff
@@ -1044,7 +1093,7 @@ def fit(db, plan, seed=1):
         for cand in sorted(pool + lend.get(q['kind'], []), key=cost)[:80]:
             if cand.get('fort') and not cand.get('keep'):
                 continue                         # (a fort's loose part: _lone_forts)
-            if cand.get('keep') and keeps:
+            if cand.get('keep') and (keeps or plan.get('nokeep')):
                 continue                         # (one keep a town, whole; seven stood in for guard towers)
             fp = cand['fp']
             cfx, cfy = (fp[0] + fp[2]) / 2.0, (fp[1] + fp[3]) / 2.0
@@ -1117,6 +1166,7 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     if opts.get('own'):
         pl['own'] = opts['own']             # (built of your own style's prefabs, planned like `culture`'s towns)
     pl['skip'] = list(opts.get('skip') or ())
+    pl['nokeep'] = bool(opts.get('nokeep'))     # (a castle's quarter: no keep building in it)
     _say('Choosing the buildings', P * (0.3 if walls else 0.8))
     plan = fit(db, pl, seed)
     if not walls:
@@ -1143,6 +1193,7 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     if opts.get('own'):
         pl['own'] = opts['own']
     pl['skip'] = list(opts.get('skip') or ())
+    pl['nokeep'] = bool(opts.get('nokeep'))     # (a castle's quarter: no keep building in it)
     _say('Choosing the buildings', P * 0.85)
     again = fit(db, pl, seed)
     built = lambda p_: sum(1 for q in p_['plots'] if q.get('b'))
@@ -1386,7 +1437,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 q['b'] = None
             W['pieces'].append(st)
         try:
-            townwalls.level_ground(db, W, new_refs)
+            # (a wall already standing on or by the line, another make's, keeps its ground: townwalls.wall_guard, here
+            # and in the terrace and hull passes; the town's levelling buried 14 of a castle's pieces 480-720 deep)
+            plan['_wall_guard'] = townwalls.wall_guard(db, W.get('outline') or [])
+            townwalls.level_ground(db, W, new_refs, keep=plan['_wall_guard'])
         except Exception as e:
             print('wall ground:', e)
     _say('Levelling the streets', 0.69)
@@ -1411,12 +1465,14 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         print('clearing:', e)
         cleared = 0
     wall_boxes = []
+    wall_guard = []                      # (the wall's feet and a band round them: never cut lower by a building's ground fit)
     if W is not None:
         memo_w = {}
         for p_ in W.get('pieces') or ():
             cs_, _b = townwalls._box(db, p_['id'], p_['pose'], memo_w)
             if cs_:
                 wall_boxes.append(_shrink_rect(cs_, 16))
+                wall_guard.append(_shrink_rect(cs_, -WALL_GUARD))
         # (and the way in behind each gate kept open, GATE_CLEAR deep into the town)
         poly_ = W.get('outline') or []
         if poly_:
@@ -1496,6 +1552,23 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             elif db.recs[ri][0] == 'DOOR' and not re.search(r'trap|hatch|gate|marker', p_['id'], re.I):
                 q.setdefault('more_doors', []).append((key, rk))      # (its back door leads in too: towninside)
         made += 1
+    # (the ground fitted to the buildings before the wall is set on it, not after: the fit raised the ground to the door
+    # sills of the houses on a hill by up to 380 along the wall's line once the wall stood, and the east wall of the
+    # user's Sketh lay buried 300 to 870 deep for 25 pieces in a row, its gate arches hanging; lab w93, 2026-11-07)
+    fitted = 0
+    if pieces:
+        _say('Fitting the ground to the buildings', 0.865)
+        db.sync_project()
+        fitted = _fit_ground(db, doors, new_refs, [(tuple(q['door_ref']), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect')],
+                             guard=wall_guard)
+        import os as _os
+        if _os.environ.get('TOWN_UNCOVER', '1') != '0':
+            try:
+                uncovered = _uncover(db, plan, new_refs, guard=wall_guard)
+                if uncovered:
+                    print('town: %d land points cut back from over the floors' % uncovered)
+            except Exception as e:
+                print('town uncover:', e)
     wall = 0
     wall_refs = []
     if W is not None:
@@ -1503,7 +1576,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         db.sync_project()
         W = townwalls.grounded(db, W)
         try:
-            townwalls.fill_ground(db, W, new_refs)  # (the ground up to the feet of the stretches raised out of a dip)
+            # (the fill keeps off the town's own buildings and their door fronts: a house 520 under the wall had its door
+            # buried 493 by the wall's fill, the lab's Sketh 2026-11-06)
+            townwalls.fill_ground(db, W, new_refs, keep=townwalls.building_guard(db, W.get('outline') or []) +
+                                  townwalls.wall_guard(db, W.get('outline') or [], mine=new_refs))
         except Exception as e:
             print('wall fill:', e)
         townwalls.drop_doubled(db, W, new_refs)     # (where a castle's or another town's wall already stands)
@@ -1572,22 +1648,11 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 stall_refs.setdefault(t['stall'], []).append((key, rk))
             if t.get('role') in ('stall', 'storage', 'sign', 'awning'):
                 life_refs.append((key, rk, t['role'], t.get('stall')))
-    fitted = painted = 0
+    painted = 0
     inside = {}
     import towninside
     name = (name or '').strip() or towninside.town_name(db, culture, seed)
     if pieces:
-        _say('Fitting the ground to the buildings', 0.92)
-        db.sync_project()
-        # (the dressing follows the ground fitted round the buildings: left, it stood sunk in the raised ground)
-        fitted = _fit_ground(db, doors, new_refs - dress_refs, [(tuple(q['door_ref']), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect')])
-        if life_refs:
-            # (the stalls and storage set down again on the fitted ground: townlife.settle)
-            try:
-                import townlife
-                townlife.settle(db, life_refs)
-            except Exception as e:
-                print('town life settle:', e)
         _say('Paving the roads', 0.96)
         painted = _paint_roads(db, plan)
         try:
@@ -1883,6 +1948,8 @@ def _terrace(db, plan, W, skip=()):
     the land round it, before its building goes down: the game's builders terraced their hillside towns, and a plot
     refused for uneven ground left a hill town of a few buildings far apart (the user, 2026-10-31: towns "dense or wide
     according to their culture"; the land may be reshaped within tolerance). What else stands there follows the ground."""
+    import townwalls
+    wg = plan.get('_wall_guard') or []
     import landscape
     import townplan
     tol = townplan.TERRACE_TOL
@@ -1952,6 +2019,8 @@ def _terrace(db, plan, W, skip=()):
                     z0 = h[n]
                     if (x, y) in street_ground:
                         continue                  # (a levelled street's own ground)
+                    if wg and any(townwalls._in_poly(k_, x, y) for k_ in wg):
+                        continue                  # (a wall already standing, another make's: its ground stays)
                     ws, inside_z, miss = [], None, 1.0
                     for r, z in near:
                         d = dist(x, y, r)
@@ -2004,6 +2073,8 @@ def _smooth_hull(db, plan, W, skip=()):
     plots were level but the ground between kept the raised land's every bump: "the terrain is still rather lumpy
     ... the end result still looks messy", the user's Nargorewatch, 2026-11-03.) What stands there follows the
     ground. Cells changed."""
+    import townwalls
+    wg = plan.get('_wall_guard') or []
     import landscape
     import townplan
     G, N = landscape.CELL, landscape.N
@@ -2064,7 +2135,7 @@ def _smooth_hull(db, plan, W, skip=()):
                 for i in range(N):
                     x, y = gx * G + i * step, gy * G + j * step
                     z0 = h[j * N + i]
-                    if z0 < 0 or (x, y) in keep:
+                    if z0 < 0 or (x, y) in keep or (wg and any(townwalls._in_poly(k_, x, y) for k_ in wg)):
                         continue
                     inside = townplan._inside(hull, x, y)
                     if not inside:
@@ -2261,7 +2332,106 @@ def _in_rect(r, x, y):
     return True
 
 
-def _fit_ground(db, doors, skip, plots=()):
+WALL_GUARD = 320               # (the ground this far round a town wall's pieces is never cut by a building's ground fit or
+                               # the floor pass: a house's landing by the wall cut 500 from under the wall and its gate on the
+                               # user's island, the wall and gate doors left hanging over a trench, 2026-11-06)
+
+
+def _uncover(db, plan, skip=(), guard=()):
+    """No ground over a building's floor inside its own plot: where a later step (the wall's fill, a neighbour's landing,
+    a terrace moved for its neighbours) raised the hill back over a wall, it is cut to the door's sill again. (The
+    user, 2026-11-06: "some of these homes are half buried", their doors clipped into the dirt; measured on their
+    island town, one house in ten had ground over its sill at a corner, the worst by 300.) The land points inside
+    the plot alone; the blend to the land round it is the terraces'. The points moved."""
+    import landscape
+    G, N = landscape.CELL, landscape.N
+    step = G / (N - 1.0)
+    plots = [(q['rect'], q['door_z'], q) for q in plan['plots'] if q.get('b') and q.get('rect') and q.get('door_z') is not None]
+    if not plots:
+        return 0
+    memo = {}
+    C = by_uid(catalog(db))
+
+    def footprint(q):
+        # (the building's own pieces' boxes in the world, a step wider: a house wider than its plot kept a buried corner,
+        # lab w81; its windows, doors and openings left out)
+        c, sn, yaw = _frame(q['face'])
+        dx, dy = q['door']
+        out = []
+        bb = built(C, q['b'])
+        for p_ in (bb['m']['fpieces'] if bb else ()):
+            low = p_['id'].lower()
+            if p_.get('door') or OPENING.search(low) or re.search(r'win|door|chimney|dormer|balcony|awning', low):
+                continue
+            if low not in memo:
+                ri = db.resolve_id(p_['id'])
+                memo[low] = (mapdata.object_bounds(db, ri) if ri is not None else None)
+            b = memo[low]
+            if not b:
+                continue
+            sc = p_.get('s') or 1.0
+            rz = (p_['rz'] + yaw) % (2 * math.pi)
+            cr, sr = math.cos(rz), math.sin(rz)
+            wx, wy = _world(dx, dy, c, sn, p_['x'], p_['y'])
+            quad = []
+            for lx, ly in ((b[0] - 32, b[1] - 32), (b[3] + 32, b[1] - 32), (b[3] + 32, b[4] + 32), (b[0] - 32, b[4] + 32)):
+                quad.append((wx + (lx * cr + ly * sr) * sc, wy + (-lx * sr + ly * cr) * sc))
+            out.append(quad)
+        return out
+
+    def in_quad(px, py, r):
+        sgn = None
+        for i in range(len(r)):
+            x1, y1 = r[i]
+            x2, y2 = r[(i + 1) % len(r)]
+            cr = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+            if abs(cr) < 1e-9:
+                continue
+            if sgn is None:
+                sgn = cr > 0
+            elif (cr > 0) != sgn:
+                return False
+        return True
+    new_h, before, moved = {}, {}, 0
+    for r, dz, q in plots:
+        quads = [r] + footprint(q)
+        xs = [p[0] for qd in quads for p in qd]
+        ys = [p[1] for qd in quads for p in qd]
+        top = dz - 8
+        for gx in range(int(math.floor(min(xs) / G)), int(math.floor(max(xs) / G)) + 1):
+            for gy in range(int(math.floor(min(ys) / G)), int(math.floor(max(ys) / G)) + 1):
+                h = new_h.get((gx, gy))
+                if h is None:
+                    L = mapdata.land(db, gx, gy)
+                    if not L or not L.get('h'):
+                        continue
+                    h = list(L['h'])
+                    before[(gx, gy)] = list(L['h'])
+                    new_h[(gx, gy)] = h
+                for j in range(N):
+                    y = gy * G + j * step
+                    if y < min(ys) or y > max(ys):
+                        continue
+                    for i in range(N):
+                        x = gx * G + i * step
+                        if x < min(xs) or x > max(xs) or not any(in_quad(x, y, qd) for qd in quads):
+                            continue
+                        if guard and any(_in_rect(g_, x, y) for g_ in guard):
+                            continue
+                        n = j * N + i
+                        if h[n] > top:
+                            h[n] = top
+                            moved += 1
+    changed = {k: h for k, h in new_h.items() if h != before[k]}
+    for (gx, gy), h in changed.items():
+        after = landscape.write(db, gx, gy, h, None, None, around=landscape.around_of(db, gx, gy, changed))
+        landscape._follow_ground(db, gx, gy, before[(gx, gy)], after, skip)
+    if changed:
+        db.sync_project()
+    return moved
+
+
+def _fit_ground(db, doors, skip, plots=(), guard=()):
     """The ground fitted to each new building the way the game's meet theirs (groundfit: raised where its foot would
     show a gap, a landing a step under its door; the game never levels the ground under a building), one after another
     so each sees the ground the last left; what else stands on the ground (trees, rocks) follows it. No Undo step."""
@@ -2280,7 +2450,7 @@ def _fit_ground(db, doors, skip, plots=()):
         # (the ground inside the other buildings' plots left as it is: one building's landing faded out over its
         # neighbour and filled an open barn 300 deep, its goods buried, lab sg2)
         others = [r for d, r in plots if d != (key, rk)]
-        if others:
+        if others or guard:
             G, N = landscape.CELL, landscape.N
             st = G / (N - 1.0)
             for c in pl['cells']:
@@ -2295,6 +2465,8 @@ def _fit_ground(db, doors, skip, plots=()):
                             x, y = c['gx'] * G + i * st, c['gy'] * G + j * st
                             if any(_in_rect(r, x, y) for r in others):
                                 c['h'][n] = old[n]
+                            elif c['h'][n] < old[n] and guard and any(_in_rect(g_, x, y) for g_ in guard):
+                                c['h'][n] = old[n]       # (never lower under or beside the wall: WALL_GUARD)
         new_h = {(c['gx'], c['gy']): c['h'] for c in pl['cells']}
         for c in pl['cells']:
             gx, gy = c['gx'], c['gy']
