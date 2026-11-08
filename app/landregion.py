@@ -170,8 +170,17 @@ def layer_amps(have, want):
     return [A * (lam / 4096.0) ** b for lam in OCTAVES]
 
 
+# Each point's own ground against its region's: how rough the land round it already is 2,048 apart (f, the local
+# figure over the region's), in these steps. A smooth patch of a rough region is short of more than the region as
+# a whole, a rough patch of less; the target follows the patch too, by f^CONTRAST, so mountains stay rougher than
+# the flats beside them (lab 2026-11-08: one figure for the region left a smooth block at 336 against 435 at 2,048)
+F_BINS = tuple(0.2 * (1.25 ** n) for n in range(14))         # (0.2 .. 3.6)
+CONTRAST = 0.5
+
+
 def plan_for(db, region, want=''):
-    """What the pass does to a region's land: {'like', 'amps' (one a layer), 'ranges' (amplitude), 'slope99'}."""
+    """What the pass does to a region's land: {'like', 'table' (the layers' heights at each step of F_BINS),
+    'ranges' (amplitude), 'slope99'}."""
     S = _survey(db)
     R = S.get(region) or {}
     lk = like_for(db, region, want)
@@ -179,9 +188,10 @@ def plan_for(db, region, want=''):
     have = {L: _fig(R, L) for L in LAG_KEYS}
     tgt = {L: _fig(T, L) for L in LAG_KEYS}
     if not all(tgt.values()) or not all(have.values()):
-        amps = [0.0] * len(OCTAVES)
+        table = [[0.0] * len(OCTAVES) for _ in F_BINS]
     else:
-        amps = layer_amps(have, tgt)
+        table = [layer_amps({L: have[L] * f for L in LAG_KEYS}, {L: tgt[L] * f ** CONTRAST for L in LAG_KEYS}) for f in F_BINS]
+    amps = table[F_BINS.index(min(F_BINS, key=lambda f: abs(f - 1.0)))]
     h8, t8 = _fig(R, '8192'), _fig(T, '8192')
     need8 = math.sqrt(max(0.0, t8 * t8 - h8 * h8))
     # (laid on only where the land stands over its floors, about half of a mountain region's points: twice the
@@ -191,7 +201,7 @@ def plan_for(db, region, want=''):
         s99 = float((T.get('slope') or {}).get('99') or 62.0)
     except (TypeError, ValueError):
         s99 = 62.0
-    return {'like': lk, 'amps': amps, 'ranges': rng, 'slope99': s99, 'have': have, 'want': tgt, 'h8192': h8, 't8192': t8,
+    return {'like': lk, 'amps': amps, 'table': table, 'ranges': rng, 'slope99': s99, 'have': have, 'want': tgt, 'h8192': h8, 't8192': t8,
             'r2048': have['2048'] or 1.0}
 
 
@@ -274,9 +284,12 @@ def run(db, F, inside, opts, seed, here, say=None):
     landshapes._region_weights). Returns the info for the note: per region what it took after and did."""
     T = clean(opts)
     say = say or (lambda what, frac: None)
-    plans = {r: plan_for(db, r, T['like']) for r in here}
-    info = {'like': {r: p['like'] for r, p in plans.items()}, 'regions': {}}
     pts = [i for i in range(len(F.z)) if inside[i]]
+    # (only the regions with weight on the points worked: the grid's ring reaches into the next region's cells)
+    here = {r: w for r, w in here.items() if any(w[i] for i in pts)}
+    plans = {r: plan_for(db, r, T['like']) for r in here}
+    # (said for the regions the marked land is mostly in; a neighbour's blends in over the edge cells' outer halves)
+    info = {'like': {r: p['like'] for r, p in plans.items() if any(here[r][i] >= 0.5 for i in pts)}, 'regions': {}}
     if not pts:
         return info
     k, w, h, cz = _coarse(F)
@@ -304,18 +317,23 @@ def run(db, F, inside, opts, seed, here, say=None):
             x, y = F.world(i)
             amps = [0.0] * len(OCTAVES)
             rng = 0.0
-            ref = 0.0
+            fsum = 0.0
+            loc = _up(F, k, w, h, lr, i)
             for r, wr in wts:
                 a = wr[i]
                 if not a:
                     continue
                 p = plans[r]
                 rng += a * p['ranges']
-                ref += a * p['r2048']
-                for o, v in enumerate(p['amps']):
-                    amps[o] += a * v
+                # (the step of F_BINS this point's own roughness falls in, between two steps linearly)
+                f = max(F_BINS[0], min(F_BINS[-1], loc / max(1.0, p['r2048'])))
+                fsum += a * f
+                b = min(len(F_BINS) - 2, int(math.log(f / F_BINS[0]) / math.log(1.25)))
+                t = (f - F_BINS[b]) / (F_BINS[b + 1] - F_BINS[b])
+                lo, hi = p['table'][b], p['table'][b + 1]
+                for o in range(len(OCTAVES)):
+                    amps[o] += a * (lo[o] + (hi[o] - lo[o]) * t)
             up = _up(F, k, w, h, over, i)
-            loc = _up(F, k, w, h, lr, i)
             shore = min(1.0, z0 / SHORE)
             add = 0.0
             if rs > 0 and rng > 0:
@@ -324,14 +342,13 @@ def run(db, F, inside, opts, seed, here, say=None):
                 if m:
                     add += rs * rng * m * _ranges_noise(x, y, seed)
             if ra > 0:
-                # (rougher where the land already rises: 0.35 to 2 times, by its roughness round it against the region's)
-                rel = max(0.35, min(2.0, math.sqrt(max(0.0, loc) / max(1.0, ref)))) if ref else 1.0
-                crag = max(0.0, min(0.7, (rel - 0.8) * 0.7))
+                # (craggier, sharp crests, where the land round it is rougher than its region's)
+                crag = max(0.0, min(0.7, (math.sqrt(fsum) - 0.8) * 0.7))
                 s = 0.0
                 for o, lam in enumerate(OCTAVES):
                     if oct_on[o] and amps[o]:
                         s += amps[o] * _octave(x, y, lam, seed, crag)
-                add += ra * rel * s
+                add += ra * s
             v = z0 + add * shore
             # (never taking dry land under the water: half its height over 32 at most)
             z[i] = max(v, 32 + 0.5 * (z0 - 32) if z0 > 32 else z0)
@@ -353,8 +370,7 @@ def run(db, F, inside, opts, seed, here, say=None):
         if not ang[i]:
             ang[i] = 62.0
     info['too_steep'] = landpasses.settle(F, inside, ang)
-    say('Rounding the corners', 0.55)
-    info['corners'] = landpasses.corners(F, inside)
+    # (no corner rounding: TR's own land has kinks at 9% of its points, VV 8%; rounded, the pass left 1-5%)
     return info
 
 

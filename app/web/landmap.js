@@ -246,7 +246,8 @@ function lmViewHtml(i){
   const pin = lsPinWhat(), towns = pin.towns, castles = pin.castles, ng = pin.ground, built = towns.length + castles.length;
   const tReady = towns.every(L => { const T = (LM.towns || {})[L.id]; return T && T.plan && T.plan.plots.length; });
   const cReady = castles.every(L => { const C = (LM.castles || {})[L.id]; return C && C.plan && !C.busy; });
-  const pinWhat = [ng ? `⛰ ${ng} ground shape${ng === 1 ? '' : 's'} · ${n ? `${n} cell${n === 1 ? '' : 's'}` : 'no cells marked'}` : '',
+  const shp = ng - (lsTerrOn() ? 1 : 0);
+  const pinWhat = [ng ? `⛰ ${[shp ? `${shp} ground shape${shp === 1 ? '' : 's'}` : '', lsTerrOn() ? 'region pass' : ''].filter(Boolean).join(' + ')} · ${n ? `${n} cell${n === 1 ? '' : 's'}` : 'no cells marked'}` : '',
     towns.length ? `🏘 ${towns.length === 1 ? esc(towns[0].p.name || (LM.towns && LM.towns[towns[0].id] && LM.towns[towns[0].id].plan && LM.towns[towns[0].id].plan.name) || 'a town') : towns.length + ' towns'}${tReady ? '' : ' (planning…)'}` : '',
     castles.length ? `🏰 ${castles.length === 1 ? esc(castles[0].p.name || (LM.castles && LM.castles[castles[0].id] && LM.castles[castles[0].id].plan && LM.castles[castles[0].id].plan.name) || 'a castle') : castles.length + ' castles'}${cReady ? '' : ' (planning…)'}` : ''].filter(Boolean).join('<br>');
   const whatBuilt = !built ? '' : built > 1 ? `${built} ${towns.length && castles.length ? 'towns and castles' : towns.length ? 'towns' : 'castles'}` : towns.length ? 'the town' : 'the castle';
@@ -521,8 +522,8 @@ async function lsPreset(kind){
 function lsHtml(){
   const P = LM.plan || {layers: []}, sel = P.layers[LM.sel];
   // (the ground sections only when a ground shape is drawn: a town or castle alone showed Protection, the passes,
-  // Dressing and Shape the marked cells, none of which touch it, 2026-11-04)
-  const ng = P.layers.filter(L => L.on !== false && !lsNoShape(L.kind)).length;
+  // Dressing and Shape the marked cells, none of which touch it, 2026-11-04; or the region pass is on)
+  const ng = P.layers.filter(L => L.on !== false && !lsNoShape(L.kind)).length, gnd = ng || lsTerrOn();
   const row = (L, i) => `<div class="ls-row${i === LM.sel ? ' on' : ''}" data-i="${i}"><input type="checkbox" data-on="${i}" ${L.on !== false ? 'checked' : ''} title="Use this shape">
       <span style="color:${LS_KINDS[L.kind].color}">${LS_KINDS[L.kind].icon}</span><span class="ls-n">${esc(L.name || LS_KINDS[L.kind].label)}</span>
       <button class="xbtn" data-up="${i}" title="Earlier (later shapes act on what earlier ones made)">↑</button><button class="xbtn" data-dn="${i}" title="Later">↓</button><button class="xbtn" data-dup="${i}" title="Duplicate (a copy beside it)">⧉</button><button class="xbtn" data-del="${i}" title="Remove">✕</button></div>`;
@@ -569,12 +570,13 @@ function lsHtml(){
     ${P.layers.length ? `<div class="ls-list">${P.layers.map(row).join('')}</div>
       <div class="actions"><button class="btn sm" id="ls-clearall" title="Take every shape off the map (the land already shaped stays as it is)">Clear shapes</button></div>` : '<div class="msg" style="font-size:11.5px">Pick a shape and draw it on the map. Towns, castles, farms and orchards need no marked cells.</div>'}
     ${sel ? `<div class="lm-raise">${params}</div>` : ''}
-    ${ng ? lsPassesHtml(P) : lsTexHtml(P)}
-    ${ng ? `<div class="lm-raise">
-      <label title="Rolling ground on the new land, as rough as the region's (1)">Roughness <input type="range" data-g="rough" min="0" max="2" step="0.1" value="${P.rough}"><span>${P.rough}</span></label>
+    ${lsRegionPassHtml(P)}
+    ${gnd ? lsPassesHtml(P, ng) : lsTexHtml(P)}
+    ${gnd ? `<div class="lm-raise">
+      ${ng ? `<label title="Rolling ground on the new land, as rough as the region's (1)">Roughness <input type="range" data-g="rough" min="0" max="2" step="0.1" value="${P.rough}"><span>${P.rough}</span></label>` : ''}
       <label title="How far in from the marked cells' edge the shapes fade in (the edges with other cells never move)">Edge fade <input type="range" data-g="fade" min="256" max="8192" step="256" value="${P.fade}"><span>${P.fade}</span></label>
       ${lsHereRegions().length > 1 || (P.only || []).length ? `<label title="Shape only the marked cells in one region; the rest stay as they are" style="white-space:nowrap">Only in ${lsRegionSel('ls-ponly', (P.only || [])[0] || '', 'all marked cells', lsHereRegions())}</label>` : ''}
-      <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ls-paint" ${P.paint !== false ? 'checked' : ''}> Texture it the way the region's land is</label>
+      ${ng ? `<label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ls-paint" ${P.paint !== false ? 'checked' : ''}> Texture it the way the region's land is</label>` : ''}
       <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ls-prev" ${LM.prevOn !== false ? 'checked' : ''}> Preview on the map</label>
       <div class="actions"><button class="btn sm" id="ls-seed" title="The same shapes with other rolling ground and shores">🎲 Re-roll</button><button class="btn sm primary" id="ls-apply" ${LM.data && LM.data.marks.length ? '' : 'disabled title="Mark the cells to shape first"'}>Shape the marked cells</button></div>
       <div class="msg" id="ls-note" style="font-size:11.5px">${LM.data && !LM.data.marks.length ? 'No cells marked: ⛰ Mark cells to shape them.' : `${LM.applyNote ? esc(LM.applyNote) + ' ' : ''}One Undo takes it back. The shapes stay, to change and shape again.`}</div></div>` : ''}`;
@@ -583,7 +585,31 @@ function lsHtml(){
 const LS_PASSES = {detail: true, detail_k: 1, settle: true, angle: 0, gullies: 0, terraces: false, tstep: 256, tsharp: 0.6, tslope: 20, valleys: 0,
   rock: 0, rthick: 512, rdip: 0, rdir: 0, rshare: 0.45, ronly: ''};
 const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1, flow: 0, shore: '', clad: true};
-function lsPassesHtml(P){
+// the region pass (landregion.py): the land that is there made as rough, as broken into ranges and as cut by valleys
+// as a hand-made region's, no shapes needed; Shape the ground runs it (tile by tile past 400 cells, one Undo)
+const LS_TERRAIN = {on: false, like: '', relief: 1, ranges: 1, valleys: 1, paint: false};
+function lsTerrOn(){ return !!(LM.plan && LM.plan.terrain && LM.plan.terrain.on); }
+function lsRegionPassHtml(P){
+  const T = P.terrain = Object.assign({}, LS_TERRAIN, P.terrain || {});
+  if (!LM.handmade && !LM.handmadeAsk){
+    LM.handmadeAsk = true;
+    api('/api/land/handmade').then(r => { LM.handmade = r.regions || []; if (T.on) renderWside(); }).catch(() => { LM.handmadeAsk = false; });
+  }
+  const sl = (key, lab, tip) => `<label title="${esc(tip)}">${lab} <input type="range" data-tr="${key}" min="0" max="2" step="0.1" value="${T[key]}"><span>${T[key]}</span></label>`;
+  const took = Object.entries(((LM.prevInfo || {}).terrain || {}).like || {});
+  const tookTxt = took.length ? 'Taking after: ' + took.map(([r, l]) => r === l ? lsRegionName(r) : `${lsRegionName(r)} → ${lsRegionName(l)}`).join(', ') + '.' : '';
+  return `<h3>Region pass${lsGuide('Region pass')}</h3><div class="lm-raise">
+      <label class="msg" style="display:flex;gap:6px;align-items:center" title="The marked cells' land made as rough, as broken into ranges and as cut by valleys as a hand-made region's land, as it is: no shapes needed. Shape the ground runs it; up to ${'2,048'} cells at once, 400 at a time"><input type="checkbox" id="lst-on" ${T.on ? 'checked' : ''}> Like hand-made land</label>
+      ${T.on ? `<label title="The hand-made region whose roughness and slopes the land takes on. Nearest: for each region, the hand-made one closest to it in relief (plains take after gentle land, mountains after mountains)">Like <select class="inp" id="lst-like"><option value="">nearest in relief</option>${(LM.handmade || []).map(r => `<option value="${esc(r)}" ${r === T.like ? 'selected' : ''}>${esc(lsRegionName(r))}</option>`).join('')}</select></label>
+        ${sl('ranges', 'Ranges', 'Side crests and spurs between the long ridges, on land standing over its valleys (plains stay plains). 0: none')}
+        ${sl('relief', 'Relief', 'Rolling ground and crags from 4,096 down to 256 across, until the land is as rough as the region it takes after. 0: none')}
+        ${sl('valleys', 'Valleys', 'The rain carves valleys into the result: deep where much ground drains. 0: none')}
+        <label class="msg" style="display:flex;gap:6px;align-items:center" title="Texture the land again by its new slopes (Dressing). Off: the textures stay as they are"><input type="checkbox" id="lst-paint" ${T.paint ? 'checked' : ''}> Texture it too</label>
+        ${tookTxt ? `<div class="msg" style="font-size:11.5px">${esc(tookTxt)}</div>` : ''}` : ''}
+    </div>`;
+}
+function lsPassesHtml(P, shapes){
+  if (shapes === undefined) shapes = 1;
   const A = P.passes = Object.assign({}, LS_PASSES, P.passes || {}), D = P.dress = Object.assign({}, LS_DRESS, P.dress || {});
   const info = LM.prevInfo || {};
   const chk = (id, on, text, tip) => `<label class="msg" style="display:flex;gap:6px;align-items:center" title="${esc(tip)}"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> <span style="flex:1;min-width:0;text-align:left">${text}</span></label>`;
@@ -595,7 +621,7 @@ function lsPassesHtml(P){
       ${R.hold ? sl('margin', 'pr', 'Margin', 128, 2048, 64, R.margin, 'How far round each held piece the ground fades back to the plan') : ''}
       <div class="msg" style="font-size:11.5px">Rocks, trees, plants, crates, people and creatures move up or down with the ground instead, and walking paths too.</div>
     </div>
-    <h3>Natural passes${lsGuide('Natural passes')}</h3><div class="lm-raise">
+    ${shapes ? `<h3>Natural passes${lsGuide('Natural passes')}</h3><div class="lm-raise">
       ${chk('lsp-detail', A.detail, 'Match the region\'s roughness', 'Rolling detail added (or the ground softened) until the plan\'s land is as rough as the region\'s own, measured 1024 and 128 units apart by the land survey')}
       ${sl('valleys', 'pa', 'Valleys', 0, 2, 0.1, A.valleys, 'Rain carves branching valleys: deep where much ground drains, faint on small slopes (0: none)')}
       ${sl('rock', 'pa', 'Rock layers', 0, 1, 0.05, A.rock, 'Bands of hard and soft rock: the hard stand as cliffs with ledges on top, the soft wear back to scree (0: none)')}
@@ -606,8 +632,8 @@ function lsPassesHtml(P){
       ${chk('lsp-settle', A.settle, `Settle the steepest slopes <span id="ls-settle-t" title="${esc(lsSettleTip(info.settle_angle))}">${lsSettleText(info.settle_angle)}</span>`, 'Ground slides down where it is steeper than 99% of the region\'s own land, so the plan keeps no more cliff than the region has')}
       ${chk('lsp-terr', A.terraces, 'Terraces', 'Steps up the slopes, the Ashlands and Molag Amur look')}
       ${A.terraces ? sl('tstep', 'pa', 'Step height', 64, 1024, 32, A.tstep, 'How high each step is') + sl('tsharp', 'pa', 'Sharpness', 0, 1, 0.05, A.tsharp, '0 soft benches, 1 hard steps') + sl('tslope', 'pa', 'From slopes of', 5, 45, 1, A.tslope, 'Only slopes steeper than this (degrees) get steps') : ''}
-    </div>
-    <h3>Dressing${lsGuide('Dressing')}</h3><div class="lm-raise">
+    </div>` : ''}
+    ${shapes || (P.terrain || {}).paint ? `<h3>Dressing${lsGuide('Dressing')}</h3><div class="lm-raise">
       ${lsDressPick(D)}
       ${D.region ? chk('lsd-assign', D.assign, 'Put the cells in this region (its weather, sounds, creatures)', 'The marked cells join the region in the same Undo') : ''}
       ${chk('lsd-tints', D.tints, 'Tint each texture as the game does', 'landshade "By texture": the colour the region\'s land gives each texture')}
@@ -620,7 +646,7 @@ function lsPassesHtml(P){
       ${chk('lsd-tview', LM.texView, 'Show the textures in the preview', 'Each texture its own colour over the preview, as the plan would lay them')}
       <div class="ls-tex" id="ls-texlegend">${lsLegend()}</div>
       ${lsTexButton()}
-    </div>`;
+    </div>` : ''}`;
 }
 // (the region the textures come from and how many a cell: shared by Dressing and "Texture the land")
 function lsDressPick(D){
@@ -850,6 +876,12 @@ function lsBind(){
     toast(`Took ${n} shape${n === 1 ? '' : 's'} off the map. ↶ (by Shapes) brings them back.`);
   };
   if (P.passes && P.dress) lsPassesBind(P);
+  // (the region pass)
+  const T = P.terrain || (P.terrain = Object.assign({}, LS_TERRAIN));
+  const ton = $('#lst-on'); if (ton) ton.onchange = () => { T.on = ton.checked; lsChanged(true); };
+  const tlk = $('#lst-like'); if (tlk) tlk.onchange = () => { T.like = tlk.value; lsChanged(); };
+  const tpa = $('#lst-paint'); if (tpa) tpa.onchange = () => { T.paint = tpa.checked; lsChanged(true); };
+  root.querySelectorAll('[data-tr]').forEach(r => r.oninput = () => { T[r.dataset.tr] = +r.value; r.nextElementSibling.textContent = r.value; lsChanged(); });
 }
 function lsMove(i, d){
   const P = LM.plan, j = i + d; if (j < 0 || j >= P.layers.length) return;
@@ -1270,7 +1302,7 @@ async function lsPreview(){
   // (towns, streets, zones and walls shape nothing: with only those, no preview; and a change to them alone previews
   // nothing again. Every change to a town re-ran the ground's preview, 3 seconds on 4 cells, the user's "so slow", 2026-11-01)
   const gl = LM.plan.layers.filter(L => !lsNoShape(L.kind));
-  if (!LM.data.marks.length || !gl.length){ ++LM.prevN; LM.prev = null; LM.prevSig = null; LM.prevStale = false; drawMap(); return; }
+  if (!LM.data.marks.length || (!gl.length && !lsTerrOn())){ ++LM.prevN; LM.prev = null; LM.prevSig = null; LM.prevStale = false; drawMap(); return; }
   const sig = JSON.stringify([LM.data.marks, gl, Object.entries(LM.plan).filter(([k]) => k !== 'layers')]);
   if (sig === LM.prevSig && LM.prevData && !LM.prevBusy){ LM.prevStale = false; drawMap(); return; }
   // (one preview at a time: changes made while it works are previewed once it's back, the latest only. Each edit
@@ -1295,7 +1327,8 @@ async function lsPreview(){
     const lg = $('#ls-texlegend'); if (lg) lg.innerHTML = lsLegend();
     const st = $('#ls-settle-t'); if (st && LM.prevInfo.settle_angle){ st.textContent = lsSettleText(LM.prevInfo.settle_angle); st.title = lsSettleTip(LM.prevInfo.settle_angle); }
     // (the marked cells' regions arrived: the "Only in" choices follow them)
-    const hk = lsHereRegions().join('|'); if (hk !== LM.hereKey){ LM.hereKey = hk; renderWside(); }
+    const hk = lsHereRegions().join('|') + JSON.stringify((LM.prevInfo.terrain || {}).like || {});
+    if (hk !== LM.hereKey){ LM.hereKey = hk; renderWside(); }
     const ht = $('#ls-held-t'); if (ht && LM.prevInfo.held != null) ht.textContent = `(${LM.prevInfo.held} here, outlined on the map)`;
   } catch (e){ if (ask === LM.prevN){ LM.prevStale = false; drawMap(); } const n = $('#ls-note'); if (n) n.textContent = e.message; }
   finally {
@@ -1666,7 +1699,7 @@ async function lsApply(btn){
   try {
     const r = await post('/api/land/plan/apply', {cells: LM.data.marks, plan: LM.plan});
     clearInterval(poll);
-    toast(`Shaped ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.new ? ` (${r.new} new)` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed the ground` : ''}${r.shaded && r.shaded.length ? '; shaded' : ''}${r.rocks ? `; ${r.rocks} rocks set` : ''}${r.clad_pending ? '; the cliff cladding is still learning the game\'s rocks, shape again later for it' : ''}${r.assigned ? `; ${r.assigned} put in the region` : ''}. Changes to the ground show in game after a restart.`);
+    toast(`Shaped ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.tiles ? ` in ${r.tiles} tiles` : ''}${r.new ? ` (${r.new} new)` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed the ground` : ''}${r.shaded && r.shaded.length ? '; shaded' : ''}${r.rocks ? `; ${r.rocks} rocks set` : ''}${r.clad_pending ? '; the cliff cladding is still learning the game\'s rocks, shape again later for it' : ''}${r.assigned ? `; ${r.assigned} put in the region` : ''}. Changes to the ground show in game after a restart.`);
     // (the land made, against the region's own figures from the land survey)
     const m = r.measured || {}, figs = Object.entries(r.region_figures || {});
     if (figs.length && m.slope){
@@ -1691,7 +1724,7 @@ async function lsApply(btn){
 // (what the pinned button does: the ground shapes, and the towns, each drawn and ticked)
 function lsPinWhat(){
   const on = LM.plan && LM.plan.layers ? LM.plan.layers.filter(L => L.on !== false && L.pts && L.pts.length) : [];
-  return {ground: on.filter(L => !lsNoShape(L.kind)).length, towns: on.filter(L => L.kind === 'town'), castles: on.filter(L => L.kind === 'castle')};
+  return {ground: on.filter(L => !lsNoShape(L.kind)).length + (lsTerrOn() ? 1 : 0), towns: on.filter(L => L.kind === 'town'), castles: on.filter(L => L.kind === 'castle')};
 }
 async function lsDoAll(btn){
   const {ground, towns, castles} = lsPinWhat();

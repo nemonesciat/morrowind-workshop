@@ -10,6 +10,7 @@
 | Scatter grass, plants, rocks or trees | **The Ground brush**, Scatter |
 | Rocks and cliffs over land that's there (an island you raised, ground you sculpted) | **🪨 Dress…** (the Land panel, on the marked cells) |
 | Make an island, a mountain range, a river valley or cliffs over many cells | **Land shaping** (the Land panel) |
+| Make smooth, plain land (a heightmap mod's, or your own) as rugged as hand-made land, over whole regions | **Region pass** (the Land panel) |
 | Work on the land in World Machine, Gaea, GIMP or Krita | **Height maps** (the Land panel) |
 
 Every change goes into your mod and comes back with one **Undo**. Changes to the ground show in the game
@@ -220,6 +221,33 @@ under Dressing when you have shapes, and in **Texture the land** when you don't.
 
 At the bottom: **Roughness**, **Edge fade** (how far in from the marked cells' edge the shapes fade in), **Only
 in** (the whole plan in one region), **🎲 Re-roll** (the same shapes with other rolling ground and shores).
+
+## Region pass
+
+Some land is smooth from far off and plain up close: land made from a heightmap, or land you raised. The **Region
+pass** makes the marked cells' land as it is as rough, as broken into ranges and as cut by valleys as land made by
+hand, with no shapes drawn. Tick **Like hand-made land** (Land panel, under Shapes), watch the preview, then press
+**Shape the ground**.
+
+| Setting | What it does |
+|---|---|
+| Like | The hand-made region whose roughness and slopes the land takes on. **Nearest in relief** (the default) picks for each region the hand-made one closest to it in relief: plains take after gentle land, mountains after mountains. The panel says what each region takes after. |
+| Ranges | Side crests and spurs between long, smooth ridges, about as far apart as the game's. Only on land standing over its valleys: plains stay plains. |
+| Relief | Rolling ground and crags down to the smallest bumps, until the land is as rough as the region it takes after; craggier where the land already rises, gentle on the flats, fading out near the water. |
+| Valleys | The rain carves valleys into the result, deep where much ground drains. |
+| Texture it too | Textures the land again by its new slopes (with the Dressing settings). Off: the textures stay as they are. |
+
+- Only marked cells change, and Protection works as for shapes: by default it starts from the land under your mod,
+  so pressing it again doesn't add more on top, and the ground under buildings, ruins and doors is held.
+- **Cells side by side:** where the marked cells meet land your mod has already changed (an earlier press), the new
+  land is joined to it with no step and no smooth strip between; the edges with other land fade back into it.
+- **Big areas:** up to 2,048 cells at once. Past 400 it works in tiles of 16 × 16 cells, each joined to the ones
+  before, and it is still one Undo. It takes about half a second a cell (a 20 × 20 block in about three
+  minutes); the preview of a big area can take a minute.
+- With shapes drawn too, the shapes go first and the region pass runs over all of it in place of **Match the
+  region's roughness**.
+- It sets no rocks or trees and makes no cliffs yet (the steepest slopes stay near the region's own): **🪨 Dress…**
+  afterwards sets the region's rocks, trees and plants on the new ground.
 
 ## Step 4: Shape them
 

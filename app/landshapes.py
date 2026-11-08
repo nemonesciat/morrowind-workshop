@@ -809,8 +809,10 @@ def _work(db, cells, plan, s):
         keys = [k for k in keys if landrange._region_of(db, k[0], k[1]) in only]
         if not keys:
             raise EditError('None of the marked cells is in %s.' % ('that region' if len(only) == 1 else 'those regions'))
-    if len(keys) > landrange.MAX_CELLS:
-        raise EditError('That is %d cells; shape at most %d at once.' % (len(keys), landrange.MAX_CELLS))
+    # (the region pass alone previews as many cells as one press takes, at every 4th point; it applies tile by tile)
+    cap = TERRAIN_MAX if s > 1 and terrain_only(plan) else landrange.MAX_CELLS
+    if len(keys) > cap:
+        raise EditError('That is %d cells; shape at most %d at once.' % (len(keys), cap))
     layers = [_clean(L) for L in (plan.get('layers') or []) if L.get('on', True) is not False and L.get('kind') not in NO_SHAPE]
     # (rivers and lakes are carved last, through whatever the other shapes raised: a volcano stamped after a river
     # was drawn would otherwise dam it; among themselves, and the others among themselves, the order stands)
@@ -1202,10 +1204,14 @@ def _preview(db, cells, plan):
 PROGRESS = {'on': False, 'what': '', 'frac': 0.0}
 
 
+_SPAN = [0.0, 1.0, '']             # (a tile of a tiled region pass: its share of the bar, and its label)
+
+
 def _say(what, frac):
     _check_stop()
     if PROGRESS['on']:
-        PROGRESS.update(what=what, frac=round(max(PROGRESS['frac'], min(1.0, frac)), 3))
+        frac = _SPAN[0] + (_SPAN[1] - _SPAN[0]) * frac
+        PROGRESS.update(what=(_SPAN[2] + what) if _SPAN[2] else what, frac=round(max(PROGRESS['frac'], min(1.0, frac)), 3))
 
 
 def progress():
@@ -1216,9 +1222,47 @@ def apply(db, cells, plan):
     """The plan written into the marked cells, with the progress said as it goes (PROGRESS)."""
     PROGRESS.update(on=True, what='Starting', frac=0.0)
     try:
+        keys = sorted({landrange._key(k) for k in cells or []})
+        if terrain_only(plan) and len(keys) > landrange.MAX_CELLS:
+            return _apply_tiles(db, keys, plan)
         return _apply(db, cells, plan)
     finally:
         PROGRESS.update(on=False, what='', frac=0.0)
+        _SPAN[:] = [0.0, 1.0, '']
+
+
+TERRAIN_TILE = 16                  # (cells a side of each tile of a big region pass)
+TERRAIN_MAX = 2048                 # (cells one press of the region pass takes: about 16 minutes, 80 MB of project)
+
+
+def terrain_only(plan):
+    """The plan is the region pass alone: its terrain on and no shape that shapes ground."""
+    return bool(landregion.clean(plan.get('terrain'))['on']) and not [
+        L for L in plan.get('layers') or [] if L.get('on', True) is not False and L.get('kind') not in NO_SHAPE]
+
+
+def _apply_tiles(db, keys, plan):
+    """The region pass over more cells than one Field holds: tile by tile (TERRAIN_TILE square), each matched to the
+    tiles before it (landregion.match_edges, as two presses side by side are), folded into one Undo step."""
+    import editing
+    if len(keys) > TERRAIN_MAX:
+        raise EditError('That is %d cells; the region pass takes at most %d at once.' % (len(keys), TERRAIN_MAX))
+    tiles = {}
+    for k in keys:
+        tiles.setdefault((k[0] // TERRAIN_TILE, k[1] // TERRAIN_TILE), []).append(k)
+    order = sorted(tiles, key=lambda t: (t[1], t[0]))
+    out, n_ = None, 0
+    for n_, t in enumerate(order):
+        _SPAN[:] = [n_ / len(order), (n_ + 1) / len(order), 'Tile %d of %d: ' % (n_ + 1, len(order))]
+        r = _apply(db, ['%d,%d' % k for k in tiles[t]], plan)
+        if out is None:
+            out = r
+        else:
+            for f in ('cells', 'new', 'eased', 'moved', 'paths'):
+                out[f] = out.get(f, 0) + r.get(f, 0)
+    editing.fold(db, len(order), 'Shaped %d cells with the region pass (%d tiles)' % (len(keys), len(order)))
+    out['tiles'] = len(order)
+    return out
 
 
 def _apply(db, cells, plan):
@@ -1245,9 +1289,9 @@ def _apply(db, cells, plan):
     dress = _clean_opts(plan.get('dress'), DRESS)
     ids, files = {}, {}
     TR = landregion.clean(plan.get('terrain'))
-    terrain_only = TR['on'] and not [L for L in plan.get('layers') or [] if L.get('on', True) is not False and L.get('kind') not in NO_SHAPE]
+    t_only = terrain_only(plan)
     # (the region pass alone keeps the land's textures unless asked: it changes the relief, not the ground's look)
-    paint = plan.get('paint', True) is not False and (TR['paint'] or not terrain_only)
+    paint = plan.get('paint', True) is not False and (TR['paint'] or not t_only)
     if paint:
         import landdress
         seed_ = int(plan.get('seed') or 1)
@@ -1295,7 +1339,8 @@ def _apply(db, cells, plan):
     refs_of = lambda k: set((db.project.cells.get('#%d,%d' % k) or {}).get('refs') or {})
     had = {k: refs_of(k) for k in keys}
     clad = 0
-    if dress['rocks'] > 0 and plan.get('layers'):
+    # (only with ground shapes: the region pass alone sets no rocks, a town drawn beside it shapes nothing)
+    if dress['rocks'] > 0 and plan.get('layers') and not t_only:
         import cliffrocks
         F.z = list(G.z)
         region_of = lambda x, y: reg.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
@@ -1332,7 +1377,7 @@ def _apply(db, cells, plan):
     _keep_base(db, before, keys, set_rocks)
     m = measure(F, keys)
     n = len([L for L in plan.get('layers') or [] if L.get('on', True) is not False])
-    if terrain_only:
+    if t_only:
         commit(db, 'Shaped %d cell%s with the region pass%s' % (len(keys), '' if len(keys) == 1 else 's', (' (%d new)' % made) if made else ''))
     else:
         commit(db, 'Shaped %d cell%s with %d shape%s%s' % (len(keys), '' if len(keys) == 1 else 's', n, '' if n == 1 else 's',

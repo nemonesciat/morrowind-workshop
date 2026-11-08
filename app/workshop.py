@@ -1017,6 +1017,10 @@ class Handler(BaseHTTPRequestHandler):
                 # how far a town's Make it has got (the same: asked while it works)
                 import townbuild
                 self._json(townbuild.progress())
+            elif u.path == '/api/land/handmade':
+                # the regions whose land was made by hand, the ones the region pass takes after (landregion.py)
+                import landregion
+                self._json({'regions': sorted(landregion.handmade(db))})
             elif u.path == '/api/land/looks':
                 # the regions whose rocks can dress land (cliffrocks.py)
                 import cliffrocks
