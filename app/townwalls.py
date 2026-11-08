@@ -809,16 +809,9 @@ def wall_stairs(W, avoid=(), most=STAIRS_MAX, free=None, db=None):
             and all(math.hypot(p['pose'].x - x, p['pose'].y - y) > STAIRS_CLEAR for x, y in keep_off)]
     stair = {}
     for c in cand:
-        q = c['pose']
-        for side in (-1, 1):
-            ly = side * S['ly']
-            wx, wy = q.x + ly * math.sin(q.rz), q.y + ly * math.cos(q.rz)
-            if _inside(poly, (wx, wy)):
-                st = {'id': S['id'], 'pose': Pose(wx, wy, 0.0, q.rz + (math.pi if side < 0 else 0.0), S['id']),
-                      'kind': 'stairs', 'dz': S['dz'], 'host': q}
-                if (free is None or free(st)) and (db is None or _stair_ground(db, st, q)):
-                    stair[id(c)] = st
-                break
+        st = _stair_at(c, S, poly, free, db)
+        if st:
+            stair[id(c)] = st
     cand = [c for c in cand if id(c) in stair]
     gates = [p['pose'] for p in W['pieces'] if p.get('kind') in ('gate', 'end')]
     picks = []
@@ -837,6 +830,58 @@ def wall_stairs(W, avoid=(), most=STAIRS_MAX, free=None, db=None):
             break
         picks.append(far)
     return [stair[id(c)] for c in picks[:most]]
+
+
+def _stair_at(c, S, poly, free, db):
+    """The stair against plain length c's inner face, or None (outside the outline, on something, or on no ground)."""
+    q = c['pose']
+    for side in (-1, 1):
+        ly = side * S['ly']
+        wx, wy = q.x + ly * math.sin(q.rz), q.y + ly * math.cos(q.rz)
+        if _inside(poly, (wx, wy)):
+            st = {'id': S['id'], 'pose': Pose(wx, wy, 0.0, q.rz + (math.pi if side < 0 else 0.0), S['id']),
+                  'kind': 'stairs', 'dz': S['dz'], 'host': q}
+            if (free is None or free(st)) and (db is None or _stair_ground(db, st, q)):
+                return st
+            return None
+    return None
+
+
+LEVEL_STAIR_CLEAR = 400        # (a level's own stair this far from a tower, gate or corner at least: a short stretch between
+                               # two towers still gets one)
+
+
+def stair_each_level(W, avoid=(), free=None, db=None):
+    """A stair up to the walk for every level stretch of a grounded wall that has none (W['stretches']): where the wall
+    changes level at a tower or a keep the walk is cut there, and a stretch without a stair of its own could not be
+    climbed to (the user's Firuhn, 2026-11-07). After fill_ground, the ground under it being final. [stair pieces], at
+    their height."""
+    S = STAIRS.get(W.get('family'))
+    poly = W.get('outline') or []
+    kit = W.get('kit') or {}
+    if not S or len(poly) < 3 or not W.get('stretches'):
+        return []
+    have = {id(p['host']) for p in W['pieces'] if p.get('kind') == 'stairs' and p.get('host') is not None}
+    by_pose = {id(p['pose']): p for p in W['pieces']}
+    keep_off = [(p['pose'].x, p['pose'].y) for p in W['pieces'] if p['id'] != kit.get('straight') or p.get('kind') != 'wall']
+    keep_off += list(avoid)
+    out = []
+    for ids in W['stretches']:
+        ps = [by_pose[i] for i in ids if i in by_pose]
+        plain = [p for p in ps if p.get('kind') == 'wall' and p['id'] == kit.get('straight') and 'run' in p]
+        if len(plain) < 2 or any(id(p['pose']) in have for p in ps):
+            continue
+        mid = len(plain) / 2.0
+        for k, c in sorted(enumerate(plain), key=lambda kc: abs(kc[0] + 0.5 - mid)):
+            if any(math.hypot(c['pose'].x - x, c['pose'].y - y) <= LEVEL_STAIR_CLEAR for x, y in keep_off):
+                continue
+            st = _stair_at(c, S, poly, free, db)
+            if st:
+                st['pose'].z = c['pose'].z + S['dz']
+                out.append(st)
+                keep_off.append((c['pose'].x, c['pose'].y))
+                break
+    return out
 
 
 DOUBLED = 0.3                  # (a new wall piece over this share of whose footprint another wall already stands is left out)
@@ -1359,6 +1404,48 @@ def fill_ground(db, W, skip=(), keep=()):
     return _shape_ground(db, segs, skip, 0.0, FILL_MAX, keep) if segs else 0
 
 
+INNER_OFFS = (320.0, 800.0)    # (the ground inside the wall brought to each stretch's foot level: level in full this far in from
+                               # the wall's line (LEVEL_R round each), fading inward beyond; raised within FILL_MAX, cut within
+                               # LEVEL_TOL: a wall "built on a rampart of earth that could just be more level ground", the
+                               # user's Firuhn 2026-11-07, its houses dug in below the band of fill under the wall)
+
+
+def inner_ground(db, W, skip=(), keep=()):
+    """The ground inside the wall levelled up to each stretch's foot: a band INNER_OFFS deep in from the wall's line at
+    the foot's level (the ground under the piece's corners once the fill has brought it up), raised within FILL_MAX and
+    cut within LEVEL_TOL, fading into the town's ground beyond; the buildings' and the streets' ground (keep) left to
+    them. Gates and towers set no level. The cells changed."""
+    outline = W.get('outline') or []
+    if len(outline) < 3:
+        return 0
+    cx = sum(p_[0] for p_ in outline) / len(outline)
+    cy = sum(p_[1] for p_ in outline) / len(outline)
+    segs = []
+    for p in W.get('pieces') or ():
+        cs = p.get('corners')
+        if not cs or len(cs) < 4 or p.get('kind') in ('gate', 'tower', 'stair', 'step') or GATEISH.search(p['id']) or TOWERISH.search(p['id']):
+            continue
+        zs = [mapdata.terrain_z(db, x, y) for x, y in cs]
+        if any(z is None for z in zs):
+            continue
+        zs.sort()
+        level = (zs[1] + zs[2]) / 2.0
+        e0 = math.hypot(cs[1][0] - cs[0][0], cs[1][1] - cs[0][1])
+        e1 = math.hypot(cs[2][0] - cs[1][0], cs[2][1] - cs[1][1])
+        if e0 >= e1:
+            ux, uy, h = (cs[1][0] - cs[0][0]) / (e0 or 1.0), (cs[1][1] - cs[0][1]) / (e0 or 1.0), e0 / 2.0
+        else:
+            ux, uy, h = (cs[2][0] - cs[1][0]) / (e1 or 1.0), (cs[2][1] - cs[1][1]) / (e1 or 1.0), e1 / 2.0
+        h = max(0.0, h - FILL_IN)
+        mx, my = sum(c[0] for c in cs) / 4.0, sum(c[1] for c in cs) / 4.0
+        nx, ny = -uy, ux
+        if (cx - mx) * nx + (cy - my) * ny < 0:
+            nx, ny = -nx, -ny
+        for off in INNER_OFFS:
+            segs.append(((mx - h * ux + nx * off, my - h * uy + ny * off), (mx + h * ux + nx * off, my + h * uy + ny * off), level))
+    return _shape_ground(db, segs, skip, LEVEL_TOL, FILL_MAX, keep) if segs else 0
+
+
 GATE_GRADE = math.tan(math.radians(16))     # (the way through a gate climbs at most this steeply, the game's gate roads at 8-15)
 GATE_RAMP = 1024                             # (graded this far in and out of the arch)
 GATE_HALF = 288                              # (level across this much either side of the gate's axis)
@@ -1554,8 +1641,10 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=()):
                         if d >= LEVEL_R + blend:
                             continue
                         w = 1.0 if d <= LEVEL_R else 0.5 + 0.5 * math.cos(math.pi * (d - LEVEL_R) / blend)
-                        if best is None or w > best[0]:
-                            best = (w, t)
+                        # (two in full at one point: the nearer one's level, not the first listed: under a wall's end,
+                        # the neighbouring higher stretch's fill buried it, the lab's Firuhn 2026-11-07)
+                        if best is None or (w, -d) > (best[0], -best[2]):
+                            best = (w, t, d)
                     if not best:
                         continue
                     want = max(z - cut_tol, min(z + raise_tol, best[1]))
@@ -1598,7 +1687,8 @@ def grounded(db, W):
             continue
         pts = cs + [((cs[i][0] + cs[(i + 1) % 4][0]) / 2, (cs[i][1] + cs[(i + 1) % 4][1]) / 2) for i in range(4)]
         pts.append((p['pose'].x, p['pose'].y))
-        zs = [z for z in (mapdata.terrain_z(db, x, y) for x, y in pts) if z is not None]
+        gz = [mapdata.terrain_z(db, x, y) for x, y in pts]
+        zs = [z for z in gz if z is not None]
         if not zs or max(zs) < 0:
             wet += 1
             continue
@@ -1606,6 +1696,17 @@ def grounded(db, W):
         # whole run down to the sea floor, its foot showing a little there as the user set their own, Chillmorrow test4)
         zs.sort()
         p['corners'], p['_g'], p['_b'] = cs, (zs[min(2, len(zs) - 1)], zs[-1]), b
+        # (a piece along a cliff's edge or a steep bank, the ground under its own footprint differing by more than
+        # CLIFF_SPREAD: its foot is measured along its crest, the middle and the two end midpoints, not at the corner
+        # over the drop, and no bank of earth is raised under it (_fill_under): the cliff is the wall's foot. The
+        # user's Firuhn, 2026-11-07: "integrate the cliffs themselves into the fortress structure, in order to keep
+        # the walls level")
+        if zs[-1] - zs[0] > CLIFF_SPREAD:
+            ends = (5, 7) if (W.get('kit') or {}).get('axis', 0) == 0 else (4, 6)
+            crest = [z for z in [gz[8]] + [gz[k] for k in ends] if z is not None]
+            if crest:
+                p['_cliff'] = True
+                p['_g'] = (min(crest), zs[-1])
         keep.append(p)
     def span(ps):
         # (the levels that bury every foot and show enough of every top: origin z in [lo, hi])
@@ -1618,6 +1719,8 @@ def grounded(db, W):
         for p in ps:
             p['pose'].z = min(z, p['_g'][0] - SINK - p['_b'][2])
     tower_id = next((t for v in ((W.get('kit') or {}).get('corner_towers') or {}).values() for t, _e in v), None)
+    AN = ANCHOR.get(W.get('family')) if db is not None and all(db.resolve_id(v) is not None for v in (ANCHOR.get(W.get('family')) or {}).values() if isinstance(v, str)) else None
+    stacks = []                                  # (the round towers stacked where the wall changes level by more than a wall tower hides)
     # the levels set round the whole wall in order, corner by side by corner: each stretch as long as one level can serve
     # it, the next stretch starting at a tower so the step hides in it. (A level per side and each corner set to suit one
     # side left a step at every corner between sides at different heights, 36 joins up to 889 units apart on the user's
@@ -1638,8 +1741,16 @@ def grounded(db, W):
         # towers level and the rest steps, never straight to straight (2 of 141), lab sj1/sj2. A corner or a gate
         # arch on the high side closes the step itself)
         a, b = order[i - 1] if i > 0 else order[-1], order[i]
-        if abs((a['pose'].z + a['_b'][5]) - (b['pose'].z + b['_b'][5])) < 16:
+        d_ = abs((a['pose'].z + a['_b'][5]) - (b['pose'].z + b['_b'][5]))
+        if d_ < 16:
             return                                       # (no step left to hide: the stretches came out level)
+        if AN and d_ > STEP_HIDE:
+            # (more than a wall tower hides: a round tower stacked at the joint spans the whole change, the two
+            # stretches running into its sides at their own heights, as the user set Firuhn's by hand, 2026-11-07)
+            # (not where a guard tower or the keep already stands at the joint: set from the higher wall and sunk to
+            # its ground, it spans the change itself)
+            stacks.extend(_stack_anchor(db, a, b, AN, W, avoid=[(p['pose'].x, p['pose'].y) for p in big if p.get('host') is None]))
+            return
         hp = max((a, b), key=lambda p: p['pose'].z + p['_b'][5])
         if any('tower' in p['id'].lower() and p['pose'].z + p['_b'][5] >= hp['pose'].z + hp['_b'][5] - 16 for p in (a, b)):
             return
@@ -1652,35 +1763,43 @@ def grounded(db, W):
                 hp['_b'] = nb_
                 # (its top at least the wall's, its foot under its own ground)
                 hp['pose'].z = min(max(hp['pose'].z, top - nb_[5]), hp['_g'][0] - SINK - nb_[2]) if nb_[5] - nb_[2] > 0 else hp['pose'].z
-    seg, starts, segs = [], [], []
-    for i, p in enumerate(order):
+    if AN and tower_id:
+        # (the hill rule: as few level stretches round the ring as the ground allows, each as long as it can be with
+        # the ground filled under its low end, the change of level between two at an anchor: _plan_levels)
+        segs, starts = _plan_levels(order, W, keep)
+    else:
+        seg, starts, segs = [], [], []
+        for i, p in enumerate(order):
+            if seg:
+                lo, hi = span(seg + [p])
+                if lo > hi:
+                    level(seg)
+                    segs.append(seg)
+                    seg = []
+                    starts.append(i)
+            seg.append(p)
         if seg:
-            lo, hi = span(seg + [p])
-            if lo > hi:
-                level(seg)
-                segs.append(seg)
-                seg = []
-                starts.append(i)
-        seg.append(p)
-    if seg:
-        level(seg)
-        segs.append(seg)
-    _one_level(segs, W, span, keep)
+            level(seg)
+            segs.append(seg)
+        _one_level(segs, W, span, keep)
     _no_dips(segs, W)
-    _cap_steps(segs, W)
-    # (the ground brought up to every stretch's foot across the wall's width, not only under the raised ones: a level
-    # stretch sunk under the lowest ground along its line still hung over the slope falling away outside it, 60 of a
-    # town's 199 pieces with a corner over nothing in the game, the lab's Sketh walked 2026-11-06. fill_ground raises
-    # only, within FILL_MAX, and fades out)
-    fill_all = W.setdefault('fill', [])
-    for seg in segs:
-        _fill_under(fill_all, seg, seg[0]['pose'].z)
+    if not AN:
+        _cap_steps(segs, W)
+    W['stretches'] = [[id(p['pose']) for p in seg] for seg in segs]
     St = STEP_PIECES.get(W.get('family'))
     if St and straight:
         for k in range(1, len(segs)):
-            _stepped(db, segs[k - 1], segs[k], St, straight, span, memo)
+            _stepped(db, segs[k - 1], segs[k], St, straight, span, memo, fill=FILL_MAX if AN else 0.0)
     for i in starts:
         towered(i)
+    # (the ground brought up to every stretch's foot across the wall's width, not only under the raised ones: a level
+    # stretch sunk under the lowest ground along its line still hung over the slope falling away outside it, 60 of a
+    # town's 199 pieces with a corner over nothing in the game, the lab's Sketh walked 2026-11-06. fill_ground raises
+    # only, within FILL_MAX, and fades out. After the ramps: each piece at its own height; not under a cliff piece on
+    # its crest)
+    fill_all = W.setdefault('fill', [])
+    for seg in segs:
+        _fill_under(fill_all, seg, None, (W.get('kit') or {}).get('axis', 0))
     # (round the loop: where the last stretch meets the first at another level, a tower there too)
     if order and starts and abs(order[-1]['pose'].z - order[0]['pose'].z) > 48 and \
             abs((order[-1].get('run') if order[-1].get('run') is not None else order[-1].get('corner', 0)) - (order[0].get('run') if order[0].get('run') is not None else order[0].get('corner', 0))) < 100:
@@ -1703,20 +1822,39 @@ def grounded(db, W):
         q.z = wz + p['dz'] if gc is None else min(wz + p['dz'], gc - SINK - p['_b'][2])
     keep = [p for p in keep if not p.pop('_gone', False)]
     for p in keep:
-        for k_ in ('_g', '_b'):
+        for k_ in ('_g', '_b', '_cliff'):
             p.pop(k_, None)
-    W['pieces'] = keep
+    W['pieces'] = keep + stacks
     if wet:
         W['faults'].append('%d pieces over water left out' % wet)
     return W
 
 
-def _fill_under(fill, seg, z):
-    """The ground wanted under each piece of a stretch set at z: its own foot (a line from the stretch's first piece to
-    its last cut the corners, and the pieces round them stood in the air)."""
+FILL_IN = 48                   # (a piece's fill line stops this short of its ends: the next piece's own fill takes over at the joint)
+HOLD = -1e9                    # (a fill line's level that raises nothing: the ground under it kept from the neighbours' fill)
+
+
+def _fill_under(fill, seg, z=None, axis=0):
+    """The ground wanted under each piece of a stretch set at z (None: each piece's own height, after the ramps): its
+    own foot, along a short line down the piece's own length (a line from the stretch's first piece to its last cut
+    the corners, and the pieces round them stood in the air; a point at each piece's middle let the neighbour's fill
+    win under the piece's ends). A cliff piece whose foot sits on its crest gets no bank raised under its drop: the
+    cliff is its foot."""
     for p in seg:
         q = p['pose']
-        fill.append(((q.x, q.y), (q.x, q.y), z + p['_b'][2] + SINK + 8))
+        zz = q.z if z is None else z
+        b = p['_b']
+        on_crest = p.get('_cliff') and p['_g'][0] + CLIFF_SIT >= zz + b[2]
+        lo_, hi_ = (b[0], b[3]) if axis == 0 else (b[1], b[4])
+        m, h = (lo_ + hi_) / 2.0, max(0.0, (hi_ - lo_) / 2.0 - FILL_IN)
+        c, s_ = math.cos(q.rz), math.sin(q.rz)
+        if axis == 0:
+            a_, b_ = (q.x + (m - h) * c, q.y - (m - h) * s_), (q.x + (m + h) * c, q.y - (m + h) * s_)
+        else:
+            a_, b_ = (q.x + (m - h) * s_, q.y + (m - h) * c), (q.x + (m + h) * s_, q.y + (m + h) * c)
+        # (a cliff piece on its crest: its line holds the ground as it is (a level nothing can be raised to), so the
+        # neighbouring stretch's bank stops at the joint instead of burying it)
+        fill.append((a_, b_, HOLD if on_crest else zz + b[2] + SINK + 8))
 
 
 def _one_level(segs, W, span, keep):
@@ -1729,10 +1867,18 @@ def _one_level(segs, W, span, keep):
     gs = sorted(p['_g'][0] for p in keep)
     want = gs[int(len(gs) * LEVEL_AT)] + 208               # (level()'s own figure, for the whole ring)
     fill = W.setdefault('fill', [])
+    ax = (W.get('kit') or {}).get('axis', 0)
+    rise = (STEP_PIECES.get(W.get('family')) or {}).get('rise') or HILL_STEP
     for seg in segs:
         lo, hi = span(seg)
         if want < lo:
-            z = lo                                      # (a hill: the wall must show over the ground)
+            # (a hill: the wall must show over the ground. Its level a whole number of rises over the ring's, so the
+            # climb goes in steps a tower hides and the ground is filled under the stretch's low end, not a notch
+            # at every short stretch: a castle's north wall took 13 steps of 7-66 over ten pieces, the user's
+            # Skethwall 2026-11-07, "they dip down when it looks easy to make them level")
+            z = want + math.ceil((lo - want) / rise - 1e-6) * rise
+            if z - hi > FILL_MAX:
+                z = lo                                  # (too much fill under its low end: its own level)
         elif want <= hi:
             z = want
         elif want - hi <= FILL_MAX:
@@ -1744,9 +1890,136 @@ def _one_level(segs, W, span, keep):
         for p in seg:
             p['pose'].z = z
         if z > hi:
-            _fill_under(fill, seg, z)
+            _fill_under(fill, seg, z, ax)
 
 
+CLIFF_SPREAD = 512             # (the ground under one piece's footprint differing by more than this: a cliff piece, its foot
+                               # measured along its crest; half the Imperial wall's 921 height)
+CLIFF_SIT = 64                 # (a cliff piece's foot within this over its crest sits on it: no bank raised under it)
+GATE_FILL = 256                # (the ground under a gate raised this much at most: a gate on a bank of fill had the road climb
+                               # it and drop again inside, the lab's Firuhn gate 572 up, 2026-11-07; the game's gates stand at
+                               # their ground on the low side)
+
+
+def _allow(p):
+    """How much fill a wall piece may stand on."""
+    return GATE_FILL if p.get('kind') == 'gate' else FILL_MAX
+
+
+def _plan_levels(order, W, keep):
+    """The ring cut into as few level stretches as the ground allows, each as long as it can be: a stretch's one level
+    must show every piece (SHOW, SHOW_SHARE) and bury every foot or have the ground filled up to it within FILL_MAX;
+    between two stretches the level changes whole, at an anchor (towered: a wall tower, or a stacked round tower for
+    more than STEP_HIDE), by preference where a tower, gate or corner already stands. The fewest stretches first, then
+    the fewest changes in the open, then the least fill. Each stretch at the ring's level (LEVEL_AT) where its ground
+    allows, a whole number of rises over it on a hill, its own level where the ring's lies too deep to fill. (The
+    stretch-by-stretch rule cut a wall down a mountainside into a staircase: ex_imp_wall_01 at twelve heights, 838 to
+    5375, a step of 256 every length or two, the user's Firuhn, 2026-11-07: "wall sections stay level along the
+    crest; the whole change of level happens at a tower, a keep or a stair that spans it".) (segs, starts)."""
+    n = len(order)
+    if not n:
+        return [], []
+    gs = sorted(p['_g'][0] for p in keep)
+    want = gs[int(len(gs) * LEVEL_AT)] + 208               # (level()'s own figure, for the whole ring)
+    rise = (STEP_PIECES.get(W.get('family')) or {}).get('rise') or HILL_STEP
+    straight = (W.get('kit') or {}).get('straight')
+    LH = [(p['_g'][1] + max(SHOW, SHOW_SHARE * (p['_b'][5] - p['_b'][2])) - p['_b'][5], p['_g'][0] - SINK - p['_b'][2],
+           p['_g'][0] - SINK - p['_b'][2] + _allow(p)) for p in order]        # (lo, hi, hi with its fill)
+    anchorish = [p['id'] != straight for p in order]
+
+    def level_for(lo, hi, cap, ps):
+        if want < lo:
+            z = want + math.ceil((lo - want) / rise - 1e-6) * rise
+            return z if z <= cap else min(lo, cap)          # (a piece no level serves: buried, not floating)
+        if want <= cap:
+            return want
+        return max(lo, min(hi, sum(p['_g'][0] + p['_g'][1] for p in ps) / (2.0 * len(ps)) + 208))
+    NONE = (1 << 30, 0, 0.0)
+    best = [NONE] * (n + 1)
+    best[0] = (0, 0, 0.0)
+    back = [0] * (n + 1)
+    for j in range(1, n + 1):
+        lo_max, hi_min, cap_min = -1e18, 1e18, 1e18
+        for i in range(j, 0, -1):
+            lo, hi, cap = LH[i - 1]
+            lo_max, hi_min, cap_min = max(lo_max, lo), min(hi_min, hi), min(cap_min, cap)
+            if lo_max > cap_min and i < j:
+                break                                   # (no one level serves these: nor any longer stretch)
+            if best[i - 1][0] >= (1 << 30):
+                continue
+            pen = 0 if (i == 1 or anchorish[i - 2] or anchorish[i - 1]) else 1
+            z = level_for(lo_max, hi_min, cap_min, order[i - 1:j])
+            f = sum(max(0.0, min(FILL_MAX, z - h)) for _l, h, _c in LH[i - 1:j])
+            cand = (best[i - 1][0] + 1, best[i - 1][1] + pen, best[i - 1][2] + f)
+            if cand < best[j]:
+                best[j] = cand
+                back[j] = i - 1
+    segs, j = [], n
+    while j > 0:
+        i = back[j]
+        segs.append(order[i:j])
+        j = i
+    segs.reverse()
+    starts, pos = [], 0
+    for seg in segs:
+        lo = max(LH[pos + k][0] for k in range(len(seg)))
+        hi = min(LH[pos + k][1] for k in range(len(seg)))
+        cap = min(LH[pos + k][2] for k in range(len(seg)))
+        z = level_for(lo, hi, cap, seg)
+        for p in seg:
+            p['pose'].z = z
+        if pos:
+            starts.append(pos)
+        pos += len(seg)
+    return segs, starts
+
+
+# the round tower stacked where a wall changes level by more than a wall tower hides (STEP_HIDE): the game's own wall
+# tower stack (castle.TOWER), its crown 384 over the higher wall's origin, light sections every 256 down to the dirt,
+# the darker section at the dirt, the flared base, dark foundations down to the low ground. The two stretches run into
+# its sides at their own heights (the Ebon Tower's keeps and towers in the wall line; the user's Firuhn rebuilt by hand,
+# 2026-11-07: "creatively use towers and stairs and keeps to make sure continuing sections of wall remain level")
+ANCHOR = {'ex_imp': {'top': 'ex_imp_towers_top_01', 'light': 'ex_imp_towers_light_01', 'med': 'ex_imp_towers_med_01',
+                     'base': 'ex_imp_towers_base_01', 'dark': 'ex_imp_towers_dark_01', 'over': 384.0, 'bury': 64.0}}
+ANCHOR_R = 160.0               # (the ground sampled this far round the stack's middle)
+ANCHOR_CLEAR = 240.0           # (no stack where a guard tower or keep stands this near the joint)
+
+
+def _stack_anchor(db, a, b, AN, W, avoid=()):
+    """The stack at the joint between wall pieces a and b: [{'id', 'pose', 'kind': 'stack'}], and (x, y, crown z) noted
+    in W['anchors']. None where a tower of avoid's stands within ANCHOR_CLEAR of the joint."""
+    qa, qb = a['pose'], b['pose']
+    d = math.hypot(qb.x - qa.x, qb.y - qa.y)
+    L = (W.get('kit') or {}).get('L') or 512.0
+    if d <= 1.25 * L:
+        x, y = (qa.x + qb.x) / 2.0, (qa.y + qb.y) / 2.0
+    else:
+        x, y = qa.x + (qb.x - qa.x) * (L / 2.0) / d, qa.y + (qb.y - qa.y) * (L / 2.0) / d
+    if any(math.hypot(x - ax, y - ay) < ANCHOR_CLEAR for ax, ay in avoid):
+        return []
+    low_foot = min(qa.z + a['_b'][2], qb.z + b['_b'][2])
+    gzs = [g for g in (mapdata.terrain_z(db, x + ANCHOR_R * math.cos(k * math.pi / 4), y + ANCHOR_R * math.sin(k * math.pi / 4)) for k in range(8)) if g is not None]
+    gz = max(gzs) if gzs else low_foot
+    gz_lo = min(gzs + [low_foot])
+    top = max(qa.z, qb.z) + AN['over']
+    rz = qa.rz
+    out = [('top', top)]
+    z = top - 256
+    while z - 128 > gz + AN['bury']:
+        out.append(('light', z))
+        z -= 256
+    out.append(('med', z))
+    out.append(('base', z - 384))
+    bottom = z - 640
+    while bottom > gz_lo - 48:
+        out.append(('dark', bottom - 128))
+        bottom -= 256
+    W.setdefault('anchors', []).append((x, y, top))
+    return [{'id': AN[k], 'pose': Pose(x, y, zz, rz, AN[k]), 'kind': 'stack'} for k, zz in out]
+
+
+HILL_STEP = 192                # (a wall with no stair piece of its own climbs a hill in steps of this; the Imperial wall's
+                               # stair rises 256, Hlaalu's, Velothi's and Redoran's 128: STEP_PIECES)
 STEP_HIDE = 640                # (a tower hides a step between two stretches of this much at most: a bigger one raises
                                # the lower stretch, the ground filled under it. A tower stood 1,072 over the corner beside
                                # it and 34 of 167 neighbouring pieces stepped over 256 on the user's island town, "uneven
@@ -1761,6 +2034,7 @@ def _cap_steps(segs, W):
     if n < 2:
         return
     fill = W.setdefault('fill', [])
+    ax = (W.get('kit') or {}).get('axis', 0)
     base = {id(seg): seg[0]['pose'].z for seg in segs}
 
     def top(seg):
@@ -1778,7 +2052,7 @@ def _cap_steps(segs, W):
                 continue
             for p in low:
                 p['pose'].z = z
-            _fill_under(fill, low, z)
+            _fill_under(fill, low, z, ax)
             changed = True
         if not changed:
             break
@@ -1792,17 +2066,20 @@ def _no_dips(segs, W):
     if n < 3:
         return
     fill = W.setdefault('fill', [])
+    ax = (W.get('kit') or {}).get('axis', 0)
     for _round in range(n):
         changed = False
         for k, seg in enumerate(segs):
             z = seg[0]['pose'].z
             zp, zn = segs[k - 1][0]['pose'].z, segs[(k + 1) % n][0]['pose'].z
-            target = min(zp, zn)
+            # (never further than FILL_MAX over its own ground: raised to a neighbour already standing on fill, a
+            # stretch stood with its feet beyond what fill_ground brings up)
+            target = min(zp, zn, min(p['_g'][0] - SINK - p['_b'][2] + _allow(p) for p in seg))
             if z >= target - DIP_MIN or target - z > FILL_MAX:
                 continue
             for p in seg:
                 p['pose'].z = target
-            _fill_under(fill, seg, target)
+            _fill_under(fill, seg, target, ax)
             changed = True
         if not changed:
             break
@@ -1818,7 +2095,9 @@ STEP_PIECES = {'ex_hlaalu': {'id': 'ex_hlaalu_wall_up_01', 'rise': 128.0, 'up': 
                # buttress side would come inside)
                # (and a stretch's level may give up to 'give' to land on a whole rise: the game's Imperial walls step by
                # 256 and nothing else, their ground made to fit)
-               'ex_imp': {'id': 'ex_imp_wall_stairs_02', 'alt': 'ex_imp_wall_stairs_01', 'rise': 256.0, 'up': 1, 'turn': math.pi / 2, 'give': 200},
+               # (and one rise only: the game's walls climb one stair length, 256, between levels (10 of 10 changes at a
+               # stair, lab gamewalls 2026-11-07); a bigger change hides in a tower)
+               'ex_imp': {'id': 'ex_imp_wall_stairs_02', 'alt': 'ex_imp_wall_stairs_01', 'rise': 256.0, 'up': 1, 'turn': math.pi / 2, 'give': 200, 'most': 1},
                't_de_setveloth': {'id': 't_de_setveloth_x_wall_05', 'rise': 128.0, 'up': 1},
                # (a Redoran house's fort wall, Indarys's wu_01: the castle maker's Redoran stronghold on a slope)
                'ex_r_pcfort': {'id': 'ex_r_pcfort_wu_01', 'rise': 128.0, 'up': -1}}
@@ -1826,10 +2105,10 @@ STEP_MOST = 3                  # (a step of more rises than this is left to the 
 STEP_GIVE = 48                 # (how far a stretch's level may leave what its ground asks, to climb on whole steps)
 
 
-def _stepped(db, A, B, St, straight, span, memo):
+def _stepped(db, A, B, St, straight, span, memo, fill=0.0):
     """Where level stretch B follows A along the same side, B's level set a whole number of rises from A's (within
-    what its ground allows) and the lengths between climbed on the step piece: the last of A's going down, the first
-    of B's going up."""
+    what its ground allows, the ground filled under it up to fill) and the lengths between climbed on the step piece:
+    the last of A's going down, the first of B's going up."""
     a, b = A[-1], B[0]
     if a.get('run') is None or a.get('run') != b.get('run') or a['id'] != straight or b['id'] != straight:
         return False
@@ -1839,7 +2118,9 @@ def _stepped(db, A, B, St, straight, span, memo):
     # (a stretch's level may give a little, its foot or top a hand's breadth off: else a whole number of rises seldom
     # fitted, the ground allowing a stretch 10 to 60 units of play, and no step piece was ever laid, lab r26)
     give = St.get('give', STEP_GIVE)
-    ks = [k for k in range(-STEP_MOST, STEP_MOST + 1) if lo - give <= za + k * rise <= hi + give]
+    most = St.get('most', STEP_MOST)
+    # (and below only STEP_GIVE: 'give' under lo let a whole side drop 188 and show 0.47, the lab's castle 2026-11-07)
+    ks = [k for k in range(-most, most + 1) if lo - STEP_GIVE <= za + k * rise <= hi + (fill or give)]
     if not ks:
         return False
     k = min(ks, key=lambda k: (abs(k), abs(za + k * rise - zb)))

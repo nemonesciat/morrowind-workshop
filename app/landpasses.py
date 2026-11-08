@@ -84,6 +84,51 @@ def settle(F, inside, angle, rounds=24, rate=0.5):
     return first
 
 
+KINK = 48                      # (a vertex whose height differs from its two neighbours' mean, across 128, by more than this is a kink:
+                               # the game's towns measure 4% such vertices, a made one 18%, the user's Skethwall, 2026-11-07)
+
+
+def corners(F, inside, tol=48.0, rounds=3, keep=None):
+    """The creases and facets left by shaped ground rounded off: a kinked vertex (KINK, across 128 in x or y) is moved
+    half way to its four neighbours' mean, at most tol a round, for a few rounds; held points (F.hold) and keep (a
+    weight a point, 1 = left alone) stay. A straight bank keeps its slope: only its lip and foot are eased, by tol at
+    most each round. The kinks at first."""
+    w, h, z = F.w, F.h, F.z
+    hold = getattr(F, 'hold', None)
+    first = None
+    for r in range(rounds):
+        moves = []
+        n = 0
+        for y in range(1, h - 1):
+            row = y * w
+            for x in range(1, w - 1):
+                i = row + x
+                if not inside[i]:
+                    continue
+                if hold is not None and hold[i] > 0.5:
+                    continue
+                if keep is not None and keep[i] >= 0.99:
+                    continue
+                c = z[i]
+                lx = z[i - 1] + z[i + 1] - 2 * c
+                ly = z[i - w] + z[i + w] - 2 * c
+                if abs(lx) <= KINK and abs(ly) <= KINK:
+                    continue
+                n += 1
+                d = 0.5 * (lx + ly) / 4.0
+                d = max(-tol, min(tol, d))
+                if keep is not None:
+                    d *= (1.0 - keep[i])
+                moves.append((i, d))
+        if first is None:
+            first = n
+        if not moves:
+            break
+        for i, d in moves:
+            z[i] += d
+    return first or 0
+
+
 def _rms(F, inside, lag, mask=None):
     """RMS height difference `lag` points apart along the rows, over the land (above the water) inside."""
     w, z = F.w, F.z

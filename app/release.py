@@ -434,6 +434,49 @@ def leftovers(db):
     return {'people': people, 'lines': lines, 'routines': rows, 'cells': cells, 'items': items, 'summary': summary}
 
 
+def loose_cloths(db):
+    """The mod's own stretched cloths outdoors that nothing holds up: a flat, long canopy model (townlife._stretched) with no
+    pole within reach and no building piece at each end of its span (townlife.cloth_held). The game hangs such cloths
+    from poles or across an alley; a town made before 2.6.14 copied them over doors from a game building whose market
+    stall stood under them. [(cell, refkey, id)]"""
+    import mapdata
+    import townlife
+    p = db.project
+    out = []
+    memo = {}
+    for ck, c in p.cells.items():
+        if not ck.startswith('#'):
+            continue
+        mine = []
+        for rk, r in c['refs'].items():
+            if r.get('deleted') or not r.get('subs'):
+                continue
+            subs = [(t, unb64(d)) for t, d in r['subs']]
+            rid, pos, scale, _dead = ref_info(subs)
+            if not rid or not townlife.AWNING.search(rid):
+                continue
+            if rid not in memo:
+                ri = db.resolve_id(rid)
+                memo[rid] = (mapdata.object_bounds(db, ri) if ri is not None else None) or None
+            if memo[rid] and townlife._stretched(memo[rid], scale or 1.0):
+                mine.append((rk, {'id': rid, 'p': list(pos), 's': scale or 1.0, 'type': 'STAT'}))
+        if not mine:
+            continue
+        near = []
+        gx, gy = (int(v) for v in ck[1:].split(','))
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                try:
+                    near += mapdata.cellmap(db, '#%d,%d' % (gx + dx, gy + dy))['refs']
+                except Exception:
+                    pass
+        for rk, r in mine:
+            others = [o for o in near if not (o.get('k') == rk)]
+            if not townlife.cloth_held(db, r, others, memo)[0]:
+                out.append((ck, rk, r['id']))
+    return out
+
+
 def sweep(db):
     """The leftovers taken out, as one change."""
     p = db.project
@@ -869,6 +912,13 @@ def checks(db):
         out.append({'id': 'leftovers', 'sev': 'warning', 'title': 'Leftovers: %s' % ', '.join(lo['summary']),
                     'detail': 'What an interior taken out leaves behind: people placed nowhere (their lines and daily routines with them), and mod-made places no door leads to. Harmless in the game, but baggage.',
                     'items': lo['items'][:40], 'fix': {'action': 'sweep', 'label': 'Sweep them out'}})
+    lc = loose_cloths(db)
+    if lc:
+        out.append({'id': 'cloths', 'sev': 'warning', 'title': '%d cloth awning%s hanging in the air' % (len(lc), '' if len(lc) == 1 else 's'),
+                    'detail': 'Long sheets of cloth with no pole and no wall at the far end of their span, over a door or a street. The game hangs '
+                              'these from poles or across an alley; a town made before 2.6.14 copied them from a game building whose market stall stood under them.',
+                    'items': [{'label': '%s in %s' % (rid, _cell_label(db, ck)), 'cell': ck} for ck, rk, rid in lc[:40]],
+                    'fix': {'action': 'cloths', 'label': 'Take them down'}})
     qg = _quest_gaps(db)
     if qg:
         out.append({'id': 'quests', 'sev': 'warning', 'title': 'Quest stages and topics nobody can reach',
@@ -909,6 +959,13 @@ def fix(db, action):
         return sweep(db)
     if action == 'keeprolls':
         return keep_rolls(db)
+    if action == 'cloths':
+        lc = loose_cloths(db)
+        for ck, rk, _rid in lc:
+            p.cells[ck]['refs'].pop(rk, None)
+        db.sync_project()
+        commit(db, 'Health check: took down %d cloth awning%s nothing held up' % (len(lc), '' if len(lc) == 1 else 's'))
+        return {'fixed': len(lc)}
     if action == 'clean':
         ident = _identical(db)
         tiny = _tiny_moves(db)

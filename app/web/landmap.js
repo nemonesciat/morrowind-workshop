@@ -546,6 +546,7 @@ function lsHtml(){
         <label title="Whose rocks: the line's own region's, or another's">Like ${lsRegionSel('ls-like', sel.like || '', 'its own region')}</label>
         ${picked.length ? `<label class="msg" style="display:flex;gap:6px;align-items:center" title="Chain the rocks you have selected (${esc(picked.slice(0, 3).join(', '))}${picked.length > 3 ? '…' : ''}) instead of the region's"><input type="checkbox" id="ls-cpick" ${p.pick ? 'checked' : ''}> Use the ${picked.length} selected rock${picked.length === 1 ? '' : 's'}</label>` : ''}
         <label class="msg" style="display:flex;gap:6px;align-items:center" title="Lift the ground behind the line to the face's top, fading back into the land, so the land meets the cliff"><input type="checkbox" id="ls-craise" ${p.raise ? 'checked' : ''}> Raise the land behind it</label>
+        <label class="msg" style="display:flex;gap:6px;align-items:center" title="The steep ground within 1,000 of the line clad the way the game's gorges are: faces, rocks on the lip and at the foot, every piece sunk until no bottom edge shows"><input type="checkbox" id="ls-cclad" ${p.clad !== 0 ? 'checked' : ''}> Rock the slopes beside it</label>
         <div class="actions"><button class="btn sm primary" id="ls-clay" title="Lay the rocks along the line now. One Undo takes them back; lay it again for another arrangement">🪨 Lay the cliff</button></div>`;
     }
     if (sel.kind === 'river' || sel.kind === 'spring') params += `<label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ls-canyon" ${p.canyon ? 'checked' : ''}> A canyon (steep walls)</label>`;
@@ -581,7 +582,7 @@ function lsHtml(){
 // stage 3 and 4 (landpasses.py, landdress.py): the natural passes and the dressing, with the plan's own defaults
 const LS_PASSES = {detail: true, detail_k: 1, settle: true, angle: 0, gullies: 0, terraces: false, tstep: 256, tsharp: 0.6, tslope: 20, valleys: 0,
   rock: 0, rthick: 512, rdip: 0, rdir: 0, rshare: 0.45, ronly: ''};
-const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1, flow: 0, shore: ''};
+const LS_DRESS = {variety: -1, tints: true, seams: true, hollows: true, shade: 1, region: '', assign: false, rocks: 1, flow: 0, shore: '', clad: true};
 function lsPassesHtml(P){
   const A = P.passes = Object.assign({}, LS_PASSES, P.passes || {}), D = P.dress = Object.assign({}, LS_DRESS, P.dress || {});
   const info = LM.prevInfo || {};
@@ -614,6 +615,7 @@ function lsPassesHtml(P){
       ${chk('lsd-hollows', D.hollows, 'Darker hollows, lighter crests', 'As the region\'s land is: the land survey measured hollows 6 to 14% darker than level ground, crests 1 to 5% lighter')}
       ${sl('shade', 'dr', 'Shading', 0, 1, 0.05, D.shade, 'How strongly the tints, seams and hollows are laid on')}
       ${sl('rocks', 'dr', 'Rocks', 0, 2, 0.1, D.rocks, 'The region\'s rocks on the new slopes and cliffs, as thickly as the game sets them on such ground (1), fewer or more (0: none). Set when you shape')}
+      ${D.rocks > 0 ? chk('lsd-clad', D.clad, 'Rock the steep ground', 'A ridge, valley, river or plateau\'s steep ground clad in the region\'s cliff pieces the way the game\'s gorges and hilltops are: big faces, smaller rocks on the lip and at the foot, banks along the water, outcrops on knolls; every piece sunk until no bottom edge shows. Off: the plain rock scatter alone') : ''}
       ${sl('flow', 'dr', 'Stream beds', 0, 2, 0.1, D.flow, 'Where much water runs, the region\'s water\'s-edge textures (mud, wet ground), so streams show. The Bitter Coast\'s own land does this; most regions\' don\'t, so 0 (off) is the game\'s way there. Higher: smaller streams too')}
       ${chk('lsd-tview', LM.texView, 'Show the textures in the preview', 'Each texture its own colour over the preview, as the plan would lay them')}
       <div class="ls-tex" id="ls-texlegend">${lsLegend()}</div>
@@ -759,6 +761,7 @@ function lsPassesBind(P){
   on('lsd-tints', el => { D.tints = el.checked; lsChanged(); });
   on('lsd-seams', el => { D.seams = el.checked; lsChanged(); });
   on('lsd-hollows', el => { D.hollows = el.checked; lsChanged(); });
+  on('lsd-clad', el => { D.clad = el.checked; lsChanged(); });
   on('lsd-tview', el => { LM.texView = el.checked; lsBuildPrev(); drawMap(); });
   if (typeof regLoad === 'function' && !REG.data) regLoad().then(() => renderWside()).catch(() => {});
 }
@@ -814,6 +817,7 @@ function lsBind(){
   const cs = $('#ls-cside'); if (cs) cs.onchange = () => { sel.p.side = +cs.value; lsChanged(); };
   const cp = $('#ls-cpick'); if (cp) cp.onchange = () => { sel.p.pick = cp.checked ? 1 : 0; lsChanged(); };
   const cr = $('#ls-craise'); if (cr) cr.onchange = () => { sel.p.raise = cr.checked ? 1 : 0; lsChanged(); };
+  const cc = $('#ls-cclad'); if (cc) cc.onchange = () => { sel.p.clad = cc.checked ? 1 : 0; lsChanged(); };
   const cl = $('#ls-clay'); if (cl) cl.onclick = () => lsLayCliff(sel, cl);
   const cy = $('#ls-canyon'); if (cy) cy.onchange = () => { sel.p.canyon = cy.checked ? 1 : 0; lsChanged(); };
   const se = $('#ls-sea'); if (se) se.onchange = () => { sel.p.sea = se.checked ? 1 : 0; lsChanged(); };
@@ -973,7 +977,7 @@ function lsTownHtml(sel){
     if (!T.plan.plots.length) info = `<div class="msg" style="font-size:11.5px">No room for ${esc(T.plan.culture || 'its')} buildings here: draw the town bigger.</div>`;
   }
   const ws = LM.walls || [];
-  return `<label title="Whose towns it is planned like: their streets, how close their buildings stand, how many shops and taverns. Blank: the nearest game town's">Like <select class="inp" id="ls-tcult"><option value="">the nearest town's${!p.culture && cult ? ' (' + esc(cult) + ')' : ''}</option>${cs.map(c => `<option value="${esc(c.id)}" ${p.culture === c.id ? 'selected' : ''} title="${esc((c.examples || []).join(', '))}">${esc(c.id)} (${c.towns} towns)</option>`).join('')}</select></label>
+  return `<label title="Whose towns it is planned like: their streets, how close their buildings stand, how many shops and taverns. Blank: the nearest game town's">Like <select class="inp" id="ls-tcult"><option value="">the nearest town's${!p.culture && cult ? ' (' + esc(cult) + ')' : ''}</option>${cs.map(c => `<option value="${esc(c.id)}" ${p.culture === c.id ? 'selected' : ''} title="${esc((c.examples || []).join(', '))}">${esc(c.id)} (${c.towns} towns)</option>`).join('')}</select></label>${lsLookHtml(p, cult, cs)}
     <label title="A wall round it, the game's own pieces joined as its walls are, with gates where the streets go out">Wall <select class="inp" id="ls-twall"><option value="">none</option><option value="auto" ${p.walls === 'auto' ? 'selected' : ''}>its culture's</option>${ws.map(w => `<option value="${esc(w.id)}" ${p.walls === w.id ? 'selected' : ''} title="${esc((w.towns || []).join(', '))}">${esc(lsWallName(w.id))}</option>`).join('')}</select></label>
     <label title="The town's name: its interiors are called after it (Balmora, …). Blank: the one shown">Name <input class="inp" id="ls-tname" value="${esc(p.name || '')}" placeholder="${esc((T && T.plan && T.plan.name) || '')}" maxlength="40" spellcheck="false"></label>
     <label title="How many buildings, against the culture's own towns of this size (1). Up for a city, down for a hamlet. A walled town fills its wall at 1 and over">Density <input type="range" id="ls-tdens" min="0.3" max="4" step="0.1" value="${p.density || 1}"><span>${p.density || 1}</span></label>
@@ -995,9 +999,17 @@ function lsWallName(id){
   const names = {imp: 'Imperial', hlaalu: 'Hlaalu', stronghold: 'Stronghold', velothi: 'Velothi', redoran: 'Redoran', nord: 'Nord', de: 'Dunmer', com: 'Common', telvanni: 'Telvanni'};
   return names[n.toLowerCase()] || n.charAt(0).toUpperCase() + n.slice(1);
 }
+// (the Look: which of the culture's building families leads the town, Balmora's or Narsis's; shown when the culture
+// has two or more; the style review, 2026-11-07)
+function lsLookHtml(p, cult, cs){
+  const c = cs.find(x => x.id === cult), looks = (c && c.looks) || [];
+  if (looks.length < 2) return '';
+  return `<label title="Which of its building families the town is built of: each is named for the game town it is known by. Blank: as the game mixes them">Look <select class="inp" id="ls-tlook"><option value="">as the game mixes them</option>${looks.map(l => `<option value="${esc(l.id)}" ${p.look === l.id ? 'selected' : ''} title="${esc(l.buildings + ' buildings, leads ' + l.towns + ' town' + (l.towns === 1 ? '' : 's'))}">${esc(l.label)}</option>`).join('')}</select></label>`;
+}
 function lsTownBind(){
   const P = LM.plan, sel = P && P.layers[LM.sel]; if (!sel || sel.kind !== 'town') return;
-  const c = $('#ls-tcult'); if (c) c.onchange = () => { sel.p.culture = c.value; lsChanged(true); };
+  const c = $('#ls-tcult'); if (c) c.onchange = () => { sel.p.culture = c.value; delete sel.p.look; lsChanged(true); };
+  const lk = $('#ls-tlook'); if (lk) lk.onchange = () => { if (lk.value) sel.p.look = lk.value; else delete sel.p.look; lsChanged(true); };
   const wl = $('#ls-twall'); if (wl) wl.onchange = () => { sel.p.walls = wl.value; lsChanged(true); };
   const stw = $('#ls-tstreets'); if (stw) stw.onchange = () => { sel.p.streets = stw.value; lsChanged(true); };
   const tdn = $('#ls-tdens'); if (tdn){ tdn.oninput = () => { tdn.nextElementSibling.textContent = tdn.value; }; tdn.onchange = () => { sel.p.density = +tdn.value; lsChanged(true); }; }
@@ -1101,6 +1113,7 @@ function lsTownOf(L){
 function lsTownOpts(T){
   const o = {}, p = T.p || {};
   if (p.streets) o.streets = p.streets;
+  if (p.look) o.family = p.look;
   if (p.density && +p.density !== 1) o.density = +p.density;
   if (p.counts && Object.keys(p.counts).length) o.counts = p.counts;
   if (p.skip && p.skip.length) o.skip = p.skip;
@@ -1250,12 +1263,14 @@ function lsPreviewSoon(){
 }
 async function lsPreview(){
   if (!LM.data || !LM.plan || LM.prevOn === false){ LM.prevStale = false; return; }
-  // (nothing to preview: also stops one still on its way from painting the old plan back. With no shapes left after a
-  // Shape them, the preview is what Shape would make now: the ground before it, not the shaped land drawn on)
+  // (nothing to preview: also stops one still on its way from painting the old plan back. With no shapes left, the
+  // map shows the land as it is: after a Shape them, Clear shapes and a town drawn, the preview of "what Shape would
+  // make now", the land under the mod, was painted over the marked cells and the ridge just shaped vanished from the
+  // 2D map while the 3D view had it, the user 2026-11-07)
   // (towns, streets, zones and walls shape nothing: with only those, no preview; and a change to them alone previews
   // nothing again. Every change to a town re-ran the ground's preview, 3 seconds on 4 cells, the user's "so slow", 2026-11-01)
   const gl = LM.plan.layers.filter(L => !lsNoShape(L.kind));
-  if (!LM.data.marks.length || (!gl.length && !LM.shapedOnce)){ ++LM.prevN; LM.prev = null; LM.prevSig = null; LM.prevStale = false; drawMap(); return; }
+  if (!LM.data.marks.length || !gl.length){ ++LM.prevN; LM.prev = null; LM.prevSig = null; LM.prevStale = false; drawMap(); return; }
   const sig = JSON.stringify([LM.data.marks, gl, Object.entries(LM.plan).filter(([k]) => k !== 'layers')]);
   if (sig === LM.prevSig && LM.prevData && !LM.prevBusy){ LM.prevStale = false; drawMap(); return; }
   // (one preview at a time: changes made while it works are previewed once it's back, the latest only. Each edit
@@ -1651,7 +1666,7 @@ async function lsApply(btn){
   try {
     const r = await post('/api/land/plan/apply', {cells: LM.data.marks, plan: LM.plan});
     clearInterval(poll);
-    toast(`Shaped ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.new ? ` (${r.new} new)` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed the ground` : ''}${r.shaded && r.shaded.length ? '; shaded' : ''}${r.rocks ? `; ${r.rocks} rocks set` : ''}${r.assigned ? `; ${r.assigned} put in the region` : ''}. Changes to the ground show in game after a restart.`);
+    toast(`Shaped ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.new ? ` (${r.new} new)` : ''}${r.eased ? `; ${r.eased} steps too steep for the game eased` : ''}${r.moved ? `; ${r.moved} objects followed the ground` : ''}${r.shaded && r.shaded.length ? '; shaded' : ''}${r.rocks ? `; ${r.rocks} rocks set` : ''}${r.clad_pending ? '; the cliff cladding is still learning the game\'s rocks, shape again later for it' : ''}${r.assigned ? `; ${r.assigned} put in the region` : ''}. Changes to the ground show in game after a restart.`);
     // (the land made, against the region's own figures from the land survey)
     const m = r.measured || {}, figs = Object.entries(r.region_figures || {});
     if (figs.length && m.slope){
@@ -1719,9 +1734,9 @@ async function lsLayCliff(L, btn){
   p.seed = (p.seed || 0) + 1;
   if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Laying…'; }
   try {
-    const r = await post('/api/land/cliff', {pts: L.pts, side: p.side || 0, height: p.height || 600, amount: p.amount != null ? p.amount : 1, like: L.like || '', pieces, raise: !!p.raise, seed: p.seed});
+    const r = await post('/api/land/cliff', {pts: L.pts, side: p.side || 0, height: p.height || 600, amount: p.amount != null ? p.amount : 1, like: L.like || '', pieces, raise: !!p.raise, seed: p.seed, clad: p.clad !== 0});
     if (!r.rocks) toast(r.why ? `Nothing laid: ${r.why}.` : 'Nothing laid.', true);
-    else toast(`Laid ${r.rocks} rocks (${r.parts.face} face, ${r.parts.foot} foot, ${r.parts.crest} crest)${r.region ? ', like ' + r.region : ''}${r.raised ? ', land raised behind' : ''}. Undo takes them back.`);
+    else toast(`Laid ${r.rocks} rocks (${r.parts.face} face, ${r.parts.foot} foot, ${r.parts.crest} crest${r.clad ? `, ${r.clad} on the slopes` : ''})${r.region ? ', like ' + r.region : ''}${r.raised ? ', land raised behind' : ''}. Undo takes them back.`);
     lsChanged();
     await afterChange();
     for (const k of Object.keys(W.cells)) if (W.cells[k] && W.cells[k].exists) await worldReloadCell(k);
@@ -1751,12 +1766,14 @@ async function lmDressAsk(){
   // (shapes with an outline: dress only inside one; the picked one, else the first Dress area)
   const rings = lmDressRings();
   const pick = rings.find(o => o.i === LM.sel) || rings.find(o => o.L.kind === 'area');
-  const D = LM.dress = LM.dress || {rocks: true, growth: true, amt: 1, like: '', brush: ''};
+  const D = LM.dress = LM.dress || {rocks: true, clad: true, growth: true, amt: 1, like: '', brush: ''};
+  if (D.clad == null) D.clad = true;
   if (D.brush && !mine.some(s => s.key === D.brush)) D.brush = '';
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(440px,92vw)"><h3 style="margin-top:0">🪨 Dress ${cells.length ? cells.length + ' cell' + (cells.length === 1 ? '' : 's') : 'an area'}</h3>
     <div class="msg" style="display:flex;gap:14px">
       <label title="The region's rocks and cliffs, as thick as the game sets them on such ground, turned to their slopes"><input type="checkbox" id="lmd-rocks" ${D.rocks ? 'checked' : ''}> Rocks & cliffs</label>
+      <label title="The steep ground clad the way the game's gorges and hilltops are: big faces, rocks on the lip and at the foot, banks, outcrops on knolls; no bottom edge left showing"><input type="checkbox" id="lmd-clad" ${D.clad ? 'checked' : ''}> Steep faces</label>
       <label title="Trees, plants, grass and logs: the region's own squares of land, laid where the ground is like theirs"><input type="checkbox" id="lmd-grow" ${D.growth ? 'checked' : ''}> Trees & plants</label></div>
     <label class="msg" style="display:flex;gap:8px;align-items:center;margin-top:8px" title="Whose look: the land nearest (each cell's own region, or for open sea the nearest region with land), or one region's for all">Like
       <select id="lmd-like" style="flex:1"><option value="">The land nearest</option>${looks.map(o => `<option value="${esc(o.region)}">${esc(o.name)}</option>`).join('')}</select></label>
@@ -1777,7 +1794,7 @@ async function lmDressAsk(){
   bg.querySelector('#lmd-like').value = D.like || '';
   bg.querySelector('#lmd-ok').onclick = async () => {
     const ok = bg.querySelector('#lmd-ok');
-    D.rocks = bg.querySelector('#lmd-rocks').checked; D.growth = bg.querySelector('#lmd-grow').checked;
+    D.rocks = bg.querySelector('#lmd-rocks').checked; D.growth = bg.querySelector('#lmd-grow').checked; D.clad = bg.querySelector('#lmd-clad').checked;
     D.like = bg.querySelector('#lmd-like').value; D.amt = +amt.value;
     const bs = bg.querySelector('#lmd-brush'); D.brush = bs ? bs.value : '';
     if (!D.rocks && !D.growth) return toast('Pick rocks, trees and plants, or both.', true);
@@ -1785,7 +1802,7 @@ async function lmDressAsk(){
     const send = ring ? lmRingCells(ring) : cells;
     ok.disabled = true; ok.innerHTML = '<span class="spin"></span>Dressing…';
     try {
-      const r = await post('/api/land/dress', {cells: send, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: ring, brush: D.growth ? D.brush : ''});
+      const r = await post('/api/land/dress', {cells: send, like: D.like, parts: {rocks: D.rocks ? D.amt : 0, clad: D.rocks && D.clad ? D.amt : 0, growth: D.growth ? D.amt : 0}, outline: ring, brush: D.growth ? D.brush : ''});
       close();
       const what = [r.growth ? `${r.growth} trees and plants` : '', r.rocks ? `${r.rocks} rocks` : ''].filter(Boolean).join(' and ');
       toast(what ? `Set ${what} in ${r.cells} cell${r.cells === 1 ? '' : 's'}${r.looks.length ? ', like ' + r.looks.join(', ') : ''}. Undo takes them back.`

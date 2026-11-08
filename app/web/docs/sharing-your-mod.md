@@ -41,7 +41,9 @@ Four steps:
 1. **Check**: the mod checked for what would trouble players, each finding marked **Needs fixing**, **Worth a look**
    or **Good to know**, with a safe fix where there is one. **↻ Check again** after fixing. **Leftovers** is what a
    place taken out leaves behind: people placed nowhere (with their lines and daily routines) and mod-made places no
-   door leads to; **Sweep them out** removes them in one change.
+   door leads to; **Sweep them out** removes them in one change. **Cloth awnings hanging in the air** are long
+   sheets of cloth with no pole and no wall at the far end of their span (a town made before 2.6.14 copied them over
+   doors from a game building whose market stall stood under them); **Take them down** removes them in one change.
 2. **Describe**: author, description (shown in the OpenMW Launcher), version and what's new, where to start (left
    empty, it lists the doors into your new places), credits and permissions. It writes the **Readme** and the **Nexus
    description** for you; **⧉ Copy** either.

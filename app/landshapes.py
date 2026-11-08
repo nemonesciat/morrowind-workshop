@@ -31,6 +31,7 @@ from array import array
 from collections import Counter
 
 import landrange
+import landregion
 import landscape
 import mapdata
 from editing import EditError, commit, _require_project
@@ -89,6 +90,7 @@ def save_plan(db, plan):
              'paint': plan.get('paint', True) is not False, 'seed': int(plan.get('seed') or 1),
              'passes': _clean_opts(plan.get('passes'), PASSES), 'dress': _clean_opts(plan.get('dress'), DRESS),
              'protect': _clean_opts(plan.get('protect'), PROTECT),
+             'terrain': landregion.clean(plan.get('terrain')),
              'only': [str(r).lower()[:64] for r in (plan.get('only') or []) if r][:20]}
     p.land = dict(p.land or {}, plan=clean)
     p.save_soon()
@@ -96,12 +98,15 @@ def save_plan(db, plan):
 
 
 # stage 3 and 4 settings (landpasses, landdress), with their defaults
-PASSES = {'detail': True, 'detail_k': 1.0, 'settle': True, 'angle': 0.0, 'gullies': 0.0, 'terraces': False, 'tstep': 256.0,
+PASSES = {'corners': True, 'round': True, 'detail': True, 'detail_k': 1.0, 'settle': True, 'angle': 0.0, 'gullies': 0.0, 'terraces': False, 'tstep': 256.0,
           'tsharp': 0.6, 'tslope': 20.0, 'valleys': 0.0,
           'rock': 0.0, 'rthick': 512.0, 'rdip': 0.0, 'rdir': 0.0, 'rshare': 0.45, 'ronly': ''}
 DRESS = {'variety': -1.0, 'tints': True, 'seams': True, 'hollows': True, 'shade': 1.0, 'region': '', 'assign': False,
          'rocks': 1.0, 'flow': 0.0,      # (flow: stream beds, off; only the Bitter Coast's land does it, landdress.FLOW_BED)
-         'shore': ''}                    # (shores as the region lays them, or 'sand' / 'rock' whatever the region)
+         'shore': '',                    # (shores as the region lays them, or 'sand' / 'rock' whatever the region)
+         'clad': True}                   # (the steep ground clad in the region's cliff pieces, rockface.py; CLAD_KINDS shapes)
+# the shapes whose steep ground the rock-face pass clads (faces, lips, feet, banks, outcrops) when Dressing's Rocks is on
+CLAD_KINDS = ('ridge', 'valley', 'river', 'plateau')
 
 
 def _beds(F, inside, dress, seed):
@@ -237,6 +242,23 @@ def _outline(F, L, reach):
 
 
 # ---------- the layers ----------
+
+def _round_pts(pts, closed, rounds=2):
+    """A drawn outline's corners rounded (Chaikin): an open line keeps its ends."""
+    pts = [(float(x), float(y)) for x, y in pts]
+    for _ in range(rounds):
+        if len(pts) < 3:
+            return pts
+        q = [] if closed else [pts[0]]
+        pairs = list(zip(pts, pts[1:] + ([pts[0]] if closed else [])))
+        for a, b in pairs:
+            q.append((0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]))
+            q.append((0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]))
+        if not closed:
+            q.append(pts[-1])
+        pts = q
+    return pts
+
 
 def _coast(F, L, seed):
     _coasts(F, [L], seed)
@@ -766,6 +788,16 @@ def _drop_rocks(db, cells):
     return n
 
 
+def _cell_points(F, G, k, h):
+    """(index in F, height) for each of F's points in cell k, from its 65 x 65 heights h (edges included)."""
+    s = F.s
+    ox, oy = (k[0] - G.x0) * 64, (k[1] - G.y0) * 64
+    for ly in range(0, N, s):
+        row = ((oy + ly) // s) * F.w
+        for lx in range(0, N, s):
+            yield row + (ox + lx) // s, h[ly * N + lx]
+
+
 def _work(db, cells, plan, s):
     keys = sorted({landrange._key(k) for k in cells or []})
     if not keys:
@@ -804,7 +836,33 @@ def _work(db, cells, plan, s):
             cxs = {G.x0 + (x - 1) // per, G.x0 + x // per} if x % per == 0 else {G.x0 + x // per}
             if all((cx, cy) in marked for cx in cxs for cy in cys):
                 inside[y * F.w + x] = 1
+    # the region pass (landregion): read from the land under the mod everywhere, the marked cells without the fresh
+    # start's fade towards what they hold, and the cells round them that the mod already changed kept aside (ring),
+    # so the pass is worked out over them too and matched to what they hold: no step and no band of the game's land
+    # where two runs meet
+    TR = landregion.clean(plan.get('terrain'))
+    terrain = bool(TR['on'])
+    ring_under = {}
+    if terrain and db.project and _clean_opts(plan.get('protect'), PROTECT).get('fresh'):
+        for gx in range(G.x0, G.x1 + 1):
+            for gy in range(G.y0, G.y1 + 1):
+                k = (gx, gy)
+                if k not in G.land or ('LAND|%d,%d' % k) not in db.project.records:
+                    continue
+                try:
+                    h = _under(db, k)
+                except Exception:
+                    continue
+                if not h or len(h) != N * N:
+                    continue
+                if k in marked:
+                    for i, v in _cell_points(F, G, k, h):
+                        if inside[i]:
+                            F.z[i] = before[i] = v
+                else:
+                    ring_under[k] = h
     springs = {}
+    P_round = bool(_clean_opts(plan.get('passes'), PASSES).get('round', True))
     # (the coasts together, where the first of them stands in the order: see _coasts)
     coasts = [L for L in layers if L['kind'] == 'coast']
     F.flatw = [0.0] * len(F.z)                          # (how much a point is a plateau's level top: _plateau)
@@ -817,6 +875,10 @@ def _work(db, cells, plan, s):
         zb = list(F.z) if L['only'] or L['like'] else None
         fn = {'plateau': _plateau, 'ridge': _ridge, 'river': _river, 'valley': _valley, 'lake': _lake}.get(L['kind'])
         if fn:
+            # (the drawn outline's corners rounded first: a shape's straight sides and sharp corners left creases
+            # along their bisectors and facets in the ground round it, the user's "jagged polygons", 2026-11-07)
+            if P_round and len(L.get('pts') or ()) >= 3:
+                L = dict(L, pts=_round_pts(L['pts'], closed=L['kind'] in ('plateau', 'valley', 'lake')))
             fn(F, L, seed)
         elif L['kind'] == 'spring':
             springs[L['id'] or str(len(springs))] = _spring(F, L, seed, inside)
@@ -844,10 +906,28 @@ def _work(db, cells, plan, s):
             F.z[i] = min(before[i], FLOOR)
     # rolling ground on the plan's land, as rough as the region's (none under the sea: the bed stays smooth)
     shaped = [min(1.0, abs(F.z[i] - before[i]) / 256.0) for i in range(len(F.z))]     # (how far the shapes moved it)
+    tinfo, matched = None, set()
+    if terrain:
+        # (all of the marked land is the pass's own)
+        shaped = [1.0 if inside[i] else s_ for i, s_ in enumerate(shaped)]
+        calc = bytearray(inside)
+        for k, h in ring_under.items():
+            for i, v in _cell_points(F, G, k, h):
+                if not inside[i]:
+                    matched.add(i)
+                    F.z[i] = v
+                    calc[i] = 1
+        tinfo = landregion.run(db, F, calc, TR, seed, _region_weights(db, F, ''),
+                               say=lambda what, frac: _say(what, 0.04 + 0.5 * frac))
+        comp = {i: F.z[i] for i in matched}
+        for i in matched:
+            F.z[i] = before[i]
+        tinfo['matched'] = round(landregion.match_edges(F, inside, comp, {i: before[i] for i in matched},
+                                                        float(plan.get('fade', 1024))))
     F.shaped = shaped
     rough = float(plan.get('rough', 1.0))
     reg = {k: (dress['region'] or landrange._region_of(db, k[0], k[1])).lower() for k in keys}
-    if rough > 0 and layers:
+    if rough > 0 and layers and not terrain:
         amps = {r: rough * landrange._roughness(db, [r]) / 1.8 * 0.6 for r in like}
         for i in range(len(F.z)):
             z = F.z[i]
@@ -862,6 +942,8 @@ def _work(db, cells, plan, s):
     used_regions = sorted(r for r, w in like.items() if any(w[i] for i in range(len(w)) if inside[i]))
     # the natural passes (landpasses): terraces, rain gullies, then settling the steepest slopes to the region's
     F.info = {'regions': used_regions, 'marked_regions': marked_regions}
+    if tinfo is not None:
+        F.info['terrain'] = tinfo
     if springs:
         F.info['springs'] = springs
     P = _clean_opts(plan.get('passes'), PASSES)
@@ -887,7 +969,7 @@ def _work(db, cells, plan, s):
         F.info['valleys'] = round(deep)
     if layers or P['gullies'] > 0 or P['terraces']:
         import landpasses
-        if P['detail'] and layers:
+        if P['detail'] and layers and not terrain:
             _say('Roughening the ground', 0.26)
             changed = bytearray(1 if F.z[i] != before[i] and F.flatw[i] < 0.5 else 0 for i in range(len(F.z)))
             live = [r for r in used_regions if any(like[r][i] for i in range(len(F.z)) if changed[i] and inside[i])]
@@ -937,6 +1019,10 @@ def _work(db, cells, plan, s):
                 F.info['too_steep'] = landpasses.settle(F, inside, ang, rounds=60)
             else:
                 F.info['too_steep'] = landpasses.settle(F, inside, ang)
+    if P.get('corners', True) and (layers or P['gullies'] > 0 or P['terraces']):
+        # (the creases and facets the shapes and passes leave, rounded off: the user's "jagged polygons", 2026-11-07)
+        _say('Rounding the corners', 0.58)
+        F.info['corners'] = landpasses.corners(F, inside)
     # the ground held under what is built on it: buildings, ruins, doors (the loose things move with the ground)
     prot = _clean_opts(plan.get('protect'), PROTECT)
     F.hold, F.held = None, []
@@ -948,8 +1034,10 @@ def _work(db, cells, plan, s):
                 if k:
                     F.z[i] = F.z[i] + (before[i] - F.z[i]) * k
         F.info['held'] = len(F.held)
-    # the fade at the edge of the marked cells: nothing moves on an edge shared with a cell that isn't marked
-    dist = landrange._distance(inside, F.w, F.h)
+    # the fade at the edge of the marked cells: nothing moves on an edge shared with a cell that isn't marked (but
+    # where the region pass was matched to cells the mod already changed, it runs on to them unfaded)
+    dist = landrange._distance(inside if not matched else bytearray(1 if inside[i] or i in matched else 0 for i in range(len(inside))),
+                               F.w, F.h)
     fade = float(plan.get('fade', 1024))
     for i in range(len(F.z)):
         t = _smooth(dist[i] * F.step / fade) if inside[i] else 0.0
@@ -1156,7 +1244,10 @@ def _apply(db, cells, plan):
     moved = paths = 0
     dress = _clean_opts(plan.get('dress'), DRESS)
     ids, files = {}, {}
-    paint = plan.get('paint', True) is not False
+    TR = landregion.clean(plan.get('terrain'))
+    terrain_only = TR['on'] and not [L for L in plan.get('layers') or [] if L.get('on', True) is not False and L.get('kind') not in NO_SHAPE]
+    # (the region pass alone keeps the land's textures unless asked: it changes the relief, not the ground's look)
+    paint = plan.get('paint', True) is not False and (TR['paint'] or not terrain_only)
     if paint:
         import landdress
         seed_ = int(plan.get('seed') or 1)
@@ -1203,13 +1294,28 @@ def _apply(db, cells, plan):
     rocks = 0
     refs_of = lambda k: set((db.project.cells.get('#%d,%d' % k) or {}).get('refs') or {})
     had = {k: refs_of(k) for k in keys}
+    clad = 0
     if dress['rocks'] > 0 and plan.get('layers'):
-        _say('Setting the rocks', 0.83)
         import cliffrocks
         F.z = list(G.z)
         region_of = lambda x, y: reg.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
-        rocks = cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, region_of, float(dress['rocks']),
-                                                          int(plan.get('seed') or 1), F.hold))
+        hold = F.hold
+        # (the steep ground of a ridge, valley, river or plateau clad first, the way the game's gorges and hilltops
+        # are: faces, lips, feet, banks and outcrops, every piece settled by the rim rule, rockface.py; the gentle
+        # ground is cliffrocks' as before, kept off the zones the pass took)
+        if dress.get('clad') and any(L.get('kind') in CLAD_KINDS for L in plan['layers'] if L.get('on', True) is not False):
+            import rockface
+            _say('Cladding the steep ground', 0.80)
+            rf = rockface.clad(db, keys, like=dress['region'], amount=float(dress['rocks']), seed=int(plan.get('seed') or 1),
+                               field=(F, inside, F.hold), region_of=region_of, weight=F.shaped,
+                               say=lambda what, frac: _say(what, 0.80 + 0.03 * frac))
+            clad = rf['rocks']
+            F.info['clad'] = {k: v for k, v in rf.items() if k in ('parts', 'dropped', 'cover', 'steep_points', 'zone_points', 'knolls', 'rejects', 'why')}
+            if rf.get('why') != 'learning':
+                hold = [max(F.hold[i] if F.hold else 0.0, 1.0 if rf['zones'][i] else 0.0) for i in range(len(F.z))]
+        _say('Setting the rocks', 0.83)
+        rocks = clad + cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, region_of, float(dress['rocks']),
+                                                                 int(plan.get('seed') or 1), hold))
         db.sync_project()
     set_rocks = {k: sorted(refs_of(k) - had[k]) for k in keys}
     shaded = [m for m in ('texture', 'seams', 'hollows') if m in shaded]
@@ -1226,10 +1332,14 @@ def _apply(db, cells, plan):
     _keep_base(db, before, keys, set_rocks)
     m = measure(F, keys)
     n = len([L for L in plan.get('layers') or [] if L.get('on', True) is not False])
-    commit(db, 'Shaped %d cell%s with %d shape%s%s' % (len(keys), '' if len(keys) == 1 else 's', n, '' if n == 1 else 's',
-                                                       (' (%d new)' % made) if made else ''))
+    if terrain_only:
+        commit(db, 'Shaped %d cell%s with the region pass%s' % (len(keys), '' if len(keys) == 1 else 's', (' (%d new)' % made) if made else ''))
+    else:
+        commit(db, 'Shaped %d cell%s with %d shape%s%s' % (len(keys), '' if len(keys) == 1 else 's', n, '' if n == 1 else 's',
+                                                           (' (%d new)' % made) if made else ''))
     texn = sorted(len(set(v)) for v in ids.values())
-    return {'cells': len(keys), 'new': made, 'eased': eased, 'moved': moved, 'paths': paths, 'info': F.info, 'rocks': rocks,
+    return {'cells': len(keys), 'new': made, 'eased': eased, 'moved': moved, 'paths': paths, 'info': F.info, 'rocks': rocks, 'clad': clad,
+            'clad_pending': (F.info.get('clad') or {}).get('why') == 'learning',
             'shaded': shaded, 'assigned': assigned, 'measured': m,
             'textures_a_cell': texn[len(texn) // 2] if texn else 0,
             'region_figures': _figures(db, sorted(set(reg.values()) | set(F.info.get('regions') or [])))}

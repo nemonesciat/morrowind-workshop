@@ -172,6 +172,8 @@ it runs again when you change a shape.
 **Start from the land under my mod** (on by default): each Shape starts from the marked cells' land as it is
 without your mod (the game's land, or the sea bed), so a moved or removed shape leaves nothing behind. Off, it
 starts from your land as it is now, keeping what you sculpted there by hand (shapes you took out then stay in it).
+The map's preview shows what Shape them would make only while the plan has shapes; with none left (after Clear
+shapes, say) the map shows your land as it is.
 
 **Hold the ground under buildings, ruins and doors** keeps the ground exactly as it is under them (outlined
 on the map), fading back to the plan over the **Margin**. Rocks, plants, people and paths move with the
@@ -186,6 +188,7 @@ ground instead.
 | Rock layers | Bands of hard and soft rock: hard ones stand as cliffs with ledges on top, soft ones wear back to scree. **Layer height**, **Hard rock** (how many bands are hard), **Tilt** and **Tilt way** (tilted layers make one-sided ridges), **Only in**. |
 | Rain gullies | Raindrops cut small gullies and leave fans at their feet. |
 | Settle the steepest slopes | Ground slides down where it's steeper than the region's own steepest. |
+| Round the corners | On by default. The corners of what you drew are rounded before shaping, and the creases and facets the shapes leave are eased afterwards, so a plateau or valley drawn with a few clicks has no straight edges or sharp bends. A made town rounds its own ground the same way, keeping its streets, plots, paths and wall. |
 | Terraces | Steps up the slopes (the Ashlands look). |
 
 ### Dressing
@@ -198,6 +201,7 @@ ground instead.
 | Shores | As the region lays them (West Gash's shores are rock, Nedothril's half sand), or **sandy** beaches or **rocky** shores whatever the region: at the water's edge and on the flat ground just over it, in the region's own sand or rock texture where it has one. Also in Texture only. |
 | Tint, seams, hollows, Shading | The region's own colouring, laid on as the game does. |
 | Rocks | The region's rocks on the new slopes and cliffs, as thickly as the game sets them on such ground, at the foot, on the face and at the crest, turned to the slope as the game turns them. |
+| Rock the steep ground | On by default. The steep ground of a ridge, valley, river or plateau is clad the way the game's gorges and hilltops are: the region's big cliff pieces on the faces first and smaller rocks filling in, until the faces are as much under rock as the region's own; smaller rocks on the lip just above and boulders at the foot; rocks along the water's edge; and on a knoll (a hilltop of 300 or more) an outcrop packed into one mass, as the game's hills that read as mountains have. Every piece is sunk until no bottom edge shows: the open rim of its mesh is checked point by point against the ground and the rocks round it, and a piece that would need sinking more than most of its height is left out. Nothing goes on roads, under buildings or in the water. Off: the plain rock scatter alone. |
 | Stream beds | Where much water runs, the region's water's-edge textures (mud, wet ground), so streams show. Off by default: the Bitter Coast's own land does this, most regions' don't. Also in Texture only. |
 
 ### Texture only
@@ -262,6 +266,9 @@ more and some **Tilt**.
   crest, each turned to its own slope as the game turned that rock, so faces look out over the drop and crests hang
   over it. Steep faces are then covered as much as the region covers its own: most of a West Gash cliff hides
   behind rock, a coast's stays bare.
+- **Steep faces:** on by default with Rocks & cliffs. The steep ground is clad first the way the game's gorges are
+  (big faces, rocks on the lip and at the foot, banks, outcrops on knolls, no bottom edge showing: see *Rock the
+  steep ground* under Dressing); the plain scatter then takes the gentle ground.
 - **Trees & plants:** trees, plants, grass and logs from the region's own land. Its wild land is cut into squares
   (1024 across), each kept whole with what grows on it, and yours is filled with squares of the same kind of ground
   (as steep, as high, by the water or not), grown on the same texture where the region has them: grass tufts on the
@@ -282,7 +289,8 @@ chained along the line, each in a pose the game set such a rock in, facing the l
 lie at the foot and pieces on the crest. **Height** scales them within the sizes the game uses; **Drops** says which
 side falls away when the lower side isn't the one you mean; **Like** borrows another region's rocks; with rocks
 selected, **Use the selected rocks** chains those instead; **Raise the land behind it** lifts the ground to the
-face's top. One Undo; lay it again for another arrangement.
+face's top; **Rock the slopes beside it** (on by default) clads the steep ground within about 1,000 of the line as
+*Rock the steep ground* does, leaning its pieces on the chain. One Undo; lay it again for another arrangement.
 
 To place rocks, cliffs, trees and plants by hand, open the **🎨 Style palette** and pick a region under **Regions**.
 
@@ -292,10 +300,14 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 
 - **Like:** whose towns it is planned after (streets, spacing, shops and taverns). The Imperial looks are kept apart:
   **Imperial** (the classic white towns and forts), **Anvil** and **Gold Coast**. **🎲 Another** gives another layout.
+- **Look:** which of the culture's building families the town is built of, each named for the game town it is known
+  by (a Hlaalu town of Balmora's houses, or of Narsis's). Shown when the culture has more than one. Blank: as the
+  game mixes them.
 - **Wall:** none, its culture's own, or one you pick. The wall is made of the game's pieces, each joined to the
   next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out.
   Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
-  the land round it), and the wall sunk deep enough that no foot shows. Where it must change height, Hlaalu and
+  the land round it), and the wall sunk deep enough that no foot shows; inside, the town's ground is brought level
+  with the wall's foot for a way in, not left as a bank under the wall with the houses dug in below it. Where it must change height, Hlaalu and
   Velothi walls climb on their own step pieces; Imperial walls step at a tower. Gates stand on the low side, where
   the town's streets go out, and the streets run on through them, never out onto the sea or over a cliff. Stairs inside lead up to the wall walk.
   The wall goes round at one level: where the ground lies lower it is brought up to the wall's foot, and the wall
@@ -310,6 +322,21 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   outline (the game's towns gather round their middle and leave open ground); lower it for a hamlet. A walled town
   fills its wall at 1 and over.
 - **Streets:** as its towns' (wide), **narrower**, or **lanes**, one ground square (512) across.
+- **On a hillside** (ground rising 400 or more across the outline) the streets run in **level bands** along the slope,
+  a row of houses apart up it, the main street the middle band; the bands are joined by **ramps** found at a walkable
+  grade, or by a straight **stair street** where a ramp would have to wander; each band's rows are a district of their
+  own. Where the ground is a bowl or a crest of short contours and bands would halve the town, the plain plan stands.
+- **The ground:** each street is one level plane across and runs smoothly along; each plot is levelled to its door;
+  the ground from a door's front to its street is graded even. A door on a hillside whose straight way down would be
+  steeper than a quarter rise a unit gets a **footpath** instead: a tread cut into the hill along the slope (never
+  built up), level across and no steeper than a third, with a level landing at the door and a bank on the uphill side,
+  the way you would shape one with Flatten. The few doors that get neither stand too far above or below any street.
+- **Rocks on the hill:** a town on steep ground gets the rocks its culture's own towns stand, at their rate a building
+  (a Mournhold town many, a Common one few, and fewer still where the land round the town is bare): behind the houses
+  on their terraces' cut banks, under the downhill edge of a floor standing over the land so it rests on a rock top,
+  along the footpaths' banks and the wall's, at the towers' feet, and a crown of big rocks packed into one mass where
+  the town stands on a knoll. Each rock is sunk until the bottom edge of its mesh lies under the ground all round, as
+  the game's are; one that would still show is left out. Never on a street, a plot, a tread or in a door's way.
 - **Draw 〰 Street / ▧ Zone / 🧱 Wall:** shapes of the town's own, drawn inside it.
   - **Streets** you draw are its streets, in place of the ones it would plan.
   - A **zone** is a quarter: **Houses** keeps shops, taverns and halls out; **Business** draws shops, taverns and

@@ -333,6 +333,102 @@ def model_segments(db, model, T=None):
     return res
 
 
+RIM_LOOP = 0.15        # a rock's bottom rim: the loops of open edges (one face on them) whose lowest point lies in the
+                       # lowest RIM_LOOP of the model's height (a rock group's upper rocks have rims of their own,
+                       # resting on the lower ones, and its seams run up it: neither is a bottom edge)
+RIM_CLOSED = 0.12      # a closed shell's rim is its lowest RIM_CLOSED of vertices by height
+RIM_MAX = 160          # rim points kept a model at most (evenly thinned)
+
+
+def rim(db, model):
+    """The bottom rim of a model's mesh, in its own coordinates, for the burial rule of rocks (rockblend.py): the
+    vertices of its open edges (one face on them, as segments_from_shapes finds them) in the lower RIM_LOW of its
+    height, or, for a closed shell with no open edge, its lowest RIM_CLOSED of vertices. {'pts': [(x, y, z)], 'b': box,
+    'open': n open edges, 'closed': bool}, cached with the model's segments; None when the mesh can't be read."""
+    if not model:
+        return None
+    rel = 'meshes/' + model.lower().replace('\\', '/')
+    m = _load_models()
+    size = _size_of(db, rel)
+    key = 'rim|%s|%s' % (rel, size)
+    with _lock:
+        hit = m['data'].get(key)
+    if hit is not None:
+        return hit or None
+    res = None
+    try:
+        data = db.meshes.read(rel)
+        shapes = nif.mesh_from_nif(data, max_verts=60000) if data else None
+        res = rim_from_shapes(shapes) if shapes else None
+    except Exception:
+        res = None
+    with _lock:
+        m['data'][key] = res or {}
+        m['dirty'] += 1
+        if m['dirty'] >= 50:
+            save()
+    return res
+
+
+def rim_from_shapes(shapes):
+    lo = [1e18] * 3
+    hi = [-1e18] * 3
+    key = lambda v: (round(v[0] / WELD), round(v[1] / WELD), round(v[2] / WELD))
+    count = Counter()
+    where = {}
+    allv = []
+    for sh in shapes or ():
+        p, idx = sh['p'], sh['i']
+        for k in range(0, len(idx) - 2, 3):
+            ks = []
+            for j in (idx[k], idx[k + 1], idx[k + 2]):
+                v = (p[j * 3], p[j * 3 + 1], p[j * 3 + 2])
+                for a in range(3):
+                    if v[a] < lo[a]:
+                        lo[a] = v[a]
+                    if v[a] > hi[a]:
+                        hi[a] = v[a]
+                kv = key(v)
+                where.setdefault(kv, v)
+                ks.append(kv)
+                allv.append(v)
+            for e in ((ks[0], ks[1]), (ks[1], ks[2]), (ks[2], ks[0])):
+                count[frozenset(e)] += 1
+    if lo[0] > hi[0] or not allv:
+        return None
+    h = hi[2] - lo[2]
+    op = [tuple(e) for e, n in count.items() if n == 1]
+    pts = []
+    if op:
+        adj = defaultdict(list)
+        for a, b in op:
+            adj[a].append(b)
+            adj[b].append(a)
+        seen = set()
+        for v0 in list(adj):
+            if v0 in seen:
+                continue
+            comp, stack = [], [v0]
+            seen.add(v0)
+            while stack:
+                v = stack.pop()
+                comp.append(v)
+                for w in adj[v]:
+                    if w not in seen:
+                        seen.add(w)
+                        stack.append(w)
+            if min(where[k][2] for k in comp) <= lo[2] + RIM_LOOP * h:
+                pts += [where[k] for k in comp]
+    closed = not op
+    if closed:
+        cut = lo[2] + RIM_CLOSED * h
+        pts = sorted({key(v): v for v in allv if v[2] <= cut}.values())
+    if len(pts) > RIM_MAX:
+        step = len(pts) / float(RIM_MAX)
+        pts = [pts[int(i * step)] for i in range(RIM_MAX)]
+    return {'pts': [[round(c, 1) for c in v] for v in pts], 'b': [round(v, 2) for v in lo + hi], 'open': len(op), 'closed': closed}
+
+
 # ------------------------------------------------------------------ a place
 def _tile_of(db, rid):
     """(kit prefix, tile size) when this is a kit's tile piece (an ordinary or a tall one), else (prefix or None, None)."""

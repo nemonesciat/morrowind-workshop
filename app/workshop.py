@@ -840,7 +840,14 @@ class Handler(BaseHTTPRequestHandler):
                     import stylesurvey
                     own = [{'id': '\u2605' + n, 'towns': 0, 'own': True, 'like': o.get('like') or '', 'prefabs': len(o.get('prefabs') or {})}
                            for n, o in sorted(stylesurvey.own_styles().items()) if o.get('prefabs')]
-                    self._json({'cultures': townplan.cultures(db) + own, 'walls': townwalls.choices(db)})
+                    import townbuild
+                    cs = townplan.cultures(db)
+                    for c_ in cs:
+                        try:
+                            c_['looks'] = townbuild.looks(db, c_['id'])       # (Balmora / Narsis: the style review, 2026-11-07)
+                        except Exception:
+                            c_['looks'] = []
+                    self._json({'cultures': cs + own, 'walls': townwalls.choices(db)})
             elif u.path == '/api/land/autotex':
                 # the Ground brush's Auto paint: one cell's texture for every patch, as the region's land has it at
                 # that slope, height and shore (landshapes.texture_only), as {ids, paths} the brush paints with
@@ -2128,7 +2135,8 @@ class Handler(BaseHTTPRequestHandler):
                     with editing.operation('cliff'):
                         return self._json(cliffline.lay(db, body.get('pts') or [], int(body.get('side') or 0), float(body.get('height') or 600),
                                                         body.get('like') or '', body.get('seed'), body.get('pieces') or None,
-                                                        bool(body.get('raise')), float(body.get('amount') or 1.0)))
+                                                        bool(body.get('raise')), float(body.get('amount') or 1.0),
+                                                        clad=body.get('clad', True) is not False))
                 if u.path == '/api/land/field':
                     # a farm or an orchard on a drawn outline (storydress.lay_field): fields of the region's crop in
                     # the culture's farm fence, or a loose grid of its fruit tree; one Undo. A blank culture is the

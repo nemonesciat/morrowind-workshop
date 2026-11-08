@@ -24,6 +24,7 @@ RAISE_IN = 420                  # the ground raised along a line this far behind
 BIG = 220                       # a face piece is at least this wide (its smaller footprint side) and tall
 SMALL = 260                     # a foot boulder is at most this wide
 MAX_PIECES = 400
+CLAD_REACH = 1024               # the steep ground this far from the line is clad round the chain (rockface.py)
 LAST = {}
 
 
@@ -238,7 +239,19 @@ def _raise(db, pts, side, height):
     return townwalls._shape_ground(db, runs, (), 0.0, height * 1.2)
 
 
-def lay(db, pts, side=0, height=600, like='', seed=None, pieces=None, raise_ground=False, amount=1.0, commit=True):
+def _dist(segs, x, y):
+    """The distance from a point to the line."""
+    best = None
+    for a, b, L, _t in segs:
+        dx, dy = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+        u = max(0.0, min(L, (x - a[0]) * dx + (y - a[1]) * dy))
+        d = math.hypot(x - (a[0] + dx * u), y - (a[1] + dy * u))
+        if best is None or d < best:
+            best = d
+    return best if best is not None else 1e9
+
+
+def lay(db, pts, side=0, height=600, like='', seed=None, pieces=None, raise_ground=False, amount=1.0, commit=True, clad=True):
     import editing
     seed = int(seed) if seed is not None else random.randrange(1, 1 << 30)
     info = {}
@@ -251,9 +264,21 @@ def lay(db, pts, side=0, height=600, like='', seed=None, pieces=None, raise_grou
     rocks, info = plan(db, pts, side, float(height), like, seed, pieces, float(amount))
     made = cliffrocks.place(db, rocks) if rocks else 0
     db.sync_project()
+    # (the steep ground within CLAD_REACH of the line clad by the rock-face pass, rockface.py: the slopes the chain
+    # stands on and the lip and foot round it come out as the game's gorges do, the chain's pieces leant on)
+    cladn = 0
+    if clad and made:
+        import rockface
+        segs_, _total = _poly([(float(p[0]), float(p[1])) for p in pts])
+        near_cells = sorted({(int(math.floor(r['x'] / 8192.0)), int(math.floor(r['y'] / 8192.0))) for r in rocks})
+        try:
+            cladn = rockface.clad(db, near_cells, mask=lambda x, y: _dist(segs_, x, y) <= CLAD_REACH, like=like, amount=float(amount),
+                                  seed=seed, parts=('face', 'lip', 'foot'))['rocks']
+        except editing.EditError:
+            cladn = 0
     if (made or cells) and commit:
-        editing.commit(db, 'Laid a cliff of %d rock%s' % (made, '' if made == 1 else 's'))
+        editing.commit(db, 'Laid a cliff of %d rock%s' % (made + cladn, '' if made + cladn == 1 else 's'))
     LAST.clear()
-    LAST.update(info, rocks=made, parts={p: sum(1 for r in rocks if r['part'] == p) for p in ('face', 'foot', 'crest')}, raised=cells)
-    return {'rocks': made, 'side': info.get('side'), 'region': info.get('region'), 'seed': seed, 'raised': cells,
-            'parts': LAST['parts'], 'why': info.get('why', '')}
+    LAST.update(info, rocks=made, parts={p: sum(1 for r in rocks if r['part'] == p) for p in ('face', 'foot', 'crest')}, raised=cells, clad=cladn)
+    return {'rocks': made + cladn, 'side': info.get('side'), 'region': info.get('region'), 'seed': seed, 'raised': cells,
+            'parts': LAST['parts'], 'clad': cladn, 'why': info.get('why', '')}

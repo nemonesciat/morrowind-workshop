@@ -137,6 +137,10 @@ def _size(r):
 POLE = re.compile(r'pole|post|pillar|beam|support|frame', re.I)
 CLOTH_THIN = 100               # (a canopy model under this tall is the cloth alone, with no poles of its own)
 CLOTH_HOLD = 320               # (it is kept in a scene only with a pole within this of it, or a wall it hangs from)
+CLOTH_FLAT = 50                # (a canopy model under this thick is a sheet of cloth: Tamriel Data's overhangs are 27-46; the game's
+                               # bracket awnings, furn_de_overhang_05/09, the Common wooden one, the GC canopies, 76-97, hold themselves off a wall)
+CLOTH_LONG = 300               # (a sheet this long across is stretched: each end of its span wants a pole or a wall)
+WALL_AT = 60                   # (an end this near a building piece hangs from it)
 
 
 def _held_cloth(things, refs):
@@ -204,6 +208,7 @@ def _bottom(r):
 def _learn(db):
     import towndress
     AW = defaultdict(dict)                       # (main piece -> {interior: [awning]}: the very game building's own)
+    rmemo = {}
     C = defaultdict(lambda: {'towns': 0, 'buildings': 0, 'road': 0, 'n': Counter(), 'big': Counter(), 'big_b': 0, 'guard_at': Counter(), 'folk_at': Counter(),
                              'guards': Counter(), 'folk': Counter(), 'sellers': Counter(), 'wander': defaultdict(list),
                              'stalls': [], 'lone_stalls': [], 'storage': []})
@@ -385,13 +390,27 @@ def _learn(db):
             main = (b.get('main') or '').lower()
             if not main:
                 continue
-            mine_ = []
+            mine_r = []
             for r in aws:
                 lx, ly = towndress._local(b['x'], b['y'], b['face'] + math.pi, r['p'][0], r['p'][1])
                 if abs(lx) < AWNING_NEAR[0] and AWNING_NEAR[1] < ly < AWNING_NEAR[2]:
                     near = min(bl, key=lambda o: math.hypot(r['p'][0] - o['x'], r['p'][1] - o['y']))
                     if near is b:
-                        mine_.append(dict(towndress._thing(r, b['x'], b['y'], b['face'] + math.pi, r['p'][2] - b['z'], True)))
+                        mine_r.append(r)
+            # (a cloth-only overhang comes with the poles that hold it, or not at all: Firewatch hangs two of Tamriel
+            # Data's cloths off Kul-Tei's house front over an egg seller's crates; copied over a Nord house's door
+            # alone they hung over an empty street "like rugs", the user's Skethwall 2026-11-07)
+            held, marked = [], set()
+            for r in list(mine_r):
+                if r.get('b') and _stretched(r['b'], r.get('s') or 1.0):
+                    ok, poles = cloth_held(db, r, refs, rmemo)
+                    if not ok:
+                        mine_r.remove(r)
+                        continue
+                    marked.add(id(r))
+                    held += [o for o in poles if not any(o is h for h in held + mine_r)]
+            mine_ = [dict(towndress._thing(r, b['x'], b['y'], b['face'] + math.pi, r['p'][2] - b['z'], True), **({'held': True} if id(r) in marked else {}))
+                     for r in mine_r + held]
             if mine_ and b.get('interior'):
                 AW[main][(b.get('interior') or '').lower()] = mine_
     out = {}
@@ -545,25 +564,75 @@ def _depth(sc):
     return max([60.0] + ys)
 
 
-def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
-    """Stalls (with their sellers' spots) and storage for a town being dressed, in its dressing's space. [thing], each
-    {'id', 'p', 's', 'pts', 'role', 'stall'?}; SEEN['sellers'] = the spots of the stalls' sellers."""
+def _stretched(b_, sc_):
+    """A canopy model that is a long sheet of cloth (under CLOTH_FLAT thick, CLOTH_LONG or more across): nothing of its own
+    holds its far end up. (Measured over the game's towns, cloth_game.py 2026-11-07: Tamriel Data's overhang_01a..10a,
+    211-269 by 347-469 by 27-46; the bracket awnings are 76-97 thick and under 250 deep.)"""
+    sc_ = sc_ or 1.0
+    return bool(b_) and (b_[5] - b_[2]) * sc_ < CLOTH_FLAT and max(b_[3] - b_[0], b_[4] - b_[1]) * sc_ >= CLOTH_LONG
+
+
+def _pt_poly_dist(pts, x, y):
     import towndress
-    L = ready(db)
-    SEEN.clear()
-    SEEN['sellers'] = []
-    if not L:
-        return []
-    cult = plan.get('culture')
-    built = [q for q in plan['plots'] if q.get('b') and q.get('door')]
-    B = len(built)
-    if not B:
-        return []
-    out = []
-    # awnings over doors, on buildings of the models the game hangs them on, as often as it does
+    if towndress._in_poly(pts, x, y):
+        return 0.0
+    best = 1e9
+    for i in range(len(pts)):
+        (ax, ay), (bx, by) = pts[i], pts[(i + 1) % len(pts)]
+        dx, dy = bx - ax, by - ay
+        L = dx * dx + dy * dy
+        t = 0.0 if not L else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L))
+        best = min(best, math.hypot(x - (ax + t * dx), y - (ay + t * dy)))
+    return best
+
+
+def _span_ends(pts, b):
+    """The midpoints of a footprint's two short edges (the ends of a cloth's span)."""
+    if b[3] - b[0] >= b[4] - b[1]:
+        return [((pts[1][0] + pts[2][0]) / 2, (pts[1][1] + pts[2][1]) / 2), ((pts[3][0] + pts[0][0]) / 2, (pts[3][1] + pts[0][1]) / 2)]
+    return [((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2), ((pts[2][0] + pts[3][0]) / 2, (pts[2][1] + pts[3][1]) / 2)]
+
+
+def _ends_at_walls(db, id_, x, y, rz, s, polys, memo):
+    """Whether each end of a cloth's span lies within WALL_AT of one of the polygons (building footprints, the wall)."""
+    import towndress
+    pts, b = towndress._rect_of(id_, x, y, rz, s or 1.0, memo, db)
+    if not pts:
+        return False
+    return all(any(_pt_poly_dist(p_, ex, ey) <= WALL_AT for p_ in polys) for ex, ey in _span_ends(pts, b))
+
+
+def cloth_held(db, r, refs, memo):
+    """What holds a stretched cloth up, among a place's refs ({'id', 'p', 's', 'type', 'b'?}): (held, poles). Held by poles
+    within CLOTH_HOLD of it (returned, to come along with it), or by a building piece within WALL_AT of each end of its
+    long axis (a cloth across an alley). Kul-Tei's in Firewatch hang off one wall over an egg seller's crates: not held."""
+    import towndress
+    x, y, z = r['p'][0], r['p'][1], r['p'][2]
+    poles = [o for o in refs if o is not r and POLE.search(o['id']) and abs(o['p'][2] - z) < 600 and
+             math.hypot(o['p'][0] - x, o['p'][1] - y) <= CLOTH_HOLD]
+    if poles:
+        return True, poles
+    big = []
+    for o in refs:
+        if o is r or o.get('type') != 'STAT' or AWNING.search(o['id']) or math.hypot(o['p'][0] - x, o['p'][1] - y) > 1500:
+            continue
+        opts, ob = towndress._rect_of(o['id'], o['p'][0], o['p'][1], o['p'][5], o.get('s') or 1.0, memo, db)
+        if opts and max(ob[3] - ob[0], ob[4] - ob[1]) * (o.get('s') or 1.0) >= 300 and ob[2] * (o.get('s') or 1.0) + o['p'][2] < z < ob[5] * (o.get('s') or 1.0) + o['p'][2] + 200:
+            big.append(opts)
+    return _ends_at_walls(db, r['id'], x, y, r['p'][5], r.get('s') or 1.0, big, memo), []
+
+
+def _door_awnings(db, L, built, memo, space=None):
+    """Awnings over doors, on made buildings of the very game building the game hangs them on, as it does: [thing].
+    A stretched cloth (_stretched) is laid only with a pole of its list within CLOTH_HOLD (the survey brings a cloth's
+    poles along) or with a building footprint or the wall (space's 'plot' and 'wall' polygons) at each end of its span
+    here: the game's spanned an alley to a facing wall, and the made town's streets are wider (Kul-Tei's cloths over an
+    empty street, the user's Skethwall 2026-11-07)."""
+    import towndress
     AWS = L.get('_awnings') or {}
-    n_aw = 0
+    out = []
     cat_memo = {}
+    walls = [p_ for p_ in (space.polys if space is not None else []) if space.kind.get(id(p_)) in ('plot', 'wall')]
     for q in built:
         # (only the very building's own: the same model with its door elsewhere took one 358 in the air and two cut
         # into its walls, lab T5. The made building is the game example its uid names)
@@ -586,6 +655,10 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
                 ri_ = db.resolve_id(t['id'])
                 b_ = memo[('b', t['id'])] = (mapdata.object_bounds(db, ri_) if ri_ is not None else None) or (0, 0, 0, 0, 0, 0)
             sc_ = t.get('s') or 1.0
+            if _stretched(b_, sc_) and \
+                    not any(POLE.search(o['id']) and math.hypot(o['x'] - t['x'], o['y'] - t['y']) <= CLOTH_HOLD for o in A[ex] if o is not t) and \
+                    not _ends_at_walls(db, t['id'], wx, wy, (t['rz'] + q['face'] + math.pi) % (2 * math.pi), sc_, walls, memo):
+                continue
             # (nor one hung low over a door's way: a balcony 112 over the door front, the in-game walk 2026-11-03)
             if t['z'] + b_[2] * sc_ < AWNING_HEAD:
                 rz_ = (t['rz'] + q['face'] + math.pi) % (2 * math.pi)
@@ -595,8 +668,26 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
             out.append({'id': t['id'], 'p': [round(wx, 2), round(wy, 2), round(q['door_z'] + t['z'], 2), t.get('rx') or 0.0, t.get('ry') or 0.0,
                                              round((t['rz'] + q['face'] + math.pi) % (2 * math.pi), 5)],
                         's': t.get('s') or 1.0, 'role': 'awning', 'hung': True, 'on': None, 'up': 0.0})
-            n_aw += 1
-    SEEN['awnings'] = n_aw
+    return out
+
+
+def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
+    """Stalls (with their sellers' spots) and storage for a town being dressed, in its dressing's space. [thing], each
+    {'id', 'p', 's', 'pts', 'role', 'stall'?}; SEEN['sellers'] = the spots of the stalls' sellers."""
+    import towndress
+    L = ready(db)
+    SEEN.clear()
+    SEEN['sellers'] = []
+    if not L:
+        return []
+    cult = plan.get('culture')
+    built = [q for q in plan['plots'] if q.get('b') and q.get('door')]
+    B = len(built)
+    if not B:
+        return []
+    # awnings over doors, on buildings of the models the game hangs them on, as often as it does
+    out = _door_awnings(db, L, built, memo, space)
+    SEEN['awnings'] = len(out)
     # the stalls: as many as the culture's towns have outdoor sellers at a stall a building, and the lone ones
     scenes = [s for s in _pick(L, cult, 'stalls') if _ground_things(s)]
     lone = [s for s in _pick(L, cult, 'lone_stalls', 2) if _ground_things(s)]

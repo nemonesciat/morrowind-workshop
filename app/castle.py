@@ -2198,6 +2198,19 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
             tw.fill_ground(db, W, skip, keep=guard)         # (the ground up to the feet of the stretches raised out of a dip)
         except Exception as e:
             print('castle wall fill:', e)
+        # (where the wall changes level by more than a wall tower hides, grounded stacks a round tower at the joint; the
+        # castle's own round towers do the same where they stand (their crown at the higher wall), so a stack there goes)
+        if P.get('towers'):
+            W['pieces'] = [p for p in W['pieces'] if p.get('kind') != 'stack' or
+                           all(math.hypot(p['pose'].x - t['x'], p['pose'].y - t['y']) > TOWER_CLEAR + 300 for t in P['towers'])]
+        try:
+            away = [(t['x'], t['y']) for t in P['towers']]
+            for M in P['modules']:
+                kb = M['m']['box']
+                away += [_place((M['x'], M['y'], 0.0, M['rz']), lx, ly) for lx in (kb[0], kb[2]) for ly in (kb[1], kb[3])]
+            W['pieces'] += tw.stair_each_level(W, avoid=away, db=db)    # (a stair for each level of the walk)
+        except Exception as e:
+            print('castle level stairs:', e)
     pads = []
     for M in P['modules']:
         kb = M['m']['box']

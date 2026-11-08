@@ -473,6 +473,7 @@ def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=F
     user's Imperial town of test3), the next few street layouts tried quietly; the same seed still gives the same town.
     walled: the town is to have a wall, so it stands closer. ring: the outline is the inside of its wall, and a street
     runs round just inside it (townbuild.planned). opts: what the user chose (see plan_once)."""
+    global CONTOURS
     best = None
     for k in range(6):
         p = plan_once(db, outline, culture, seed + 7919 * k, F, ground, walled, ring, opts)
@@ -480,6 +481,18 @@ def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=F
             best = p
         if len(best.get('plots') or ()) >= 3:
             break
+    # (a hillside's band streets hold fewer houses than a plain plan where the ground is a bowl or a crest of short
+    # contours: where they would halve the town, the plain plan stands, steep streets and all; lab hills 2026-11-08,
+    # a valley town of 15 came out with 7 on bands)
+    if best.get('bands') and CONTOURS:
+        try:
+            CONTOURS = False
+            plain = plan_once(db, outline, culture, seed, F, ground, walled, ring, opts)
+        finally:
+            CONTOURS = True
+        if len(plain.get('plots') or ()) * BAND_KEEP > len(best.get('plots') or ()):
+            plain['bands_dropped'] = best.get('bands')
+            return plain
     return best
 
 
@@ -545,9 +558,13 @@ def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, r
                 break
         streets, roads, square, plots = best[1]
         _kinds(plots, fig, poly, square, rng)
-        return {'culture': culture, 'layout': layout, 'streets': streets, 'roads': sorted([list(p) for p in roads]), 'square': square,
-                'plots': plots, 'figures': {k: fig[k] for k in ('width', 'setback', 'joined', 'square', 'layout', 'per_cell')},
-                'obstacles': [[[round(v, 1) for v in q] for q in o] for o in fig['_obst']]}
+        out = {'culture': culture, 'layout': layout, 'streets': streets, 'roads': sorted([list(p) for p in roads]), 'square': square,
+               'plots': plots, 'figures': {k: fig[k] for k in ('width', 'setback', 'joined', 'square', 'layout', 'per_cell')},
+               'obstacles': [[[round(v, 1) for v in q] for q in o] for o in fig['_obst']]}
+        if fig.get('_bands'):
+            out['districts'] = _districts(streets, plots, fig)
+            out['bands'] = fig['_bands']
+        return out
     if False:
         if square:
             sx, sy, sr = square
@@ -664,6 +681,34 @@ def _quay(poly, fig):
     return {'pts': line, 'w': max(512.0, fig['width'] * 0.75), 'quay': True}
 
 
+def _districts(streets, plots, fig):
+    """The town's districts on a hillside: each plot belongs to the band (contour street) its door is nearest in height
+    and place; [{'level', 'plots', 'x', 'y'}], and each plot's 'band'."""
+    bands = [(k, s_) for k, s_ in enumerate(streets) if s_.get('contour')]
+    if not bands:
+        return []
+    g = fig.get('ground')
+    out = {}
+    for q in plots:
+        if not q.get('door'):
+            continue
+        best = None
+        for k, s_ in bands:
+            d, _p = _nearest_on(s_['pts'], q['door'][0], q['door'][1])
+            dz = abs((g(q['door'][0], q['door'][1]) or s_['level']) - s_['level']) if g else 0.0
+            c = d + 3.0 * dz
+            if best is None or c < best[0]:
+                best = (c, s_['level'])
+        q['band'] = best[1]
+        o = out.setdefault(best[1], {'level': best[1], 'plots': 0, 'x': 0.0, 'y': 0.0})
+        o['plots'] += 1
+        o['x'] += q['x']
+        o['y'] += q['y']
+    for o in out.values():
+        o['x'], o['y'] = round(o['x'] / o['plots']), round(o['y'] / o['plots'])
+    return [out[k] for k in sorted(out)]
+
+
 def _street_town(poly, fig, rng, spread):
     """A street town with blocks spread so far apart: (streets, roads, square, plots), finished and trimmed."""
     streets, square = _drawn_streets(poly, fig) if fig.get('_drawn') else _streets(poly, fig, rng, spread)
@@ -734,6 +779,343 @@ def _drawn_streets(poly, fig):
     return streets, square
 
 
+CONTOURS = True
+BAND_MIN = 192                 # (a hillside town's streets run in level bands this far apart in height at least...)
+BAND_MAX = 576                 # (...and this much at most: a row's rise on the slope between, so a row of houses stands between
+                               # two bands, as the game's hill towns stand: Vos, Akamora, Ald Velothi, Hla Oad; the game's hill
+                               # towns' road lies in 3 bands at the median, 404 of rise a band)
+BAND_RELIEF = 2 * BAND_MIN     # (an outline whose ground rises this much, 10th to 90th, is a hillside town)
+CONTOUR_MIN = 1400             # (a contour street at least this long)
+CLIMB_STEP = 128               # (the climbing street is found on a lattice this fine)
+CLIMB_GRADE = 0.12             # (it climbs this much a unit by preference...)
+CLIMB_MAX = 0.25               # (...and never more: a ramp a walker takes, the game's gate roads at 8-15 degrees)
+CLIMB_SLOPE = 0.16             # (a hill this steep is climbed by the found street: steered within 50 degrees, a street on a
+                               # 0.4 slope still climbed at 0.26 and more)
+RAMP_FAR = 2.5                 # (a band longer than this many blocks past the main street gets a ramp of its own at its far end)
+BAND_KEEP = 0.5                # (a band plan is kept while it holds this share of the plain plan's houses at least)
+STAIR_HOP = 700                # (two bands this near across are joined by a straight stair street, no ramp sought)
+STAIR_WANDER = 2.0             # (a ramp longer than this times the straight way between the bands gives way to a stair street)
+
+
+def _grid_z(poly, ground, step):
+    """{(i, j): z} on a step lattice over the outline (inside it), and the lattice's origin."""
+    xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+    x0, y0 = math.floor(min(xs) / step) * step, math.floor(min(ys) / step) * step
+    nx, ny = int((max(xs) - x0) // step) + 2, int((max(ys) - y0) // step) + 2
+    Z = {}
+    for i in range(nx):
+        for j in range(ny):
+            x, y = x0 + i * step, y0 + j * step
+            if _inside(poly, x, y):
+                z = ground(x, y)
+                if z is not None and z > -64:
+                    Z[(i, j)] = z
+    return Z, x0, y0, nx, ny
+
+
+def _band_slope(poly, ground):
+    """The median slope of the ground inside the outline (rise a unit), on a 256 lattice."""
+    Z, x0, y0, nx, ny = _grid_z(poly, ground, 256.0)
+    slopes = []
+    for (i, j), z in Z.items():
+        a, b = Z.get((i + 1, j)), Z.get((i, j + 1))
+        if a is not None and b is not None:
+            slopes.append(math.hypot(a - z, b - z) / 256.0)
+    slopes.sort()
+    return slopes[len(slopes) // 2] if slopes else 0.0
+
+
+def _band_levels(poly, ground, block):
+    """The heights of a hillside town's level bands: a block's rise on the median slope apart (within BAND_MIN..BAND_MAX),
+    from the ground's 10th height up to its 90th. [] on ground too even for bands."""
+    Z, x0, y0, nx, ny = _grid_z(poly, ground, 256.0)
+    if len(Z) < 16:
+        return [], 0.0
+    zs = sorted(Z.values())
+    lo, hi = zs[int(len(zs) * 0.1)], zs[int(len(zs) * 0.9)]
+    if hi - lo < BAND_RELIEF:
+        return [], 0.0
+    slopes = []
+    for (i, j), z in Z.items():
+        a, b = Z.get((i + 1, j)), Z.get((i, j + 1))
+        if a is not None and b is not None:
+            slopes.append(math.hypot(a - z, b - z) / 256.0)
+    slopes.sort()
+    S = slopes[len(slopes) // 2] if slopes else 0.0
+    H = max(BAND_MIN, min(BAND_MAX, block * S))
+    levels = []
+    z = lo + H * 0.5
+    while z < hi:
+        levels.append(z)
+        z += H
+    return levels, H
+
+
+def _contours(poly, ground, level, step=128.0):
+    """The level's contour lines inside the outline (marching squares on a step lattice), chained, simplified and
+    eased: [[(x, y), ...]] each at least CONTOUR_MIN long, points about PATCH apart."""
+    Z, x0, y0, nx, ny = _grid_z(poly, ground, step)
+    segs = []
+    for i in range(nx - 1):
+        for j in range(ny - 1):
+            c = [Z.get((i, j)), Z.get((i + 1, j)), Z.get((i + 1, j + 1)), Z.get((i, j + 1))]
+            if any(v is None for v in c):
+                continue
+            P4 = [(x0 + i * step, y0 + j * step), (x0 + (i + 1) * step, y0 + j * step), (x0 + (i + 1) * step, y0 + (j + 1) * step), (x0 + i * step, y0 + (j + 1) * step)]
+            cross = []
+            for k in range(4):
+                a, b = c[k], c[(k + 1) % 4]
+                if (a < level) != (b < level):
+                    t = (level - a) / (b - a)
+                    ax, ay = P4[k]
+                    bx, by = P4[(k + 1) % 4]
+                    cross.append((round(ax + (bx - ax) * t, 1), round(ay + (by - ay) * t, 1)))
+            if len(cross) == 2:
+                segs.append((cross[0], cross[1]))
+            elif len(cross) == 4:
+                segs.append((cross[0], cross[1]))
+                segs.append((cross[2], cross[3]))
+    # (chain the segments end to end)
+    ends = {}
+    for n_, (a, b) in enumerate(segs):
+        ends.setdefault(a, []).append(n_)
+        ends.setdefault(b, []).append(n_)
+    used = [False] * len(segs)
+    lines = []
+    for n_ in range(len(segs)):
+        if used[n_]:
+            continue
+        used[n_] = True
+        line = [segs[n_][0], segs[n_][1]]
+        for side in (1, -1):
+            while True:
+                tip = line[-1] if side == 1 else line[0]
+                nxt = [m for m in ends.get(tip, ()) if not used[m]]
+                if not nxt:
+                    break
+                m = nxt[0]
+                used[m] = True
+                a, b = segs[m]
+                p = b if a == tip else a
+                if side == 1:
+                    line.append(p)
+                else:
+                    line.insert(0, p)
+        lines.append(line)
+    out = []
+    for line in lines:
+        L = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(line, line[1:]))
+        if L < CONTOUR_MIN:
+            continue
+        out.append(_resample(_ease(_simplify(_average(line, 2), 64.0), 1), PATCH))
+    out.sort(key=lambda l: -len(l))
+    return out
+
+
+def _average(pts, k):
+    """A polyline's points each averaged with the k either side (its ends kept): the lattice's wobble taken out."""
+    n = len(pts)
+    if n < 3:
+        return pts
+    out = []
+    for i in range(n):
+        lo, hi = max(0, i - k), min(n - 1, i + k)
+        m = hi - lo + 1
+        out.append((sum(p[0] for p in pts[lo:hi + 1]) / m, sum(p[1] for p in pts[lo:hi + 1]) / m))
+    out[0], out[-1] = pts[0], pts[-1]
+    return out
+
+
+def _simplify(pts, tol):
+    """Douglas-Peucker: the polyline with the points within tol of the lines between the rest left out."""
+    if len(pts) < 3:
+        return pts
+    (ax, ay), (bx, by) = pts[0], pts[-1]
+    L = math.hypot(bx - ax, by - ay)
+    worst, wi = -1.0, 0
+    for i in range(1, len(pts) - 1):
+        x, y = pts[i]
+        d = abs((bx - ax) * (ay - y) - (ax - x) * (by - ay)) / L if L > 1e-6 else math.hypot(x - ax, y - ay)
+        if d > worst:
+            worst, wi = d, i
+    if worst <= tol:
+        return [pts[0], pts[-1]]
+    return _simplify(pts[:wi + 1], tol)[:-1] + _simplify(pts[wi:], tol)
+
+
+def _ease(pts, rounds=2):
+    """A polyline rounded (Chaikin), its ends kept."""
+    for _ in range(rounds):
+        if len(pts) < 3:
+            return pts
+        q = [pts[0]]
+        for a, b in zip(pts, pts[1:]):
+            q.append((0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]))
+            q.append((0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]))
+        q.append(pts[-1])
+        pts = q
+    return pts
+
+
+def _resample(pts, step):
+    """The polyline's points every step along it (its ends kept)."""
+    if len(pts) < 2:
+        return [(round(x, 1), round(y, 1)) for x, y in pts]
+    out = [pts[0]]
+    carry = 0.0
+    for a, b in zip(pts, pts[1:]):
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        if L < 1e-6:
+            continue
+        d = step - carry
+        while d <= L:
+            out.append((a[0] + (b[0] - a[0]) * d / L, a[1] + (b[1] - a[1]) * d / L))
+            d += step
+        carry = L - (d - step)
+    if math.hypot(out[-1][0] - pts[-1][0], out[-1][1] - pts[-1][1]) > step * 0.4:
+        out.append(pts[-1])
+    else:
+        out[-1] = pts[-1]
+    return [(round(x, 1), round(y, 1)) for x, y in out]
+
+
+def _climb(poly, ground, x0, y0, x1, y1, step=CLIMB_STEP):
+    """A street from (x0, y0) to near (x1, y1) that climbs at most CLIMB_MAX a unit and by preference CLIMB_GRADE, found
+    on a lattice inside the outline with moves up to two steps long (a switchback where the hill is steep); eased and
+    its points every PATCH. None when there is none."""
+    import heapq
+    xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+    ox, oy = math.floor(min(xs) / step) * step, math.floor(min(ys) / step) * step
+    nx, ny = int((max(xs) - ox) // step) + 2, int((max(ys) - oy) // step) + 2
+    si, sj = int(round((x0 - ox) / step)), int(round((y0 - oy) / step))
+    ti, tj = int(round((x1 - ox) / step)), int(round((y1 - oy) / step))
+    zs, ins = {}, {}
+
+    def at(i, j):
+        if (i, j) not in zs:
+            x, y = ox + i * step, oy + j * step
+            ok = 0 <= i < nx and 0 <= j < ny and (_inside(poly, x, y) or (abs(i - si) + abs(j - sj) <= 1) or (abs(i - ti) + abs(j - tj) <= 1))
+            z = ground(x, y) if ok else None
+            zs[(i, j)] = z if (z is not None and z > -64) else None
+        return zs[(i, j)]
+    # (moves up to four steps long: a traverse across the slope at an angle; two-step moves alone could not climb a
+    # 0.5 slope under the grade)
+    moves = [(a * sa, b * sb) for a, b in ((1, 0), (0, 1), (1, 1), (1, 2), (2, 1), (1, 3), (3, 1), (1, 4), (4, 1), (2, 3), (3, 2))
+             for sa in (1, -1) for sb in (1, -1) if not ((a == 0 and sa < 0) or (b == 0 and sb < 0))]
+    dist = {(si, sj): 0.0}
+    prev = {}
+    heap = [(0.0, si, sj)]
+    seen = 0
+    while heap:
+        c, i, j = heapq.heappop(heap)
+        if c > dist.get((i, j), 1e18):
+            continue
+        if abs(i - ti) <= 1 and abs(j - tj) <= 1:
+            way, k = [], (i, j)
+            while k in prev:
+                way.append((ox + k[0] * step, oy + k[1] * step))
+                k = prev[k]
+            way.append((x0, y0))
+            way = way[::-1]
+            way[-1] = (x1, y1)
+            return _resample(_ease(_simplify(_average(way, 1), 48.0), 2), PATCH)
+        seen += 1
+        if seen > 80000:
+            return None
+        zi = at(i, j)
+        if zi is None:
+            continue
+        for da, db_ in moves:
+            a, b = i + da, j + db_
+            zb = at(a, b)
+            if zb is None:
+                continue
+            ln = step * math.hypot(da, db_)
+            g = abs(zb - zi) / ln
+            m = max(abs(da), abs(db_))
+            bad = False
+            for t in range(1, m):
+                u = t / float(m)
+                xi, yi = ox + (i + da * u) * step, oy + (j + db_ * u) * step
+                zm = ground(xi, yi)
+                if zm is None or not _inside(poly, xi, yi) or abs(zm - (zi + (zb - zi) * u)) > 256:
+                    bad = True
+                    break
+            if bad:
+                continue
+            if g > CLIMB_MAX:
+                continue
+            nc = c + ln * (1.0 + 8.0 * max(0.0, g - CLIMB_GRADE) / CLIMB_GRADE)
+            if nc < dist.get((a, b), 1e18):
+                dist[(a, b)] = nc
+                prev[(a, b)] = (i, j)
+                heapq.heappush(heap, (nc, a, b))
+    return None
+
+
+def _band_ramps(poly, ground, bands, block, w):
+    """Ramps between neighbouring bands: from points along each band (its middle, then its ends and quarters) up to the
+    nearest point of the band above within 3 blocks, found at a walkable grade (_climb); one at least a pair of levels
+    where there is one, a second where the band runs on past RAMP_FAR blocks from the first. [{'pts', 'w', 'ramp'}]"""
+    by_level = {}
+    for b_ in bands:
+        by_level.setdefault(b_['level'], []).append(b_)
+    lv = sorted(by_level)
+    out = []
+    for lo_, hi_ in zip(lv, lv[1:]):
+        up = [p_ for u_ in by_level[hi_] for p_ in u_['pts']]
+        if not up:
+            continue
+        done = []
+        for b_ in by_level[lo_]:
+            pts_ = b_['pts']
+            if len(pts_) < 2:
+                continue
+            starts = [pts_[len(pts_) // 2], pts_[0], pts_[-1]] + pts_[len(pts_) // 4:len(pts_) // 4 + 1] + pts_[3 * len(pts_) // 4:3 * len(pts_) // 4 + 1]
+            for s_ in starts:
+                if done and min(math.hypot(s_[0] - d_[0], s_[1] - d_[1]) for d_ in done) < RAMP_FAR * block:
+                    continue
+                tgt = min(up, key=lambda p_: math.hypot(p_[0] - s_[0], p_[1] - s_[1]))
+                if math.hypot(tgt[0] - s_[0], tgt[1] - s_[1]) > 3 * block:
+                    continue
+                d_ = math.hypot(tgt[0] - s_[0], tgt[1] - s_[1])
+                ramp = _climb(poly, ground, s_[0], s_[1], tgt[0], tgt[1]) if d_ > STAIR_HOP else None
+                # (a ramp that must wander more than STAIR_WANDER times the straight way for its grade, or a short hop,
+                # is a stair street instead: straight up between the bands, as Vivec's and Tel Mora's steps go; the
+                # found ramps zigzagged 3,000 units across a 0.4 slope, lab hills 2026-11-08)
+                if ramp and sum(math.hypot(b2[0] - a2[0], b2[1] - a2[1]) for a2, b2 in zip(ramp, ramp[1:])) > STAIR_WANDER * d_ + 256:
+                    ramp = None
+                if ramp and len(ramp) >= 2:
+                    out.append({'pts': ramp, 'w': float(PATCH), 'main': False, 'ramp': True})
+                else:
+                    out.append({'pts': _resample([s_, tgt], PATCH), 'w': float(PATCH), 'main': False, 'ramp': True, 'stair': True})
+                done.append(s_)
+                if len(done) >= 2:
+                    break
+    return out
+
+
+def _grades(pts, ground):
+    """The rise a unit between a polyline's points, as the ground has it."""
+    out = []
+    for a, b in zip(pts, pts[1:]):
+        za, zb = ground(a[0], a[1]), ground(b[0], b[1])
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        if za is not None and zb is not None and L > 1:
+            out.append(abs(zb - za) / L)
+    return out
+
+
+def _nearest_on(pts, x, y):
+    """The point of a polyline nearest (x, y) and its distance."""
+    best = None
+    for p in pts:
+        d = math.hypot(p[0] - x, p[1] - y)
+        if best is None or d < best[0]:
+            best = (d, p)
+    return best
+
+
 def _streets(poly, fig, rng, spread=1.0):
     """The main street along the town's length, branches a block apart off both sides, a square where the culture has
     them."""
@@ -788,17 +1170,64 @@ def _streets(poly, fig, rng, spread=1.0):
     x0, y0 = cx - ax * back, cy - ay * back
     main = _street(poly, x0, y0, ax, ay, back + fwd, 0.0 if grid else 0.05 + rng.random() * 0.05, rng, fig.get('ground'),
                    steer=(not grid or steep) and not fig.get('_spine'))
-    streets = [{'pts': main, 'w': w, 'main': True}]
-    # (a block: a building's depth and its setback each side of a street, twice over, and the street: the branch
-    # streets run this far apart, so a row of buildings faces each)
+    # (a hillside town: its streets in level bands along the slope, a block apart up it, and the main street climbing
+    # through them at a walkable grade, switching back where the hill is steep; the rows along each band are its
+    # districts. Straight up the slope a town's streets were a quarter of them over 0.25 and its doors hung over the
+    # drop; the user, 2026-11-07: "lay down streets over elevation so the homes are accessible and cluster together")
     sizes = fig['sizes']
     deep = sorted(d for _w, d in sizes)[len(sizes) // 2]
     across = sorted(w_ for w_, _d in sizes)[len(sizes) // 2]
     block = max(4 * across, 2 * (deep + fig['setback']) + w + 256) * spread
+    bands = []
+    if CONTOURS and fig.get('ground') and not fig.get('_drawn') and not village:
+        # (a band's rise: a row of houses each side of the street between two bands, no more)
+        levels, H = _band_levels(poly, fig['ground'], (2 * (deep + fig['setback']) + max(512, w * 0.75) + 128) * spread)
+        if levels:
+            # (lanes: a hill town's streets along its slope are narrow, Vos's and Hla Oad's one patch wide; wider, their
+            # painted road took the rows' ground and the band streets came out bare, lab hills 2026-11-08)
+            for lv in levels:
+                for line in _contours(poly, fig['ground'], lv):
+                    bands.append({'pts': line, 'w': float(PATCH), 'main': False, 'contour': True, 'level': round(lv)})
+            # (a town that wants more houses than its bands' rows hold packs its bands a single row apart, the houses
+            # stepped up the slope as Tel Mora's and Vos's are: two rows apart, a walled town on a 0.4 slope came out
+            # with 17 buildings where its density asked 44, lab hills 2026-11-08)
+            room = sum(sum(math.hypot(b_[0] - a_[0], b_[1] - a_[1]) for a_, b_ in zip(l_['pts'], l_['pts'][1:])) for l_ in bands) * 2.0 / (across + 200.0)
+            if bands and _want(fig, poly) > 0.9 * room:
+                levels2, H2 = _band_levels(poly, fig['ground'], (deep + fig['setback'] + PATCH + 128) * spread)
+                if len(levels2) > len(levels):
+                    levels, H = levels2, H2
+                    bands = []
+                    for lv in levels:
+                        for line in _contours(poly, fig['ground'], lv):
+                            bands.append({'pts': line, 'w': float(PATCH), 'main': False, 'contour': True, 'level': round(lv)})
+            # (the main street is the longest band nearest the middle level, at the main street's width: a street up
+            # the slope was the town's steepest, and one found climbing wandered in an arc for its grade; the bands
+            # are joined by short ramps, _band_ramps)
+            if bands:
+                mid = levels[len(levels) // 2]
+                best = min(bands, key=lambda b_: (abs(b_['level'] - round(mid)), -len(b_['pts'])))
+                bands.remove(best)
+                main = best['pts']
+                # (no wider than half the ground between two bands: at its culture's full width on a 0.45 slope, a
+                # Gold Coast main street 1,638 across took the band beside it and 730 of rise, lab hills 2026-11-08)
+                spacing = H / max(0.02, _band_slope(poly, fig['ground']))
+                w = fig['_main_w'] = max(float(PATCH), min(w, spacing * 0.5))
+                best.update({'w': w, 'main': True})
+                bands.insert(0, best)
+            fig['_bands'] = {'levels': [round(v) for v in levels], 'rise': round(H), 'streets': len(bands)}
+    streets = [{'pts': main, 'w': w, 'main': True}] if not bands else []
+    # (a block: a building's depth and its setback each side of a street, twice over, and the street: the branch
+    # streets run this far apart, so a row of buildings faces each)
     nx, ny = -ay, ax
     L = math.hypot(main[-1][0] - main[0][0], main[-1][1] - main[0][1]) if len(main) > 1 else 0
     k = 0
     d = block * (0.6 + 0.3 * rng.random())
+    if bands:
+        # (the bands are the streets; each joined to the band above by a ramp at a walkable grade, two where it is
+        # long: at its middle and at the end farthest from the first)
+        streets.extend(bands)
+        d = L
+        streets.extend(_band_ramps(poly, fig['ground'], bands, block, w))
     while d < L - block * 0.4 and len(main) > 2 and not village:
         i = min(len(main) - 2, int(d // PATCH))
         bx, by = main[i]
@@ -824,7 +1253,7 @@ def _streets(poly, fig, rng, spread=1.0):
         d += block * (0.85 + 0.3 * rng.random())
     # (back lanes: two neighbouring branches on one side joined near their far ends now and then, making blocks and
     # loops; a main street with dead-end branches read as a comb beside the game's towns)
-    br = [s for s in streets if not s.get('main')]
+    br = [s for s in streets if not s.get('main') and not s.get('contour') and not s.get('ramp')]
     for side in (1, -1):
         mine = [s for s in br if s.get('side') == side]
         for a_, b_ in zip(mine, mine[1:]):
@@ -1326,10 +1755,15 @@ def _trim(streets, plots):
     outline: the road out of town."""
     out = []
     for si, s in enumerate(streets):
-        if s.get('main') or s.get('ring') or s.get('court') or s.get('len') or s.get('drawn'):
-            out.append(s)                    # (a court and its lane whole: cut short, a court was left with no way in)
-            continue
+        if s.get('main') or s.get('ring') or s.get('court') or s.get('len') or s.get('drawn') or s.get('ramp'):
+            out.append(s)                    # (a court and its lane whole: cut short, a court was left with no way in;
+            continue                         # a ramp between two bands whole: it has no rows of its own)
         ats = [p['at'] for p in plots if p.get('si') == si]
+        if s.get('contour'):
+            # (a band street whole, along its contour to the outline, where it has a row at all: the road out of town)
+            if ats:
+                out.append(s)
+            continue
         if not ats:
             continue
         end, n = max(ats) + 600, 1

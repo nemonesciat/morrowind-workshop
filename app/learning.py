@@ -89,7 +89,9 @@ def ruin_pending(db, kind='dwemer'):
 # and came out with no buildings at all, the cold start of 2.5.9-test3
 # (strays too: a town built before the strays were learnt carried the windows of the house next door, 11 of 116 in
 # the user's Estmorevale, floating beside its buildings, 2026-11-03)
-_TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('strays', 'ready'), ('towndress', 'ready'), ('townlife', 'ready')]
+_TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('strays', 'ready'), ('towndress', 'ready'), ('townlife', 'ready'),
+         # (the game's rocks round its towns: the rocks set into a hill town's banks, 2026-11-08)
+         ('rockblend', 'ready')]
 
 
 def castle_plan_pending(db):
@@ -155,6 +157,13 @@ def prewarm(db):
     # (the game's Dwemer ruins, for the ruin maker: last, about 17 s, 2026-10-24)
     try:
         ruin_pending(db)
+    except Exception:
+        pass
+    # (how the game clads its cliffs, for the land tools' Rock the steep ground, cliffsurvey.py: every region's rocks
+    # on steep ground with their rims, some minutes; a Shape before it is learnt says so and goes without, 2026-11-08)
+    try:
+        import cliffsurvey
+        cliffsurvey.ready(db)
     except Exception:
         pass
     # (the Style palette's themes and what goes with them, stylesurvey.py: after the rest, about 25 s,

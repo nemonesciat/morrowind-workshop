@@ -496,9 +496,20 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
         for it in items:
             for i in F.near(it['x'] - 96, it['y'] - 96, it['x'] + 96, it['y'] + 96):
                 hold[i] = 1
+    clad = 0
     if float(parts.get('rocks') or 0) > 0:
+        # (the steep ground, its lip and foot and the banks first, by the rock-face pass (rockface.py: the region's
+        # cliff pieces as the game's gorges have them, each settled by the rim rule); the gentle ground is cliffrocks')
+        if float(parts.get('clad', parts['rocks']) or 0) > 0:
+            import rockface
+            rf = rockface.clad(db, ['%d,%d' % k for k in want], like=like, amount=float(parts.get('clad', parts['rocks'])), seed=seed,
+                               field=(F, inside, hold), region_of=lambda x, y: (region_of(x, y) or [''])[0])
+            clad = rf['rocks']
+            for i, v in enumerate(rf['zones']):
+                if v:
+                    hold[i] = 1
         r = cliffrocks.dress(db, cells, '', float(parts['rocks']), seed, commit=False, prepared=(want, F, inside, hold), looks_of=looks)
-        rocks = r['rocks']
+        rocks = r['rocks'] + clad
     db.sync_project()
     if rocks or grown:
         what = ' and '.join(w for w in ('%d rocks' % rocks if rocks else '', '%d trees and plants' % grown if grown else '') if w)
@@ -509,4 +520,4 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
         names.append((db.recs[ri][2] or db.recs[ri][1]) if ri is not None else reg)
     if mine and grown:
         names = [mine['label']] + (names if rocks else [])
-    return {'rocks': rocks, 'growth': grown, 'cells': len(want), 'looks': names, 'seed': seed}
+    return {'rocks': rocks, 'clad': clad, 'growth': grown, 'cells': len(want), 'looks': names, 'seed': seed}
