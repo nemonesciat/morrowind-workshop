@@ -1249,6 +1249,12 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     the wall, squared to its pieces' steps (townwalls.square_up), and the town fills it."""
     import townplan
     opts = opts or {}
+    # (gates the user put on the wall: a street drawn from the town's middle out to each, so the planner lays the way in
+    # there, and the wall opens only at them, townwalls.user_gates)
+    gates = [(float(g[0]), float(g[1])) for g in (opts.get('gates') or []) if len(g) >= 2] if walls else []
+    if gates and len(outline) >= 3:
+        cx, cy = sum(p[0] for p in outline) / len(outline), sum(p[1] for p in outline) / len(outline)
+        opts = dict(opts, roads=list(opts.get('roads') or []) + [[[cx, cy], [gx, gy]] for gx, gy in gates])
     # (the bar's planning share: a walled town is planned twice, its two plans the most of it)
     P = PLAN_END
     pl = townplan.plan(db, outline, culture, seed, walled=bool(walls), opts=opts)
@@ -1262,6 +1268,8 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     plan = fit(db, pl, seed)
     if not walls:
         return plan
+    if gates:
+        plan['user_gates'] = gates
     import townwalls
     _say('Planning inside the wall', P * 0.4)
     drawn = opts.get('wall') or []
@@ -1293,6 +1301,8 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     if built(again) < 0.75 * built(plan) and len(drawn) < 3:
         return plan
     again['wall_outline'] = [list(p_) for p_ in poly]
+    if gates:
+        again['user_gates'] = gates
     return again
 
 
@@ -1498,6 +1508,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     from project import set_ref_pos, zs
     editing._require_project(db)
     plan = planned(db, outline, culture, seed, walls, opts)
+    import towntrade
+    plan['trade'] = towntrade.clean((opts or {}).get('trade'))     # (what it lives by: its people, households and goods)
     LAST['plan'] = plan
     C = by_uid(catalog(db))
     mine = db.project.plugin.lower()

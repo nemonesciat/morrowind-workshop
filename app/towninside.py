@@ -1003,6 +1003,8 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 # rooms; the lab's Sketh walked in game, 2026-11-06/07)
                 ask = {'setting': kind} if kind in ('shop', 'tavern', 'temple', 'guild', 'manor') else \
                     {'setting': 'house'} if kind in ('house', 'farm', 'shack') else {}
+                if ask.get('setting') == 'house' and plan.get('trade'):
+                    ask['trade'] = plan['trade']          # (a fishing town's homes are fishers' as often as the game's)
                 if tname:
                     ask['name'] = tname
                 cast_ = populate.cast(db, t, ask, seed=zlib.crc32(('%s|%s|%s|%d' % (seed, town, t, made + skipped)).encode()))

@@ -515,6 +515,11 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
         notes.append('%d already live here; these are on top of them.' % len(info['people']))
     # who: one of the groups the game's places of this kind have, then the place's classes in their shares
     classes = [[c, n] for c, n in (C.get('classes') or []) if c in S['classes']]
+    if params.get('trade') and setting == 'house':
+        # (a house in a town that lives by the sea, by farming: its fishers, farmers as often as the game's houses of such
+        # towns have them, other trades' people fewer; towntrade.HOUSE_SHARE)
+        import towntrade
+        classes = towntrade.lean_pairs(classes, params['trade'], towntrade.canon_of(S['classes']), towntrade.HOUSE_SHARE)
     occ = [o for o in params.get('occupations') or [] if o in S['classes']]
     only = params.get('only') and occ
     want = []

@@ -1020,7 +1020,7 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/land/handmade':
                 # the regions whose land was made by hand, the ones the region pass takes after (landregion.py)
                 import landregion
-                self._json({'regions': sorted(landregion.handmade(db))})
+                self._json({'regions': sorted(landregion.handmade(db)), 'clads': landregion.clad_regions(db)})
             elif u.path == '/api/land/looks':
                 # the regions whose rocks can dress land (cliffrocks.py)
                 import cliffrocks
@@ -2522,6 +2522,36 @@ class Handler(BaseHTTPRequestHandler):
                                                    occupants=got('occupants', 'auto'), kind=body.get('kind') or 'dwemer',
                                                    water=got('water', 'none'), entry_piece=got('entry', None), final_hall=got('final', None),
                                                    way=body.get('way') or 'down'))
+                if u.path == '/api/land/places':
+                    # places proposed for the marked cells at the game's rates and on its ground (placeplan.py)
+                    import placeplan
+                    return self._json(placeplan.propose(db, body.get('cells') or [], body.get('amounts') or {}, int(body.get('seed') or 1),
+                                                        culture=body.get('culture') or ''))
+                if u.path == '/api/land/roads':
+                    # roads proposed between the plan's towns and the game's near the marked cells (landroads.py)
+                    import landroads
+                    return self._json(landroads.route(db, body.get('cells') or [], body.get('layers') or []))
+                if u.path == '/api/land/rumours':
+                    # the mod's dungeons in the marked cells talked of in its towns near, and quests where a band holds
+                    # one (rumours.py); one change
+                    import rumours
+                    return self._json(rumours.build(db, body.get('cells') or [], int(body.get('seed') or 1)))
+                if u.path == '/api/land/yardstick':
+                    # the marked cells against the hand-made region they take after, layer by layer (yardstick.py)
+                    import yardstick
+                    return self._json(yardstick.report(db, body.get('cells') or [], body.get('like') or '', body.get('towns') or []))
+                if u.path == '/api/land/folk':
+                    # people by the roads and at the camps, the creatures of the land and the water, for the marked
+                    # cells, as many as the game has (outfolk.py); one change
+                    import outfolk
+                    return self._json(outfolk.build(db, body.get('cells') or [], body.get('roads') or [], body.get('towns') or [],
+                                                    [tuple(c[:2]) for c in body.get('camps') or [] if len(c) >= 2], int(body.get('seed') or 1),
+                                                    max(0.0, min(3.0, float(body.get('amount') or 1.0))), body.get('culture') or ''))
+                if u.path == '/api/land/places/build':
+                    # the proposed dungeons built with the dungeon generator, one change
+                    import placeplan
+                    return self._json(placeplan.build_places(db, body.get('dungeons') or [], body.get('farms') or [], body.get('harbours') or [],
+                                                             small=body.get('small') or [], labels=body.get('labels') or []))
                 if u.path == '/api/ruin/preview':
                     # the layout those choices make, for the Dungeon tool's plan (nothing is written)
                     import dwemer

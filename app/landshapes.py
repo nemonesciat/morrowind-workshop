@@ -41,18 +41,30 @@ from editing import EditError, commit, _require_project
 # (street, zone, wall: drawn in a town, its streets, quarters and wall, townplan.plan_once's opts; they shape nothing)
 # (castle: an outline a keep or castle is planned in, castle.py; it shapes nothing)
 # (farm, orchard: an outline a farm or an orchard is laid on, storydress.lay_field; its longest edge is the gate side)
+# (dungeon: a point where a dungeon's door outside stands, built by Build the dungeons with dwemer.build: placeplan.py;
+# it shapes nothing)
+# (road: a road between towns, its bed cut and painted by Shape the ground, landroads.py; it shapes nothing else)
 KINDS = ('coast', 'plateau', 'ridge', 'river', 'valley', 'lake', 'stamp', 'spring', 'area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff',
-         'farm', 'orchard')
-NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff', 'farm', 'orchard')
+         'farm', 'orchard', 'dungeon', 'road', 'harbour', 'small', 'label', 'gate')
+NO_SHAPE = ('area', 'town', 'street', 'zone', 'wall', 'castle', 'cliff', 'farm', 'orchard', 'dungeon', 'road', 'harbour', 'small', 'label', 'gate')
 DEFAULTS = {
     'area': {},
     # (built: what Make it laid on the outline as drawn, 'things/plants/culture/hash of outline+settings'; '' before)
-    'farm': {'culture': '', 'seed': 1, 'built': ''}, 'orchard': {'culture': '', 'seed': 1, 'built': ''},
+    'farm': {'culture': '', 'seed': 1, 'built': '', 'proposed': False, 'place': ''}, 'orchard': {'culture': '', 'seed': 1, 'built': ''},
     # (cliff: a line the region's cliff rocks are chained along, cliffline.py; it shapes no ground itself)
     'cliff': {'height': 600, 'side': 0, 'amount': 1, 'raise': 0, 'seed': 1},
     'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'inside': '', 'noinside': False, 'nopeople': False,
-             'streets': '', 'density': 1.0, 'counts': {}, 'skip': []},
-    'street': {}, 'zone': {'zone': 'residential'}, 'wall': {},
+             'streets': '', 'density': 1.0, 'counts': {}, 'skip': [], 'proposed': False, 'place': '', 'trade': ''},
+    # (proposed: laid by Propose places, taken away by the next proposal unless built; place: 'village', 'town', 'city')
+    'dungeon': {'kit': 'cave_mud', 'name': '', 'size': 'small', 'rz': 0.0, 'built': '', 'proposed': False, 'place': 'cave'},
+    'road': {'culture': '', 'proposed': False, 'bridges': []},
+    # (harbour: where a town's docks go, the game's dock scene to lay there and which way the water is: harbours.py)
+    'harbour': {'scene': 0, 'phi': 0.0, 'fit': 0, 'culture': '', 'built': '', 'proposed': False, 'place': 'harbour'},
+    # (small: one of the small things between places, the game's scene of its kind to lay there: smallthings.py)
+    'small': {'what': 'camp', 'scene': 0, 'phi': 0.0, 'fit': 0, 'culture': '', 'built': '', 'proposed': False, 'place': ''},
+    # (label: a name of the land's, a peak's, a pass's, a headland's, a lake's or a crossing's, its cell's name once built)
+    'label': {'what': 'peak', 'name': '', 'culture': '', 'built': '', 'proposed': False, 'place': 'name'},
+    'street': {}, 'zone': {'zone': 'residential'}, 'wall': {}, 'gate': {},
     'castle': {'style': 'Imperial', 'size': 'medium', 'seed': 1, 'name': '', 'nopeople': False, 'rooms': 'furnished', 'gate': None},
     'coast': {'height': 600, 'width': 6144, 'wander': 1.0, 'sea': 0},
     'plateau': {'height': 2000, 'width': 768, 'terraces': 0},
@@ -84,19 +96,23 @@ def save_plan(db, plan):
     """Keep the plan (layers and settings) in the project: like the marks, a plan rather than a change to the mod."""
     _require_project(db)
     p = db.project
-    clean = {'layers': [_clean(L) for L in (plan.get('layers') or [])][:60],
+    # (400 layers: Propose places lays one a place, 150 for 400 cells at the game's rates)
+    clean = {'layers': [_clean(L) for L in (plan.get('layers') or [])][:400],
              'rough': max(0.0, min(2.0, float(plan.get('rough', 1.0)))),
              'fade': max(256.0, min(8192.0, float(plan.get('fade', 1024)))),
              'paint': plan.get('paint', True) is not False, 'seed': int(plan.get('seed') or 1),
              'passes': _clean_opts(plan.get('passes'), PASSES), 'dress': _clean_opts(plan.get('dress'), DRESS),
              'protect': _clean_opts(plan.get('protect'), PROTECT),
              'terrain': landregion.clean(plan.get('terrain')),
+             'places': _clean_opts(plan.get('places'), PLACES),
              'only': [str(r).lower()[:64] for r in (plan.get('only') or []) if r][:20]}
     p.land = dict(p.land or {}, plan=clean)
     p.save_soon()
     return clean
 
 
+# Propose places (placeplan.py): how many of each against the game's rates, and whose culture ('' the nearest in weather)
+PLACES = {'settlements': 1.0, 'dungeons': 1.0, 'culture': ''}
 # stage 3 and 4 settings (landpasses, landdress), with their defaults
 PASSES = {'corners': True, 'round': True, 'detail': True, 'detail_k': 1.0, 'settle': True, 'angle': 0.0, 'gullies': 0.0, 'terraces': False, 'tstep': 256.0,
           'tsharp': 0.6, 'tslope': 20.0, 'valleys': 0.0,
@@ -153,7 +169,7 @@ def _clean(L):
     if kind not in KINDS:
         raise EditError('Unknown shape "%s".' % kind)
     pts = [[float(a), float(b)] for a, b in (L.get('pts') or [])][:400]
-    need = 1 if kind in ('stamp', 'spring') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town', 'zone', 'wall', 'castle', 'farm', 'orchard') else 2
+    need = 1 if kind in ('stamp', 'spring', 'dungeon', 'harbour', 'small', 'label', 'gate') else 3 if kind in ('coast', 'plateau', 'lake', 'area', 'town', 'zone', 'wall', 'castle', 'farm', 'orchard') else 2
     if len(pts) < need:
         raise EditError('A %s needs at least %d point%s.' % (kind, need, '' if need == 1 else 's'))
     prm = dict(DEFAULTS[kind])
@@ -760,7 +776,7 @@ def _from_base(db, G, keys, fresh=False):
             G.z[row:row + N] = array('d', h[y * N:(y + 1) * N])
 
 
-def _keep_base(db, base_h, keys, rocks=None):
+def _keep_base(db, base_h, keys, rocks=None, thinned=None):
     """After a Shape them: each cell's ground before it, with the signature of what it wrote (see _from_base) and the
     rocks it set there (taken out again when the cell is shaped from that ground once more, _drop_rocks)."""
     p = db.project
@@ -768,7 +784,8 @@ def _keep_base(db, base_h, keys, rocks=None):
     for k in keys:
         L = mapdata.land(db, *k)
         if L.get('exists') and L.get('h') and k in base_h:
-            bases['%d,%d' % k] = {'h': _pack(base_h[k]), 'shaped': _sig(L['h']), 'rocks': (rocks or {}).get(k) or []}
+            bases['%d,%d' % k] = {'h': _pack(base_h[k]), 'shaped': _sig(L['h']), 'rocks': (rocks or {}).get(k) or [],
+                                  'thinned': (thinned or {}).get(k) or []}
     p.land = dict(p.land or {}, base=bases)
     p.save()
 
@@ -783,6 +800,21 @@ def _drop_rocks(db, cells):
         for rk in (bases.get('%d,%d' % k) or {}).get('rocks') or []:
             if c and c['refs'].pop(rk, None) is not None:
                 n += 1
+    if n:
+        db.sync_project()
+    return n
+
+
+def landfalls_h(F, x, y):
+    import cliffrocks
+    return cliffrocks._height(F, x, y)
+
+
+def _restore_trees(db, cells):
+    """The land's own trees the last Shape them took out of these cells (the region pass's thinning) put back before
+    they are shaped again from the ground before it."""
+    bases = (getattr(db.project, 'land', None) or {}).get('base') or {}
+    n = landregion.restore_trees(db, {'%d,%d' % k: (bases.get('%d,%d' % k) or {}).get('thinned') or [] for k in cells})
     if n:
         db.sync_project()
     return n
@@ -1041,9 +1073,56 @@ def _work(db, cells, plan, s):
     dist = landrange._distance(inside if not matched else bytearray(1 if inside[i] or i in matched else 0 for i in range(len(inside))),
                                F.w, F.h)
     fade = float(plan.get('fade', 1024))
+    if terrain:
+        # (the region pass, its cliffs and valleys above all, leaves the land up to 1,700 off the game's at an open
+        # edge: over the 1,024 of the fade that stood as a ramp of 60 degrees and more, a crease along every edge,
+        # lab 2026-11-08. Faded over four times the difference near the edge, the ramp adds 20 degrees at most)
+        near = sorted(abs(F.z[i] - before[i]) for i in range(len(F.z)) if inside[i] and dist[i] * F.step < 2 * fade)
+        if near:
+            fade = min(landregion.MATCH_MAX, max(fade, landregion.MATCH_RAMP * near[int(0.9 * (len(near) - 1))]))
+        F.info.setdefault('terrain', {})['fade'] = round(fade)
     for i in range(len(F.z)):
         t = _smooth(dist[i] * F.step / fade) if inside[i] else 0.0
         F.z[i] = before[i] + (F.z[i] - before[i]) * t
+    roads = [L for L in plan.get('layers') or [] if L.get('kind') == 'road' and L.get('on', True) is not False and len(L.get('pts') or []) >= 2]
+    if roads:
+        # (the roads' beds, level across and eased along: landroads.bed; never under a held building)
+        import landroads
+        _say('Laying the roads', 0.61)
+        import placeplan
+        rds = []
+        for L in roads:
+            P_ = L.get('p') or {}
+            cult = P_.get('culture') or placeplan.culture_at(db, L['pts'][0][0], L['pts'][0][1])
+            rds.append({'pts': L['pts'], 'culture': cult, 'bridges': [b for b in (P_.get('bridges') or []) if len(b) == 4],
+                        'kit': landroads.kit_for(db, cult) or 'highway'})
+        F.road, F.info['road_points'] = landroads.bed(F, inside, F.hold, rds)
+        F.roads = roads
+        # (the bridges' pieces, at their decks over the ground as it is now; set once the ground is written)
+        F.bridges = []
+        for R in rds:
+            for B in R['bridges']:
+                D = landroads.deck(B, lambda x, y: landfalls_h(F, x, y), R['kit'])
+                if D is not None and landroads.kit_for(db, R['culture']):
+                    F.bridges += landroads.bridge_pieces(B, D, R['kit'])
+    if terrain and TR['falls'] and s == 1:
+        # (waterfalls where the streams drop over the new cliffs, their pools dug now, their pieces set once the
+        # ground is written: landfalls.py)
+        import landfalls
+        if landfalls.kit_ready(db):
+            _say('Finding the waterfalls', 0.62)
+            rd = getattr(F, 'road', None)
+            falls, flow = landfalls.find(F, inside, [max(F.hold[i] if F.hold else 0.0, 1.0 if rd[i] else 0.0) for i in range(len(F.z))] if rd else F.hold, seed)
+            pieces = landfalls.lay(F, inside, falls, flow, seed)
+            for pc in pieces:
+                pc['g0'] = landfalls._h(F, pc['x'], pc['y'])
+            F.info['falls'] = pieces
+            F.wet = landfalls.wet_mask(F, pieces)
+            if getattr(F, 'road', None):
+                F.wet = bytearray(a | b for a, b in zip(F.wet, F.road))
+            F.info.setdefault('terrain', {})['falls'] = len(falls)
+    if getattr(F, 'road', None) and not getattr(F, 'wet', None):
+        F.wet = F.road
     return keys, G, F, inside, reg
 
 
@@ -1066,12 +1145,16 @@ def _holds(db, F, keys, margin):
     margin = max(64.0, float(margin))
     hold = None
     held = []
+    # (what the last Shape them set itself is taken out before the cells are shaped again: its waterfalls and pools
+    # held the ground under them as if built, and the next press found 5 falls where the first found 12, lab 2026-11-08)
+    bases = (getattr(db.project, 'land', None) or {}).get('base') or {} if getattr(db, 'project', None) else {}
+    own = {rk for k in keys for rk in ((bases.get('%d,%d' % k) or {}).get('rocks') or [])}
     for gx, gy in keys:
         if landscape._winner(db, gx, gy) is None:
             continue
         m = mapdata.cellmap(db, '#%d,%d' % (gx, gy))
         for r in m.get('refs') or []:
-            if held_kind(r) != 'hold' or not r.get('b'):
+            if held_kind(r) != 'hold' or not r.get('b') or r['k'] in own:
                 continue
             b, s = r['b'], r.get('s') or 1.0
             x0, y0, x1, y1 = b[0] * s, b[1] * s, b[3] * s, b[4] * s
@@ -1258,7 +1341,7 @@ def _apply_tiles(db, keys, plan):
         if out is None:
             out = r
         else:
-            for f in ('cells', 'new', 'eased', 'moved', 'paths'):
+            for f in ('cells', 'new', 'eased', 'moved', 'paths', 'rocks', 'clad', 'trees_out', 'trees_grown', 'plants', 'falls'):
                 out[f] = out.get(f, 0) + r.get(f, 0)
     editing.fold(db, len(order), 'Shaped %d cells with the region pass (%d tiles)' % (len(keys), len(order)))
     out['tiles'] = len(order)
@@ -1279,6 +1362,7 @@ def _apply(db, cells, plan):
     keys, G, F, inside, reg = _work(db, cells, plan, 1)
     _say('Easing the cliffs', 0.64)
     _drop_rocks(db, G.real)
+    _restore_trees(db, G.real)
     before = {k: G.cell(*k) for k in keys}
     G.z = __import__('array').array('d', F.z)
     free = inside if F.hold is None else bytearray(0 if F.hold[i] >= 1 else inside[i] for i in range(len(inside)))
@@ -1291,12 +1375,27 @@ def _apply(db, cells, plan):
     TR = landregion.clean(plan.get('terrain'))
     t_only = terrain_only(plan)
     # (the region pass alone keeps the land's textures unless asked: it changes the relief, not the ground's look)
-    paint = plan.get('paint', True) is not False and (TR['paint'] or not t_only)
+    # (and roads alone keep them too: a press with only road layers repainted every marked cell, 2026-11-08)
+    shaping = [L for L in plan.get('layers') or [] if L.get('on', True) is not False and L.get('kind') not in NO_SHAPE]
+    paint = plan.get('paint', True) is not False and ((TR['on'] and TR['paint']) or bool(shaping))
     if paint:
         import landdress
         seed_ = int(plan.get('seed') or 1)
         _say('Texturing', 0.66)
         ids, files = landdress.textures(db, F, keys, reg, dress['variety'], seed_, flow=_beds(F, inside, dress, seed_), flow_k=dress['flow'], shore=dress['shore'])
+    if TR['on'] and TR['borders'] and paint:
+        # (the region borders the repainted cells touch blended as the game's are, not switched at the cell edge)
+        F.info.setdefault('terrain', {})['border_patches'] = landregion.blend_borders(db, keys, new_h, ids, reg, int(plan.get('seed') or 1))
+    if TR['on'] and TR['cliffs'] > 0:
+        # (the pass's new cliffs in rock, not the grass the gentle land had: landregion.paint_cliffs)
+        F.info.setdefault('terrain', {})['cliff_patches'] = landregion.paint_cliffs(
+            db, keys, new_h, ids, reg, (F.info.get('terrain') or {}).get('like') or {}, TR['rockfrom'], int(plan.get('seed') or 1))
+    if getattr(F, 'roads', None):
+        # (the roads painted over all of it, in the road texture of the culture's nearest towns: landroads.paint)
+        import landroads
+        import placeplan
+        F.info['road_patches'] = landroads.paint(db, keys, ids, [{'pts': L['pts'], 'culture': (L.get('p') or {}).get('culture') or ''} for L in F.roads],
+                                                 lambda p: placeplan.culture_at(db, p[0], p[1], landrange._region_of(db, math.floor(p[0] / 8192.0), math.floor(p[1] / 8192.0))))
     # the region's shading (landshade), worked out here for each cell and written with its heights and textures in
     # one go: its tints, then its seams, then its darker hollows, each on what the one before made (as shade() would
     # read them back), on the heights as the record keeps them (to 8 units). One write a cell, not four.
@@ -1362,6 +1461,64 @@ def _apply(db, cells, plan):
         rocks = clad + cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, region_of, float(dress['rocks']),
                                                                  int(plan.get('seed') or 1), hold))
         db.sync_project()
+    elif t_only and TR['rocks'] and TR['cliffs'] > 0 and dress['rocks'] > 0:
+        # (the region pass: its steep ground clad in cliff pieces, each region's own or, where the game set none, a
+        # region's of like weather; the land's own scattered rocks stay and follow the ground, no second scatter)
+        import rockface
+        F.z = list(G.z)
+        rr = {k: TR['rockfrom'] or landregion.rock_region(db, reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
+              for k in keys}
+        region_of = lambda x, y: rr.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
+        _say('Cladding the steep ground', 0.84)
+        rf = rockface.clad(db, keys, amount=float(dress['rocks']), seed=int(plan.get('seed') or 1),
+                           field=(F, inside, F.hold), region_of=region_of, weight=F.shaped, keep=getattr(F, 'wet', None),
+                           say=lambda what, frac: _say(what, 0.84 + 0.1 * frac))
+        clad = rocks = rf['rocks']
+        F.info['clad'] = {k: v for k, v in rf.items() if k in ('parts', 'dropped', 'cover', 'steep_points', 'zone_points', 'knolls', 'rejects', 'why')}
+        F.info['clad']['from'] = sorted(set(rr.values()))
+        db.sync_project()
+    thinned = {}
+    if TR['on'] and TR['trees']:
+        # (the land's own trees off the cliffs and gathered into groves, as the game's stand: landregion.thin_trees;
+        # the new ones in the groves are the press's own, taken out with its rocks when it is shaped again)
+        import cliffrocks
+        _say('Gathering the trees into groves', 0.95)
+        F.z = list(G.z)
+        wet = getattr(F, 'wet', None)
+        thinned, grown = landregion.thin_trees(db, keys, F, [max(F.hold[i] if F.hold else 0.0, 1.0 if wet[i] else 0.0) for i in range(len(F.z))]
+                                               if wet else F.hold, int(plan.get('seed') or 1))
+        F.info['trees'] = {'out': sum(len(v) for v in thinned.values()), 'grown': cliffrocks.place(db, grown)}
+        db.sync_project()
+    if getattr(F, 'bridges', None):
+        # (the roads' bridges, the press's own: taken out with its rocks when it is shaped again)
+        import cliffrocks
+        F.info['bridges_set'] = cliffrocks.place(db, F.bridges)
+        db.sync_project()
+    if F.info.get('falls'):
+        # (each piece moved with the ground under it since it was laid: the easing of steps too steep for the game)
+        import cliffrocks
+        import landfalls
+        F.z = list(G.z)
+        pcs = []
+        for pc in F.info.pop('falls'):
+            g = landfalls._h(F, pc['x'], pc['y'])
+            if g is not None and pc.get('g0') is not None:
+                pc['z'] += g - pc['g0']
+            pcs.append({k: v for k, v in pc.items() if k != 'g0'})
+        F.info['falls_set'] = cliffrocks.place(db, pcs)
+        db.sync_project()
+    if TR['on'] and TR['plants']:
+        # (plants where the land has none of its own, from the nearest region in weather and place that has:
+        # landregion.grow_plants; the press's own, taken out with its rocks when it is shaped again)
+        import cliffrocks
+        _say('Planting', 0.97)
+        F.z = list(G.z)
+        wet = getattr(F, 'wet', None)
+        hold_ = [max(F.hold[i] if F.hold else 0.0, 1.0 if wet and wet[i] else 0.0) for i in range(len(F.z))] if wet else F.hold
+        pl, frm = landregion.grow_plants(db, keys, F, inside, hold_, reg, (F.info.get('terrain') or {}).get('like') or {},
+                                         int(plan.get('seed') or 1))
+        F.info['plants'] = {'set': cliffrocks.place(db, pl), 'from': frm}
+        db.sync_project()
     set_rocks = {k: sorted(refs_of(k) - had[k]) for k in keys}
     shaded = [m for m in ('texture', 'seams', 'hollows') if m in shaded]
     cl = ['%d,%d' % k for k in keys]
@@ -1374,16 +1531,23 @@ def _apply(db, cells, plan):
         except EditError:
             pass
     db.sync_project()
-    _keep_base(db, before, keys, set_rocks)
+    _keep_base(db, before, keys, set_rocks, thinned)
     m = measure(F, keys)
-    n = len([L for L in plan.get('layers') or [] if L.get('on', True) is not False])
+    n = len([L for L in plan.get('layers') or [] if L.get('on', True) is not False and L.get('kind') not in NO_SHAPE])
+    nroad = len(getattr(F, 'roads', None) or [])
     if t_only:
         commit(db, 'Shaped %d cell%s with the region pass%s' % (len(keys), '' if len(keys) == 1 else 's', (' (%d new)' % made) if made else ''))
+    elif not n and nroad:
+        commit(db, 'Laid %d road%s in %d cell%s' % (nroad, '' if nroad == 1 else 's', len(keys), '' if len(keys) == 1 else 's'))
     else:
         commit(db, 'Shaped %d cell%s with %d shape%s%s' % (len(keys), '' if len(keys) == 1 else 's', n, '' if n == 1 else 's',
                                                            (' (%d new)' % made) if made else ''))
     texn = sorted(len(set(v)) for v in ids.values())
     return {'cells': len(keys), 'new': made, 'eased': eased, 'moved': moved, 'paths': paths, 'info': F.info, 'rocks': rocks, 'clad': clad,
+            'trees_out': (F.info.get('trees') or {}).get('out', 0), 'trees_grown': (F.info.get('trees') or {}).get('grown', 0),
+            'plants': (F.info.get('plants') or {}).get('set', 0), 'falls': (F.info.get('terrain') or {}).get('falls', 0),
+            'roads': len(getattr(F, 'roads', None) or []), 'road_patches': F.info.get('road_patches', 0),
+            'bridges': sum(len((L.get('p') or {}).get('bridges') or []) for L in getattr(F, 'roads', None) or []),
             'clad_pending': (F.info.get('clad') or {}).get('why') == 'learning',
             'shaded': shaded, 'assigned': assigned, 'measured': m,
             'textures_a_cell': texn[len(texn) // 2] if texn else 0,

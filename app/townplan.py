@@ -1814,13 +1814,17 @@ ZONE_COST = 6.0
 def _kinds(plots, fig, poly, square, rng):
     """What each building is, in the culture's mix: the special ones (a tavern, a temple, a guild hall, shops, a manor,
     a guard post) nearest the square or the middle and on the main street, houses the rest."""
+    import towntrade
     kinds = {k: v for k, v in fig['kinds'].items() if k != 'other'}
     tot = float(sum(kinds.values()) or 1)
     n = len(plots)
     O = fig.get('_opts') or {}
+    # (what the town lives by leans its mix as the game's towns of that trade lean: a farm town's fewer shops and guard
+    # posts, a mine town's more shops, taverns and guild halls; towntrade.KIND_LIFT)
+    lift = towntrade.kind_lift(O.get('trade'))
     want = Counter()
     for k in SPECIAL:
-        share = kinds.get(k, 0) / tot
+        share = kinds.get(k, 0) / tot * lift.get(k, 1.0)
         c = share * n
         want[k] = int(c) + (1 if rng.random() < c - int(c) else 0)
     if n >= 8 and kinds.get('tavern'):

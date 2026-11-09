@@ -75,6 +75,16 @@ CROWN_RELIEF = 516.0
 CROWN_SIZE = [420, 480, 570, 700, 920]        # (its rocks' sizes, p10 to p90)
 CROWN_SINK = [100, 150, 217, 300, 420]
 CROWN_H = [140, 170, 210, 420, 1090]          # (its rocks' heights)
+BANK_STEEP = 0.7               # a land vertex is bank when a facet through it is this steep (one in 0.7: 35 degrees)
+BANK_REACH = 1200.0            # ... and stands within this of a building or a street
+BANK_COVER = 0.85              # the bank pass stops when this share of the town's steep vertices is covered (the game's
+#                                hill towns p50 0.90, rocks most of it: 0.04 of their land bare without them, 0.008 with)
+BANK_SHOULDER = 640.0          # a bank within this of a street's edge is the street's shoulder: shored up first
+BANK_MAX = 260                 # rocks the pass lays at most
+BANK_STREET_KEEP = 0.5         # a bank rock's middle stands at least this share of its half-size off a street's edge
+BANK_TRIES = 7                 # tries a bank vertex: smaller after a spot refused for room, taller after a rim that shows
+BANK_OFFS = (0.15, -0.2, 0.35, 0.0, -0.4, 0.25, 0.5)   # (the middle's offset down the fall, a share of the half-size)
+BANK_SMALLEST = 200.0          # (the smallest bank rock across; banks rocks lap each other at OVERLAP, packed)
 _mem = {}
 _rims = {}
 
@@ -389,14 +399,18 @@ def _ground(db, x, y, memo=None):
     return memo[k]
 
 
-def pose(rng, b, s, x, y, gr, bin_, P, tilt_scale=1.0, align=0.5):
+def pose(rng, b, s, x, y, gr, bin_, P, tilt_scale=1.0, align=0.5, along=False):
     """A rock's turn at a spot: its long axis down the slope (with chance `align`, within 30 degrees; else any way,
     the game's rocks lie nearly any way to their slope, cos p50 0.7), its top tipped the way the ground falls by the
     game's tilt for the slope's bin. (rx, ry, rz)."""
     w, d = (b[3] - b[0]) * s, (b[4] - b[1]) * s
     long_local = 0.0 if w >= d else math.pi / 2
     slope = math.hypot(*gr) if gr else 0.0
-    if gr and slope > 0.03 and rng.random() < align:
+    if gr and slope > 0.03 and along:
+        # (its long axis along the bank, across the fall: a bank's rocks shore it up the length of it)
+        down = math.atan2(-gr[1], -gr[0])
+        rz = (-(down + math.pi / 2 - long_local) + (rng.random() - 0.5) * math.radians(40)) % (2 * math.pi)
+    elif gr and slope > 0.03 and rng.random() < align:
         down = math.atan2(-gr[1], -gr[0])          # (the world angle of the way downhill)
         # (local +X points along the world angle -rz: rz = -(angle wanted for +X))
         rz = (-(down - long_local) + (rng.random() - 0.5) * math.radians(60)) % (2 * math.pi)
@@ -977,11 +991,168 @@ def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, 
                 continue
             rot = pose(rng, b, s, x, y, gr2, slope_bin(math.hypot(*gr2)), P)
             put(rid, b, s, x, y, g - _draw(rng, [20, 40, 70, 110, 160], 0.1, 0.9) - b[2] * s, rot, 'foot', loose=True)
+    # 6. the banks left bare: the steep ground the passes above left showing, the streets' shoulders first (the user,
+    # 2026-11-08: "use stones etc to reinforce the sides of raised street profiles like this, as you might need to in
+    # real life to shore up similar landscaping"; ours covered 24-38% of their steep ground before this pass)
+    bank = _banks(db, plan, S, K, P, rng, memo, put, boxes, outline or plan.get('outline') or [], amount)
     if os.environ.get('TOWN_ROCK_DEBUG'):
-        print('  rocks: refused spots %s; drops %s' % (dict(S.refused), dict(drops)))
+        print('  rocks: refused spots %s; drops %s; banks %s' % (dict(S.refused), dict(drops), bank))
     return {'placed': len(out), 'dropped': drops['buried'], 'drops': dict(drops), 'kinds': dict(kinds), 'rocks': out, 'refused': dict(S.refused),
             'factor': round(f / max(1e-6, amount), 2), 'culture_factor': round(F['factor'], 2), 'surround': round(sf, 2), 'round': n_round,
-            'from': F['from'], 'knoll': kn}
+            'from': F['from'], 'knoll': kn, 'banks': bank}
+
+
+def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
+    """The town's bare banks shored up with rocks: every land vertex within BANK_REACH of a building or a street,
+    inside the town's reach, whose steepest facet is BANK_STEEP or more and which nothing covers (a building's plot,
+    the wall, a thing standing there, a rock laid); the streets' shoulders first, then the highest banks; each rock
+    sized to its bank's rise, laid along it, sunk until its rim is buried, the vertices under it covered; until
+    BANK_COVER of the steep vertices are covered (times amount) or BANK_MAX rocks. {'steep', 'covered_before',
+    'covered_after', 'laid', 'tried'}."""
+    import townbuild
+    cen = []
+    for q in plan.get('plots') or ():
+        if q.get('b') and q.get('rect'):
+            cen.append((sum(p_[0] for p_ in q['rect']) / 4.0, sum(p_[1] for p_ in q['rect']) / 4.0))
+    for st in plan.get('streets') or ():
+        pts = st.get('pts') or []
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            L = math.hypot(bx - ax, by - ay)
+            for k in range(int(L // 600) + 1):
+                t = k * 600.0 / L if L else 0.0
+                cen.append((ax + (bx - ax) * t, ay + (by - ay) * t))
+    if not cen:
+        return {}
+    H = {}
+
+    def vz(i, j):
+        if (i, j) not in H:
+            H[(i, j)] = _ground(db, i * 128.0, j * 128.0, memo)
+        return H[(i, j)]
+
+    rr = int(BANK_REACH // 128) + 1
+    verts = set()
+    for cx, cy in cen:
+        ci, cj = int(round(cx / 128.0)), int(round(cy / 128.0))
+        for i in range(ci - rr, ci + rr + 1):
+            for j in range(cj - rr, cj + rr + 1):
+                if (i * 128.0 - cx) ** 2 + (j * 128.0 - cy) ** 2 <= BANK_REACH * BANK_REACH:
+                    verts.add((i, j))
+    steep = {}
+    for i, j in verts:
+        z = vz(i, j)
+        if z is None or z < 0:
+            continue
+        worst = 0.0
+        for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            z2 = vz(i + di, j + dj)
+            if z2 is not None:
+                worst = max(worst, abs(z2 - z) / 128.0)
+        if worst < BANK_STEEP:
+            continue
+        x, y = i * 128.0, j * 128.0
+        if len(S.outline) >= 3 and not _inside_poly(S.outline, x, y) and _edge_dist(S.outline, x, y) > S.pad:
+            continue
+        steep[(i, j)] = worst
+    if not steep:
+        return {'steep': 0}
+
+    def under(x, y):
+        for q in S.rects:
+            if S._in_rect(q, x, y):
+                return True
+        for q in S.wall:
+            if S._in_rect(q, x, y):
+                return True
+        for tx, ty, th in S.things:
+            if math.hypot(x - tx, y - ty) < th * 0.8:
+                return True
+        return False
+
+    def footprint(x, y, rz, s_, b):
+        """The lattice vertices under a rock's box (0.9 of it)."""
+        c, sn = math.cos(rz), math.sin(rz)
+        R = max(abs(b[0]), abs(b[3]), abs(b[1]), abs(b[4])) * s_
+        got = []
+        for i in range(int(math.floor((x - R) / 128.0)), int(math.ceil((x + R) / 128.0)) + 1):
+            for j in range(int(math.floor((y - R) / 128.0)), int(math.ceil((y + R) / 128.0)) + 1):
+                dx, dy = i * 128.0 - x, j * 128.0 - y
+                lx, ly = (dx * c - dy * sn) / s_, (dx * sn + dy * c) / s_
+                if b[0] * 0.9 <= lx <= b[3] * 0.9 and b[1] * 0.9 <= ly <= b[4] * 0.9:
+                    got.append((i, j))
+        return got
+
+    covered = {v for v in steep if under(v[0] * 128.0, v[1] * 128.0)}
+    for x_, y_, _z, rz_, s_, b_ in boxes:
+        covered.update(v for v in footprint(x_, y_, rz_, s_, b_) if v in steep)
+    before = len(covered) / float(len(steep))
+    target = min(0.95, BANK_COVER * max(0.3, min(1.15, amount)))
+    # (a vertex on a street, a road patch, the square or a footpath's tread is the walk itself: never a bank's rock)
+    order = []
+    for (i, j), worst in steep.items():
+        if (i, j) in covered:
+            continue
+        x, y = i * 128.0, j * 128.0
+        sd = S._street_dist(plan, x, y)
+        if sd is not None and sd <= 0:
+            continue
+        if (int(math.floor(x / S.PATCH)), int(math.floor(y / S.PATCH))) in S.roads:
+            continue
+        lo = min(v for v in (vz(i + 2, j), vz(i - 2, j), vz(i, j + 2), vz(i, j - 2), vz(i, j)) if v is not None)
+        hi = max(v for v in (vz(i + 2, j), vz(i - 2, j), vz(i, j + 2), vz(i, j - 2), vz(i, j)) if v is not None)
+        shoulder = sd is not None and sd < BANK_SHOULDER
+        order.append((0 if shoulder else 1, -(hi - lo), rng.random(), i, j, hi - lo, sd))
+    order.sort()
+    laid = tried = 0
+    for _sh, _neg, _r, i, j, rise, sd in order:
+        if len(covered) >= target * len(steep) or laid >= BANK_MAX:
+            break
+        if (i, j) in covered:
+            continue
+        tried += 1
+        x0, y0 = i * 128.0, j * 128.0
+        gr = _grad(db, x0, y0)
+        if gr is None:
+            continue
+        slope = math.hypot(*gr)
+        dx_, dy_ = (-gr[0] / slope, -gr[1] / slope) if slope > 1e-6 else (0.0, 0.0)
+        taller = smaller = 1.0
+        for _try in range(BANK_TRIES):
+            tall = max(160.0, min(1000.0, rise * 0.75 + 120.0)) * taller
+            size = max(BANK_SMALLEST, min(1100.0, rise * 1.3 + 260.0) * smaller * (0.8 + rng.random() * 0.45))
+            pk = K.pick(rng, size=size, tall=tall, small=smaller < 0.6)
+            if not pk:
+                break
+            rid, b, s_ = pk
+            half = max(b[3] - b[0], b[4] - b[1]) * s_ / 2.0
+            # (its middle a little down or up the bank from the vertex, so it sits into the rise; jittered along it.
+            # A spot refused for room: a smaller rock, and the other way along the fall)
+            off = BANK_OFFS[_try % len(BANK_OFFS)] * half
+            jit = (rng.random() - 0.5) * 96.0
+            x, y = x0 + dx_ * off - dy_ * jit, y0 + dy_ * off + dx_ * jit
+            if not S.free(x, y, half, loose=True):
+                smaller *= 0.75
+                continue
+            sd2 = S._street_dist(plan, x, y)
+            if sd2 is not None and sd2 < half * BANK_STREET_KEEP:
+                S.refused['shoulder'] += 1
+                smaller *= 0.75
+                continue
+            g = _ground(db, x, y, memo)
+            gr2 = _grad(db, x, y)
+            if g is None or g < 0 or gr2 is None:
+                continue
+            kb = slope_bin(math.hypot(*gr2))
+            rot = pose(rng, b, s_, x, y, gr2, kb, P, align=0.0, along=True)
+            sink = _draw(rng, P['bins'][kb]['sink'] or [20, 50, 100, 200, 400], 0.2, 0.6)
+            if put(rid, b, s_, x, y, g - sink - b[2] * s_, rot, 'bank', loose=True):
+                laid += 1
+                x_, y_, _z, rz_, s3, b3 = boxes[-1]
+                covered.update(v for v in footprint(x_, y_, rz_, s3, b3) if v in steep)
+                break
+            taller *= 1.3
+    return {'steep': len(steep), 'covered_before': round(before, 3), 'covered_after': round(len(covered) / float(len(steep)), 3),
+            'laid': laid, 'tried': tried}
 
 
 def knoll(db, outline, memo=None):

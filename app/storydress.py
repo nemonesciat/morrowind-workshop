@@ -15,6 +15,7 @@ y into the yard from the house's back wall, z over the ground. Things that would
 Nothing grows in a walking line: the doors' ways and the arrival spots in front of them, the streets, the plots.
 """
 import math
+import os
 import random
 import re
 
@@ -89,6 +90,24 @@ KINDS = {
     'pen': [('t_com_setfarm_haybale_01', -120, 200, 0, 0.3), ('t_com_setfarm_haybale_01', -40, 220, 0, 1.2), ('t_imp_setfarm_foodtrough_01', 100, 120, 0, 1.571),
             ('t_com_setfarm_haypile_01', 150, 260, 0, 0.0)],
 }
+# (a fishing household's yard: a net on its drying frame, fish hung to dry, a coil of rope, an oar, a barrel; the game's
+# own harbour pieces, those the load order has. towntrade.YARD_SHARE says how often)
+FISHING = [(('t_imp_setharbor_fishnet_02', 't_nor_setharbor_fishnet_01'), -40, 100, 0, 0.0),
+           (('t_com_setharbor_fishhanging_01',), 135, 70, 0, 0.0), (('t_com_setharbor_fishhanging_01',), 170, 100, 0, 0.6),
+           (('t_com_setharbor_rope_01',), 125, 170, 0, 0.8), (('ex_de_oar',), -150, 180, 0, 1.4), (('barrel_01',), 185, 175, 0, 0.3)]
+
+
+def _fishing_set(db):
+    out = []
+    for ids, x, y, z, rz in FISHING:
+        rid = _first(db, *ids)
+        if rid:
+            out.append((rid, x, y, z, rz))
+    # (a yard with no net and no hanging fish is no fisher's: the oar and the barrel alone are anyone's)
+    return out if any(re_fish.search(t[0]) for t in out) else []
+
+
+re_fish = re.compile(r'fishnet|fishhanging', re.I)
 KIND_BY = {'house': ['kitchen', 'garden', 'kitchen', 'pen'], 'manor': ['garden', 'kitchen'], 'shop': ['workshop', 'kitchen'],
            'tavern': ['kitchen', 'workshop'], 'farm': ['pen', 'garden'], 'shack': ['kitchen', 'garden']}
 LAST = {}                      # (the last town's figures, for the checks)
@@ -880,14 +899,21 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0):
         # the yard's kind, laid against the house's back
         if depth >= YARD_MIN:
             kinds = KIND_BY.get(q.get('kind') or 'house') or KIND_BY['house']
-            kind = rng.choice(kinds)
+            kind = None
+            if plan.get('trade') and (q.get('kind') or 'house') in ('house', 'shack'):
+                # (what the town lives by: a fisher's yard, a farmer's pen as often as the game's houses of such towns)
+                import towntrade
+                kind = towntrade.yard_kind(rng, plan['trade'], kinds)
+                if kind == 'fishing' and not _fishing_set(db):
+                    kind = None
+            kind = kind or rng.choice(kinds)
             laid = []
             ox = oy = None
             # (against the middle of the back wall, else to one side: a porch or the dressing's own things may stand
             # in the middle)
             for off in (0.0, w / 4.0, -w / 4.0):
                 ox, oy = h.at((xl + xr) / 2.0 + off, back)
-                laid = _lay_set(db, space, memo, KINDS[kind], ox, oy, X, Y, kind)
+                laid = _lay_set(db, space, memo, _fishing_set(db) if kind == 'fishing' else KINDS[kind], ox, oy, X, Y, kind)
                 if laid:
                     break
             if kind == 'garden':
@@ -937,10 +963,253 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0):
                 if laid:
                     n['vines'] += 1
                     add(laid, 'vine')
+    # the empty ground left between: a kitchen garden where a pocket holds one, trees on the open ground by the streets
+    # (the user, 2026-11-08: "Try to fill in empty space where you can ... a garden in the box area ... maybe some tree
+    # in the green patch by the road")
+    if amount > 0:
+        try:
+            pk = pockets(db, plan, space, memo, rng, cult, pool, add, amount)
+            n.update(pk)
+        except Exception as e_:
+            WHY['pockets: %s' % e_] = 1
     n['species'] = len(n['species'])
     n['why'] = dict(WHY)
     LAST.clear()
     LAST.update(n)
+    return out
+
+
+POCKET_STEP = 128.0            # the lattice the town's open ground is read on
+POCKET_SLOPE = 0.3             # ground steeper than this is no garden's or tree's (the banks are rockblend's)
+POCKET_IN = 128.0              # (and this far in from the town's outline or wall)
+TREE_SLOPE = 0.6               # (a tree stands on ground up to this steep, as the game's do on its banks)
+POCKET_MIN = 8                 # a pocket of fewer lattice points is left as it is
+GARDEN_MIN = (384.0, 256.0)    # a pocket that holds a box this big (across, deep) gets a fenced garden (the game's fields: 500 by 200 at the median)
+GARDEN_MAX = (1400.0, 1100.0)  # (no bigger: the game's kitchen gardens are small)
+GARDEN_EDGE = 48.0             # (its fence kept this far in from the pocket's edge)
+POCKET_TREE_AREA = 420000.0    # a tree for about every this much open ground left (650 square) ...
+POCKET_TREE_GAP = 520.0        # ... no nearer another than this
+POCKET_STREET = 900.0          # trees on ground within this of a street first (by the road)
+POCKET_GARDENS = 0.25          # gardens at most this share of the town's buildings (at least one)
+
+
+def _max_rect(grid, W, H):
+    """The biggest all-True box in a W x H grid (grid[v][u]): (u0, v0, u1, v1) inclusive, or None."""
+    best, out = 0, None
+    hgt = [0] * W
+    for v in range(H):
+        for u in range(W):
+            hgt[u] = hgt[u] + 1 if grid[v][u] else 0
+        stack = []
+        for u in range(W + 1):
+            h = hgt[u] if u < W else 0
+            start = u
+            while stack and stack[-1][1] >= h:
+                su, sh = stack.pop()
+                if sh * (u - su) > best:
+                    best = sh * (u - su)
+                    out = (su, v - sh + 1, u - 1, v)
+                start = su
+            stack.append((start, h))
+    return out
+
+
+def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0):
+    """The town's open ground (inside its wall or outline, gentle, clear of everything `space` holds: the plots,
+    door ways, streets, the dressing, the rocks, the yards) read on a POCKET_STEP lattice and joined into pockets; a
+    pocket that holds a GARDEN_MIN box gets a fenced kitchen garden of the region's crop (farm()), its gate toward the
+    nearest street, turned as its nearest house; the open ground left gets trees of the region's own kinds, those by
+    the streets first. {'gardens', 'pocket trees', 'pockets'}."""
+    outline = [tuple(p) for p in (plan.get('wall_outline') or plan.get('outline') or ())]
+    if len(outline) < 3:
+        # (a plan without its outline: the hull of its plots and streets)
+        pts_ = sorted({(round(p[0]), round(p[1])) for q in plan['plots'] if q.get('rect') for p in q['rect']} |
+                      {(round(p[0]), round(p[1])) for s_ in plan.get('streets') or () for p in s_.get('pts') or ()})
+        if len(pts_) < 3:
+            return {}
+        cr = lambda o, a_, b_: (a_[0] - o[0]) * (b_[1] - o[1]) - (a_[1] - o[1]) * (b_[0] - o[0])
+        lo, hi = [], []
+        for p in pts_:
+            while len(lo) >= 2 and cr(lo[-2], lo[-1], p) <= 0:
+                lo.pop()
+            lo.append(p)
+        for p in reversed(pts_):
+            while len(hi) >= 2 and cr(hi[-2], hi[-1], p) <= 0:
+                hi.pop()
+            hi.append(p)
+        outline = lo[:-1] + hi[:-1]
+    xs, ys = [p[0] for p in outline], [p[1] for p in outline]
+    st = POCKET_STEP
+
+    def edge_d(x, y):
+        best = None
+        for k in range(len(outline)):
+            (ax, ay), (bx, by) = outline[k], outline[(k + 1) % len(outline)]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t = 0.0 if not L2 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+            d = math.hypot(x - ax - dx * t, y - ay - dy * t)
+            best = d if best is None or d < best else best
+        return best
+
+    gmemo = {}
+
+    def gz(x, y):
+        k = (round(x), round(y))
+        if k not in gmemo:
+            gmemo[k] = mapdata.terrain_z(db, x, y)
+        return gmemo[k]
+
+    why = {}
+
+    def ok(x, y, slope=POCKET_SLOPE):
+        if not _inside(outline, x, y) or edge_d(x, y) < POCKET_IN:
+            return False
+        z = gz(x, y)
+        if z is None or z < 8:
+            why['water'] = why.get('water', 0) + 1
+            return False
+        for dx, dy in ((st, 0), (0, st)):
+            z2 = gz(x + dx, y + dy)
+            if z2 is None or abs(z2 - z) / st > slope:
+                why['steep'] = why.get('steep', 0) + 1
+                return False
+        r_ = _rect(x, y, 1.0, 0.0, st / 2.0, st / 2.0)
+        if not space.free(r_, grows=True):
+            if os.environ.get('POCKET_DEBUG'):
+                if any(_overlap(r_, p_) for p_ in space.strict):
+                    why['taken street'] = why.get('taken street', 0) + 1
+                else:
+                    for k_, p_ in enumerate(space.polys):
+                        if _overlap(r_, p_):
+                            ar = abs(sum(p_[i][0] * p_[(i + 1) % len(p_)][1] - p_[(i + 1) % len(p_)][0] * p_[i][1] for i in range(len(p_)))) / 2.0
+                            kk = 'taken %s' % ('huge' if ar > 4e6 else 'big' if ar > 4e5 else 'mid' if ar > 4e4 else 'small')
+                            why[kk] = why.get(kk, 0) + 1
+                            break
+            why['taken'] = why.get('taken', 0) + 1
+            return False
+        return True
+
+    pts = set()
+    for i in range(int(math.floor(min(xs) / st)), int(math.ceil(max(xs) / st)) + 1):
+        for j in range(int(math.floor(min(ys) / st)), int(math.ceil(max(ys) / st)) + 1):
+            if ok(i * st, j * st, TREE_SLOPE):
+                pts.add((i, j))
+    comps = []
+    seen = set()
+    for v in pts:
+        if v in seen:
+            continue
+        c, stack = [], [v]
+        seen.add(v)
+        while stack:
+            a = stack.pop()
+            c.append(a)
+            for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                w = (a[0] + d[0], a[1] + d[1])
+                if w in pts and w not in seen:
+                    seen.add(w)
+                    stack.append(w)
+        if len(c) >= POCKET_MIN:
+            comps.append(c)
+    comps.sort(key=len, reverse=True)
+    built = [q for q in plan['plots'] if q.get('b') and q.get('rect')]
+    streets = [tuple(p) for s_ in plan.get('streets') or () for p in s_.get('pts') or ()]
+
+    def street_pt(x, y):
+        return min(streets, key=lambda p: (p[0] - x) ** 2 + (p[1] - y) ** 2) if streets else None
+
+    gardens = 0
+    g_cap = max(1, int(round(len(built) * POCKET_GARDENS * min(1.5, amount))))
+    trees = []
+    region_memo = {}
+    out = {'pockets': len(comps), 'gardens': 0, 'pocket trees': 0, 'open points': len(pts), 'pocket sizes': [len(c) for c in comps[:6]], 'refused': dict(why)}
+    for c in comps:
+        cx = sum(a[0] for a in c) * st / len(c)
+        cy = sum(a[1] for a in c) * st / len(c)
+        region = _region_at(db, cx, cy, region_memo)
+        cset = set(c)
+        # 1. a garden: the biggest box the pocket holds, in the frame of its nearest house
+        if gardens < g_cap and len(c) * st * st >= GARDEN_MIN[0] * GARDEN_MIN[1] and built:
+            q = min(built, key=lambda q_: (sum(p[0] for p in q_['rect']) / 4.0 - cx) ** 2 + (sum(p[1] for p in q_['rect']) / 4.0 - cy) ** 2)
+            f0 = q.get('face') or 0.0
+            X = (math.cos(f0), -math.sin(f0))
+            Y = (math.sin(f0), math.cos(f0))
+            us = [a[0] * st * X[0] + a[1] * st * X[1] for a in c]
+            vs = [a[0] * st * Y[0] + a[1] * st * Y[1] for a in c]
+            u0, v0 = min(us) - st, min(vs) - st
+            W, H = int((max(us) - u0) / st) + 2, int((max(vs) - v0) / st) + 2
+            grid = []
+            for vv in range(H):
+                row = []
+                for uu in range(W):
+                    u, v = u0 + uu * st, v0 + vv * st
+                    x, y = X[0] * u + Y[0] * v, X[1] * u + Y[1] * v
+                    near = (int(round(x / st)), int(round(y / st)))
+                    row.append(near in cset and ok(x, y))
+                grid.append(row)
+            R = _max_rect(grid, W, H)
+            why.setdefault('garden boxes', []).append(None if not R else ((R[2] - R[0] + 1) * st - 2 * GARDEN_EDGE, (R[3] - R[1] + 1) * st - 2 * GARDEN_EDGE))
+            if R:
+                # (a run of n lattice points holds n steps of ground: half a step past each end point)
+                w = (R[2] - R[0] + 1) * st - 2 * GARDEN_EDGE
+                d = (R[3] - R[1] + 1) * st - 2 * GARDEN_EDGE
+                if max(w, d) >= GARDEN_MIN[0] and min(w, d) >= GARDEN_MIN[1]:
+                    um, vm = u0 + (R[0] + R[2]) / 2.0 * st, v0 + (R[1] + R[3]) / 2.0 * st
+                    gx, gy = X[0] * um + Y[0] * vm, X[1] * um + Y[1] * vm
+                    w, d = min(w, GARDEN_MAX[0] if w >= d else GARDEN_MAX[1]), min(d, GARDEN_MAX[0] if d > w else GARDEN_MAX[1])
+                    # (its gate toward the nearest street: of the frame's four ways, the one nearest it; the box's
+                    # across and deep follow the way turned)
+                    sp = street_pt(gx, gy)
+                    face, gw, gd = f0, w, d
+                    if sp:
+                        want = math.atan2(sp[0] - gx, sp[1] - gy)
+                        best = None
+                        for k in range(4):
+                            fk = f0 + k * math.pi / 2
+                            diff = abs((want - fk + math.pi) % (2 * math.pi) - math.pi)
+                            if best is None or diff < best[0]:
+                                best = (diff, fk, w if k % 2 == 0 else d, d if k % 2 == 0 else w)
+                        _df, face, gw, gd = best
+                    laid = farm(db, gx, gy, face, gw, gd, cult, region=region, seed=rng.randrange(1 << 30), space=space, memo=memo)
+                    why.setdefault('garden crops', []).append(sum(1 for t in laid if t.get('role') == 'crop'))
+                    if sum(1 for t in laid if t.get('role') == 'crop') >= 4:
+                        gardens += 1
+                        add([(t['id'], t['p'], t['s'], 'garden ' + t.get('role', 'crop')) for t in laid], 'garden')
+                        space.take(_rect(gx, gy, X[0], X[1], (R[2] - R[0] + 1) * st / 2.0, (R[3] - R[1] + 1) * st / 2.0))
+                        cset = {a for a in cset if ok(a[0] * st, a[1] * st, TREE_SLOPE)}
+        # 2. trees on what is left of it, those by a street first
+        tp = pool('house_trees', region)
+        if not tp or not cset:
+            continue
+        want_n = int(len(cset) * st * st / POCKET_TREE_AREA * min(1.5, amount) + rng.random())
+        cand = sorted(cset, key=lambda a: (0 if streets and min((p[0] - a[0] * st) ** 2 + (p[1] - a[1] * st) ** 2 for p in streets) < POCKET_STREET ** 2 else 1, rng.random()))
+        got = 0
+        for a in cand:
+            if got >= want_n:
+                break
+            x, y = a[0] * st + (rng.random() - 0.5) * st * 0.6, a[1] * st + (rng.random() - 0.5) * st * 0.6
+            if any(math.hypot(x - tx, y - ty) < POCKET_TREE_GAP for tx, ty in trees):
+                continue
+            rid = _pick(db, rng, tp)
+            bb = _bounds(db, memo, rid) if rid else None
+            if not bb:
+                continue
+            crown = max(bb[3] - bb[0], bb[4] - bb[1])
+            room = max(TREE_TRUNK, 0.3 * crown, TREE_MIN_D)
+            if not space.free(_rect(x, y, 1.0, 0.0, room, room), grows=True):
+                continue
+            sc = round(rng.uniform(0.9, 1.15), 3)
+            z = _ground_z(db, bb, x, y, sc)
+            if z is None:
+                continue
+            space.take(_rect(x, y, 1.0, 0.0, TREE_TRUNK, TREE_TRUNK))
+            add([(rid, (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc)], 'tree')
+            trees.append((x, y))
+            got += 1
+    out['gardens'] = gardens
+    out['pocket trees'] = len(trees)
+    out['refused'] = dict(why)
     return out
 
 
@@ -1095,10 +1364,46 @@ def orchard(db, cx, cy, face, w, d, culture, region=None, seed=1, space=None, me
     return out
 
 
-def lay_field(db, pts, culture, what='farm', seed=None, commit=True):
+def _clear_field(db, pts, cells, pad=150.0):
+    """The land's own trees, plants and rocks (another plugin's) standing inside the outline, or within pad of it,
+    taken out (deleted in the mod): a field is cleared land. Returns how many."""
+    import cliffrocks
+    import editing
+    import landdecor
+    from project import ref_info
+    mine = db.project.plugin.lower()
+    n = 0
+    for ck in cells:
+        try:
+            refs, _h = db.cell_refs(ck)
+        except Exception:
+            continue
+        c = None
+        for rk, ref in refs.items():
+            rid, pos, _s, dead = ref_info(ref['subs'])
+            if dead or not rid or ref.get('origin') == mine:
+                continue
+            low = rid.lower()
+            if not (landdecor.kind_of(low) or cliffrocks.is_rock(low)):
+                continue
+            x, y = pos[0], pos[1]
+            if not (_inside(pts, x, y) or min(math.hypot(x - a[0], y - a[1]) for a in pts) < pad):
+                continue
+            if c is None:
+                c, _r = editing._cell(db, ck)
+            editing._store(c, rk, ref['origin'], ref['idx'], ref['subs'], deleted=True)
+            n += 1
+    if n:
+        db.sync_project()
+    return n
+
+
+def lay_field(db, pts, culture, what='farm', seed=None, commit=True, clear=False):
     """A farm or an orchard on an outline drawn on the map (world points, three or more): the outline's longest edge
     is the near side (the gate's), and the field fills the outline's box in that frame. Placed into the mod as one
-    Undo step. {'things', 'plants', 'kind', 'seed'}."""
+    Undo step. {'things', 'plants', 'kind', 'seed'}. clear: the land's own trees, plants and rocks in it taken out
+    first, and only what is built keeps the field off (Tamriel.esm's trees stand 1,700 across by their bounds: a
+    proposed farm among them laid nothing, 2026-11-08)."""
     import editing
     import cliffrocks
     editing._require_project(db)
@@ -1111,16 +1416,44 @@ def lay_field(db, pts, culture, what='farm', seed=None, commit=True):
         raise editing.EditError('That outline is too small for a field.')
     # (round what stands there already: an orchard went through a ruin's pillars, the 3D look of 2026-11-05)
     cells = {'#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0)) for x, y in pts} | {'#%d,%d' % (math.floor(cx / 8192.0), math.floor(cy / 8192.0))}
-    space = _Space(_standing(db, None, {}, cells))
+    cleared = _clear_field(db, pts, cells) if clear else 0
+    st = _standing(db, None, {}, cells)
+    if clear:
+        st = _standing_built(db, cells)
+    space = _Space(st)
     items = (farm if what == 'farm' else orchard)(db, cx, cy, face, w, d, culture, seed=seed, space=space)
     # (only within the outline itself, not its box's corners)
     items = [it for it in items if _inside(pts, it['p'][0], it['p'][1]) or it['role'] == 'fence']
     placed = cliffrocks.place(db, [{'id': it['id'], 'x': it['p'][0], 'y': it['p'][1], 'z': it['p'][2], 'rx': it['p'][3], 'ry': it['p'][4], 'rz': it['p'][5], 's': it['s']} for it in items])
     db.sync_project()
     plants = sum(1 for it in items if it['role'] in ('crop', 'tree'))
-    if commit and placed:
+    if commit and (placed or cleared):
         editing.commit(db, 'Laid %s of %d %s' % ('a farm' if what == 'farm' else 'an orchard', plants, 'plants' if what == 'farm' else 'trees'))
-    return {'things': placed, 'plants': plants, 'kind': what, 'seed': seed}
+    return {'things': placed, 'plants': plants, 'kind': what, 'seed': seed, 'cleared': cleared}
+
+
+def _standing_built(db, cells):
+    """As _standing, but only what is built: not the land's trees, plants and rocks."""
+    import cliffrocks
+    import landdecor
+    out = []
+    for ck in cells:
+        try:
+            m = mapdata.cellmap(db, ck)
+        except Exception:
+            continue
+        for r in m.get('refs') or ():
+            if r.get('mine') or not r.get('b') or r['type'] not in ('STAT', 'ACTI', 'CONT'):
+                continue
+            low = r['id'].lower()
+            if landdecor.kind_of(low) or cliffrocks.is_rock(low) or 'marker' in low:
+                continue
+            s = r.get('s') or 1.0
+            b = r['b']
+            if max(b[3] - b[0], b[4] - b[1]) * s < STANDING:
+                continue
+            out.append(_footprint(b, r['p'][0], r['p'][1], r['p'][5], s, 0.0))
+    return out
 
 
 # ------------------------------------------------------------------ the fort's yard

@@ -535,15 +535,19 @@ def lay(db, plan, family=None, cell=None):
         d = _unit(c_[0] - b[0], c_[1] - b[1])
         if (in_.x - out_.x) * d[0] + (in_.y - out_.y) * d[1] >= span + 1.5 * kit['L']:
             ok_sides.add(k)
+    mine = user_gates(plan, poly, roads, kit['L'], ok_sides or None)
+    if mine:
+        streets, roads = mine
     if any(k not in ok_sides for k in streets):
         kept = [(poly[k][0] + _unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1])[0] * h,
                  poly[k][1] + _unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1])[1] * h)
                 for k, hs in streets.items() if k in ok_sides for h in hs]
         streets = defaultdict(list, {k: v for k, v in streets.items() if k in ok_sides})
         roads = [r for r in roads if any(math.hypot(r[1][0] - q[0], r[1][1] - q[1]) < 50 for q in kept)]
-    if db is not None:
+    # (the user's gates stand where they put them: not moved downhill, none added)
+    if db is not None and not mine:
         streets, roads = _downhill_gates(db, poly, streets, roads)
-    if not any(streets.values()):
+    if not any(streets.values()) and not mine:
         # (no street reaches the wall line: on a big drawn outline the main street ended far inside it and the town had
         # "0 ways in", the user's island town of 2026-11-06. A gate all the same: at the main street's end carried on to
         # the nearest side however far, else in the middle of a side; the side chosen as gates are kept, dry, no cliff,
@@ -674,7 +678,11 @@ def lay_palisade(db, plan, P):
     pts = [at(k * step) for k in range(n)]
     # (the gates: where the streets cross the ring, as lay() finds them)
     sides, roads = _street_crossings(plan, pts)
-    sides, roads = _downhill_gates(db, pts, sides, roads)
+    mine = user_gates(plan, pts, roads, step)
+    if mine:
+        sides, roads = mine
+    else:
+        sides, roads = _downhill_gates(db, pts, sides, roads)
     gates_at = []
     for k, ds in sides.items():
         a, b = pts[k], pts[(k + 1) % n]
@@ -1027,6 +1035,49 @@ def _unit(x, y):
 
 
 REACH = 3500                   # a street's end is carried on to the wall this far, for a gate
+
+
+def user_gates(plan, poly, roads, L, sides=None):
+    """The gates where the user put them ("really need some flexibility with where these gates wind up", 2026-11-08):
+    each drawn gate (plan['user_gates']) on the nearest side of poly, at the point nearest it, and its way in, the
+    carried street that reaches the wall nearest it (within two lengths) or a new one from the nearest point of a
+    street. Only the sides that can hold a gate (sides, when given): one put on a short jog of the wall goes to the
+    nearest side that can. ({side: [distance along]}, roads), as _street_crossings gives them; None where the user drew
+    none."""
+    ug = plan.get('user_gates') or []
+    if not ug:
+        return None
+    n = len(poly)
+    out, rds = defaultdict(list), []
+    spts = [tuple(p) for st in plan.get('streets') or () if not st.get('ring') for p in st.get('pts') or ()]
+    for g in ug:
+        best = None
+        for k in range(n):
+            if sides and k not in sides:
+                continue
+            a, b = poly[k], poly[(k + 1) % n]
+            d = _unit(b[0] - a[0], b[1] - a[1])
+            ln = math.hypot(b[0] - a[0], b[1] - a[1])
+            t = max(0.0, min(ln, (g[0] - a[0]) * d[0] + (g[1] - a[1]) * d[1]))
+            dist = math.hypot(g[0] - (a[0] + d[0] * t), g[1] - (a[1] + d[1] * t))
+            # (clear of the corners, so a whole gate fits there: one moved to the nearest side that can hold it landed
+            # at that side's corner and was never laid, lab j_gate)
+            m = min(ln / 2.0, 3.0 * L)
+            t = max(m, min(ln - m, t))
+            q = (a[0] + d[0] * t, a[1] + d[1] * t)
+            if best is None or dist < best[0]:
+                best = (dist, k, t, q)
+        _dd, k, t, q = best
+        out[k].append(t)
+        r = min(roads, key=lambda r_: math.hypot(r_[1][0] - q[0], r_[1][1] - q[1])) if roads else None
+        if r is not None and math.hypot(r[1][0] - q[0], r[1][1] - q[1]) < 2 * L:
+            rds.append((r[0], q, r[2]))
+        elif spts:
+            p = min(spts, key=lambda s_: math.hypot(s_[0] - q[0], s_[1] - q[1]))
+            rds.append((p, q, 256))
+    return out, rds
+
+
 
 
 def _street_crossings(plan, poly):
@@ -2097,7 +2148,12 @@ STEP_PIECES = {'ex_hlaalu': {'id': 'ex_hlaalu_wall_up_01', 'rise': 128.0, 'up': 
                # 256 and nothing else, their ground made to fit)
                # (and one rise only: the game's walls climb one stair length, 256, between levels (10 of 10 changes at a
                # stair, lab gamewalls 2026-11-07); a bigger change hides in a tower)
-               'ex_imp': {'id': 'ex_imp_wall_stairs_02', 'alt': 'ex_imp_wall_stairs_01', 'rise': 256.0, 'up': 1, 'turn': math.pi / 2, 'give': 200, 'most': 1},
+               'ex_imp': {'id': 'ex_imp_wall_stairs_02', 'alt': 'ex_imp_wall_stairs_01', 'rise': 256.0, 'up': 1, 'turn': math.pi / 2, 'give': 200, 'most': 1,
+                          # (and a change of two or three rises laid stair, wall, stair: a straight at each level between,
+                          # each stair at the lower level of its own step; the user's Soulrest east wall, 2026-11-08, its
+                          # two wall towers at a 512 change taken out for that by hand: "use stairs more when joining
+                          # different levels of wall section", "stair - wall - stair insertion")
+                          'chain': 3},
                't_de_setveloth': {'id': 't_de_setveloth_x_wall_05', 'rise': 128.0, 'up': 1},
                # (a Redoran house's fort wall, Indarys's wu_01: the castle maker's Redoran stronghold on a slope)
                'ex_r_pcfort': {'id': 'ex_r_pcfort_wu_01', 'rise': 128.0, 'up': -1}}
@@ -2110,7 +2166,14 @@ def _stepped(db, A, B, St, straight, span, memo, fill=0.0):
     what its ground allows, the ground filled under it up to fill) and the lengths between climbed on the step piece:
     the last of A's going down, the first of B's going up."""
     a, b = A[-1], B[0]
-    if a.get('run') is None or a.get('run') != b.get('run') or a['id'] != straight or b['id'] != straight:
+    chain = St.get('chain', 0)
+
+    def in_run(p):
+        # (a length of the run: a straight, or, for a chain, the wall tower the planner set the change at; the user took
+        # Soulrest's two out and laid the stairs in their places, 2026-11-08)
+        return p.get('run') is not None and p.get('run') == a.get('run') and (
+            p['id'] == straight or (chain and p.get('kind') == 'tower' and 'corner' not in p and TOWERISH.search(p['id'])))
+    if a.get('run') is None or not in_run(a) or not in_run(b):
         return False
     za, zb = a['pose'].z, b['pose'].z
     lo, hi = span(B)
@@ -2120,23 +2183,66 @@ def _stepped(db, A, B, St, straight, span, memo, fill=0.0):
     give = St.get('give', STEP_GIVE)
     most = St.get('most', STEP_MOST)
     # (and below only STEP_GIVE: 'give' under lo let a whole side drop 188 and show 0.47, the lab's castle 2026-11-07)
-    ks = [k for k in range(-most, most + 1) if lo - STEP_GIVE <= za + k * rise <= hi + (fill or give)]
+    ks = [k for k in range(-max(most, chain), max(most, chain) + 1) if lo - STEP_GIVE <= za + k * rise <= hi + (fill or give)]
     if not ks:
         return False
-    k = min(ks, key=lambda k: (abs(k), abs(za + k * rise - zb)))
+    # (the fewest rises, as before; a chain's rises only where B's own ground asks for them: never more than its level
+    # needs, the lower stretch kept on its ground rather than raised on fill to save a rise)
+    near = min(abs(za + k * rise - zb) for k in ks)
+    k = min(ks, key=lambda k: (abs(k) > most and abs(za + k * rise - zb) > near, abs(k) if abs(k) <= most else 0, abs(za + k * rise - zb), abs(k)))
     if k == 0:
         for p in B:
             p['pose'].z = za                 # (one level after all: no step)
         return True
-    run = B[:k] if k > 0 else A[k:]
-    if len(run) < abs(k) or any(p['id'] != straight or p.get('run') != a.get('run') for p in run):
-        return False
+    # (more rises than the piece climbs in a row: a stair, a straight at the level it reaches, the next stair; the
+    # straights between are pieces of the stretch the stairs are taken from)
+    gap = abs(k) > most
+    need = 2 * abs(k) - 1 if gap else abs(k)
+    if not gap and (a['id'] != straight or b['id'] != straight):
+        return False                         # (one rise at a tower: the tower hides it, as before)
+
+    def fits(run):
+        if len(run) < need or any(not in_run(p) if gap else (p['id'] != straight or p.get('run') != a.get('run')) for p in run):
+            return False
+        # (each straight between at its own level must still bury its foot and show its top: else the change is left
+        # to the tower, as before)
+        for m, p in enumerate(run):
+            if gap and m % 2 == 1:
+                lvl = za + ((m + 1) // 2) * rise * (1 if k > 0 else -1)
+                plo, phi = span([p])
+                if not (plo - STEP_GIVE <= lvl <= phi + (fill or give)):
+                    return False
+        return True
+    # (the pieces from the side the step piece climbs into, as before; a chain may take the other side's when that run
+    # ends short of its corner: the levels go by the order the wall runs in either way)
+    run = B[:need] if k > 0 else A[-need:]
+    if not fits(run):
+        other = A[-need:] if k > 0 else B[:need]
+        if not gap or not fits(other):
+            return False
+        run = other
     for p in B:
         p['pose'].z = za + k * rise
     # (each step piece turned so it climbs the way the wall does: from A towards B when B is higher)
     fwd = (b['pose'].x - a['pose'].x, b['pose'].y - a['pose'].y)
-    for j, p in enumerate(run):
+    for m, p in enumerate(run):
         q = p['pose']
+        if gap:
+            # (in the order the wall runs from A to B: stair, straight, stair, ...; the m-th piece the (m // 2)-th step)
+            if m % 2 == 1:
+                # (a straight between two stairs: at the level the stair before it reaches; a wall tower there
+                # becomes a straight)
+                q.z = za + ((m + 1) // 2) * rise * (1 if k > 0 else -1)
+                if p['id'] != straight:
+                    p['id'] = q.id = straight
+                    p['kind'] = 'piece'
+                    nb_ = _box(db, straight, q, memo)[1]
+                    if nb_:
+                        p['_b'] = nb_
+                continue
+            j = m // 2
+        else:
+            j = m
         lx = (math.cos(q.rz), -math.sin(q.rz))
         climb = St['up'] * (1 if lx[0] * fwd[0] + lx[1] * fwd[1] > 0 else -1)
         pid = St['id']

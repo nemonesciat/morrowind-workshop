@@ -197,18 +197,91 @@ def valleys(F, inside, weight, strength=1.0, seed=1, hard=None, rounds=24, K=0.0
             z[i] = max(v, floor[i])
     dz = [z[i] - z0[i] for i in range(w * h)]
     deepest = -min(dz) if dz else 0.0
-    _lay(F, C, dz, weight)
+    _lay(F, C, dz, weight, rec)
     return A, w, deepest
 
 
-def _lay(F, C, dz, weight):
-    """The change at every 512 units laid on every point of F, bilinear, times the weight there."""
+def _blur(v, w, h):
+    """A 3 x 3 [1 2 1] blur on a coarse grid (edges by their own values)."""
+    t = [0.0] * (w * h)
+    for y in range(h):
+        for x in range(w):
+            i = y * w + x
+            t[i] = (v[i - 1 if x else i] + 2 * v[i] + v[i + 1 if x < w - 1 else i]) * 0.25
+    o = [0.0] * (w * h)
+    for y in range(h):
+        for x in range(w):
+            i = y * w + x
+            o[i] = (t[i - w if y else i] + 2 * t[i] + t[i + w if y < h - 1 else i]) * 0.25
+    return o
+
+
+def _along(F, C, sharp, rec):
+    """{point of F: the channel's cut there}: each stream's sharp cut (sharp, negative) laid along its line with the
+    corners cut (from halfway to its receiver to halfway on to the next, as Chaikin rounds a line), interpolated
+    along and falling off smoothly to nothing a 512 step to either side. Laid bilinear on the 512 grid instead, a
+    stream turning between the grid's eight ways leaves a staircase of trenches, a row of dimples where it runs
+    diagonally, lab 2026-11-08."""
+    k, w = C.k, C.w
+    R = float(k)
+    best = {}
+    for i, r in enumerate(rec):
+        if r < 0:
+            continue
+        rr = rec[r] if rec[r] >= 0 else r
+        si, sr, srr = sharp[i], sharp[r], sharp[rr]
+        da, db = (si + sr) * 0.5, (sr + srr) * 0.5
+        if da > -4 and db > -4:
+            continue
+        ax, ay = ((i % w) + (r % w)) * 0.5 * k, ((i // w) + (r // w)) * 0.5 * k
+        bx, by = ((r % w) + (rr % w)) * 0.5 * k, ((r // w) + (rr // w)) * 0.5 * k
+        # (a stream's first point: from the point itself)
+        if si < -4 and not any(rec[j] == i for j in _ups(i, w, len(rec))):
+            ax, ay, da = (i % w) * k, (i // w) * k, si
+        sx, sy = bx - ax, by - ay
+        L2 = float(sx * sx + sy * sy) or 1.0
+        x0, x1 = max(0, int(min(ax, bx) - k)), min(F.w - 1, int(max(ax, bx) + k) + 1)
+        y0, y1 = max(0, int(min(ay, by) - k)), min(F.h - 1, int(max(ay, by) + k) + 1)
+        for y in range(y0, y1 + 1):
+            row = y * F.w
+            for x in range(x0, x1 + 1):
+                t = ((x - ax) * sx + (y - ay) * sy) / L2
+                t = 0.0 if t < 0 else 1.0 if t > 1 else t
+                ex, ey = ax + sx * t - x, ay + sy * t - y
+                q = math.sqrt(ex * ex + ey * ey) / R
+                if q >= 1.0:
+                    continue
+                q = 1.0 - q * q * (3 - 2 * q)
+                v = (da + (db - da) * t) * q
+                j = row + x
+                if v < best.get(j, 0.0):
+                    best[j] = v
+    return best
+
+
+def _ups(i, w, n):
+    x = i % w
+    for dy in (-w, 0, w):
+        for dx in (-1, 0, 1):
+            if (dx or dy) and 0 <= x + dx < w and 0 <= i + dy + dx < n:
+                yield i + dy + dx
+
+
+def _lay(F, C, dz, weight, rec=None):
+    """The change at every 512 units laid on every point of F, bilinear, times the weight there. With the streams
+    (rec: each 512 point's receiver) the change is laid in two parts: its broad shape (blurred) bilinear, and what
+    the channels cut deeper than that along the streams' rounded lines (_along)."""
     k, w, h = C.k, C.w, C.h
     if k == 1:
         for i, d in enumerate(dz):
             if d:
                 F.z[i] += d * weight[i]
         return
+    best = {}
+    if rec is not None:
+        broad = _blur(dz, w, h)
+        best = _along(F, C, [min(0.0, a - b) for a, b in zip(dz, broad)], rec)
+        dz = broad
     for y in range(F.h):
         cy, ty = divmod(y, k)
         ty /= k
@@ -222,8 +295,11 @@ def _lay(F, C, dz, weight):
             cx1 = min(cx + 1, w - 1)
             d = ((dz[cy * w + cx] * (1 - tx) + dz[cy * w + cx1] * tx) * (1 - ty)
                  + (dz[cy1 * w + cx] * (1 - tx) + dz[cy1 * w + cx1] * tx) * ty)
+            d += best.get(i, 0.0)
             if d:
-                F.z[i] += d * weight[i]
+                z = F.z[i]
+                # (the blur can reach a point the cut itself never took under the water: dry land stays dry)
+                F.z[i] = max(z + d * weight[i], min(z, 16.0)) if z > 0 else z + d * weight[i]
 
 
 def trace(F, inside, x, y):

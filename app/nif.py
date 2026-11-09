@@ -10,11 +10,13 @@ import time
 HEADER = b'NetImmerse File Format, Version 4.0.0.2\n'
 TYPE_START = re.compile(rb'[\x04-\x30]\x00\x00\x00(?=Ni|RootCollisionNode|AvoidNode|BS)')
 NODE_TYPES = {b'NiNode', b'NiBSAnimationNode', b'NiBSParticleNode', b'NiBillboardNode', b'RootCollisionNode',
-              b'AvoidNode', b'NiSwitchNode', b'NiLODNode'}
+              b'AvoidNode', b'NiSwitchNode', b'NiLODNode', b'NiCollisionSwitch'}
+# (NiCollisionSwitch is a NiNode: Tamriel_Data's water pieces keep their surface under one, and read without it a
+# 512 pool measured 62 across and drew nothing in the 3D view, 2026-11-08)
 GEOM_TYPES = {b'NiTriShape', b'NiTriStrips'}
 SKIP_SUBTREES = {b'RootCollisionNode', b'AvoidNode'}
 
-CACHE_VERSION = 5      # 3: the root node's transform ignored, as the game does; 4: a type name as extra-data text; 5: a root mesh keeps its transform
+CACHE_VERSION = 6      # 3: the root node's transform ignored, as the game does; 4: a type name as extra-data text; 5: a root mesh keeps its transform; 6: NiCollisionSwitch read as a node
 _IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 

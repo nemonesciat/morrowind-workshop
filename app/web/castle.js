@@ -100,6 +100,7 @@ function csBind(){
     try {
       const r_ = await post('/api/castle/remove', {outline: out});
       toast(`Removed ${r_.name}: ${r_.things} things and ${r_.interiors} rooms.`);
+      { const C = (LM.castles || {})[sel.id]; if (C) C.built = false; }
       await csShow();
     } catch (e){ toast(e.message, true); }
   };
@@ -196,6 +197,8 @@ async function csMake(sel){
     if (r.learning) throw new Error('Still learning ' + r.learning.join(', ') + ': try again in a minute.');
     toast(`Built ${esc(r.name)}: ${r.pieces} pieces outside${r.buildings ? `, ${r.buildings} buildings in its quarters` : ''}, ${r.interiors} rooms${r.people ? `, ${r.people} people` : ''}. One Undo takes it back.`);
     ok = true;
+    // (known built, for the pinned button: it leaves a built castle as it is, lsDoAll)
+    { const C = (LM.castles || {})[sel.id]; if (C) C.built = true; }
     await csShow();
   } catch (e){ toast(e.message, true); }
   const b = $('#cs-make');

@@ -11,6 +11,7 @@
 | Rocks and cliffs over land that's there (an island you raised, ground you sculpted) | **🪨 Dress…** (the Land panel, on the marked cells) |
 | Make an island, a mountain range, a river valley or cliffs over many cells | **Land shaping** (the Land panel) |
 | Make smooth, plain land (a heightmap mod's, or your own) as rugged as hand-made land, over whole regions | **Region pass** (the Land panel) |
+| Fill a region with towns, villages and dungeons, as many as the game has and where it puts them | **Places** (the Land panel) |
 | Work on the land in World Machine, Gaea, GIMP or Krita | **Height maps** (the Land panel) |
 
 Every change goes into your mod and comes back with one **Undo**. Changes to the ground show in the game
@@ -235,19 +236,192 @@ hand, with no shapes drawn. Tick **Like hand-made land** (Land panel, under Shap
 | Ranges | Side crests and spurs between long, smooth ridges, about as far apart as the game's. Only on land standing over its valleys: plains stay plains. |
 | Relief | Rolling ground and crags down to the smallest bumps, until the land is as rough as the region it takes after; craggier where the land already rises, gentle on the flats, fading out near the water. |
 | Valleys | The rain carves valleys into the result, deep where much ground drains. |
-| Texture it too | Textures the land again by its new slopes (with the Dressing settings). Off: the textures stay as they are. |
+| Cliffs | Hard rock stepped into cliffs and ledges where the game keeps its steep ground: on land high over its valleys, mid-slope, where the land round it is rough; not at the streams or on the plains. As much steep ground as the region it takes after has. The new cliffs get the rock texture of such ground (the region's own, else the one the cliff pieces come from), the steeper the more of it. |
+| Rock the cliffs | Clads the steep ground in cliff pieces, as the game clads its own: faces, lips along the top, feet along the bottom and outcrops on the hilltops, each piece sunk so its bottom edge never shows. The land's own scattered rocks stay and follow the ground. |
+| Rock | Whose cliff pieces. **Nearest in weather** (the default) takes the region's own where the game clad its cliffs, else those of the region nearest it in weather and on the map that did and whose ground looks like this land's (snowy land gets snowy rock, a province its neighbours', and no red sandstone on dark green land); land named for a hand-made region takes that region's. The panel says whose; pick another here if it doesn't fit. |
+| Trees in groves | The land's own trees stood as the game stands its trees: ten times fewer on cliffs than on the flat, gathered into groves (a few more of the same kind grown round the trees in a grove, fewer in the open between). Trees you placed yourself, and trees by buildings, stay. Pressing again puts the same trees back first. |
+| Plants | Plants where the land has none of its own: those of the nearest region in weather and on the map that has (Cyrodiil's or Skyrim's from their own lands), laid as that region's own land grows them, about as many as the game sets (some 20 a cell). The panel says whose. |
+| Waterfalls | Where a stream that drains half a cell or more drops over the new cliffs, a waterfall as the game lays them in its mountains: the fall scaled to the drop and turned down the stream, a round plunge pool dug into the ground at its foot (with a rim, so no edge stands in the air), mist and the sound of falling water. About one fall for every three mountain cells, none on gentle land. Uses Tamriel_Data's water pieces; nothing is set if they're missing. |
+| Texture it too | Textures the land again by its new slopes (with the Dressing settings), and blends them over the region borders as the game does: within a few hundred units of another region a patch often takes that region's texture, less and less to about two kilometres in. Off: the textures stay as they are, but for the cliffs'. |
 
 - Only marked cells change, and Protection works as for shapes: by default it starts from the land under your mod,
-  so pressing it again doesn't add more on top, and the ground under buildings, ruins and doors is held.
+  so pressing it again doesn't add more on top, and the ground under buildings, ruins and doors is held. At edges
+  with land you haven't marked it fades back over a longer way than the Edge fade when the new land differs much
+  from the old (up to a cell), so cliffs and valleys ease out instead of ending in a crease.
 - **Cells side by side:** where the marked cells meet land your mod has already changed (an earlier press), the new
   land is joined to it with no step and no smooth strip between; the edges with other land fade back into it.
 - **Big areas:** up to 2,048 cells at once. Past 400 it works in tiles of 16 × 16 cells, each joined to the ones
-  before, and it is still one Undo. It takes about half a second a cell (a 20 × 20 block in about three
-  minutes); the preview of a big area can take a minute.
+  before, and it is still one Undo. It takes about a second a cell with the cliffs rocked (a 20 × 20 block in about
+  six minutes); the preview of a big area can take a minute.
 - With shapes drawn too, the shapes go first and the region pass runs over all of it in place of **Match the
   region's roughness**.
-- It sets no rocks or trees and makes no cliffs yet (the steepest slopes stay near the region's own): **🪨 Dress…**
-  afterwards sets the region's rocks, trees and plants on the new ground.
+- It plants no new kinds of tree and sets no rocks away from the cliffs: **🪨 Dress…** afterwards sets the region's
+  trees and scattered rocks on the new ground if you want more.
+
+## Places
+
+**The order to press them in** (the buttons are numbered):
+
+1. **Propose places**: towns, roads, dungeons, small things and names, as markers to move or remove. Nothing is built.
+2. **Shape, then build** (at the top of the Land panel): shapes the ground and lays the roads, then builds the towns
+   with their people.
+3. **Build the places**: the dungeons, fields, docks, small things and the names on their cells.
+4. **People and beasts**: travellers by the roads, campers at the camps built in 3, and the creatures. Once.
+5. **Rumours and quests**: needs the towns of 2 and the dungeons of 3.
+
+**Propose roads** is for after you move, add or remove towns: it joins them again.
+
+**Propose places** (Land panel, under the Region pass) lays towns, villages and dungeons over the marked cells as many
+as the game has on as much land and on the ground it puts them: towns and cities by the sea and on big streams, on the
+flat; villages on level ground; caves and tombs in hollows on steep slopes; Dwemer ruins high and steep. Each kind keeps
+the game's spacing, and nothing is put by a place the land already has.
+
+| Setting | What it does |
+|---|---|
+| Towns | Cities, towns and villages: 1 is the game's number for the land marked (about one village and one town for every forty cells, a city for every two hundred and fifty). |
+| Dungeons | Caves, Velothi tombs, Dwemer and Daedric ruins, Imperial forts and Velothi towers: 1 is the game's number (about one cave for every five cells). |
+| Small things | Camps, carts, graves, remains, wayside shrines, wrecks and fishing spots between the places: 1 is the game's number (about eleven for every hundred cells). |
+| Culture | Whose towns they are planned like. **Nearest in weather** takes the game town nearest in its region's weather and on the map. Tombs and towers only stand on Dunmer land, as the game's do. |
+
+- The places come as layers in the list, to move on the map, remove or keep. Proposing again replaces the proposed
+  places you haven't built.
+- **Towns** are ordinary town layers in the culture, sized like the game's (a village about 1,600 across its middle, a
+  town 3,600, a city 8,900): **Shape, then build** makes them as any town you draw.
+- **Dungeons** are 🕳 markers where their door outside goes, each named in the culture's way. Pick one to change its
+  kind, name or size, or **Build it**.
+- **Build the places** makes every dungeon and mine with the Dungeon tool (their doors facing down the slope), lays the
+  fields, the harbours' docks and the small things, all as one Undo. A kind the Dungeon tool is still learning is left for later; build
+  again once it has. Until then a dungeon's name on the map reads "not built yet"; a built one has a white ring.
+- You can also add a 🕳 Dungeon marker by hand from the shapes' buttons.
+
+### How the places grow
+
+The places are laid in the order a land fills up, each kind placed by the ones before it as the game's own places
+sit by each other:
+
+1. **Cities and towns** first, on the best ground.
+2. **Villages** in the gaps: the game's keep away from the towns rather than lie between them (half as often
+   8,000–16,000 from a town as the land alone would give, a little more often past 16,000).
+3. **Roads** joining them all and the game's towns near, as Propose roads makes them. They come with the places.
+4. **Farmsteads** along those roads, about one for each settlement: a small town layer of two or three buildings
+   living by farming (a plantation with its manor one time in three), a field beside it off the road. The game's farms
+   stand on a road nine times as often as the land would give.
+5. **Roadside inns**, as rare as the game's (about one for every five hundred cells), on a road away from the towns: a
+   tavern and a building or two.
+6. **Dungeons**: by the roads two to four times as often as elsewhere, but off the settlements (caves and tombs a
+   quarter as often within 2,000–8,000 of one). Towers and forts stand near the towns. No door is put on a road.
+   **Landmarks are put where the roads see them**, as the game's are: from points along the roads, the view is traced
+   over the land to see which ground the road looks at. Daedric ruins stand where most of the road near them sees
+   them, towers and wayside shrines lean that way, and caves and tombs keep out of sight in their hollows.
+7. **Small things** last: what makes the way between places worth walking. Each is one of the game's own scenes as
+   it stands, with what lies round it: a camp's bedroll, fire, stools and sacks; a cart left by the road with its load;
+   an Ashlander cairn or burial banners; someone's bones and what they carried; a wayside shrine; a wreck on the beach;
+   a fishing pole and a stool by the water. They stand where the game's do: carts beside the roads, camps on level
+   ground away from the towns, remains in hollows, wrecks on the shore facing the sea, burial banners up high. Of a
+   kind's scenes, the one whose ground falls most like the spot's is laid, one from the same region first. They are
+   ✦ markers; **Build the places** lays them on the ground as it is then, so shape first.
+
+Farmsteads and inns are town layers with fewer buildings and their kinds set (**How many**), built with **Shape, then
+build** like the rest.
+
+### Names of the land
+
+Propose places also names a few of the land's features the way the game names its own, sparingly, each the name of
+the one cell it stands in (the game's Mount Kand, Verulas Pass, Khartag Point, Lake Dolosamsi):
+
+- **Peaks:** the most prominent tops, standing well over the land round them: "Mount …" ("… Peak" in Nordic lands).
+- **Passes:** where a road crosses a ridge between higher ground either side: "… Pass".
+- **Headlands:** land reaching out into the sea: "… Point". **Lakes** inland: "Lake …".
+- **Crossings:** some of the bridges: "… Crossing".
+
+About one name for every hundred cells, as the game has them, and at least the greatest peak or pass of a province.
+An inn or a fort by a named pass or crossing takes its name ("Verulas Pass" for the inn, "Fort Verulas"). Names are
+🏷 markers: pick one to change its name. **Build the places** gives each its cell's name (on the map and as you walk
+in); a cell with a name already keeps it.
+
+### People and beasts
+
+**🧍 People and beasts** (under the Places buttons) brings the marked cells to life as the game's land outside its
+towns is, once the places are built:
+
+- **Travellers** by the roads, as many as the game has (about six for every hundred cells): guards, traders,
+  merchants, pilgrims and commoners, and barbarians and rogues too, alone or two or three of a kind together, just
+  off the road.
+- **Campers** at the camps you've built, two or three of one kind: outlaws, hunters, or Ashlanders on Dunmer land.
+- **Creatures** over the land and in the water, about four a cell as the game has them, fewer near the towns, more on
+  low ground and by the shore: the creatures and creature lists of the region's own wilds, or of the region nearest
+  in weather. Swimmers go only in water deep enough.
+
+Each person is made the way Populate makes one, in the region's own people (their race, faction, clothes and gear).
+It's one Undo; each press adds more, so press it once.
+
+### Rumours and quests
+
+**📜 Rumours and quests** (under the Places buttons) gets your towns talking about the dungeons you've built near
+them, as the game's towns talk of theirs. Press it once the towns (with their people) and the places are built:
+
+- **A topic for each dungeon**, its name, with a line for the people of each of the two nearest of your towns within
+  40,000: where it lies from the town ("a short walk north-east of Ida Vathi, under Mount Dreycrom") and who is there
+  (bandits, smugglers, a necromancer, cultists, the dead, Daedra, Dwemer machines, beasts), read from what is inside.
+- **A rumour** in "latest rumors" in the nearest town that teaches the topic.
+- **A quest** where a band of people holds the dungeon, from the town's publican (else a guard), up to two a town:
+  ask about the place, deal with the band's leader, go back for the gold. It's on the Quest Board like any quest, to
+  change or add to.
+
+It's one Undo.
+
+### Yardstick
+
+**📏 Measure** (Land panel, under Places) reads the marked cells as they stand now and sets each layer beside the
+hand-made region they take after (the Region pass's **Like**, else the hand-made region nearest in roughness), read
+from up to 160 of that region's own cells, none of them a town's:
+
+- **The ground:** roughness close up, 512 apart and 2,048 apart (hills and hollows), and the share of ground over 30°
+  and over 45°.
+- **What stands on it:** trees, plants and rocks a cell, and the share of the ground in a road texture.
+- **Who and what is there**, the towns' cells left out: places a cell (doors within 1,024 of each other count as one),
+  small things, people and creatures.
+
+Each layer gets a bar: green when the two figures are within a fifth of each other, red when one is twice the other
+or more. The number at the top is their mean, out of 100. Hand-made land measured against its own region scores about
+90; Tamriel.esm's coarse land about 40.
+
+**Cells to look at** names the five cells furthest from the region's typical cell, none of them next to each other,
+each with what is most off there (fewer plants, smoother, no rocks). **Look** opens the cell in 3D.
+
+### What the towns live by
+
+Each proposed town and village gets a livelihood from its land, at the game's own rates (its towns read for docks,
+boats and nets, fields, crops and beasts, mine doors and who lives there): with the sea within a cell's eighth, seven
+in ten live by the sea; a little further, half; inland, farming comes first, then mines and trade. A town only gets what
+its site allows; the note under Propose places says what they live by.
+
+- **By the sea:** a ⚓ Harbour marker on its shore: one of the game's own docks, its piers, boats and nets as they
+  stand, laid where the shore falls to the water as it does under them, the size of the town.
+- **By farming:** fields beside it on its flattest ground (one for a village, three for a city), laid as the Farm
+  tool lays them, clearing the trees on them.
+- **By a mine:** a mine on the steepest hillside near it, a 🕳 marker like the dungeons; an egg mine on Dunmer land.
+- **By trade:** nothing more round it.
+
+### Roads
+
+Propose places brings its roads with it. **🛤 Propose roads** joins the towns again after you move, add or remove
+some (drawn, proposed, and the game's own near the marked cells) as road networks join them: each pair with no third town nearer both, so roads go round a town instead of cutting through it. Each road
+finds its way as the game's do: gently up the slopes (half its length under about 4°), round steep ground by zigzags,
+never through water or a building, from the edge of one town to the edge of the next.
+
+- The roads are 🛤 Road layers, to move, reshape or remove; you can draw your own too. Proposing again replaces the
+  proposed ones and keeps the ones you drew.
+- **Shape the ground** lays the roads in the marked cells: the ground under each made level across it and eased along
+  it, never under a building, and painted with the road texture of the culture's nearest towns. Things standing on the
+  ground follow it, and rocks, trees and plants keep off the road. Each press lays them again on the land it makes.
+- **Bridges:** where going round the water would be much longer, a road crosses a river or a strait up to about
+  two kilometres wide on a bridge, as the game's do: its deck level with the banks and high enough over the water,
+  in the culture's own style (Hlaalu arches on Dunmer land, the Imperial highway's in Skyrim and the Reach, Anvil's
+  on the Gold Coast, the Imperial stone bridge in Imperial towns), with piers under the long ones. The ground is
+  raised to the deck under each end of the bridge, and the road climbs to it, gently and over a longer way where the
+  deck stands high. A river running through a town gets no road bridge: the town's streets are its own. The
+  bridges are drawn on the map, solid and wider than the road.
 
 ## Step 4: Shape them
 
@@ -332,11 +506,12 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   by (a Hlaalu town of Balmora's houses, or of Narsis's). Shown when the culture has more than one. Blank: as the
   game mixes them.
 - **Wall:** none, its culture's own, or one you pick. The wall is made of the game's pieces, each joined to the
-  next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out.
+  next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out, or
+  where you put them with **⛩ Gate** (below).
   Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
   the land round it), and the wall sunk deep enough that no foot shows; inside, the town's ground is brought level
   with the wall's foot for a way in, not left as a bank under the wall with the houses dug in below it. Where it must change height, Hlaalu and
-  Velothi walls climb on their own step pieces; Imperial walls step at a tower. Gates stand on the low side, where
+  Velothi walls climb on their own step pieces; Imperial walls climb a stair for one step, stair, wall, stair for two or three, and a tower for more. Gates stand on the low side, where
   the town's streets go out, and the streets run on through them, never out onto the sea or over a cliff. Stairs inside lead up to the wall walk.
   The wall goes round at one level: where the ground lies lower it is brought up to the wall's foot, and the wall
   steps up only where a hill stands too high to cut. Castle walls the same.
@@ -350,6 +525,17 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   outline (the game's towns gather round their middle and leave open ground); lower it for a hamlet. A walled town
   fills its wall at 1 and over.
 - **Streets:** as its towns' (wide), **narrower**, or **lanes**, one ground square (512) across.
+- **Trade:** fishing, farming, mining or trading, as the game's towns that live by it, or **any** for the culture's
+  own mix. A proposed town comes with the one its land gave it.
+  - **Fishing:** fishers, sailors and dockworkers are a fifth of the townsfolk in the streets, and about one in twelve
+    of the people in its houses. Some yards have a net on its frame and fish hung to dry.
+  - **Farming:** farmers, herders and hunters are a third of the townsfolk and a quarter of the people in its houses.
+    More yards are pens, and there are fewer shops, guard posts and guild halls.
+  - **Mining:** about one townsperson in eight is a miner, and a few live in its houses. There are more shops, taverns
+    and guild halls.
+  - **Trading:** more shops and fewer taverns.
+  - Its stalls and storage carry the trade's goods twice as often: fish and nets, crops, eggs and hay, or ore, picks
+    and carts. Other trades' people turn up seldom: a fisher in a mining town is rare, as in the game.
 - **On a hillside** (ground rising 400 or more across the outline) the streets run in **level bands** along the slope,
   a row of houses apart up it, the main street the middle band; the bands are joined by **ramps** found at a walkable
   grade, or by a straight **stair street** where a ramp would have to wander; each band's rows are a district of their
@@ -365,11 +551,20 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   along the footpaths' banks and the wall's, at the towers' feet, and a crown of big rocks packed into one mass where
   the town stands on a knoll. Each rock is sunk until the bottom edge of its mesh lies under the ground all round, as
   the game's are; one that would still show is left out. Never on a street, a plot, a tread or in a door's way.
-- **Draw 〰 Street / ▧ Zone / 🧱 Wall:** shapes of the town's own, drawn inside it.
+- **Banks shored up:** steep ground the town leaves bare, the sides of a raised street first, is shored up with
+  rocks laid along the bank and packed close, until about as much of it is covered as in the game's hill towns
+  (nine tenths).
+- **Open ground:** a pocket of level ground left between the houses gets a small fenced kitchen garden, and the
+  open ground by the streets gets a few of the region's trees.
+- **Draw 〰 Street / ▧ Zone / 🧱 Wall / ⛩ Gate:** shapes of the town's own, drawn inside it.
   - **Streets** you draw are its streets, in place of the ones it would plan.
   - A **zone** is a quarter: **Houses** keeps shops, taverns and halls out; **Business** draws shops, taverns and
     guild halls, every other house a shop; **Noble** draws manors and temples, its houses manors.
   - A **wall** you draw keeps to a grid of the wall's pieces from your first point, its corners square; the town fills it.
+  - A **gate**: click on the wall where a way in goes, once for each gate. A walled town with gates of yours opens
+    only at them, each where you put it (to the wall's piece step), with a street running in from the town's middle;
+    drag one to move it, ✕ to take it away. One put on a short jog of the wall, too short to hold a gate, goes to
+    the nearest side that can, clear of the corners. With none drawn, the gates are where the streets go out.
 - **How many:** shops, taverns, temples, guild halls, manors and guard posts. Blank is as its towns have them.
 - **Which buildings:** the game's buildings it picks from, with how often each is used. Untick one to leave it out.
 - **Like ★ your style:** a style of your own (Style palette) builds the town of your prefabs, planned like the

@@ -681,6 +681,7 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
     if not L:
         return []
     cult = plan.get('culture')
+    trade = plan.get('trade') or ''
     built = [q for q in plan['plots'] if q.get('b') and q.get('door')]
     B = len(built)
     if not B:
@@ -721,7 +722,7 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
             open_ = [s_ for s_ in pool if times.get(id(s_), 0) < cap]
             if not open_:
                 break
-            sc = rng.choice(open_)
+            sc = _lean_choice(rng, open_, trade)
             times[id(sc)] = times.get(id(sc), 0) + 1
             if rng.random() < 0.5:
                 sc = {'things': [dict(t, x=-t['x'], rz=(-t['rz']) % (2 * math.pi)) for t in sc['things']], 'seller': sc.get('seller'), 'up': sc.get('up')}
@@ -778,14 +779,14 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
             continue
         if by_road and rng.random() < ROAD_SHARE * len(by_road) / float(len(clusters)):
             # (stacked by a street, as the game's stand where carts unload)
-            sc = rng.choice(by_road)
+            sc = _lean_choice(rng, by_road, trade)
             st = _street_spots(plan, rng, _depth(sc))
             if not st:
                 continue
             x, y, ang = st[rng.randrange(len(st))]
             ang += math.pi                       # (-y toward the street)
         else:
-            sc = rng.choice(by_wall)
+            sc = _lean_choice(rng, by_wall, trade)
             gap = min(260.0, max(48.0, sc.get('gap') or 96.0))
             cx = sum(p[0] for p in rect) / 4.0
             cy = sum(p[1] for p in rect) / 4.0
@@ -1175,6 +1176,10 @@ def people(db, plan, culture, seed, cells, new_refs, W=None, stall_refs=None):
     cast = S['casts'].get('outdoors') or S['casts'].get('house') or {}
     guards = _classes(L, culture, 'guards')
     folk = [[k, n] for k, n in _classes(L, culture, 'folk') if not NOT_FOLK.search(k.split('|')[0])]
+    import towntrade
+    # (what the town lives by: its fishers, farmers or miners in the streets as often as the game's towns of that trade
+    # have them, and other trades' people seldom; towntrade.FOLK_SHARE)
+    folk = towntrade.lean_pairs(folk, plan.get('trade'), towntrade.canon_of(S['classes']))
     tot_f = float(sum(n for _k, n in folk)) or 1.0
     fshare = Counter()
     for k, n in folk:
@@ -1293,6 +1298,21 @@ def people(db, plan, culture, seed, cells, new_refs, W=None, stall_refs=None):
     SEEN['owned'] = owned
     return {'people': sum(counts.values()), 'guards': counts['guards'], 'sellers': counts['sellers'], 'folk': counts['folk'],
             'owned': owned, 'records': len(made)}
+
+
+def _lean_choice(rng, pool, trade):
+    """A scene from the pool, those carrying the goods the town lives by (fish, crops, ore and carts) picked
+    towntrade.GOODS_LEAN times as often. A town of no trade: rng.choice, the same picks as before."""
+    if not trade:
+        return rng.choice(pool)
+    import towntrade
+    ws = [towntrade.goods_weight(s, trade) for s in pool]
+    t = rng.random() * sum(ws)
+    for s, w in zip(pool, ws):
+        t -= w
+        if t <= 0:
+            return s
+    return pool[-1]
 
 
 def _w_pick(rng, pairs):
