@@ -1179,6 +1179,8 @@ function lsBind(){
     // (Cliffs to or from 0 shows or hides Rock the cliffs)
     lsChanged(r.dataset.tr === 'cliffs' && (!was) !== (!T.cliffs));
   });
+  // (the staged panel's Rocks slider: it moved but set nothing, so it read 1 always; the user, 2026-11-11)
+  root.querySelectorAll('[data-dr]').forEach(r => r.oninput = () => { const D = P.dress = Object.assign({}, LS_DRESS, P.dress || {}); D[r.dataset.dr] = +r.value; r.nextElementSibling.textContent = r.value; lsChanged(); });
 }
 function lsMove(i, d){
   const P = LM.plan, j = i + d; if (j < 0 || j >= P.layers.length) return;
