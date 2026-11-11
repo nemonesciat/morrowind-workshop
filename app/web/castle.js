@@ -22,7 +22,7 @@ function csHtml(sel){
   let info = '';
   if (C && C.err) info = `<div class="msg warn" style="font-size:11.5px">${esc(C.err)}</div>`;
   else if (C && C.learning) info = `<div class="msg" style="font-size:11.5px"><span class="spin"></span>Learning ${esc(C.learning.join(', '))} first (once)…</div>`;
-  else if (!C || C.busy && !C.plan) info = '<div class="msg" style="font-size:11.5px"><span class="spin"></span>Planning…</div>';
+  else if ((!C || C.busy && !C.plan) && !document.getElementById('lst-root')) info = '<div class="msg" style="font-size:11.5px"><span class="spin"></span>Planning…</div>';
   if (C && C.plan) info += csSummaryHtml(C.plan);
   const help = typeof guideLink === 'function' ? guideLink('shaping-the-land.md', 'Keeps and castles', 'How castles are made') : '';
   return `<div style="display:flex;align-items:center;gap:4px;font-size:12px"><b>Castle</b>${help}</div>
@@ -110,7 +110,16 @@ function csBind(){
 }
 
 function csKey(L){ return JSON.stringify([L.pts, L.p.style || 'Imperial', L.p.size || 'medium', L.p.seed || 1, L.p.name || '', L.p.gate ?? null]); }
-function csSoon(){ clearTimeout(LM.csT); LM.csT = setTimeout(csPlans, 350); }
+function csSoon(){
+  if (document.getElementById('lst-root')){
+    for (const L of (LM.plan && LM.plan.layers) || []){
+      const C = LM.castles && LM.castles[L.id];
+      if (L.kind === 'castle' && C && !C.busy && C.key !== csKey(L)) delete LM.castles[L.id];
+    }
+    return;
+  }
+  clearTimeout(LM.csT); LM.csT = setTimeout(csPlans, 350);
+}
 async function csPlans(){
   if (LM.csBusy){ LM.csAgain = true; return; }
   LM.csBusy = true;
@@ -119,6 +128,7 @@ async function csPlans(){
     LM.castles = LM.castles || {};
     for (const L of P.layers){
       if (L.kind !== 'castle' || !L.pts || L.pts.length < 3) continue;
+      if (LM.previewOnly && L.id !== LM.previewOnly) continue;      // (the staged panel's 👁: that castle alone)
       const key = csKey(L), C = LM.castles[L.id];
       if (C && C.key === key) continue;
       LM.castles[L.id] = {key, plan: C && C.plan, busy: true};
@@ -191,7 +201,7 @@ async function csMake(sel){
   try {
     let r;
     try {
-      r = await post('/api/castle/make', {outline: sel.pts, style: sel.p.style || 'Imperial', size: sel.p.size || 'medium', seed: sel.p.seed || 1,
+      r = await post('/api/castle/make', {outline: sel._fit || sel.pts, style: sel.p.style || 'Imperial', size: sel.p.size || 'medium', seed: sel.p.seed || 1,
         name: sel.p.name || '', people: !sel.p.nopeople, rooms: sel.p.rooms || 'furnished', gate: sel.p.gate ?? null});
     } finally { clearInterval(poll); }
     if (r.learning) throw new Error('Still learning ' + r.learning.join(', ') + ': try again in a minute.');

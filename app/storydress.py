@@ -987,10 +987,18 @@ POCKET_MIN = 8                 # a pocket of fewer lattice points is left as it 
 GARDEN_MIN = (384.0, 256.0)    # a pocket that holds a box this big (across, deep) gets a fenced garden (the game's fields: 500 by 200 at the median)
 GARDEN_MAX = (1400.0, 1100.0)  # (no bigger: the game's kitchen gardens are small)
 GARDEN_EDGE = 48.0             # (its fence kept this far in from the pocket's edge)
-POCKET_TREE_AREA = 420000.0    # a tree for about every this much open ground left (650 square) ...
-POCKET_TREE_GAP = 520.0        # ... no nearer another than this
+POCKET_TREE_AREA = 300000.0    # a tree for about every this much open ground left (550 square) ...
+POCKET_TREE_GAP = 420.0        # ... no nearer another than this
 POCKET_STREET = 900.0          # trees on ground within this of a street first (by the road)
 POCKET_GARDENS = 0.25          # gardens at most this share of the town's buildings (at least one)
+# the small growth of the land a building, on the open ground between the houses (grass, bushes, flowers, mushrooms,
+# stumps and logs: the game's towns by culture, 149 towns read 2026-11-10; made towns had a third of it)
+UNDER = {'Dunmer': 2.5, 'Dunmer common': 2.5, 'Hlaalu': 2.0, 'Telvanni': 1.9, 'Velothi': 3.0, 'Common': 1.1, 'Gold Coast': 7.6, 'Redoran': 1.6,
+         'Ashlander': 4.0, 'Reach': 3.2, 'Mournhold': 5.0, 'Nordic': 2.1, 'Indoril': 5.2}
+UNDER_ELSE = 2.5
+UNDER_REACH = 800.0            # (within this of a building's middle: the town's own ground, not the land beyond)
+UNDER_ROOM = 14.0              # (a small plant's own room, half a side)
+WILD_MIN = 40                  # (a region with fewer small growing things read than this is not the look)
 
 
 def _max_rect(grid, W, H):
@@ -1207,10 +1215,86 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0):
             add([(rid, (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc)], 'tree')
             trees.append((x, y))
             got += 1
+    # 3. the small growth of the region's own land on the open ground left by the houses, in tufts of a kind
+    try:
+        def on_land(x, y):
+            if not _inside(outline, x, y) or edge_d(x, y) < POCKET_IN / 2.0:
+                return False
+            z = gz(x, y)
+            return z is not None and all((lambda z2: z2 is not None and abs(z2 - z) / 64.0 <= TREE_SLOPE)(gz(x + dx, y + dy)) for dx, dy in ((64.0, 0.0), (0.0, 64.0)))
+        out['undergrowth'] = _undergrowth(db, plan, space, memo, rng, cult, add, amount, built, on_land)
+    except Exception as e_:
+        why['undergrowth: %s' % e_] = 1
     out['gardens'] = gardens
     out['pocket trees'] = len(trees)
     out['refused'] = dict(why)
     return out
+
+
+def _wild_small(db, x, y):
+    """[(id, dz, rx, ry, s)]: the small things growing wild in the region at a spot (landdecor's squares: plants,
+    grass, logs, no trees), each as the game laid it; the nearest land's where the region has little of its own."""
+    import landdecor
+    gx, gy = math.floor(x / 8192.0), math.floor(y / 8192.0)
+    regs = [_region_at(db, x, y, {})]
+    try:
+        regs += [r for r in landdecor.nearest_lands(db, gx, gy, lambda r: landdecor._broad(db, r) and landdecor._grows(db, r) >= landdecor.ENOUGH, 6) if r not in regs]
+    except Exception:
+        pass
+    for reg in regs:
+        # (a region of stand-in trees alone, the continent's unmade land, has no small growth: the next land's then)
+        out = []
+        for sqs in landdecor.learn(db, reg)['squares'].values():
+            for sq in sqs:
+                for it in sq:
+                    low = it[0].lower()
+                    if not low.startswith('dlt_') and landdecor.kind_of(low) in ('plants', 'grass', 'logs') and it[3] <= landdecor.LIFTED and db.resolve_id(it[0]) is not None:
+                        out.append((it[0], it[3], it[4], it[5], it[7]))
+        if len(out) >= WILD_MIN:
+            return out
+    return []
+
+
+def _undergrowth(db, plan, space, memo, rng, cult, add, amount, built, on_land):
+    """The count laid: UNDER a building of the region's small wild growth on the free ground within UNDER_REACH of the
+    buildings, each in its turn, in tufts of one kind (1 to 4 together); never on a street or a door's way.
+    on_land(x, y): the town's own ground, not too steep."""
+    want = int(round(len(built) * UNDER.get(cult, UNDER_ELSE) * min(1.5, amount)))
+    if want <= 0 or not built:
+        return 0
+    mids = []
+    for q in built:
+        mx, my = sum(p[0] for p in q['rect']) / 4.0, sum(p[1] for p in q['rect']) / 4.0
+        mids.append((mx, my, max(math.hypot(p[0] - mx, p[1] - my) for p in q['rect'])))
+    wild = _wild_small(db, sum(m[0] for m in mids) / len(mids), sum(m[1] for m in mids) / len(mids))
+    if not wild:
+        return 0
+    got = tries = 0
+    while got < want and tries < want * 14:
+        mx, my, rad = mids[tries % len(mids)]
+        tries += 1
+        rid = rng.choice(wild)[0]
+        same = [w for w in wild if w[0] == rid]
+        bb = _bounds(db, memo, rid)
+        if not bb:
+            continue
+        half = max(UNDER_ROOM, min(60.0, 0.25 * max(bb[3] - bb[0], bb[4] - bb[1])))
+        ang, r = rng.uniform(0, 2 * math.pi), rng.uniform(0.5 * rad, min(UNDER_REACH, rad + 420.0))
+        x0, y0 = mx + r * math.cos(ang), my + r * math.sin(ang)
+        if not on_land(x0, y0):
+            continue
+        for k in range(rng.choice((1, 1, 2, 2, 3, 4))):
+            ang, r = rng.uniform(0, 2 * math.pi), (0.0 if k == 0 else rng.uniform(2.2, 4.5) * half)
+            x, y = x0 + r * math.cos(ang), y0 + r * math.sin(ang)
+            box = _rect(x, y, 1.0, 0.0, half, half)
+            g = mapdata.terrain_z(db, x, y)
+            if g is None or g < 8 or not on_land(x, y) or not space.free(box, grows=True):
+                continue
+            _r, dz, rx, ry, s = rng.choice(same)
+            space.take(box)
+            add([(rid, (x, y, g + dz, rx, ry, rng.uniform(0, 2 * math.pi)), s)], 'wild')
+            got += 1
+    return got
 
 
 # ------------------------------------------------------------------ farms and orchards on the land

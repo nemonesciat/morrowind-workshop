@@ -23,7 +23,10 @@ _mem = {}
 
 def _disk(db):
     import taste
-    folder = os.path.join(os.environ.get('WORKSHOP_HOME') or os.path.dirname(os.path.abspath(__file__)), 'cache')
+    # (the Workshop's own cache folder, beside projects: under app\ the Setup removed it with the program files at every
+    # install, and the strays, town dressing and town life were learnt again, minutes each, the user's 2026-11-09)
+    import project
+    folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, 'strays_%s_v%d.json' % (taste.sig(db), VERSION))
 

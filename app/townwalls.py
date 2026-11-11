@@ -535,6 +535,11 @@ def lay(db, plan, family=None, cell=None):
         d = _unit(c_[0] - b[0], c_[1] - b[1])
         if (in_.x - out_.x) * d[0] + (in_.y - out_.y) * d[1] >= span + 1.5 * kit['L']:
             ok_sides.add(k)
+    # (open to the sea: no gate on a side that faces the water, its wall is left out below)
+    sea = bool(plan.get('open_sea')) and db is not None
+    if sea:
+        dry = ok_sides - _sea_sides(db, poly, kit['L'])
+        ok_sides = dry or ok_sides
     mine = user_gates(plan, poly, roads, kit['L'], ok_sides or None)
     if mine:
         streets, roads = mine
@@ -590,6 +595,21 @@ def lay(db, plan, family=None, cell=None):
             pieces.append({'id': q.id, 'pose': q, 'kind': 'corner' if q.id != kit['straight'] else 'wall', 'corner': k})
     pieces += _big_towers(db, fam, kit, poly, [need[t] == dom for t in turns], pieces)
     pieces = _once(pieces)
+    if sea:
+        # (a coastal town: the wall on the land side only, the lengths that face the water left out, the user 2026-11-09)
+        n_g = sum(1 for p in pieces if p.get('kind') in ('gate', 'end'))
+        order = []
+        for k in range(n):
+            d = _unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1])
+            order += [p for p in pieces if p.get('corner') == k]
+            order += sorted([p for p in pieces if p.get('run') == k], key=lambda p: p['pose'].x * d[0] + p['pose'].y * d[1])
+        nrm = _out_normals(poly)
+        tower = next((t for v in (kit.get('corner_towers') or {}).values() for t, _e in v), None)
+        pieces = _open_to_sea(db, pieces, order, lambda p: [nrm[p['run']]] if 'run' in p else [nrm[p['corner'] - 1], nrm[p['corner']]],
+                              kit['straight'], tower, [_unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1]) for k in range(n)], nrm, kit['L'],
+                              (lambda B: {'id': B['tower'], 'dz': B['tower_dz']} if B else None)(BIG.get(fam)))
+        if n_g:
+            gates = int(round(gates * sum(1 for p in pieces if p.get('kind') in ('gate', 'end')) / float(n_g)))
     return {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': gates, 'faults': faults,
             'roads': _gate_roads(poly, roads, pieces, L) if gates else []}
 
@@ -704,6 +724,11 @@ def lay_palisade(db, plan, P):
         for s_ in (-1, 1):
             x, y = gx + d[0] * s_ * (P['gate_half'] + 20), gy + d[1] * s_ * (P['gate_half'] + 20)
             pieces.append({'id': P['post'], 'pose': Pose(x, y, 0.0, math.atan2(-d[1], d[0]), P['post']), 'kind': 'end', 'run': 0})
+    if plan.get('open_sea') and db is not None:
+        cx, cy = sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n
+        order = sorted(pieces, key=lambda p: math.atan2(p['pose'].y - cy, p['pose'].x - cx))
+        pieces = _open_to_sea(db, pieces, order, lambda p: [_unit(p['pose'].x - cx, p['pose'].y - cy)], L=step)
+        gates_at = [g for g in gates_at if any(p.get('kind') == 'gate' and math.hypot(p['pose'].x - g[0], p['pose'].y - g[1]) < 1 for p in pieces)]
     return {'family': 'palisade', 'kit': {'L': step, 'straight': None}, 'pieces': pieces, 'outline': pts, 'gates': len(gates_at),
             'faults': [] if gates_at else ['No street crosses the palisade'], 'roads': roads if gates_at else [], 'palisade': True}
 
@@ -939,7 +964,11 @@ def wall_models(db):
 def standing_walls(db, pts, R=1200, skip=()):
     """The wall pieces already standing near pts (a town's or a castle's, the game's or made): [(corners, z0, z1)]."""
     M = wall_models(db)
-    cells = {'#%d,%d' % (math.floor((x + dx) / 8192.0), math.floor((y + dy) / 8192.0)) for x, y in pts for dx in (-R, R) for dy in (-R, R)}
+    # (every cell the box round each point reaches, not only its corners': a reach past half a cell skipped the cell in
+    # the middle, and a castle beside a town found none of the town's wall there, 2026-11-09)
+    cells = {'#%d,%d' % (gx, gy) for x, y in pts
+             for gx in range(math.floor((x - R) / 8192.0), math.floor((x + R) / 8192.0) + 1)
+             for gy in range(math.floor((y - R) / 8192.0), math.floor((y + R) / 8192.0) + 1)}
     out = []
     for ck in cells:
         for r in mapdata.cellmap(db, ck).get('refs') or ():
@@ -1130,6 +1159,199 @@ def _street_crossings(plan, poly):
 # gate at its top as often as at its foot
 GATE_HIGH = 0.67               # (a gate on ground higher than this share of the wall's)
 GATE_RISE = 192                # (and this much over the lowest gate's ground) is left out, while another gate remains
+
+
+SEA_NEAR = 3000                # (a length with water within this of its outer face faces the water)
+SEA_STEP = 400
+SEA_MIN = 3                    # (fewer lengths in a row than this are not opened)
+SEA_ALONE = 6                  # (fewer than this left standing between two openings go too)
+SEA_BY = 1500                  # (a section with water this near all along it stands by the water)
+
+
+def _faces_sea(db, x, y, nx, ny):
+    for i in range(int(SEA_NEAR // SEA_STEP) + 1):
+        z = mapdata.terrain_z(db, x + nx * SEA_STEP * i, y + ny * SEA_STEP * i)
+        if z is None or z < GATE_WATER:
+            return True
+    return False
+
+
+def _out_normals(poly):
+    """Each side's unit normal pointing out of the outline."""
+    n = len(poly)
+    s = 1 if sum(poly[k][0] * poly[(k + 1) % n][1] - poly[(k + 1) % n][0] * poly[k][1] for k in range(n)) > 0 else -1
+    out = []
+    for k in range(n):
+        d = _unit(poly[(k + 1) % n][0] - poly[k][0], poly[(k + 1) % n][1] - poly[k][1])
+        out.append((d[1] * s, -d[0] * s))
+    return out
+
+
+def _sea_sides(db, poly, L):
+    """The sides of an outline that face the water along half their length or more."""
+    n, nrm, out = len(poly), _out_normals(poly), set()
+    for k in range(n):
+        a, b = poly[k], poly[(k + 1) % n]
+        m = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) // L))
+        wet = sum(1 for i in range(m) if _faces_sea(db, a[0] + (b[0] - a[0]) * (i + 0.5) / m, a[1] + (b[1] - a[1]) * (i + 0.5) / m, *nrm[k]))
+        if 2 * wet >= m:
+            out.add(k)
+    return out
+
+
+def _even(flags, v, least):
+    """flags (round a ring) with every run of v shorter than least turned over."""
+    N = len(flags)
+    if all(f == v for f in flags) or not any(f == v for f in flags):
+        return flags
+    s = next(i for i in range(N) if flags[i] != v)
+    out = list(flags)
+    i = 0
+    while i < N:
+        if flags[(s + i) % N] != v:
+            i += 1
+            continue
+        j = i
+        while j < N and flags[(s + j) % N] == v:
+            j += 1
+        if j - i < least:
+            for t in range(i, j):
+                out[(s + t) % N] = not v
+        i = j
+    return out
+
+
+def _by_water(db, x, y):
+    """Water within SEA_BY of a spot, any way round."""
+    for i in range(8):
+        for r in (SEA_BY / 2.0, SEA_BY):
+            z = mapdata.terrain_z(db, x + r * math.cos(i * math.pi / 4), y + r * math.sin(i * math.pi / 4))
+            if z is None or z < GATE_WATER:
+                return True
+    return False
+
+
+def _open_to_sea(db, pieces, order, normals, straight=None, tower=None, dirs=None, nrm=None, L=None, cap=None):
+    """pieces without the wall that faces the water: order is the wall's pieces round the ring, normals(p) the ways out
+    from a piece (a corner faces the water when both its sides do). The towers standing on a length left out go with it.
+    The wall that stays runs on to the water at both its ends, straight on past the corner where the ring turns along
+    the shore, so that nobody walks round it; a section standing wholly by the water, apart from the land side's wall,
+    goes too (the user's Senchal, 2026-11-09). A wall's end is capped: the family's big tower (cap: {'id', 'dz'}) in
+    the place of its last length, else the kit's wall tower."""
+    N = len(order)
+    if N < 2 * SEA_MIN:
+        return pieces
+    wet = [all(_faces_sea(db, p['pose'].x, p['pose'].y, nx, ny) for nx, ny in normals(p)) for p in order]
+    wet = _even(_even(wet, True, SEA_MIN), False, SEA_ALONE)
+    if not any(wet) or all(wet):
+        return pieces
+    # (the sections left standing; all but the longest go when they stand by the water all along)
+    s0 = next(i for i in range(N) if wet[i])
+    secs, cur = [], []
+    for t in range(1, N + 1):
+        i = (s0 + t) % N
+        if not wet[i]:
+            cur.append(i)
+        elif cur:
+            secs.append(cur)
+            cur = []
+    longest = max(secs, key=len)
+    for sec in secs:
+        if sec is not longest and all(_by_water(db, order[i]['pose'].x, order[i]['pose'].y) for i in sec):
+            for i in sec:
+                wet[i] = True
+    at_water = lambda q: (lambda zz: zz is None or zz < GATE_WATER)(mapdata.terrain_z(db, q['pose'].x, q['pose'].y))
+    wet0, added, ends = list(wet), [], []
+    for i in range(N):
+        for step in (1, -1):
+            if wet0[i] or not wet0[(i + step) % N]:
+                continue
+            # (this end runs on along its side while the ground is dry)
+            j, p, c = i, order[i], None
+            if dirs is None:
+                # (a palisade: straight on from its end, the way its last lengths ran, to the water)
+                q = order[(i - 3 * step) % N]
+                u = _unit(p['pose'].x - q['pose'].x, p['pose'].y - q['pose'].y)
+                sp = L or math.hypot(p['pose'].x - q['pose'].x, p['pose'].y - q['pose'].y)
+                wid = next((t['id'] for t in order if t.get('kind') == 'wall'), None)
+                m, M = 1, int(SEA_NEAR // max(1.0, sp)) + 3
+                dryz = lambda m_: (lambda zz: zz is not None and zz >= GATE_WATER)(mapdata.terrain_z(db, p['pose'].x + u[0] * sp * m_, p['pose'].y + u[1] * sp * m_))
+                while m <= M and dryz(m):
+                    m += 1
+                if wid and sp > 1 and m <= M and not at_water(p):
+                    for m_ in range(1, m + 1):
+                        added.append({'id': wid, 'pose': Pose(p['pose'].x + u[0] * sp * m_, p['pose'].y + u[1] * sp * m_, 0.0, math.atan2(-u[1], u[0]), wid), 'kind': 'wall', 'run': 0})
+                continue
+            if 'corner' in p:
+                c = p['corner']
+            else:
+                k, back = p.get('run'), []
+                reach = int(SEA_NEAR // max(1.0, L or math.hypot(order[(i + step) % N]['pose'].x - p['pose'].x, order[(i + step) % N]['pose'].y - p['pose'].y))) + 2
+                while not at_water(order[j]):
+                    nj = (j + step) % N
+                    if not wet0[nj]:
+                        break
+                    if dirs is not None and order[nj].get('run') != k:
+                        c = order[nj].get('corner')
+                        break
+                    if dirs is None and len(back) >= reach:
+                        # (a palisade with no water this near along its ring: as it was)
+                        for t in back:
+                            wet[t] = True
+                        j = i
+                        break
+                    wet[nj] = False
+                    back.append(nj)
+                    j = nj
+            end = order[j]
+            if c is not None and dirs is not None and straight and L:
+                # (the ring turns here: straight on to the water, the corner left out)
+                n = len(dirs)
+                u = dirs[(c - 1) % n] if step == 1 else (-dirs[c][0], -dirs[c][1])
+                w = nrm[c] if step == 1 else nrm[(c - 1) % n]
+                chain = [t for t in range(N) if order[t].get('corner') == c]
+                A = order[chain[0] if step == 1 else chain[-1]] if chain else None
+                if A is not None and u[0] * w[0] + u[1] * w[1] > 0.5:
+                    m, M = 1, int(SEA_NEAR // L) + 3
+                    spot = lambda m_: (A['pose'].x + u[0] * L * m_, A['pose'].y + u[1] * L * m_)
+                    wetz = lambda xy: (lambda zz: zz is None or zz < GATE_WATER)(mapdata.terrain_z(db, xy[0], xy[1]))
+                    while m <= M and not wetz(spot(m)):
+                        m += 1
+                    if m <= M:
+                        for t in chain:
+                            wet[t] = order[t] is not A
+                        end = A
+                        for m_ in range(1, m + 1):
+                            x, y = spot(m_)
+                            end = {'id': straight, 'pose': Pose(x, y, 0.0, A['pose'].rz, straight), 'kind': 'wall',
+                                   'run': (c - 1) % n if step == 1 else c}
+                            added.append(end)
+            ends.append(end)
+    gone = {id(p) for p, w in zip(order, wet) if w}
+    ring = {id(p) for p in order}
+    for p in pieces:
+        if id(p) not in ring:
+            q = min(order, key=lambda o: math.hypot(o['pose'].x - p['pose'].x, o['pose'].y - p['pose'].y))
+            if id(q) in gone:
+                gone.add(id(p))
+    out = [p for p in pieces if id(p) not in gone] + added
+    if cap and L:
+        # (the wall's ends capped by the family's big tower, standing where the last length stood; the towers the wall
+        # already had this near make way for it)
+        caps = []
+        for p in ends:
+            if id(p) in gone or not any(p is q for q in out):
+                continue
+            caps.append({'id': cap['id'], 'pose': Pose(p['pose'].x, p['pose'].y, 0.0, p['pose'].rz, cap['id']), 'kind': 'bigtower', 'dz': cap['dz']})
+        near = lambda q: any(math.hypot(q['pose'].x - c['pose'].x, q['pose'].y - c['pose'].y) < 2.5 * L for c in caps)
+        ended = {id(p) for p in ends}
+        out = [q for q in out if not (id(q) in ended and near(q)) and not (q.get('kind') in ('bigtower', 'tower') and near(q))] + caps
+    elif tower and straight:
+        for p in ends:
+            if p['id'] == straight and id(p) not in gone:
+                p['id'] = p['pose'].id = tower
+                p['kind'] = 'tower'
+    return out
 
 
 GATE_WATER = 16                # (ground under this, by the water line, is no way in: the sea or the shore)
@@ -1425,12 +1647,17 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL, keep=()):
     # they set it all at one, flattening the ground to it, test4)
     every = sorted(z for ps in runs.values() for z in (mapdata.terrain_z(db, q.x, q.y) for q in ps) if z is not None and z >= 0)
     ring = every[len(every) // 2] if every else None
+    # (round a mountainside, HILL_RELIEF: a run under the ring's level towards its own middle height, and raised by tol
+    # only. Towards the ring's one level the low side was raised 500 before any fill and stood on a bank 1,000 high,
+    # the lab's Gold Coast hill town, 2026-11-10. The high side is cut as ever: left high, the wall stood 500 over the
+    # houses inside it)
+    hill = bool(every) and every[int(len(every) * 0.9)] - every[int(len(every) * 0.1)] > HILL_RELIEF
     for k, ps in runs.items():
         zs = sorted(z for z in (mapdata.terrain_z(db, q.x, q.y) for q in ps) if z is not None)
         if not zs or zs[len(zs) // 2] < 0:
             continue                      # (a run at the water: left as it is)
-        segs.append(((ps[0].x, ps[0].y), (ps[-1].x, ps[-1].y), ring))
-        tz[k] = ring
+        tz[k] = min(ring, zs[len(zs) // 2]) if hill else ring
+        segs.append(((ps[0].x, ps[0].y), (ps[-1].x, ps[-1].y), tz[k]))
     # (the corners too, towards the runs either side: a corner on a cliff's edge stood buried on its high side)
     nk = max(list(runs) + [-1]) + 1
     for p in W['pieces']:
@@ -1439,9 +1666,11 @@ def level_ground(db, W, skip=(), tol=LEVEL_TOL, keep=()):
             if near:
                 q = p['pose']
                 segs.append(((q.x, q.y), (q.x, q.y), sum(near) / len(near)))
-    return _shape_ground(db, segs, skip, CUT_TOL, RAISE_TOL, keep)
+    return _shape_ground(db, segs, skip, CUT_TOL, tol if hill else RAISE_TOL, keep)
 
 
+HILL_RELIEF = 2048             # (a wall round a mountainside: its ground differs by more than this, a tenth of it left out
+                               # at each end)
 FILL_MAX = 1024                # (a stretch sunk this far under its neighbours is raised to them, the ground filled under it)
 LEVEL_AT = 0.7                 # (the ring's level stands at this share of its stretches' ground: more fill, fewer steps up)
 DIP_MIN = 48
@@ -1494,7 +1723,7 @@ def inner_ground(db, W, skip=(), keep=()):
             nx, ny = -nx, -ny
         for off in INNER_OFFS:
             segs.append(((mx - h * ux + nx * off, my - h * uy + ny * off), (mx + h * ux + nx * off, my + h * uy + ny * off), level))
-    return _shape_ground(db, segs, skip, LEVEL_TOL, FILL_MAX, keep) if segs else 0
+    return _shape_ground(db, segs, skip, LEVEL_TOL, FILL_MAX, keep, grade=INNER_GRADE, mix=True) if segs else 0
 
 
 GATE_GRADE = math.tan(math.radians(16))     # (the way through a gate climbs at most this steeply, the game's gate roads at 8-15)
@@ -1650,7 +1879,33 @@ def _in_poly(r, x, y):
     return True
 
 
-def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=()):
+KEEP_GRADE = 0.8               # (beside a kept footprint the ground is moved by this times the distance from it at most: the
+                               # fill stopped dead at a house's plot and at a street's edge, a pit 576 deep round a tavern by
+                               # the wall and a cliff along every street near it, the lab's Redoran hill town 2026-11-10)
+
+
+def _keep_dist(k_, x, y, far):
+    """How far (x, y) is outside the footprint k_ (far when farther than that)."""
+    best = far
+    n = len(k_)
+    for i in range(n):
+        ax, ay = k_[i][0], k_[i][1]
+        bx, by = k_[(i + 1) % n][0], k_[(i + 1) % n][1]
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0.0 if not L2 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+        d = math.hypot(x - (ax + dx * t), y - (ay + dy * t))
+        if d < best:
+            best = d
+    return best
+
+
+INNER_GRADE = 0.5              # (the ground inside the wall: gentler still beside the houses and streets, and where two stretches
+                               # of the wall stand at different levels their levels run into each other: each stretch's own
+                               # level 800 in made terraces with a cliff between them at every step of the wall)
+
+
+def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=(), grade=KEEP_GRADE, mix=False):
     """The ground along each ((x0, y0), (x1, y1), level) evened towards its level, cut by at most cut_tol and raised by at
     most raise_tol, fading back into the land round it (LEVEL_R, LEVEL_BLEND); the ground inside keep's footprints
     (building_guard) left as it is. The cells changed."""
@@ -1671,6 +1926,7 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=()):
         t = 0.0 if not L2 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
         return math.hypot(px - (ax + dx * t), py - (ay + dy * t))
     new_h, before = {}, {}
+    kbox = [(min(c[0] for c in k_), min(c[1] for c in k_), max(c[0] for c in k_), max(c[1] for c in k_), k_) for k_ in keep if len(k_) >= 3]
     for gx in range(int(math.floor((min(xs) - reach) / G)), int(math.floor((max(xs) + reach) / G)) + 1):
         for gy in range(int(math.floor((min(ys) - reach) / G)), int(math.floor((max(ys) + reach) / G)) + 1):
             L = mapdata.land(db, gx, gy)
@@ -1684,6 +1940,7 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=()):
                     best = None
                     n = j * landscape.N + i
                     z = h[n]
+                    sw = st = 0.0
                     for a, b, t in segs:
                         d = dist(x, y, a, b)
                         if d >= reach:
@@ -1696,13 +1953,27 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=()):
                         # the neighbouring higher stretch's fill buried it, the lab's Firuhn 2026-11-07)
                         if best is None or (w, -d) > (best[0], -best[2]):
                             best = (w, t, d)
+                        if mix:
+                            m_ = 1.0 / (d + 64.0) ** 3
+                            sw += m_
+                            st += m_ * t
                     if not best:
                         continue
+                    if mix:
+                        best = (best[0], st / sw, best[2])
                     want = max(z - cut_tol, min(z + raise_tol, best[1]))
                     nz = z + best[0] * (want - z)
                     if abs(nz - z) >= 1:
                         if keep and any(_in_poly(k_, x, y) for k_ in keep):
                             continue                     # (a town building's own ground: left to it)
+                        far = abs(nz - z) / grade
+                        for kx0, ky0, kx1, ky1, k_ in kbox:
+                            if kx0 - far < x < kx1 + far and ky0 - far < y < ky1 + far:
+                                far = _keep_dist(k_, x, y, far)
+                        if far * grade < abs(nz - z):
+                            nz = z + math.copysign(far * grade, nz - z)
+                            if abs(nz - z) < 1:
+                                continue
                         h[n] = nz
                         changed = True
             if changed:
@@ -1759,6 +2030,8 @@ def grounded(db, W):
                 p['_cliff'] = True
                 p['_g'] = (min(crest), zs[-1])
         keep.append(p)
+    gs_ = sorted(p['_g'][0] for p in keep)
+    _FILL[0] = HILL_FILL if gs_ and gs_[int(len(gs_) * 0.9)] - gs_[int(len(gs_) * 0.1)] > HILL_RELIEF else FILL_MAX
     def span(ps):
         # (the levels that bury every foot and show enough of every top: origin z in [lo, hi])
         lo = max(p['_g'][1] + max(SHOW, SHOW_SHARE * (p['_b'][5] - p['_b'][2])) - p['_b'][5] for p in ps)
@@ -1840,7 +2113,7 @@ def grounded(db, W):
     St = STEP_PIECES.get(W.get('family'))
     if St and straight:
         for k in range(1, len(segs)):
-            _stepped(db, segs[k - 1], segs[k], St, straight, span, memo, fill=FILL_MAX if AN else 0.0)
+            _stepped(db, segs[k - 1], segs[k], St, straight, span, memo, fill=_FILL[0] if AN else 0.0)
     for i in starts:
         towered(i)
     # (the ground brought up to every stretch's foot across the wall's width, not only under the raised ones: a level
@@ -1952,9 +2225,16 @@ GATE_FILL = 256                # (the ground under a gate raised this much at mo
                                # their ground on the low side)
 
 
+HILL_FILL = 512                # (a wall round a mountainside, HILL_RELIEF: a stretch
+                               # stands on this much fill at most. With the whole FILL_MAX the downhill side stood on a bank
+                               # 700 to 1,017 high dropping 400 to 640 within 900 outside, the lab's Gold Coast hill town,
+                               # 2026-11-10; the wall steps down at more towers and stairs instead)
+_FILL = [FILL_MAX]
+
+
 def _allow(p):
     """How much fill a wall piece may stand on."""
-    return GATE_FILL if p.get('kind') == 'gate' else FILL_MAX
+    return GATE_FILL if p.get('kind') == 'gate' else _FILL[0]
 
 
 def _plan_levels(order, W, keep):
@@ -2126,7 +2406,7 @@ def _no_dips(segs, W):
             # (never further than FILL_MAX over its own ground: raised to a neighbour already standing on fill, a
             # stretch stood with its feet beyond what fill_ground brings up)
             target = min(zp, zn, min(p['_g'][0] - SINK - p['_b'][2] + _allow(p) for p in seg))
-            if z >= target - DIP_MIN or target - z > FILL_MAX:
+            if z >= target - DIP_MIN or target - z > _FILL[0]:
                 continue
             for p in seg:
                 p['pose'].z = target

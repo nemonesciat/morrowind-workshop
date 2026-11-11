@@ -77,11 +77,20 @@ WHOLE_MOD = ('/api/undo', '/api/redo', '/api/undo_group', '/api/undo_entry', '/a
              '/api/project/enable', '/api/adopt/pick', '/api/group')
 
 
+_stamp = [0.0, 0.0]
+
+
 def code_stamp():
+    # (looked up at most once a minute: the window asks twice a second, and some 400 file dates read while a town is
+    # being made each waited their turn behind it, a status answer 3 s late, 2026-11-09)
+    if time.time() - _stamp[0] < 60:
+        return _stamp[1]
     d = os.path.dirname(os.path.abspath(__file__))
     files = [os.path.join(d, f) for f in os.listdir(d) if f.endswith('.py')]
     files += [os.path.join(d, 'link_scripts', f) for f in os.listdir(os.path.join(d, 'link_scripts'))]
-    return max(os.path.getmtime(f) for f in files)
+    _stamp[1] = max(os.path.getmtime(f) for f in files)
+    _stamp[0] = time.time()
+    return _stamp[1]
 
 
 STARTED_CODE = code_stamp()
@@ -1109,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
                     out['quest_in_game'] = link.in_game('DIAL', q['quest'])
                 self._json(out)
             elif u.path == '/api/palette':
-                self._json(mapdata.palette(db, q['key']))
+                self._json(mapdata.palette(db, q['key'], limit=100000))   # (every piece of each kind)
             elif u.path == '/api/style/themes':
                 # the Style palette's tabs (stylesurvey.py); {'ready': False, 'waiting'} while it's learnt
                 import stylesurvey
@@ -2174,9 +2183,18 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/land/plan/preview':
                     import landshapes
                     return self._json(landshapes.preview(db, body.get('cells') or [], body.get('plan') or {}))
+                if u.path == '/api/land/fit':
+                    # a town's or castle's outline fitted to the land round a marker (placeplan.fit_outline)
+                    import placeplan
+                    return self._json({'outline': placeplan.fit_outline(db, float(body['x']), float(body['y']), float(body.get('r') or 3600))})
+                if u.path == '/api/land/clearable':
+                    # how many objects "Clear what's there first" would take from the cells being made (standins.py)
+                    import standins
+                    return self._json(standins.count(db, body.get('cells') or []))
                 if u.path == '/api/land/plan/apply':
                     import landshapes
-                    with editing.operation('land'):
+                    import ledger
+                    with editing.operation('land'), ledger.open(db, 'land', 'Land', opts={'cells': len(body.get('cells') or [])}):
                         return self._json(landshapes.apply(db, body.get('cells') or [], body.get('plan') or {}))
                 if u.path == '/api/land/flow':
                     # the land map's flow overlay: where the rain runs on the marked cells (landshapes.flow_lines)
@@ -2586,10 +2604,25 @@ class Handler(BaseHTTPRequestHandler):
                     if body.get('walls'):
                         # (its wall as it would be laid, for the map: townwalls.py)
                         import townwalls
+                        pl['open_sea'] = bool((opts_ or {}).get('open_sea'))
                         pl['walls'] = townwalls.preview(db, pl, None if body['walls'] == 'auto' else body['walls'])
                     import towninside
                     pl['name'] = towninside.town_name(db, cult, int(body.get('seed') or 1))      # (the one Make it gives it, unless named)
                     return self._json(pl)
+                if u.path == '/api/town/insides':
+                    # the interiors and people of towns built with theirs left for later (the Land panel's third stage);
+                    # look: only which towns wait, and how many doors each
+                    import townbuild
+                    if body.get('look'):
+                        return self._json({'towns': townbuild.later_towns(db)})
+                    import learning
+                    lp = learning.town_pending(db, body.get('people') is not False)
+                    if lp:
+                        return self._json({'learning': lp})
+                    rooms = 'shells' if body.get('rooms') == 'shells' else 'furnished'
+                    with editing.operation('town'):
+                        return self._json(townbuild.insides(db, body.get('names') or None, body.get('interiors') is not False,
+                                                            body.get('people') is not False, rooms, int(body.get('reseed') or 0)))
                 if u.path == '/api/town/make':
                     # the planned town built: the culture's own buildings on its plots, one change (townbuild.py)
                     import townplan
@@ -2600,7 +2633,7 @@ class Handler(BaseHTTPRequestHandler):
                     cult, opts_ = _town_culture(db, body, out)
                     # (interiors: 'none', 'shells' (the building's architecture only) or 'furnished'; true = furnished)
                     iv = body.get('interiors')
-                    inside = False if iv in (False, 'none') else 'shells' if iv == 'shells' else True
+                    inside = False if iv in (False, 'none') else 'shells' if iv == 'shells' else 'later' if iv == 'later' else True
                     with editing.operation('town'):
                         return self._json(townbuild.make(db, out, cult, int(body.get('seed') or 1), body.get('walls') or '',
                                                          body.get('dress') is not False, inside, body.get('people') is not False,
@@ -2625,13 +2658,55 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({k: pl[k] for k in ('style', 'size', 'seed', 'name', 'preview', 'rooms', 'fig', 'game', 'faults', 'gate')})
                     with editing.operation('castle'):
                         return self._json(castle.make(*args, people=body.get('people') is not False, rooms=body.get('rooms') or 'furnished', gate=gate))
+                if u.path == '/api/castle/snap':
+                    # a castle's outline with its near side on the town wall beside it (castle.snap_to_walls)
+                    import castle
+                    return self._json(castle.snap_to_walls(db, body.get('outline') or []))
+                if u.path == '/api/place/built':
+                    # how many building pieces a Make laid stand inside an outline: a town or castle stands there
+                    # (first by the places ledger: the town or castle made at this outline, as many of its things as
+                    # still stand; a place from before the ledger by where the pieces stand, as it was)
+                    import townbuild
+                    import ledger
+                    pid = ledger.at(db, body.get('outline') or [], body.get('kind') or None) if body.get('kind') else None
+                    if pid:
+                        return self._json({'inside_n': len(ledger.pieces(db, pid)), 'id': pid})
+                    away = [tuple(float(v) for v in a[:3]) for a in body.get('away') or () if len(a) >= 3]
+                    return self._json({'inside_n': townbuild.made_inside(db, body.get('outline') or [], away)})
+                if u.path == '/api/places':
+                    # the made places the mod keeps a record of (ledger.py), newest first
+                    import ledger
+                    return self._json({'places': ledger.summary(db)})
+                if u.path == '/api/places/drop':
+                    # one made place taken away, whatever was built after it (look: only count)
+                    import ledger
+                    return self._json(ledger.drop(db, str(body.get('id') or ''), bool(body.get('look'))))
+                if u.path == '/api/places/again':
+                    # one made town or castle taken away and made anew where it stood, with another seed: one Undo step
+                    import ledger
+                    import learning
+                    lp = learning.town_pending(db, True)
+                    if lp:
+                        return self._json({'learning': lp})
+                    with editing.operation('town'):
+                        return self._json(ledger.again(db, str(body.get('id') or ''), body.get('seed')))
                 if u.path == '/api/castle/remove':
                     # what a castle's Make it built, taken away, rooms and all (castle.remove)
                     import castle
+                    import ledger
+                    pid = ledger.at(db, body.get('outline') or [], 'castle')
+                    if pid:
+                        r_ = ledger.drop(db, pid, bool(body.get('look')))
+                        return self._json(dict(r_, inside=1.0) if body.get('look') else r_)
                     return self._json(castle.remove(db, body.get('outline') or [], bool(body.get('look'))))
                 if u.path == '/api/town/remove':
                     # what a town's Make it built, taken away (townbuild.remove; look: only count it)
                     import townbuild
+                    import ledger
+                    pid = ledger.at(db, body.get('outline') or [], 'town')
+                    if pid:
+                        r_ = ledger.drop(db, pid, bool(body.get('look')))
+                        return self._json(dict(r_, inside=1.0) if body.get('look') else r_)
                     return self._json(townbuild.remove(db, body.get('outline') or [], bool(body.get('look'))))
                 if u.path == '/api/lived/apply':
                     # make a place lived in: what people leave round its beds, fires, tables and work spots, as the
@@ -3020,7 +3095,7 @@ def model_for(q):
 def changes_list():
     out = []
     p = db.project
-    for k, ri in db.overlay.items():
+    for k, ri in list(db.overlay.items()):
         tag, key = k
         r = db.recs[ri]
         if tag == 'CELL':

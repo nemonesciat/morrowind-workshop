@@ -136,6 +136,7 @@ async function twPoll(){
     const project = r.project !== TW.project, restarted = r.n < TW.n;
     const theirs = r.changes.filter(c => c.by !== WIN_ID);
     TW.n = r.n; TW.project = r.project;
+    if (project) forgetMod();      // (the other window switched mods: the old one's map and shapes let go)
     if (project || restarted || r.all || theirs.some(c => c.cells == null || c.records)){ await refreshAfterEdits(true); return; }
     if (!theirs.length) return;
     const touched = new Set(theirs.flatMap(c => c.cells));

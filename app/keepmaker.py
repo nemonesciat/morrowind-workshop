@@ -146,7 +146,14 @@ def _layout_with_doors(db, I, tries=6):
     return best[1], best[2]
 
 
-def make(db, name, size='medium', seed=1, outs=None, people=True, commit=True, progress=None, box=None):
+def make(db, name, *a, **k):
+    """_make, written into the places ledger (ledger.py): a keep's interiors, its castle's when one is being made."""
+    import ledger
+    with ledger.open(db, 'interior', name, seed=k.get('seed')):
+        return _make(db, name, *a, **k)
+
+
+def _make(db, name, size='medium', seed=1, outs=None, people=True, commit=True, progress=None, box=None):
     """The keep's interiors built and linked. name: the keep's ("Fort Vanvuld": its interiors are "Fort Vanvuld, Great
     Hall" and so on). outs: the doors to the outside wanted, as plan(). Returns {'name', 'cells': [keys], 'interiors':
     [{role, label, key, name, doors: [...]}], 'links': n, 'outs': [{cell, k, name, arrive, role, z}] (the doors kept for

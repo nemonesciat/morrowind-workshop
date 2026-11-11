@@ -81,10 +81,25 @@ BANK_COVER = 0.85              # the bank pass stops when this share of the town
 #                                hill towns p50 0.90, rocks most of it: 0.04 of their land bare without them, 0.008 with)
 BANK_SHOULDER = 640.0          # a bank within this of a street's edge is the street's shoulder: shored up first
 BANK_MAX = 260                 # rocks the pass lays at most
+BODY = 0.85                    # a rock's body reaches this share of its half-size from its middle
+DOOR_CLEAR = 256.0             # and stays this far off every door
 BANK_STREET_KEEP = 0.5         # a bank rock's middle stands at least this share of its half-size off a street's edge
 BANK_TRIES = 7                 # tries a bank vertex: smaller after a spot refused for room, taller after a rim that shows
 BANK_OFFS = (0.15, -0.2, 0.35, 0.0, -0.4, 0.25, 0.5)   # (the middle's offset down the fall, a share of the half-size)
+MASS_MIN = 8                   # a bare bank of this many steep vertices under one rock takes a big rock first (the game's towns:
+                               # a quarter of their rocks 700+ across, 8-13 steep vertices a rock where rocks do the covering;
+                               # ours were p50 350, p90 650, 3-4 vertices a rock and 5-14 rocks a building, lab 2026-11-10)
+MASS_SIZES = (1800.0, 1300.0, 900.0, 650.0)   # (the sizes tried, biggest first)
+MASS_OFFS = ((0.0, 0.0),) + tuple((r * math.cos(k * math.pi / 4), r * math.sin(k * math.pi / 4)) for r in (0.35, 0.7) for k in range(8))
+MASS_PLOT = 0.7                # (a big rock's body off the plots: it laps one by under a third of its half width)
+MASS_TRIES = 25                # (the spots tried a size a round, the barest first)
 BANK_SMALLEST = 200.0          # (the smallest bank rock across; banks rocks lap each other at OVERLAP, packed)
+TOP_SHARE = 0.2                # one model is at most this share of a town's rocks (the game's hill towns: the commonest
+                               # 0.21 of a town's rocks, the three commonest 0.47; ours 0.26 to 0.36 and 0.58, lab 2026-11-10)
+CLONE_TURN = 0.5               # two touching rocks of one model turned within this of each other (radians) and within
+CLONE_SCALE = 1.25             # ... this of each other's size read as copies: 0.00 to 0.02 of the game's touching pairs,
+                               # 0.05 to 0.09 of ours (bank rocks all lie along their bank). The second is turned end for end,
+                               # else another model is drawn
 _mem = {}
 _rims = {}
 
@@ -267,7 +282,7 @@ def learn(db):
     return out
 
 
-def figures(db, P, culture):
+def figures(db, P, culture, region=''):
     """The culture's figures (its own, or a kin's when its hill towns stood too few rocks), with only the rocks this
     load order has: {'rate', 'ids': {id: n}, 'scale', 'near', 'factor', 'from'}."""
     seen = []
@@ -290,7 +305,9 @@ def figures(db, P, culture):
                 scale.setdefault(i, c['scale'].get(i, 1.0))
         C = {'rate': P['rate_all'], 'ids': dict(ids.most_common(60)), 'scale': scale, 'near': {}}
         name = ''
-    ids = {i: n for i, n in C['ids'].items() if db.resolve_id(i) is not None}
+    import landregion
+    # (a home region's rocks only at home: Narsis's red sandstone in a Hlaalu town elsewhere, HOME_ROCKS)
+    ids = {i: n for i, n in C['ids'].items() if db.resolve_id(i) is not None and landregion.home_rock_ok(i, region)}
     return {'rate': C['rate'], 'ids': ids, 'scale': C.get('scale') or {}, 'near': C.get('near') or {},
             'factor': max(0.25, min(3.0, C['rate'] / float(P['rate_all'] or 5.0))), 'from': name}
 
@@ -513,13 +530,15 @@ class _Space:
             for q in self.wall:
                 if self._in_rect(q, x, y) or _rect_dist(q, x, y) < r * 0.6:
                     return 'wall'
+        # (the rock's whole body off the door and off the street: a boulder stood in a door's way in the user's
+        # Senchal, 2026-11-09; 6 of 231 rocks within 160 of a door and 27 lapping a street there before)
         for dx, dy in self.doors:
-            if math.hypot(x - dx, y - dy) < 220 + r * 0.5:
+            if math.hypot(x - dx, y - dy) < DOOR_CLEAR + half * BODY:
                 return 'door'
         if (int(math.floor(x / self.PATCH)), int(math.floor(y / self.PATCH))) in self.roads:
             return 'road'
         sd = self._street_dist(self.plan, x, y)
-        if sd is not None and sd < r * 0.4:
+        if sd is not None and sd < half * BODY:
             return 'street'
         if self.square and math.hypot(x - self.square[0], y - self.square[1]) < self.square[2] + r:
             return 'square'
@@ -560,6 +579,8 @@ class _Picker:
         self.boxes = P.get('boxes') or {}
         self.scale = F.get('scale') or {}
         self.memo = {}
+        self.used = Counter()                  # (rocks laid by model)
+        self.shun = None                       # (a model not to draw next: its copy stands at the spot)
 
     def box(self, rid):
         low = rid.lower()
@@ -572,6 +593,10 @@ class _Picker:
         return self.memo[low]
 
     def _one(self, rng, pool):
+        tot = sum(self.used.values())
+        cap = max(TOP_SHARE, 1.5 / len(pool)) * (tot + 1)
+        ok = [(i, n) for i, n in pool if i.lower() != self.shun and (tot < 8 or self.used[i.lower()] < cap)]
+        pool = ok or pool
         u = rng.random() * float(sum(n for _i, n in pool))
         for i, n in pool:
             u -= n
@@ -617,7 +642,26 @@ class _Picker:
                 best = (err, rid, b, round(s, 2))
             if not (size and tall):
                 break
+        self.shun = None
         return None if best is None else best[1:]
+
+    def pick_big(self, rng, size):
+        """A rock about `size` across from the culture's big pieces, by use, near its natural size."""
+        pool = []
+        for i, n in self.ids:
+            b = self.box(i)
+            if not b:
+                continue
+            nat = max(b[3] - b[0], b[4] - b[1]) or 1.0
+            if size / 1.35 <= nat <= size * 1.35:
+                pool.append((i, n))
+        if not pool:
+            return None
+        rid = self._one(rng, pool)
+        self.shun = None
+        b = self.box(rid)
+        nat = max(b[3] - b[0], b[4] - b[1]) or 1.0
+        return rid, b, round(max(SCALE[0], min(SCALE[1], size / nat * (0.9 + rng.random() * 0.2))), 2)
 
 
 def _finish(db, rid, b, s, x, y, z, rot, memo, out, kind, drops, others=()):
@@ -673,7 +717,16 @@ def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, 
     P = ready(db)
     if P is None:
         return {'placed': 0, 'dropped': 0, 'kinds': {}, 'rocks': [], 'factor': 0, 'from': ''}
-    F = figures(db, P, culture)
+    region = ''
+    try:
+        import landrange
+        c0 = sorted(cells)[0] if cells else None
+        if c0 is not None:
+            gx, gy = (c0 if isinstance(c0, tuple) else tuple(int(v) for v in str(c0).strip('#').split(',')))
+            region = landrange._region_of(db, gx, gy) or ''
+    except Exception:
+        region = ''
+    F = figures(db, P, culture, region)
     if not F['ids']:
         return {'placed': 0, 'dropped': 0, 'kinds': {}, 'rocks': [], 'factor': F['factor'], 'from': F['from']}
     rng = random.Random(seed * 104729 + 7)
@@ -687,14 +740,31 @@ def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, 
     kinds = Counter()
 
     boxes = []                                 # (the rocks standing so far, for the rim rule's cover)
+    laid_ = []                                 # (... with their models: x, y, half, id, turn, scale)
+
+    def copy_(low, x, y, half, rz, s):
+        for x2, y2, h2, id2, rz2, s2 in laid_:
+            if id2 == low and math.hypot(x - x2, y - y2) < half + h2 + 100                     and abs((rz - rz2 + math.pi) % (2 * math.pi) - math.pi) < CLONE_TURN and 1 / CLONE_SCALE < s / s2 < CLONE_SCALE:
+                return True
+        return False
 
     def put(rid, b, s, x, y, z, rot, kind, loose=False):
         half = max(b[3] - b[0], b[4] - b[1]) * s / 2.0
+        low = rid.lower()
+        if copy_(low, x, y, half, rot[2], s):
+            # (end for end: its long axis lies as it did, its tilt the same way in the world)
+            rot = ((-rot[0]) % (2 * math.pi), (-rot[1]) % (2 * math.pi), (rot[2] + math.pi) % (2 * math.pi))
+            if copy_(low, x, y, half, rot[2], s):
+                K.shun = low
+                drops['copy'] += 1
+                return False
         if _finish(db, rid, b, s, x, y, z, rot, memo, out, kind, drops, others=boxes if loose else ()):
             S.take(x, y, half, loose)
             kinds[kind] += 1
             r_ = out[-1]
             boxes.append((r_['x'], r_['y'], r_['z'], r_['rz'], s, b))
+            laid_.append((r_['x'], r_['y'], half, low, r_['rz'], s))
+            K.used[low] += 1
             return True
         return False
 
@@ -1104,11 +1174,78 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
         order.append((0 if shoulder else 1, -(hi - lo), rng.random(), i, j, hi - lo, sd))
     order.sort()
     laid = tried = 0
+    # (masses first: a big bare bank takes one big rock, the small ones fill in after)
+    masses = 0
+    left = {(o[3], o[4]) for o in order}
+    discs = {sz: [(di, dj) for di in range(-int(sz * 0.5 // 128), int(sz * 0.5 // 128) + 1) for dj in range(-int(sz * 0.5 // 128), int(sz * 0.5 // 128) + 1)
+                  if di * di + dj * dj <= int(sz * 0.5 // 128) ** 2] for sz in MASS_SIZES}
+    dead = set()
+    mwhy = Counter()
+    while len(left) >= MASS_MIN and laid < BANK_MAX and len(covered) < target * len(steep):
+        done = False
+        for size in MASS_SIZES:
+            disc = discs[size]
+            cand = []
+            for (i, j) in left:
+                if (size, i, j) in dead:
+                    continue
+                n_ = sum(1 for di, dj in disc if (i + di, j + dj) in left)
+                if n_ >= MASS_MIN:
+                    cand.append((-n_, i, j))
+            cand.sort()
+            for _n, i, j in cand[:MASS_TRIES]:
+                near = [(i + di, j + dj) for di, dj in disc if (i + di, j + dj) in left]
+                x0 = sum(v[0] for v in near) * 128.0 / len(near)
+                y0 = sum(v[1] for v in near) * 128.0 / len(near)
+                pk = K.pick_big(rng, size)
+                if not pk:
+                    break
+                rid, b, s_ = pk
+                half = max(b[3] - b[0], b[4] - b[1]) * s_ / 2.0
+                why = ''
+                for ox, oy in MASS_OFFS:           # (the middle of the bare ground first, then a little off it: out of a yard, off a street)
+                    x, y = x0 + ox * half, y0 + oy * half
+                    if (ox or oy) and sum(1 for di, dj in disc if (int(round(x / 128.0)) + di, int(round(y / 128.0)) + dj) in left) < MASS_MIN:
+                        continue
+                    sd2 = S._street_dist(plan, x, y)
+                    g = _ground(db, x, y, memo)
+                    gr2 = _grad(db, x, y, 256.0)
+                    w_ = S._why(x, y, half, True, False) or ('keep' if (sd2 is not None and sd2 < half * BANK_STREET_KEEP) else '')                         or ('plot' if any(_rect_dist(q, x, y) < half * MASS_PLOT for q in S.rects) else '')                         or ('ground' if (g is None or g < 0 or gr2 is None) else '')
+                    if not w_:
+                        why = ''
+                        break
+                    why = why or w_
+                if why:
+                    mwhy[(int(size), why)] += 1
+                    dead.add((size, i, j))
+                    continue
+                zs = [vz(*v) for v in near]
+                rise = max(zs) - min(zs)
+                kb = slope_bin(math.hypot(*gr2))
+                rot = pose(rng, b, s_, x, y, gr2, kb, P, tilt_scale=0.5, align=0.0, along=True)
+                top = max(160.0, min(700.0, rise * 0.6 + 140.0), 0.24 * (b[5] - b[2]) * s_)
+                if put(rid, b, s_, x, y, g + top - b[5] * s_, rot, 'bank', loose=True):
+                    laid += 1
+                    masses += 1
+                    x_, y_, _z, rz_, s3, b3 = boxes[-1]
+                    got = footprint(x_, y_, rz_, s3, b3)
+                    covered.update(v for v in got if v in steep)
+                    left.difference_update(got)
+                    left.discard((i, j))
+                    done = True
+                    break
+                dead.add((size, i, j))
+            if done:
+                break
+        if not done:
+            break
     for _sh, _neg, _r, i, j, rise, sd in order:
         if len(covered) >= target * len(steep) or laid >= BANK_MAX:
             break
         if (i, j) in covered:
             continue
+        if not any((i + di, j + dj) in steep and (i + di, j + dj) not in covered for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+            continue                               # (a lone bare vertex is no bank: no rock of its own)
         tried += 1
         x0, y0 = i * 128.0, j * 128.0
         gr = _grad(db, x0, y0)
@@ -1152,7 +1289,7 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
                 break
             taller *= 1.3
     return {'steep': len(steep), 'covered_before': round(before, 3), 'covered_after': round(len(covered) / float(len(steep)), 3),
-            'laid': laid, 'tried': tried}
+            'laid': laid, 'masses': masses, 'tried': tried, 'mass_refused': {'%d %s' % k: v for k, v in sorted(mwhy.items())}}
 
 
 def knoll(db, outline, memo=None):

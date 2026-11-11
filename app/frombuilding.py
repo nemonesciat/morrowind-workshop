@@ -1426,8 +1426,15 @@ def upper_ways(db, b, out, idoor):
 
 # ---------------------------------------------------------------- building it
 
-def build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None,
-          seed=0, lighting='normal', lights=True, route=None, layout=None, variant=0):
+def build(db, cell_key, ref_key, name, *a, **k):
+    """_build, written into the places ledger (ledger.py): an interior of its own, or one of the town's being made."""
+    import ledger
+    with ledger.open(db, 'interior', name, seed=k.get('seed')):
+        return _build(db, cell_key, ref_key, name, *a, **k)
+
+
+def _build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, tiles=None, tolerance='usual', cellar=None,
+           seed=0, lighting='normal', lights=True, route=None, layout=None, variant=0):
     """Plan, build, link the doors both ways and put the northmarker in."""
     import release
     b = building_at(db, cell_key, ref_key, door_key)

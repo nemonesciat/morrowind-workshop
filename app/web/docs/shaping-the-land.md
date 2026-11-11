@@ -67,24 +67,46 @@ its usual tint, and **Hollows** darkens the hollows and lightens the crests. **A
 
 ## Land shaping: how it works
 
-Land shaping changes many cells at once from a **plan**: shapes you draw on the map (a coast, a ridge, a
-river…), with settings for how natural it looks. It is on the World map's **Land** panel, on the flat map
-(not in 3D).
+Land shaping changes many cells at once. It's on the World map's **Land** panel, on the flat map (not in 3D), and
+it goes in stages, in the order you'd build a place:
 
-It always goes in four steps:
+1. **🖌 Mark** the cells to work on.
+2. **Land**: draw features (a coast, a ridge, a river…) and tick **Shape the rest automatically** to have the rest of
+   the marked land made like a hand-made region round them. Press **Make land**. With it ticked, **Clear first** (shown
+   when there's something to clear) takes other mods' objects out of the cells being made: Tamriel.esm's low-detail
+   **stand-ins** (with the region's real trees and rocks where its trees and rocks stood), **trees, rocks, plants**, or
+   **everything**. Your mod marks them removed, so turning it off brings them back; kept land is never cleared.
+   **Trees** and **Plants** (0 to 2) set how thick it's dressed: at 1, a real tree for each of Tamriel.esm's stand-in
+   trees, and plants as the region grows them.
+   **♣ Cover** is an outline you draw, then pick what grows inside: **forest**, **swamp**, **grassland**, **rocky** or
+   **bare**, and a **Density**. Each kind takes after the nearest hand-made region with the most of it (forest: the most
+   trees a cell; swamp: the nearest marsh or the Bitter Coast); **Like** picks another. Make land lays it in place of the
+   automatic dressing inside the outline.
+3. **Places**: draw towns, castles, roads, farms and dungeons, or press **🎲 Suggest**. Press **Make places**. Towns
+   go up from the outside only.
+4. **Insides and people**: the towns' interiors, the dungeons, people and creatures, rumours and quests. Press
+   **Make insides**.
 
-1. **Draw shapes**. Each marks the cells it reaches as you draw, move or widen it (towns left out).
-2. **Mark more cells** if you like: land with no shape on it is smoothed into the rest.
-3. **Watch the preview** on the map, and change the sliders until it looks right.
-4. **Press the button pinned at the top of the panel** to write it into your mod. It does everything you drew, in
-   order: **Shape the ground**, **Build the town**, or **Shape, then build** when there are both.
+After each Make, look it over on the map and in 3D, then:
 
-**Only marked cells ever change.** Everything else, including the edge a marked cell shares with an
-unmarked one, stays exactly as it is. Marking is how you say both "work here" and "leave the rest alone".
+- **✓ Keep**: it stays. Its shapes leave the map; the land kept is where the next Make starts, and the automatic
+  shaping leaves it alone (a feature you draw over it later still shapes it).
+- **↻ Try again**: it's taken back and made again, rolled anew.
+- **✕ Drop**: it's taken back.
+
+Each stage is one Undo step. **Only marked cells ever change**, and the edge a marked cell shares with an unmarked
+one stays as it is. Each stage's ⚙ holds its settings.
 
 ## Step 1: mark the cells
 
-Tick **Show the land map** to see what each cell is:
+Press **🖌 Mark** and drag over cells to mark them; **⌫ Unmark** and drag to unmark. **Shift**+drag marks or unmarks
+a box. Right-drag moves the map while you mark. A game town's cells are left out unless you hold **Ctrl**. Press the
+button again, **Done** or Esc to stop.
+
+The **⋮** menu has **Clear marks**, **🪨 Dress…**, **↶ Undo my land** (the land in the marked cells back as it was
+before your mod), the **Land map** colours, **Where water runs**, and height maps.
+
+The land map's colours:
 
 | Colour | Means |
 |---|---|
@@ -99,21 +121,8 @@ Tick **Show the land map** to see what each cell is:
 ground drains through. With shapes, it follows the plan's preview; without, the land as it is. Brighter lines are
 where **Stream beds** (Dressing) would texture the ground.
 
-Press **⛰ Mark cells…**, then drag over cells to mark them. **Ctrl**+drag unmarks. Settled cells are left out
-unless you hold **Shift**, so a town isn't reshaped by accident. **Done** (or Esc) stops marking.
-**Clear marks** unmarks them all. Your shapes stay.
-
-**↶ Undo my land** puts the land in the marked cells back as it was before your mod: heights, ground textures and
-grass, in one step. Your objects stay, and Undo brings your land back. (In **My mod**, you can also pick ground
-rows and undo just those.)
-
-Cells with no land at all (the open sea) get a sea bed when you shape them. **Raise the marked cells into
-land** is a quick way to make plain land there without drawing shapes (Height, Coast width, Roughness).
-
-**Shapes mark their own cells:** drawing a shape, moving its points or widening it marks every cell it reaches,
-except towns. A shape that reaches a town says so; **Shift**+click **⛰ Mark its cells** to shape the town too. Marks
-are never taken away by themselves: a moved shape's old cells stay marked, so its old land goes when you shape
-again. Dress areas mark nothing.
+**Shapes mark their own cells:** drawing a feature, moving its points or widening it marks every cell it reaches,
+except towns. Dress areas mark nothing.
 
 ## Step 2: draw shapes
 
@@ -152,7 +161,7 @@ marks), in place of the shapes there: **Island**, **Mountain range**, **River va
   | Undo a shape edit | **Ctrl+Z** (Ctrl+Y redoes) while the Land panel is open and a shape edit was your last change. |
 
 - **↶ ↷** (by Shapes) undo and redo changes to the shapes and their settings, Clear shapes included. They are
-  the plan's own; the Undo at the top undoes changes to your mod, such as Shape them.
+  the plan's own; the Undo at the top undoes changes to your mod, such as Make land.
 - **Order matters**: each shape acts on what the ones above it made (↑ ↓ to reorder). Rivers, lakes and
   springs always go last, so they cut through what the others raised.
 - **Only in** (on a shape) limits it to one region of the marked cells, fading out at the border. **Like**
@@ -162,7 +171,7 @@ marks), in place of the shapes there: **Island**, **Mountain range**, **River va
 ## Step 3: the preview and the settings
 
 The map shows the plan's land over the marked cells, about half a second after you stop sliding. **Nothing
-in your mod changes until you press Shape them.** You don't have to touch any setting below: each starts at
+in your mod changes until you press Make land.** You don't have to touch any setting below: each starts at
 the region's own figures.
 
 A big plan (a long coast over a hundred cells) can take a minute or more to preview: the map counts the seconds,
@@ -171,11 +180,7 @@ it runs again when you change a shape.
 
 ### Protection
 
-**Start from the land under my mod** (on by default): each Shape starts from the marked cells' land as it is
-without your mod (the game's land, or the sea bed), so a moved or removed shape leaves nothing behind. Off, it
-starts from your land as it is now, keeping what you sculpted there by hand (shapes you took out then stay in it).
-The map's preview shows what Shape them would make only while the plan has shapes; with none left (after Clear
-shapes, say) the map shows your land as it is.
+Each Make starts from your land as it is now: a stage tried again or dropped is taken back first, so nothing stacks.
 
 **Hold the ground under buildings, ruins and doors** keeps the ground exactly as it is under them (outlined
 on the map), fading back to the plan over the **Margin**. Rocks, plants, people and paths move with the
@@ -211,7 +216,7 @@ ground instead.
 **🎨 Texture only** textures the marked cells without reshaping them: each 512-unit patch gets the texture the
 region's own land has at that slope, height and distance from the water, with the region's tints and shading.
 Each cell gets about as many textures as the region's own land cells have, in patches as broken up as theirs,
-so no single texture covers the land in big repeating blocks. Shape them and Raise texture new land the same way;
+so no single texture covers the land in big repeating blocks. Make land and Raise texture new land the same way;
 land textured before keeps its textures until you texture it again. It's
 under Dressing when you have shapes, and in **Texture the land** when you don't.
 
@@ -260,18 +265,19 @@ hand, with no shapes drawn. Tick **Like hand-made land** (Land panel, under Shap
 
 ## Places
 
-**The order to press them in** (the buttons are numbered):
+**Town and Castle: draw the limits.** Press the button and draw round the place, in one stroke or point by point.
+It is built inside the line you drew; drag its points to change it. Try again builds another in the same spot.
 
-1. **Propose places**: towns, roads, dungeons, small things and names, as markers to move or remove. Nothing is built.
-2. **Shape, then build** (at the top of the Land panel): shapes the ground and lays the roads, then builds the towns
-   with their people.
-3. **Build the places**: the dungeons, fields, docks, small things and the names on their cells.
-4. **People and beasts**: travellers by the roads, campers at the camps built in 3, and the creatures. Once.
-5. **Rumours and quests**: needs the towns of 2 and the dungeons of 3.
+**Made** (under Make places) lists every town, castle, dungeon and interior the mod's Makes have built. 👁 goes there. ↻ Try again takes that one away and makes it anew with another layout. ✕ Drop only this takes away what it built and its interiors, whatever was made after it; what you added and the ground stay. Each is one Undo step. Places made by older versions are not listed.
 
-**Propose roads** is for after you move, add or remove towns: it joins them again.
+Places is the second stage. **🎲 Suggest** puts towns, roads, dungeons, farms, small things and names on the map as
+markers to move or drop; nothing is built. **Make places** lays the roads, builds the towns and castles (outsides
+only) and lays the fields, docks, small things and names. The dungeons, the towns' interiors and the people come in
+the third stage, **Insides and people**.
 
-**Propose places** (Land panel, under the Region pass) lays towns, villages and dungeons over the marked cells as many
+**🛤 Suggest roads only** (Places ⚙) is for after you move, add or remove towns: it joins them again.
+
+**🎲 Suggest** (Places) lays towns, villages and dungeons over the marked cells as many
 as the game has on as much land and on the ground it puts them: towns and cities by the sea and on big streams, on the
 flat; villages on level ground; caves and tombs in hollows on steep slopes; Dwemer ruins high and steep. Each kind keeps
 the game's spacing, and nothing is put by a place the land already has.
@@ -286,10 +292,10 @@ the game's spacing, and nothing is put by a place the land already has.
 - The places come as layers in the list, to move on the map, remove or keep. Proposing again replaces the proposed
   places you haven't built.
 - **Towns** are ordinary town layers in the culture, sized like the game's (a village about 1,600 across its middle, a
-  town 3,600, a city 8,900): **Shape, then build** makes them as any town you draw.
+  town 3,600, a city 8,900): **Make places** builds them as any town you draw.
 - **Dungeons** are 🕳 markers where their door outside goes, each named in the culture's way. Pick one to change its
   kind, name or size, or **Build it**.
-- **Build the places** makes every dungeon and mine with the Dungeon tool (their doors facing down the slope), lays the
+- **Make places** lays the fields, docks and small things; **Make insides** makes every dungeon and mine with the Dungeon tool (their doors facing down the slope), lays the
   fields, the harbours' docks and the small things, all as one Undo. A kind the Dungeon tool is still learning is left for later; build
   again once it has. Until then a dungeon's name on the map reads "not built yet"; a built one has a white ring.
 - You can also add a 🕳 Dungeon marker by hand from the shapes' buttons.
@@ -319,14 +325,14 @@ sit by each other:
    a fishing pole and a stool by the water. They stand where the game's do: carts beside the roads, camps on level
    ground away from the towns, remains in hollows, wrecks on the shore facing the sea, burial banners up high. Of a
    kind's scenes, the one whose ground falls most like the spot's is laid, one from the same region first. They are
-   ✦ markers; **Build the places** lays them on the ground as it is then, so shape first.
+   ✦ markers; **Make places** lays them on the ground as it is then, so make the land first.
 
 Farmsteads and inns are town layers with fewer buildings and their kinds set (**How many**), built with **Shape, then
 build** like the rest.
 
 ### Names of the land
 
-Propose places also names a few of the land's features the way the game names its own, sparingly, each the name of
+Suggest also names a few of the land's features the way the game names its own, sparingly, each the name of
 the one cell it stands in (the game's Mount Kand, Verulas Pass, Khartag Point, Lake Dolosamsi):
 
 - **Peaks:** the most prominent tops, standing well over the land round them: "Mount …" ("… Peak" in Nordic lands).
@@ -336,7 +342,7 @@ the one cell it stands in (the game's Mount Kand, Verulas Pass, Khartag Point, L
 
 About one name for every hundred cells, as the game has them, and at least the greatest peak or pass of a province.
 An inn or a fort by a named pass or crossing takes its name ("Verulas Pass" for the inn, "Fort Verulas"). Names are
-🏷 markers: pick one to change its name. **Build the places** gives each its cell's name (on the map and as you walk
+🏷 markers: pick one to change its name. **Make places** gives each its cell's name (on the map and as you walk
 in); a cell with a name already keeps it.
 
 ### People and beasts
@@ -394,7 +400,7 @@ each with what is most off there (fewer plants, smoother, no rocks). **Look** op
 Each proposed town and village gets a livelihood from its land, at the game's own rates (its towns read for docks,
 boats and nets, fields, crops and beasts, mine doors and who lives there): with the sea within a cell's eighth, seven
 in ten live by the sea; a little further, half; inland, farming comes first, then mines and trade. A town only gets what
-its site allows; the note under Propose places says what they live by.
+its site allows; the note under Suggest says what they live by.
 
 - **By the sea:** a ⚓ Harbour marker on its shore: one of the game's own docks, its piers, boats and nets as they
   stand, laid where the shore falls to the water as it does under them, the size of the town.
@@ -405,7 +411,7 @@ its site allows; the note under Propose places says what they live by.
 
 ### Roads
 
-Propose places brings its roads with it. **🛤 Propose roads** joins the towns again after you move, add or remove
+Suggest brings its roads with it. **🛤 Suggest roads only** (Places ⚙) joins the towns again after you move, add or remove
 some (drawn, proposed, and the game's own near the marked cells) as road networks join them: each pair with no third town nearer both, so roads go round a town instead of cutting through it. Each road
 finds its way as the game's do: gently up the slopes (half its length under about 4°), round steep ground by zigzags,
 never through water or a building, from the edge of one town to the edge of the next.
@@ -423,17 +429,11 @@ never through water or a building, from the edge of one town to the edge of the 
   deck stands high. A river running through a town gets no road bridge: the town's streets are its own. The
   bridges are drawn on the map, solid and wider than the road.
 
-## Step 4: Shape them
+## Step 4: Make, then keep
 
-The button pinned at the top of the panel (**Shape the ground**, or **Shape, then build** with towns drawn too; and
-**Shape the marked cells** at the bottom) writes the plan into the marked cells, as one Undo step, then builds each
-town drawn. You don't need to select a town first. Town, street, zone and wall shapes change no ground. Things standing on the ground follow it, and the note after it compares the new land's
-slopes and roughness with the region's own.
-
-The shapes stay after shaping, so you can change them and shape again: with **Start from the land under my
-mod** on, the land is made afresh from your shapes each time. While it works, the button shows the step it's on
-and fills like a bar. **◐ Before** (under Show where water
-runs) shows the land as it was before the last Shape them or Texture only for as long as you hold it.
+**Make land** writes the features and the automatic shaping into the marked cells as one Undo step; things standing
+on the ground follow it. While it works the button shows the step it's on. **◐** beside Mark shows the land as it was
+before, for as long as you hold it. Then **✓ Keep**, **↻ Try again** or **✕ Drop** (see above).
 
 ## Height maps
 
@@ -515,6 +515,7 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   the town's streets go out, and the streets run on through them, never out onto the sea or over a cliff. Stairs inside lead up to the wall walk.
   The wall goes round at one level: where the ground lies lower it is brought up to the wall's foot, and the wall
   steps up only where a hill stands too high to cut. Castle walls the same.
+  **Open to the water** leaves out the wall where it faces the sea or a lake, for a coastal town walled on its land side only.
   A Nord village gets a **palisade**: post sections following the land round it, with a gatehouse on the way in.
 - **Dressed:** sets out what the culture's own towns set out. Before doors: benches, signs, lanterns, crates, a
   smith's forge and anvil. Along the streets: carts, stools, barrels. In the square: a well or a shrine. And the

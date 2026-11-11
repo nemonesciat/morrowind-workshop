@@ -43,6 +43,8 @@ NAME_CULTURE = {'Imperial': 'Imperial', 'Stronghold': 'Dunmer', 'Redoran': 'Redo
 SIZES = {'small': 0.8, 'medium': 1.0, 'large': 1.3}
 KEEP_STOREY = 1037             # (a keep piece on a keep piece: the Ebon Tower's keep_01 over keep_01, lab w10 2026-11-05)
 TOWER_UP = {'court': 3, 'junction': 2, 'corner': 2, 'gate': 1}   # (light storeys over the walk in a tall castle: the Ebon Tower's crowns stand 512-1920 over the wall, 2-7 storeys)
+SHARE_REACH = 3000             # (a town wall this far out from the castle's front: the castle stands on it and shares it)
+SHARE_MIN = 4                  # (wall pieces along the front, at least, to call it the town's wall)
 GREAT = 7168                   # (a great castle: a cell across, as the Ebon Tower's and Firewatch's walls, in wards with the keep's court)
 MARGIN = 700                   # a keep stands this far in from the wall behind it (the wall's own depth and a lane)
 TOWN_NEAR = 6000               # (a town's wall this near turns the castle's gate towards the town)
@@ -252,6 +254,20 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
             tx = ty = None                   # (the castle in the very middle of its town: by the ground, as alone)
     # (never out onto the sea or over a cliff: a castle on an island or a headland had its gate at the water, the lowest
     # ground, and the user had to steer every one, 2026-11-03. gate: the way the user picked, an angle, kept to)
+    # (a castle drawn beside a walled town shares the town's wall: turned to run with it, then, below, moved so its front
+    # stands on it, its own front left out there and its gate cut through. The user, 2026-11-09: "I think that should be
+    # the behavior when a castle wall is drawn next to a city wall ... And to ensure a gate will connect through them".
+    # A box castle (the game's sizes, great) turns; a drawn outline keeps its own way)
+    near_town = []
+    if tx is not None:
+        near_town = sorted(town, key=lambda q: math.hypot(sum(c[0] for c in q[0]) / 4.0 - F['x'], sum(c[1] for c in q[0]) / 4.0 - F['y']))[:12]
+        if size != 'drawn' and len(near_town) >= SHARE_MIN:
+            angs = []
+            for cs_, _z0, _z1 in near_town:
+                e = max(((cs_[i], cs_[(i + 1) % 4]) for i in range(4)), key=lambda e: math.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]))
+                angs.append(math.atan2(e[1][1] - e[0][1], e[1][0] - e[0][0]) % (math.pi / 2))
+            angs.sort()
+            F['a'] = angs[len(angs) // 2]
     great = size == 'great'
     if size == 'great':
         # (a great castle: a square a cell across round the outline's middle, built as a drawn one is, in wards)
@@ -390,6 +406,23 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
             if fallback is not None:
                 tries, i_try, fallback = [fallback], 0, None   # (no court for the plain keep either: the widest mass)
         v_min = min(p[1] for p in polyf)
+        if near_town:
+            # (the town wall pieces before the castle's front, in its frame: the castle moved so its front stands on them)
+            u_max = max(abs(p[0]) for p in polyf)
+            band = []
+            for cs_, _z0, _z1 in town:
+                mx, my = sum(c[0] for c in cs_) / 4.0, sum(c[1] for c in cs_) / 4.0
+                c_, s_ = math.cos(F['a']), math.sin(F['a'])
+                u_ = (mx - F['x']) * c_ + (my - F['y']) * s_
+                v_ = -(mx - F['x']) * s_ + (my - F['y']) * c_
+                if abs(u_) <= u_max and v_min - SHARE_REACH <= v_ <= v_min + 2 * L:
+                    band.append(v_)
+            if len(band) >= SHARE_MIN:
+                band.sort()
+                sh = band[len(band) // 2] - v_min
+                F['x'] -= sh * math.sin(F['a'])
+                F['y'] += sh * math.cos(F['a'])
+                out['shared'] = len(band)
         poly = [_to_world(F, u, v) for u, v in polyf]
         # (the way in: out, through the front, out again, so the gate is asked for there alone)
         way = [list(_to_world(F, u_gate - 16, v_min - 1500)), list(_to_world(F, u_gate, v_min + 200)), list(_to_world(F, u_gate + 16, v_min - 1500))]
@@ -2025,9 +2058,16 @@ def progress():
 
 def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=True, rooms='furnished', gate=None):
     """The castle built (plan() laid out), its rooms as ROOMS says. One Undo."""
+    import ledger
     PROGRESS.update(on=True, what='Planning', frac=0.0)
     try:
-        return _make(db, outline, style, size, seed, name, people, rooms if rooms in ROOMS else 'furnished', gate)
+        # (written into the places ledger: what it is made from, and every piece it makes, ledger.py)
+        with ledger.open(db, 'castle', name, outline, seed, {'style': style, 'size': size, 'people': bool(people),
+                                                             'rooms': rooms, 'gate': gate}) as led:
+            out = _make(db, outline, style, size, seed, name, people, rooms if rooms in ROOMS else 'furnished', gate)
+            if led is not None and isinstance(out, dict) and out.get('name'):
+                led['name'] = out['name']
+            return out
     finally:
         PROGRESS.update(on=False, what='', frac=0.0)
 
@@ -2248,11 +2288,22 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     if W is not None:
         db.sync_project()
         _cut_town_wall(db, W['outline'])
+        # (its gate and gatehouse kept where the town's wall stands, the town's wall cut there so the way goes through;
+        # the rest of the castle's pieces there left out, the town's wall serving both)
+        gates = [p for p in W['pieces'] if p.get('kind') in ('gate', 'end') or p.get('gatehouse')]
+        W['pieces'] = [p for p in W['pieces'] if not any(p is g for g in gates)]
         tw.drop_doubled(db, W)               # (where a town's wall already stands, it is the castle's too)
+        W['pieces'] += gates
+        gh = _gatehouse_make(db, W)
+        if P.get('shared'):
+            # (before anything of the castle is set down: only the town's own pieces can be cut)
+            _cut_under_gates(db, gates)
+            # (the gatehouse's guard towers where the town's wall has its own: the town's taken out, one tower each)
+            _cut_near(db, [(pos[0], pos[1]) for rid, pos, _s in gh if 'tower' in rid.lower()], GH_TOWER_NEAR)
         for p in W['pieces']:
             q = p['pose']
             wr.put(p['id'], (q.x, q.y, q.z, 0.0, 0.0, q.rz))
-        for rid, pos, s_ in _gatehouse_make(db, W):
+        for rid, pos, s_ in gh:
             wr.put(rid, pos, s_)
     tdoors = []                                  # [(tower index, kind, (cell, rk, pos), arrive outside)]
     if P['towers'] and W is not None:
@@ -2352,14 +2403,14 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     # barrels, crates and baskets stood sunk in the raised ground of Fort Skethwest's yard, the in-game walk 2026-11-07)
     if W is not None:
         _say('Setting out the bailey', 0.49)
-        n0 = len(wr.refs)
+        nb0 = len(wr.refs)        # (its own name: n0 is the undo depth the whole castle folds from)
         try:
             for rid, pos, s_ in _bailey(db, P, W, rng):
                 wr.put(rid, pos, s_)
         except Exception as e:
             print('castle bailey:', e)
-        if len(wr.refs) > n0:
-            editing.commit(db, 'Set out the bailey of %s: %d things' % (name, len(wr.refs) - n0))
+        if len(wr.refs) > nb0:
+            editing.commit(db, 'Set out the bailey of %s: %d things' % (name, len(wr.refs) - nb0))
     db.sync_project()
     # ---- inside
     _say('Copying the rooms', 0.5)
@@ -2789,6 +2840,66 @@ def _clear_town(db, poly, keep=()):
 
 
 CUT_IN = 200                   # (a made town wall's pieces this far inside a castle's wall are the castle's ground now)
+
+
+GATE_CUT = 160                 # (a town wall piece whose middle is this near a castle gate's box goes, so the way goes through)
+
+
+GH_TOWER_NEAR = 300            # (a town wall tower or corner this near a gatehouse tower stands in it)
+
+
+def _cut_near(db, spots, R):
+    """The mod's own town wall pieces standing within R of any of spots, taken out. The count."""
+    if not spots:
+        return 0
+    M = tw.wall_models(db)
+    p = db.project
+    n = 0
+    cells = {'#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0)) for x, y in spots}
+    for ck in cells:
+        c = p.cells.get(ck)
+        if not c:
+            continue
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if not r.get('new') or r.get('tb') or r['id'].lower() not in M:
+                continue
+            if any(math.hypot(r['p'][0] - x, r['p'][1] - y) <= R for x, y in spots) and r['k'] in (c.get('refs') or {}):
+                c['refs'].pop(r['k'])
+                p.town_parts.pop(r['k'], None)
+                n += 1
+    if n:
+        db.sync_project()
+    return n
+
+
+def _cut_under_gates(db, gates):
+    """The mod's own town wall pieces where a castle's gate stands on the town's wall: taken out, so the gate opens
+    through the shared wall into the town. The count."""
+    M = tw.wall_models(db)
+    p = db.project
+    memo, boxes = {}, []
+    for g in gates:
+        cs, _b = tw._box(db, g['id'], g['pose'], memo)
+        if cs:
+            boxes.append(tw._widen(cs, GATE_CUT) if hasattr(tw, '_widen') else cs)
+    if not boxes:
+        return 0
+    n = 0
+    cells = {'#%d,%d' % (math.floor(c[0] / 8192.0), math.floor(c[1] / 8192.0)) for b in boxes for c in b}
+    for ck in cells:
+        c = p.cells.get(ck)
+        if not c:
+            continue
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if not r.get('new') or r['id'].lower() not in M:
+                continue
+            if any(tw._inside(b, (r['p'][0], r['p'][1])) for b in boxes) and r['k'] in (c.get('refs') or {}):
+                c['refs'].pop(r['k'])
+                p.town_parts.pop(r['k'], None)
+                n += 1
+    if n:
+        db.sync_project()
+    return n
 
 
 def _cut_town_wall(db, poly):
@@ -3429,6 +3540,45 @@ def _people(db, keys, names, seed):
 REMOVE_PAD = 1500              # (a castle's pieces stand this far outside its outline at most)
 
 
+SNAP_REACH = 2500.0             # (outline points this near a standing wall go onto it)
+SNAP_STEP = 512.0
+
+
+def snap_to_walls(db, outline, reach=SNAP_REACH):
+    """The castle's outline with its near side on the town wall standing beside it, so the two share it (drop_doubled
+    leaves the castle's own pieces out where the town's stand). The user, 2026-11-09: "Maybe I want the castle and town
+    walls to coincide ... A castle with walls next to a walled town just seems like a natural thing." The outline
+    walked in SNAP_STEP steps; each point within reach of a wall piece moved onto the nearest. {'outline', 'snapped'}."""
+    pts = [(float(a), float(b)) for a, b in outline or ()]
+    if len(pts) < 3:
+        return {'outline': [list(p) for p in pts], 'snapped': 0}
+    walk = []
+    for i, a in enumerate(pts):
+        b = pts[(i + 1) % len(pts)]
+        n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) // SNAP_STEP))
+        walk += [(a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n) for t in range(n)]
+    walls = tw.standing_walls(db, walk, reach)
+    if not walls:
+        return {'outline': [[round(x), round(y)] for x, y in pts], 'snapped': 0}
+    mids = [(sum(c[0] for c in cs) / 4.0, sum(c[1] for c in cs) / 4.0) for cs, _z0, _z1 in walls]
+    out, n_ = [], 0
+    for x, y in walk:
+        d, m = min(((math.hypot(x - mx, y - my), (mx, my)) for mx, my in mids), key=lambda t: t[0])
+        if d <= reach:
+            out.append(m)
+            n_ += 1
+        else:
+            out.append((x, y))
+    # (points that landed on the same wall piece made one)
+    keep = [out[0]]
+    for p in out[1:]:
+        if math.hypot(p[0] - keep[-1][0], p[1] - keep[-1][1]) > 64:
+            keep.append(p)
+    if len(keep) < 3:
+        return {'outline': [[round(x), round(y)] for x, y in pts], 'snapped': 0}
+    return {'outline': [[round(x), round(y)] for x, y in keep], 'snapped': n_}
+
+
 def remove(db, outline, look=False):
     """Everything a castle's Make it built round its outline, taken away as one step: every piece outside it made as
     one castle (project.town_parts, one group for all its outside pieces) and the rooms its doors lead into, named
@@ -3469,7 +3619,10 @@ def remove(db, outline, look=False):
     inside = [k for k in p.cells if pre and k.startswith(pre[0][0] + ', ')]
     name = ((mapdata.cell_info(db, inside[0]) or {}).get('name') or pre[0][0]).split(',')[0] if inside else 'the castle'
     if look:
-        return {'things': len(out), 'interiors': len(inside), 'name': name}
+        # (and how much of it stands inside this outline: a town built beside a castle's outline counted as the castle,
+        # and Make places left the castle unbuilt, the user's "where's the castle", 2026-11-09)
+        share = sum(1 for _ck, r in out if tw._inside(poly, (r['p'][0], r['p'][1]))) / float(len(out) or 1)
+        return {'things': len(out), 'interiors': len(inside), 'name': name, 'inside': round(share, 2)}
     for ck, r in out:
         c = p.cells.get(ck)
         if c and r['k'] in (c.get('refs') or {}):
@@ -3924,7 +4077,14 @@ def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, l
         print('castle furnish', key, e)
         return 0
     n = (out or {}).get('placed') if isinstance(out, dict) else 0
-    return n if isinstance(n, int) else len(n or ())
+    n = n if isinstance(n, int) else len(n or ())
+    try:
+        # (no bare weapon rack, sconce or lantern hook: what the game hangs on that model, fitcarry; the user, 2026-11-09)
+        import fitcarry
+        n += fitcarry.fill(db, key, seed)
+    except Exception as e:
+        print('fittings loaded', key, e)
+    return n
 
 
 def source_share(db, key, src_key, shift=(0.0, 0.0, 0.0)):

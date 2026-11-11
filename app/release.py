@@ -130,6 +130,14 @@ def lean_masters(db, with_reasons=False, texts=None):
             need[pi].append(why)
 
     seen_ids = {}
+    # (which game file first made a thing does not change while the same files are loaded: kept between calls, so a
+    # town's 130 steps do not each look up the mod's 4,000 things again. Only things a game file made are kept: one
+    # the mod makes itself, or not found, may be made or deleted by the next step)
+    sig = (id(db.plugins), len(db.plugins), tuple(sorted(own)))
+    known = db.__dict__.get('_definer_memo')
+    if known is None or known[0] != sig:
+        known = db.__dict__['_definer_memo'] = (sig, {})
+    known = known[1]
 
     def uses(rid, why):
         low = rid.lower()
@@ -137,18 +145,22 @@ def lean_masters(db, with_reasons=False, texts=None):
             if seen_ids[low] is not None:
                 add(seen_ids[low], why)
             return
-        ri = db.resolve_id(rid)
-        pi = None
-        if ri is not None:
-            r = db.recs[ri]
-            pi = _definer(db, r[0], r[7], own)
+        pi = known.get(low)
+        if pi is None:
+            ri = db.resolve_id(rid)
+            if ri is not None:
+                r = db.recs[ri]
+                pi = _definer(db, r[0], r[7], own)
+                if pi is not None:
+                    known[low] = pi
         seen_ids[low] = pi
         if pi is not None:
             add(pi, why)
 
     # (without reasons, each ID used anywhere is looked up once: 70,000 lookups a change on a big mod)
+    from project import quiet, quiet_values
     pending = set() if not with_reasons else None
-    for rec in p.records.values():
+    for rec in list(quiet_values(p.records)):
         tag, key = rec['tag'], rec['key']
         label = '%s "%s"' % (tag, key.split('|')[0])
         if not rec.get('created') and tag != 'LTEX':      # (ground texture entries stand on their own)
@@ -162,7 +174,7 @@ def lean_masters(db, with_reasons=False, texts=None):
             uses(s, label + ' uses "%s"' % s)
     memo = p.__dict__.setdefault('_master_memo', {}) if texts is not None and not with_reasons else None
     own_low = p.plugin.lower()
-    for ck, c in list(p.cells.items()):
+    for ck, c in list(quiet(p.cells)):
         if not c['refs'] and not c.get('props'):
             continue
         add(_definer(db, 'CELL', ck, own), 'you change the place "%s"' % ck)

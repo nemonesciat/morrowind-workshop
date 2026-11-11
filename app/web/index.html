@@ -433,8 +433,16 @@ input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-sel
 .tile .vartog:hover{background:var(--sel-b)}
 .tile.variant{border-style:dashed}
 .ddlist div.hasthumb > span{min-width:0;flex:1}
-.recent{display:flex;gap:5px;overflow-x:auto;padding:2px 0 6px}
-.recent .tile{width:68px;flex:none}
+.recent{display:flex;gap:4px;overflow-x:auto;padding:2px 0 6px}
+.recent .tile{width:46px;flex:none;padding:2px;border-radius:6px}
+.recent .tile span,.tiles.dense .tile span{display:none}
+.tiles.dense{grid-template-columns:repeat(5,1fr);gap:4px}
+.tiles.dense .tile{padding:2px;border-radius:6px}
+.tiles.dense .tile .vartog{top:1px;right:1px;font-size:9px;padding:1px 3px}
+.palchips{display:flex;flex-wrap:wrap;gap:3px;padding:2px 0 5px}
+.palchips button{font:inherit;font-size:11.5px;line-height:1;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:none;color:var(--muted);cursor:pointer}
+.palchips button:hover{color:var(--text,inherit);border-color:var(--goldline)}
+.palchips button.on{color:var(--gold2);border-color:var(--gold);background:color-mix(in srgb,var(--gold) 14%,transparent)}
 .placingbar{display:flex;gap:8px;align-items:center;border:1px solid var(--gold);background:var(--panel2-c);border-radius:8px;padding:6px 8px;margin-bottom:10px;font-size:12.5px;color:var(--gold2)}
 .placingbar img,.placingbar .nothumb{width:38px;height:38px;flex:none}
 .placingbar div{flex:1;min-width:0}
@@ -878,6 +886,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
 <script src="/web/regions.js"></script>
 <script src="/web/landmap.js"></script>
 <script src="/web/castle.js"></script>
+<script src="/web/landstages.js"></script>
 <script src="/web/itemed.js"></script>
 <script src="/web/luaed.js"></script>
 <script src="/web/questtest.js"></script>
@@ -1165,6 +1174,17 @@ function loadProblemsNote(s){
 // (the computer's own words: openmw.exe, the Recycle Bin and Explorer on Windows; openmw, the bin and the file
 // manager on Linux. /api/status sends them)
 function osw(k){ const o = (S.summary && S.summary.os) || {}; return o[k] || {exe: 'openmw.exe', bin: 'Recycle Bin', files: 'Explorer'}[k]; }
+// (a switch to another mod: what the page held of the last one let go. The map kept the old mod's ground, place names and
+// Land panel shapes, as worldOpen keeps the camera after a reload, and the old plan was saved into the new mod; the
+// user, 2026-11-09)
+function forgetMod(){
+  W.lands = {}; W.landsPrev = null; W.sel = null; W.cut = null;
+  if (W.multi) W.multi.clear();
+  if (W.hide && W.hide.clear) W.hide.clear();
+  if (typeof v3LandsReload === 'function') v3LandsReload();
+  if (typeof lmForget === 'function') lmForget();
+  if (typeof REG !== 'undefined' && REG.data && typeof regLoad === 'function') regLoad(true).catch(() => {});
+}
 async function poll(){
   let s;
   try { s = await api('/api/status'); } catch(e){ setTimeout(poll, 800); return; }
@@ -1182,6 +1202,9 @@ async function poll(){
     // show is found again by its ID, not by its old number, which can now be another record)
     if (!S.reopen && S.cur && S.cur.id && S.cur.type) S.reopen = {id: S.cur.id, type: S.cur.type};
     if (S.reopen) reopenAfterReload();
+    const mod = s.project ? s.project.plugin : null;
+    if (S.modSeen !== undefined && mod !== S.modSeen) forgetMod();
+    S.modSeen = mod;
     if (W.key) worldOpen(W.key, true);
     if (pageOn('mymod')) renderMyMod();
     return;
@@ -2447,7 +2470,7 @@ function viewCells(margin){
 }
 async function loadAround(){
   // the 3D view goes by its camera, not the 2D zoom: full detail and objects in the cells around it
-  const in3d = V3.on, d3 = in3d ? v3Dist() : 1;      // (the 3D view's View distance: cells each way)
+  const in3d = V3.on, d3 = in3d ? v3Reach() : 1;      // (the 3D view's View distance: cells each way)
   const step = in3d ? 1 : mapStep(), cx = Math.floor(W.cam.x / CELL), cy = Math.floor(W.cam.y / CELL);
   const R = in3d ? d3 : step >= 4 ? 26 : 9;  // (the server takes at most ~400 detailed or ~3000 coarse cells at once)
   const objR = in3d ? d3 : MAP_OBJECTS_R;
@@ -2510,7 +2533,7 @@ async function loadAround(){
   const keepCell = k => k === W.key || (W.sel && W.sel.cell === k);
   for (const k of Object.keys(W.cells)){
     const c = W.cells[k];
-    const far = in3d ? 2 : objR + 3;
+    const far = in3d ? d3 + 2 : objR + 3;      // (2 in 3D once: the far cells' things came and went at every step)
     if (c.gx != null && !keepCell(k) && (Math.abs(c.gx - cx) > far || Math.abs(c.gy - cy) > far ||
         (!in3d && (c.gx < x0 - 3 || c.gx > x1 + 3 || c.gy < y0 - 3 || c.gy > y1 + 3)))) delete W.cells[k];
   }
@@ -2564,10 +2587,14 @@ function terrainAt(x, y){
 }
 function visibleRefs(){
   const out = [];
+  const far3 = V3.on && W.ext && v3Reach() > V3_SMALL_TO, fcx = Math.floor(W.cam.x / CELL), fcy = Math.floor(W.cam.y / CELL);
   for (const [ck, c] of Object.entries(W.cells)){
     if (!c.exists) continue;
     if (!W.ext && ck !== W.key) continue;
+    // (the 3D view's far cells: the big things only)
+    const big = far3 && c.gx != null && Math.max(Math.abs(c.gx - fcx), Math.abs(c.gy - fcy)) > V3_SMALL_TO;
     for (const r of c.refs){
+      if (big && !(r.b && Math.max(r.b[3] - r.b[0], r.b[4] - r.b[1], r.b[5] - r.b[2]) * (r.s || 1) >= V3_FAR_SIZE)) continue;
       const layer = LAYERS.findIndex(L => L[1].includes(r.type));
       if (W.hidden.has(layer < 0 ? 0 : layer)) continue;
       if (W.cut != null && !W.ext && r.p[2] > W.cut) continue;
@@ -2860,6 +2887,9 @@ cv.addEventListener('wheel', e => {
   if (W.ext) recentre();                       // zooming shows more (or fewer) cells
 }, {passive: false});
 cv.addEventListener('mousedown', e => {
+  // (right- or middle-drag moves the map in any mode, so marking or drawing never has to stop to look round: the user,
+  // 2026-11-09, "you can't drag the map to readjust your view"; a right-click that doesn't move still opens the menu)
+  if (W.key && (e.button === 2 || e.button === 1)){ W.drag = {kind: 'pan', rpan: true, sx: e.offsetX, sy: e.offsetY, cx: W.cam.x, cy: W.cam.y, moved: false}; if (e.button === 1) e.preventDefault(); return; }
   if (!W.key || e.button !== 0) return;
   if (W.mode === 'region'){ regDown(e); return; }
   if (W.mode === 'landmap'){ lmDown(e); return; }
@@ -2886,6 +2916,12 @@ cv.addEventListener('mousedown', e => {
 });
 cv.addEventListener('mouseleave', () => { $('#maptip').style.display = 'none'; });
 cv.addEventListener('mousemove', e => {
+  if (W.drag && W.drag.rpan){
+    const D = W.drag, dx = e.offsetX - D.sx, dy = e.offsetY - D.sy;
+    if (Math.hypot(dx, dy) > 4) D.moved = true;
+    if (D.moved){ cv.classList.add('dragging'); W.cam.x = D.cx - dx / W.cam.z; W.cam.y = D.cy + dy / W.cam.z; $('#maptip').style.display = 'none'; drawMap(); }
+    return;
+  }
   if (W.mode === 'region' && REG.drag){ regMove(e); return; }
   // (marking cells or drawing a shape: no hover card, it sat over the very cells being picked and stayed there,
   // the user 2026-10-28; the bar under the map names the cell under the mouse)
@@ -2917,6 +2953,7 @@ cv.addEventListener('mousemove', e => {
   else tip.style.display = 'none';
 });
 window.addEventListener('mouseup', async e => {
+  if (W.drag && W.drag.rpan){ const D = W.drag; W.drag = null; cv.classList.remove('dragging'); if (D.moved){ W.noCtx = Date.now(); if (W.ext) recentre(); } return; }
   if (REG.drag){ regUp(); return; }
   if (typeof LM !== 'undefined' && LM.drag){ lmUp(); return; }
   if (typeof LM !== 'undefined' && LM.hdrag){ lmHandleUp(); return; }
@@ -3280,9 +3317,11 @@ function groupByMesh(items, meshOf){
 }
 const variantsText = n => `${n} variant${n === 1 ? '' : 's'}`;
 // a palette group's tiles, the variants of a model folded under its common record (+20 opens them)
-function palTilesHtml(g){
+function palTilesHtml(g, n){
   W.palVar = W.palVar || new Set();
-  return groupByMesh(g.items, it => it.mesh).map(gr => {
+  const all = groupByMesh(g.items, it => it.mesh);
+  W.palLeft = n ? Math.max(0, all.length - n) : 0;
+  return (n ? all.slice(0, n) : all).map(gr => {
     if (gr.length < 2) return tileHtml(gr[0]);
     const key = g.name + '|' + (gr[0].mesh || '').toLowerCase(), open = W.palVar.has(key), n = gr.length - 1;
     const tog = `<button class="vartog" data-vartog="${esc(key)}" title="${variantsText(n)} of this model (other records with the same mesh): click to ${open ? 'fold them away' : 'show them'}">${open ? '−' : '+'}${n}</button>`;
@@ -3764,27 +3803,63 @@ async function furnishDialog(cellKey){
 
 async function loadPalette(){
   if (!W.key || W.paletteKey === W.key) return;
-  W.paletteKey = W.key; W.palette = null;
-  const box = $('#w-palette'); if (box) box.innerHTML = paletteHtml();
+  // (the list never swaps while you fly about outdoors: what it holds stays where it is, and the things of the land
+  // you fly to join at the end of each kind. Flying over a cell's edge emptied it and brought another list back, the
+  // tree being picked gone: "I cant fly and decorate without my palette swapping", the user's Senchal, 2026-11-09.
+  // Opening a place makes the list anew.)
+  const cellAt = k => { const m = /^#(-?\d+),(-?\d+)$/.exec(k || ''); return m ? [+m[1], +m[2]] : null; };
+  const a = cellAt(W.key), o = cellAt(W.palAt);
+  const add = !!(W.paletteKey && W.palette && a && o);
+  if (add && Math.abs(a[0] - o[0]) <= 2 && Math.abs(a[1] - o[1]) <= 2) return;
+  W.paletteKey = W.key;
+  if (!W.palette){ W.palN = 0; const box = $('#w-palette'); if (box) box.innerHTML = paletteHtml(); }
+  const key = W.key;
   try {
-    const p = await api('/api/palette?key=' + encodeURIComponent(W.key));
-    if (W.paletteKey === W.key){ W.palette = p; const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); } }
+    const p = await api('/api/palette?key=' + encodeURIComponent(key));
+    if (W.paletteKey !== key) return;
+    let draw = true;
+    if (add && W.palette){
+      draw = false;
+      for (const g of p.groups){
+        const mine = W.palette.groups.find(x => x.name === g.name);
+        if (!mine){ W.palette.groups.push(g); draw = true; continue; }
+        const have = new Set(mine.items.map(i => i.id));
+        const more = g.items.filter(i => !have.has(i.id));
+        if (more.length){ mine.items.push(...more); draw = true; }
+      }
+    } else { W.palette = p; W.palN = 0; }
+    W.palAt = key;
+    const b = $('#w-palette'); if (draw && b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
   } catch (e) { W.paletteKey = null; }
 }
+// the things places like this one hold: the kinds as one row of chips, the chosen kind's things as small pictures
+// (the name and a bigger picture on hover). (Eight folding lists of big named tiles before: "takes up a lot of
+// space ... looks tacky", the user, 2026-11-09.)
+const PAL_SHORT = {'Wall hangings': 'Hangings', 'Rugs & mats': 'Rugs', 'Plants & gardening': 'Plants', 'Clutter & items': 'Clutter', 'People & creatures': 'People', 'Building trim': 'Trim', 'Market & yard': 'Market', 'Docks & boats': 'Docks'};
 function paletteHtml(){
   const P = W.palette;
-  if (!P) return W.key ? `<h3>Suggested for this place</h3><div class="msg">Looking at similar places…</div>` : '';
+  if (!P) return W.key ? `<h3>For this place</h3><div class="msg">…</div>` : '';
   if (!P.groups.length) return '';
-  W.palOpen = W.palOpen || {'Furniture': true, 'Clutter & items': true};
-  return `<h3>Suggested for this place</h3><div class="msg" style="margin-bottom:6px">${P.style ? `A <b>${esc(P.style)}</b> place, going by ${P.similar} similar ones${P.borrowed ? ` and ${esc(P.borrowed)}` : ''}. ` : ''}<b>Drag</b> into the view, or click and then click where it goes.</div>` +
-    P.groups.map(g => `<details class="pal" data-pal="${esc(g.name)}" ${W.palOpen[g.name] ? 'open' : ''}><summary>${esc(g.name)} <span class="msg">${g.items.length}</span></summary><div class="tiles">` +
-      palTilesHtml(g) + `</div></details>`).join('');
+  const g = P.groups.find(x => x.name === W.palTab) || P.groups[0];
+  const why = (P.style ? `A ${P.style} place, going by ${P.similar} similar ones${P.borrowed ? ` and ${P.borrowed}` : ''}. ` : '') + 'Drag one into the view, or click it and then click where it goes.';
+  return `<h3 title="${esc(why)}">For this place${P.style ? ` <span class="msg">${esc(P.style)}</span>` : ''}</h3>` +
+    `<div class="palchips">${P.groups.map(x => `<button class="${x === g ? 'on' : ''}" data-palchip="${esc(x.name)}" title="${esc(x.name)} (${x.items.length})">${esc(PAL_SHORT[x.name] || x.name)}</button>`).join('')}</div>` +
+    `<div class="tiles dense">${palTilesHtml(g, W.palN || PAL_STEP)}</div>` + (W.palLeft ? (setTimeout(palMore, 0), '<div id="pal-more"></div>') : '');
 }
-$('#world').addEventListener('toggle', e => {
-  const d = e.target.closest && e.target.closest('[data-pal]'); if (!d) return;
-  W.palOpen = W.palOpen || {}; W.palOpen[d.dataset.pal] = d.open;
-  if (d.open) v3ThumbScan(d);
-}, true);
+// (every piece of the kind, drawn as the list is scrolled: "Show every piece", the user, 2026-11-09)
+const PAL_STEP = 60;
+function palMore(){
+  const m = $('#pal-more'); if (!m || !m.offsetParent) return;
+  if (m.getBoundingClientRect().top > innerHeight + 400) return;
+  W.palN = (W.palN || PAL_STEP) + PAL_STEP;
+  const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+}
+document.addEventListener('scroll', palMore, true);
+$('#world').addEventListener('click', e => {
+  const c = e.target.closest && e.target.closest('[data-palchip]'); if (!c) return;
+  W.palTab = c.dataset.palchip; W.palN = 0;
+  const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+});
 document.addEventListener('dragstart', e => {
   const c = e.target.closest && e.target.closest('[data-pid]'); if (!c) return;
   e.dataTransfer.setData('text/x-mw-id', c.dataset.pid); e.dataTransfer.setData('text/x-mw-name', c.dataset.pname);

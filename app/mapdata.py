@@ -114,7 +114,8 @@ def cellmap(db, cell_key, original=False):
     info['refs'] = out
     info['gone'] = gone
     # (a Dwemer ruin the Workshop made: how, so the map's menu can make it again; dwemer.py)
-    pc = db.project.cells.get(cell_key) if getattr(db, 'project', None) else None
+    # (looked at only: asked for the usual way, every place a town's Make read counted as changed, project.Tracked)
+    pc = __import__('project').peek(db.project.cells, cell_key) if getattr(db, 'project', None) else None
     if pc and pc.get('ruin'):
         info['ruin'] = pc['ruin']
     if not EXTRAS:
@@ -304,7 +305,20 @@ def palette(db, cell_key, limit=24):
         for ck, n in furnish.related_cells(db, borrowed).items():
             if ck not in weights:
                 weights[ck] = n * 0.2
-    groups = palette_from(db, weights, arch_ids, here, limit)
+    near = set()
+    if not m.get('interior'):
+        # (outdoors the land round here counts too: its trees and rocks, for the list's Trees and Rocks; three cells
+        # each way, and what grows there leads those lists: the list of the next cell over, a Nordic house in it,
+        # opened with Skyrim's pines and the palms of this shore far down, the user's Senchal, 2026-11-09)
+        try:
+            gx_, gy_ = (int(v) for v in cell_key.lstrip('#').split(','))
+            for dx_ in range(-3, 4):
+                for dy_ in range(-3, 4):
+                    near.add('#%d,%d' % (gx_ + dx_, gy_ + dy_))
+                    weights.setdefault('#%d,%d' % (gx_ + dx_, gy_ + dy_), 2)
+        except ValueError:
+            pass
+    groups = palette_from(db, weights, arch_ids, here, limit, outdoor=not m.get('interior'), near=near)
     if m.get('interior'):
         # the style's patch pieces (loose walls, door frames, posts, columns) for fixing gaps by hand
         try:
@@ -318,10 +332,29 @@ def palette(db, cell_key, limit=24):
             'borrowed': furnish.CULTURE_NAMES.get(borrowed) if borrowed else None}
 
 
-def palette_from(db, weights, skip=(), here=(), limit=24):
-    """What stands in these cells (cell key -> weight), most used first, grouped for the sidebar."""
+# (outdoors, a town's own dressing, hidden from the list before as "architecture": the user's "appropriate pieces in
+# one place", 2026-11-09. Whole buildings and wall kits stay out: the town and wall tools lay those.)
+_TOWN_KINDS = (
+    ('Docks & boats', re.compile(r'dock|pier|piling|mooring|boat|ship|skiff|galleon|_oar|crane|barnacle|cleat|_rope|shack_plank|setmw_x_planks')),
+    ('Fences', re.compile(r'fence|drystonewall|palisade|railing|_rail(_|$)|plat_rail')),
+    ('Market & yard', re.compile(r'marketstand|stall|_tent_|cart|wagon|_well_|fountain|furn_de_ex_|parasol|gallows|_logs_|firepile|statue|trebuchet|scrapwood|forge')),
+    ('Building trim', re.compile(r'window|_win_|_win[a-z]+_\d|dormer|chimney|arrowslit|arrowlit|awning|overhang|balcon|doorjam|doorf_|entrance|buttress|banner|_ban_|_pole_|_sign')),
+)
+_TOWN_NOT = re.compile(r'^dlt_|^sound_|shipwreck|_in_|^in_|_i_|building|house|tower|keep|shack_0')
+
+
+def _town_kind(low):
+    if _TOWN_NOT.search(low):
+        return None
+    return next((name for name, rx in _TOWN_KINDS if rx.search(low)), None)
+
+
+def palette_from(db, weights, skip=(), here=(), limit=24, outdoor=False, near=()):
+    """What stands in these cells (cell key -> weight), most used first, grouped for the sidebar. near: the cells
+    round here, whose trees, rocks and plants lead their lists, those in most of them first."""
     from database import CELL_REF_RE
     counts = {}
+    local = {}
     for ck, weight in weights.items():
         lst = [v for v in db.by_key.get(('CELL', ck), []) if v not in db.dead]
         if not lst:
@@ -334,23 +367,34 @@ def palette_from(db, weights, skip=(), here=(), limit=24):
                 size = struct.unpack('<I', mm.group(1))[0]
                 seen.add(zstr(data[mm.end():mm.end() + size]).lower())
         for oid in seen:
-            if oid in skip or 'marker' in oid:
+            if (oid in skip and not (outdoor and _town_kind(oid))) or 'marker' in oid:
                 continue
             counts[oid] = counts.get(oid, 0) + weight
+            if ck in near:
+                local[oid] = local.get(oid, 0) + 1
     # (the user: "Furniture divided into three sections of their own: Furniture, Wall, and Floor")
     # (and "a tab for plants or gardening ... to contain planters and the decoration that goes in them":
     # planters, pots, the plants and flowers that stand in them, whatever record kind they are)
-    groups = {'Furniture': [], 'Wall hangings': [], 'Rugs & mats': [], 'Plants & gardening': [], 'Containers': [], 'Lights': [],
+    groups = {'Trees': [], 'Rocks': [], 'Building trim': [], 'Fences': [], 'Market & yard': [], 'Docks & boats': [], 'Furniture': [], 'Wall hangings': [], 'Rugs & mats': [], 'Plants & gardening': [], 'Containers': [], 'Lights': [],
               'Clutter & items': [], 'People & creatures': []}
-    for oid, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+    import scatter
+    lead = {oid: n for oid, n in local.items() if scatter._kind(oid) in ('trees', 'rocks', 'plants')}
+    for oid, n in sorted(counts.items(), key=lambda kv: (-lead.get(kv[0], 0), -kv[1])):
         ri = db.resolve_id(oid)
         if ri is None:
             continue
         r = db.recs[ri]
         b = object_bounds(db, ri)
-        if is_architecture(r[0], r[1], b):
+        # (outdoors, the land's trees and rocks, big as they are: the user's "Trees" and "Rocks", 2026-11-09)
+        # (not the continent file's DLT_ stand-ins)
+        land_ = scatter._kind(r[1].lower()) if outdoor and r[0] == 'STAT' and not r[1].lower().startswith('dlt_') else None
+        if land_ in ('trees', 'rocks'):
+            g = 'Trees' if land_ == 'trees' else 'Rocks'
+        elif outdoor and r[0] in ('STAT', 'ACTI') and _town_kind(r[1].lower()):
+            g = _town_kind(r[1].lower())
+        elif is_architecture(r[0], r[1], b):
             continue
-        if r[0] in ('STAT', 'ACTI', 'CONT', 'MISC', 'INGR') and _PLANT_RE.search(r[1]):
+        elif r[0] in ('STAT', 'ACTI', 'CONT', 'MISC', 'INGR') and _PLANT_RE.search(r[1]):
             g = 'Plants & gardening'
         elif r[0] in ('STAT', 'ACTI', 'DOOR'):
             g = _palette_kind(r[1], b)

@@ -23,6 +23,7 @@ import mapdata
 import townsurvey
 
 PATCH = 512
+_BANK = {}                      # (a town of level bands, while its plots are placed: its ground and band streets, _bank_room)
 _OBST = {}                      # (what stands in the outline already, while a plan is made: plan() sets it)
 MARGIN = 256                    # streets and plots keep this far inside the outline
 LANES = 0.5                     # the chance two neighbouring branches are joined by a back lane
@@ -490,7 +491,7 @@ def plan(db, outline, culture, seed=1, F=None, ground=True, walled=False, ring=F
             plain = plan_once(db, outline, culture, seed, F, ground, walled, ring, opts)
         finally:
             CONTOURS = True
-        if len(plain.get('plots') or ()) * BAND_KEEP > len(best.get('plots') or ()):
+        if len(plain.get('plots') or ()) * (BAND_KEEP_STEEP if _BANK.get('S', 0.0) >= BAND_STEEP else BAND_KEEP) > len(best.get('plots') or ()):
             plain['bands_dropped'] = best.get('bands')
             return plain
     return best
@@ -536,6 +537,7 @@ def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, r
         fig['ground'] = ground_at
     fig['_obst'] = _obstacles(db, [(float(q[0]), float(q[1])) for q in outline]) if ground is not False else []
     _OBST['now'] = fig['_obst']
+    _BANK['now'] = None
     # (the seed mixed with the culture: Python's first draw for seeds 1, 3, 4 and 8 is under 0.24, and towns of those
     # seeds all came out square to the compass, lab jtsq)
     rng = random.Random('%d|%s' % (int(seed), culture))
@@ -733,6 +735,9 @@ def _street_town(poly, fig, rng, spread):
                 if math.hypot((px + 0.5) * PATCH - sx, (py + 0.5) * PATCH - sy) <= sr and _inside(poly, (px + 0.5) * PATCH, (py + 0.5) * PATCH):
                     sq.add((px, py))
     roads |= sq
+    _BANK['now'] = None
+    if fig.get('ground') and BANK_SLOPE <= _BANK.get('S', 0.4) < BAND_STEEP and any(s_.get('level') is not None and len(s_['pts']) > 1 for s_ in streets):
+        _BANK['now'] = (fig['ground'], [s_ for s_ in streets if s_.get('level') is not None and len(s_['pts']) > 1])
     plots = _front_plots(poly, streets, roads, fig, rng)
     plots += _back_plots(poly, roads, plots, fig, rng)
     want = int(math.ceil(_want(fig, poly) * 1.15))
@@ -781,7 +786,11 @@ def _drawn_streets(poly, fig):
 
 CONTOURS = True
 BAND_MIN = 192                 # (a hillside town's streets run in level bands this far apart in height at least...)
-BAND_MAX = 576                 # (...and this much at most: a row's rise on the slope between, so a row of houses stands between
+BANK_GRADE = 1.2               # (the bank between two bands is given the run to fall no steeper than this: on a 0.42 slope a
+                               # band's rise of 576 came every 1,370, the street and a row of houses level across 1,100 of it, and
+                               # the 576 fell in the 270 left, sheer banks 570 tall behind the houses, lab gchill 2026-11-10)
+BANK_BY = 320                  # (a plot this near a band street stands at its level)
+BAND_MAX = 960                 # (...and this much at most: a row's rise on the slope between, so a row of houses stands between
                                # two bands, as the game's hill towns stand: Vos, Akamora, Ald Velothi, Hla Oad; the game's hill
                                # towns' road lies in 3 bands at the median, 404 of rise a band)
 BAND_RELIEF = 2 * BAND_MIN     # (an outline whose ground rises this much, 10th to 90th, is a hillside town)
@@ -793,6 +802,11 @@ CLIMB_SLOPE = 0.16             # (a hill this steep is climbed by the found stre
                                # 0.4 slope still climbed at 0.26 and more)
 RAMP_FAR = 2.5                 # (a band longer than this many blocks past the main street gets a ramp of its own at its far end)
 BAND_KEEP = 0.5                # (a band plan is kept while it holds this share of the plain plan's houses at least)
+BAND_KEEP_STEEP = 0.4          # (...and this share on ground of BAND_STEEP and more, where the plain plan buries its houses:
+BAND_STEEP = 0.5               # on a 0.55 slope it stood 22 for the bands' 14, the land 1,090 over their floors, lab redoran)
+BANK_SLOPE = 0.3               # (ground under this median slope has no banks to give room to: its bands are spaced and its
+BAND_MAX_GENTLE = 576          # plots stood as before the bank rules, which took a town on a 0.18 slope from 40 houses to
+                               # 17, lab gcflat 2026-11-10)
 STAIR_HOP = 700                # (two bands this near across are joined by a straight stair street, no ramp sought)
 STAIR_WANDER = 2.0             # (a ramp longer than this times the straight way between the bands gives way to a stair street)
 
@@ -842,7 +856,12 @@ def _band_levels(poly, ground, block):
             slopes.append(math.hypot(a - z, b - z) / 256.0)
     slopes.sort()
     S = slopes[len(slopes) // 2] if slopes else 0.0
-    H = max(BAND_MIN, min(BAND_MAX, block * S))
+    _BANK['S'] = S
+    if S < BANK_SLOPE or S >= BAND_STEEP:
+        # (nor has ground of BAND_STEEP and more the room: a town on a 0.55 slope went from 7 houses to 3, lab redoran)
+        H = max(BAND_MIN, min(BAND_MAX_GENTLE, block * S))
+    else:
+        H = max(BAND_MIN, min(BAND_MAX, block * S / (1.0 - min(0.6, S / BANK_GRADE))))
     levels = []
     z = lo + H * 0.5
     while z < hi:
@@ -1456,7 +1475,51 @@ def _free(rect, plots, roads, poly, road_rect=None):
     for x, y in rr + [(cx, cy)] + [((rr[i][0] + rr[(i + 1) % 4][0]) / 2, (rr[i][1] + rr[(i + 1) % 4][1]) / 2) for i in range(4)]:
         if (int(x // PATCH), int(y // PATCH)) in roads:
             return False
-    return not any(_overlap(rect, p['rect']) for p in plots) and not any(_overlap(rect, o) for o in _OBST.get('now') or ())
+    if any(_overlap(rect, p['rect']) for p in plots) or any(_overlap(rect, o) for o in _OBST.get('now') or ()):
+        return False
+    return not _BANK.get('now') or _bank_room(rect, plots)
+
+
+def _pt_line(pts, x, y):
+    """How far (x, y) is from a polyline."""
+    best = 9e9
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        dx, dy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / ((dx * dx + dy * dy) or 1.0)))
+        best = min(best, math.hypot(x - ax - dx * t, y - ay - dy * t))
+    return best
+
+
+def _bank_lv(rect):
+    """The level a plot will stand at in a town of level bands: its band street's where it stands by one, else its
+    own ground's; and the points of its edge."""
+    g, streets = _BANK['now']
+    pts = list(rect) + [((rect[i][0] + rect[(i + 1) % 4][0]) / 2, (rect[i][1] + rect[(i + 1) % 4][1]) / 2) for i in range(4)]
+    near = [(min(_pt_line(o['pts'], x, y) for x, y in pts) - o['w'] / 2, o['level']) for o in streets]
+    d, lv = min(near)
+    if d > BANK_BY:
+        lv = g(sum(p[0] for p in rect) / 4, sum(p[1] for p in rect) / 4)
+    return lv, pts, near
+
+
+def _bank_room(rect, plots):
+    """A plot in a town of level bands leaves the bank its run: the streets and plots of another level stand as far
+    off as the height between them at BANK_GRADE."""
+    lv, pts, near = _bank_lv(rect)
+    if lv is None:
+        return True
+    if any(d < abs(o - lv) / BANK_GRADE for d, o in near):
+        return False
+    for p in plots:
+        if 'lv' not in p:
+            p['lv'] = _bank_lv(p['rect'])[0]
+        if p['lv'] is None:
+            continue
+        need = abs(p['lv'] - lv) / BANK_GRADE
+        if need > 64 and any(abs(x - p['x']) < need + 900 and abs(y - p['y']) < need + 900 and math.hypot(x - u, y - v) < need
+                             for x, y in pts for u, v in p['rect']):
+            return False
+    return True
 
 
 def _front_plots(poly, streets, roads, fig, rng):

@@ -26,7 +26,9 @@ RANGE_WAVE = 9600.0                     # (the game's crest spacing, VV 9,216, T
 HANDMADE_128 = 40.0                     # (a region whose land is this rough 128 apart was made by hand; heightmaps 10-30)
 DEFAULTS = {'on': False, 'like': '', 'relief': 1.0, 'ranges': 1.0, 'valleys': 1.0, 'cliffs': 1.0, 'rocks': True, 'rockfrom': '', 'trees': True,
             'borders': True, 'plants': True, 'falls': True,
-            'paint': False}
+            'paint': False, 'trees_k': 1.0, 'plants_k': 1.0}
+# (trees_k, plants_k: the Land stage's Trees and Plants sliders, 0 to 2, on what the pass and Clear first lay; the user,
+# 2026-11-09, "maybe there should be a slider or some ability to choose density of what is laid down")
 VALLEY_K = 0.02
 SHORE = 400.0                           # (the detail fades out below this height, as match_roughness's)
 RIDGE_MEAN = 0.0
@@ -243,6 +245,27 @@ LOOK_LIGHT = 0.6
 # them a shade's difference took Skyrim's Vorndgad rock for Aunike Ridge over the Ascadian Isles' next door)
 LOOK_HUE_OK = 0.05
 LOOK_LIGHT_OK = 0.25
+# (rocks that stay at home: Narsis's red mesa sandstone is Shipal-Shin's alone, never borrowed for other land; the
+# user, 2026-11-09, "none of the other materials in the game fit with the desert mesa look there. Keep those rocks over
+# there exclusively")
+HOME_ROCKS = (('shipal-shin', re.compile(r'^t_mw_terrrocksh', re.I)),)
+
+
+def _base(region):
+    return re.sub(r'\s+region$', '', (region or '').lower().strip())
+
+
+def home_rock_ok(rid, region):
+    """May this rock model stand in this region? Not a home region's own rock outside it."""
+    b = _base(region)
+    return not any(rx.search(rid or '') and b != home for home, rx in HOME_ROCKS)
+
+
+def home_region(region):
+    """Is this a region whose rocks stay at home (lent to no other)?"""
+    return _base(region) in {h for h, _rx in HOME_ROCKS}
+
+
 _ROCKS = {}
 _CENTRES = {}
 
@@ -399,7 +422,7 @@ def rock_region(db, region, like=''):
     look = ground_colour(db, region)
     best, bd = like or region, None
     for r, R in regs.items():
-        if not _clads(R):
+        if not _clads(R) or (home_region(r) and _base(r) != _base(region)):
             continue
         w = _weather(db, r)
         if mine is None or w is None:
@@ -705,7 +728,7 @@ def plant_region(db, region, like=''):
     return best
 
 
-def grow_plants(db, keys, F, inside, hold, reg, likes, seed=1):
+def grow_plants(db, keys, F, inside, hold, reg, likes, seed=1, k=1.0):
     """The plants for the cells (for cliffrocks.place): each cell's plant region's own squares of the same ground
     (landdecor.plan_growth), its plants only, thinned to PLANTS_CELL a cell. Returns (plants, {region: from})."""
     import random
@@ -715,7 +738,7 @@ def grow_plants(db, keys, F, inside, hold, reg, likes, seed=1):
         return [], {}
     dens = {r: plants_a_cell(db, r) for r in set(src.values()) if r}
     region_of = lambda x, y: src.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '') or ''
-    items = landdecor.plan_growth(db, F, inside, hold, region_of, 1.0, seed)
+    items = landdecor.plan_growth(db, F, inside, hold, region_of, max(1.0, k), seed)
     rng = random.Random(seed * 3571 + 9)
     out = []
     for it in items:
@@ -724,7 +747,7 @@ def grow_plants(db, keys, F, inside, hold, reg, likes, seed=1):
         r = region_of(it['x'], it['y'])
         if not r:
             continue
-        if rng.random() < min(1.0, PLANTS_CELL / max(1.0, dens.get(r, 1.0))):
+        if rng.random() < min(1.0, k * PLANTS_CELL / max(1.0, dens.get(r, 1.0))):
             out.append(it)
     return out, {reg.get(k, ''): v for k, v in src.items() if v}
 

@@ -335,6 +335,38 @@ def _dunmer(culture):
     return culture not in NOT_DUNMER
 
 
+FIT_RAYS = 24
+FIT_STEP = 192.0
+FIT_DRY = 40.0                  # (ground this far over the water at least: a town's edge stops at the shore)
+FIT_STEEP = 32.0                # (and at ground steeper than this, degrees)
+FIT_MIN = 0.35                  # (no ray shorter than this share of the size: the place keeps a body)
+
+
+def fit_outline(db, x, y, r):
+    """A town's or castle's outline for a marker (the Land stage's Town and Castle, 2026-11-09: "Why is it so hard to
+    just draw a shape where 'I want a city here' ... and just figure it out"): rays out from the marker, each stopping
+    at the shore or at steep ground before r, smoothed round, so the place fits the land under it."""
+    r = max(400.0, min(16000.0, float(r)))
+    rad = []
+    for k in range(FIT_RAYS):
+        a = 2 * math.pi * k / FIT_RAYS
+        c, s = math.cos(a), math.sin(a)
+        d, ok = 0.0, 0.0
+        while d < r:
+            d += FIT_STEP
+            px, py = x + c * d, y + s * d
+            z = mapdata_z(db, px, py)
+            sl = _slope(db, px, py)
+            if z is None or z < FIT_DRY or (sl is not None and sl > FIT_STEEP):
+                break
+            ok = d
+        rad.append(max(ok, r * FIT_MIN))
+    # (smoothed, three rays a side: a single steep spot cut a notch into the outline)
+    sm = [sum(rad[(k + j) % FIT_RAYS] for j in range(-3, 4)) / 7.0 for k in range(FIT_RAYS)]
+    sm = [min(rad[k] * 1.15, sm[k]) for k in range(FIT_RAYS)]
+    return [[round(x + math.cos(2 * math.pi * k / FIT_RAYS) * sm[k]), round(y + math.sin(2 * math.pi * k / FIT_RAYS) * sm[k])] for k in range(FIT_RAYS)]
+
+
 def _outline(x, y, r, rng):
     pts = []
     for k in range(8):

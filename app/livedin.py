@@ -231,11 +231,13 @@ def _pick(scenes, low, h, setting, band, rng):
     return rng.choice(best) if best else None
 
 
-def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, commit=True, camps=True, stories=True):
+def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, commit=True, camps=True, stories=True, already=None):
     """Make a place lived in: round each of its anchors (or only these ref keys) that has next to nothing round it,
     one of the game's own scenes for such a spot. band: who lives there (a castsurvey band kind) to pick scenes by;
     setting: the kind of place (else read from its name and pieces). amount: the share of anchors dressed (1: as many
-    as the game dresses). One Undo step (commit False: none, the caller's change takes it in). {'anchors', 'things'}."""
+    as the game dresses). already: an anchor with this many small things round it is left as it is (ALREADY; a second
+    pass to fill a place to the game's count asks more, and keeps clear of what lies there). One Undo step (commit
+    False: none, the caller's change takes it in). {'anchors', 'things'}."""
     import editing
     import dwemer
     from project import set_ref_pos, zs
@@ -278,11 +280,13 @@ def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, com
     c_, _refs = editing._cell(db, cell)
     placed, dressed = 0, 0
     taken = []
+    # (a second pass keeps clear of the things lying there already: a cup set into the first pass's bowl)
+    lying = [(p[0], p[1], p[2]) for p in small] if already and already > ALREADY else []
     for r, ak, b in anchors:
         pos, s = r['p'], r['s'] or 1.0
         bottom, h = pos[2] + b[2] * s, (b[5] - b[2]) * s
         near = sum(1 for p in small if abs(p[0] - pos[0]) < REACH and abs(p[1] - pos[1]) < REACH and abs(p[2] - bottom - h / 2) < DZ)
-        if near >= ALREADY and not only:
+        if near >= (already or ALREADY) and not only:
             continue
         share = (L['share'].get(ak) or 0.8) * amount
         if not only and r['k'] not in camp['anchors'] and rng.random() > share:
@@ -297,6 +301,8 @@ def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, com
                 continue                      # (it lay on a table of another height: nothing to set it on here)
             x, y = pos[0] + c * lx + sn * ly, pos[1] - sn * lx + c * ly
             if any(math.hypot(x - tx, y - ty) < 6 for tx, ty in taken):
+                continue
+            if lying and any(math.hypot(x - tx, y - ty) < 14 and abs(bottom + lz - tz) < 60 for tx, ty, tz in lying):
                 continue
             # (set down on what's under it: from a little over where it lay, the first surface below)
             want = bottom + (lz * h / scene['h'] if top and scene['h'] else lz)

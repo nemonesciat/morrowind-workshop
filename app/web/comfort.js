@@ -496,6 +496,7 @@ function cfRun(id){ const a = CF_ACT.find(x => x.id === id); if (a) a.run(); }
 // the flat map, and the object lists in the panels
 cv.addEventListener('contextmenu', e => {
   e.preventDefault();
+  if (W.noCtx && Date.now() - W.noCtx < 600) return;      // (a right-drag that moved the map: no menu, the mode stays)
   if (W.mode === 'paths'){ peMenu(e); return; }
   if (W.mode){ setMode(null); return; }
   const hit = hitTest(e.offsetX, e.offsetY);

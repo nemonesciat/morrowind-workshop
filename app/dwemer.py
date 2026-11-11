@@ -4749,9 +4749,17 @@ def _write_refs(db, c, refs):
     return keys
 
 
-def build(db, name, size='medium', levels='some', twist='branching', loot='usual', creatures='usual',
-          doors=0.12, entrance=None, outside_door=None, seed=None, commit=True, occupants='auto', kind='dwemer', water='none',
-          entry_piece=None, final_hall=None, way='down', keep=None):
+def build(db, name, *a, **k):
+    """_build, written into the places ledger (ledger.py): a dungeon of its own, or part of the keep or town being made."""
+    import ledger
+    with ledger.open(db, 'dungeon' if (k.get('kind') or 'dwemer') != 'fort' else 'interior', name, seed=k.get('seed'),
+                     opts={'kind': k.get('kind') or 'dwemer'}):
+        return _build(db, name, *a, **k)
+
+
+def _build(db, name, size='medium', levels='some', twist='branching', loot='usual', creatures='usual',
+           doors=0.12, entrance=None, outside_door=None, seed=None, commit=True, occupants='auto', kind='dwemer', water='none',
+           entry_piece=None, final_hall=None, way='down', keep=None):
     """A new dungeon of the kind called name, laid out, dressed and written into the mod as a new place.
     entrance: {cell, x, y, z, rz} outside, for a door there that leads in (as Build from pieces does), or None.
     way: 'down' from the way in, or 'up' for a place that climbs (dgrules). keep: a keep interior's asks (generate):

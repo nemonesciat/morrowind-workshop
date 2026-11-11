@@ -13,20 +13,24 @@ import json
 import math
 import os
 import random
+import re
 
 import landsurvey
 import mapdata
 from project import ref_info
 
-VERSION = 3                     # (3: each square's texture, 'tex', beside it)
+VERSION = 4                     # (3: each square's texture, 'tex', beside it; 4: the growth with no plant's word in its id)
 SQUARE = 1024                   # units a square side: 8 a cell
 SAMPLE = 90                     # wild cells a region read, spread over it
 LOOK = 260                      # cells looked at for them
 KEEP = 300                      # squares kept a kind of ground
 ENOUGH = 40                     # squares with something on them a region needs to be its own look
+LIFTED = 200.0                  # (a learnt plant this far over the ground stood on a rock or a roof: laid without it, it
+                                # hangs in the air, bushes 4,800 over a made town, game walk 2026-11-10)
 BROAD = 600                     # squares of land a region needs to stand in for another's missing ground
 FALLBACKS = 3                   # regions with land tried after a cell's own, the nearest first
 SETTLED = 300                   # a non-growing thing this wide (or a door, a person) makes a square settled
+POOL_MIN = 120                  # squares of a ground to draw on at least; fewer, and the nearest grounds' join
 SAME_TEX = 4                    # squares of a ground grown on the land's own texture needed to keep to them
 BY_TEXTURE = True               # squares grown on the texture the land has there first (the user, 2026-10-30)
 HOLDOUT = set()                 # cells never learnt from (the lab's held-out blocks; nothing then kept on disk)
@@ -38,13 +42,26 @@ def _kinds():
     return scatter
 
 
+SEA = ('kelp', 'lily', 'coral', 'seaweed', 'starf', 'urch', 'shell', 'oyst', 'barnacle', 'kollop')    # (the water's own: waterplants)
+MORE = re.compile(r'flora|mushroom|shroom|tramaroot|in_cave_plant')
+LAID = re.compile(r'_fauna_|furn_bone|skeleton')    # (nests and bones: learnt with a square's growth, statics only; never kind_of's,
+                                                    # which other tools clear by and a creature's id would match)
+
+
 def kind_of(low):
     """'trees', 'plants', 'grass', 'logs' or None (rocks are cliffrocks')."""
     import cliffrocks
-    if cliffrocks.is_rock(low) or low.startswith(('sound', 'marker')) or any(w in low for w in ('kelp', 'lily', 'coral', 'seaweed', 'cave_')):
+    if cliffrocks.is_rock(low) or low.startswith(('sound', 'marker')) or any(w in low for w in SEA) or ('cave_' in low and 'in_cave_plant' not in low):
         return None
     k = _kinds()._kind(low)
-    return k if k in ('trees', 'plants', 'grass', 'logs') else None
+    if k in ('trees', 'plants', 'grass', 'logs'):
+        return k
+    # (what grows or lies in the wild under a name of its own: Shipal-Shin's veil urns, tanna and drum pears, the
+    # Othreleth Woods' shroud caps and pods, roots, the cave plant the Ascadian Isles wear outdoors, glowing
+    # mushrooms, nests, old bones. Left out, a hand-made region lost 20 to 60 things a cell of its 100 to 200, and
+    # the land dressed like it had one bush and one plant (the user, 2026-11-10: "world objects that get dismissed
+    # as clutter"))
+    return 'plants' if MORE.search(low) and not any(w in low for w in ('sound', 'sightblock')) else None
 
 
 def _sig(db):
@@ -109,6 +126,7 @@ def learn(db, region):
     """{'squares': {ground key: [[item, ...], ...]}, 'tex': {ground key: [texture under each square]}, 'grown':
     squares with something, 'cells'}: the region's own squares by their ground (item: [id, dx, dy, over the ground,
     rx, ry, rz, scale]; texture: the LTEX id most of the square's four patches have). Cached by the load order."""
+    import cliffrocks
     import landscape
     region = (region or '').lower()
     key = (id(db.recs), region, tuple(sorted(HOLDOUT)))
@@ -162,8 +180,8 @@ def learn(db, region):
             if not info:
                 continue
             tag, real, b = info
-            k = kind_of(low)
-            if k and tag in ('STAT', 'ACTI', 'CONT'):
+            k = kind_of(low) or ('plants' if tag == 'STAT' and LAID.search(low) and not cliffrocks.is_rock(low) else None)
+            if k and (tag in ('STAT', 'ACTI', 'CONT') or (tag == 'LIGH' and 'shroom' in low)):
                 g = hat(pos[0], pos[1])
                 if g is None:
                     continue
@@ -276,8 +294,19 @@ def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None, t
                         lib, tl = libs[reg]['squares'], libs[reg].get('tex') or {}
                         gk = next((k for k in _nearby_keys(ground_key(*gr)) if lib.get(k)), None)
                         pool = lib[gk] if gk else None
+                        ptex = tl.get(gk) or []
+                        if pool and len(pool) < POOL_MIN:
+                            # (few squares of this ground in the region: the next nearest grounds' join them. Low flat
+                            # land dressed like Shipal-Shin drew on 33 squares, two thirds of them bare, lab 2026-11-10)
+                            pool, ptex = [], []
+                            for k_ in _nearby_keys(ground_key(*gr)):
+                                if lib.get(k_):
+                                    pool = pool + lib[k_]
+                                    ptex = ptex + ((tl.get(k_) or []) + [None] * len(lib[k_]))[:len(lib[k_])]
+                                    if len(pool) >= POOL_MIN:
+                                        break
                         if pool and want_t:
-                            same = [sq for sq, t in zip(pool, tl.get(gk) or []) if t == want_t]
+                            same = [sq for sq, t in zip(pool, ptex) if t == want_t]
                             if len(same) >= SAME_TEX:
                                 pool = same
                         if pool:
@@ -287,8 +316,13 @@ def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None, t
                 if pool:
                     if True:
                         picks = [rng.choice(pool)]
-                        if amount > 1 and rng.random() < amount - 1:
-                            picks.append(rng.choice(pool))
+                        # (past 1, a square laid again for each whole unit over, the rest by chance: a Cover's dense
+                        # forest asks for up to 6, and twice the region's was the most before, 2026-11-09)
+                        extra = amount - 1
+                        while extra > 0 and len(picks) < 6:
+                            if rng.random() < min(1.0, extra):
+                                picks.append(rng.choice(pool))
+                            extra -= 1
                         turn = rng.randrange(4) * math.pi / 2       # (a square turned a quarter, or not: more variety)
                         c, sn = math.cos(turn), math.sin(turn)
                         for items in picks:
@@ -296,6 +330,8 @@ def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None, t
                                 if amount < 1 and rng.random() > amount:
                                     continue
                                 rid, dx, dy, dz, rx, ry, rz, s = it
+                                if dz > LIFTED:
+                                    continue
                                 cx, cy = dx - SQUARE / 2, dy - SQUARE / 2
                                 wx, wy = x + SQUARE / 2 + cx * c - cy * sn, y + SQUARE / 2 + cx * sn + cy * c
                                 if not ok(wx, wy):
@@ -448,6 +484,10 @@ def plan_brush(db, F, inside, hold, brush, amount=1.0, seed=1):
     return out
 
 
+WATER = True                    # (the water's own growth after a Dress: waterplants.grow)
+PAIR = True                     # (trees by the rocks at the game's share after a Dress: landpair.pair)
+
+
 def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush=''):
     """The marked cells' land (or the part within outline) dressed as the game dresses the region's: rocks and
     cliffs (cliffrocks) and what grows (plan_growth), each part {'rocks': amount, 'growth': amount} (0: not), as
@@ -492,6 +532,13 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
             if reg not in looks.values():
                 looks[('from', reg)] = reg
         grown = cliffrocks.place(db, items)
+        if WATER and not mine:
+            # (and what grows in the water: lily pads, kelp, reeds, as the region's own water has them; waterplants)
+            try:
+                import waterplants
+                grown += cliffrocks.place(db, waterplants.grow(db, want, lambda gx, gy: looks.get((gx, gy)), seed))
+            except Exception as e:
+                print('water plants:', e)
         # (nothing new where a tree now stands: the rocks keep clear of it)
         for it in items:
             for i in F.near(it['x'] - 96, it['y'] - 96, it['x'] + 96, it['y'] + 96):
@@ -510,6 +557,15 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
                     hold[i] = 1
         r = cliffrocks.dress(db, cells, '', float(parts['rocks']), seed, commit=False, prepared=(want, F, inside, hold), looks_of=looks)
         rocks = r['rocks'] + clad
+    if PAIR and rocks and float(parts.get('growth') or 0) > 0 and not mine:
+        # (and trees by the rocks, as the game's keep company: landpair. 16-23% of the game's rocks have a tree within
+        # 400, 3-8% of the Dress's had; its trees were half the region's)
+        try:
+            import landpair
+            db.sync_project()
+            grown += landpair.pair(db, ['%d,%d' % k for k in want], region_of, seed)
+        except Exception as e:
+            print('rocks and trees:', e)
     db.sync_project()
     if rocks or grown:
         what = ' and '.join(w for w in ('%d rocks' % rocks if rocks else '', '%d trees and plants' % grown if grown else '') if w)

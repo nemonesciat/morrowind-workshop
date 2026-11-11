@@ -4298,8 +4298,15 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
 FLOOR_TITLES = {-2: 'Lower Cellar', -1: 'Cellar', 1: 'Upstairs', 2: 'Top Floor'}
 
 
-def build_house(db, name, style, rooms, doors=None, exit=None, entrance=None, lighting='normal',
-                lights=True, outside_door=None, stairs=None, floors_as='auto', planner=None):
+def build_house(db, name, *a, **k):
+    """_build_house, written into the places ledger (ledger.py)."""
+    import ledger
+    with ledger.open(db, 'interior', name):
+        return _build_house(db, name, *a, **k)
+
+
+def _build_house(db, name, style, rooms, doors=None, exit=None, entrance=None, lighting='normal',
+                 lights=True, outside_door=None, stairs=None, floors_as='auto', planner=None):
     """Build from pieces, on one floor or several. Styles with stair pieces get real stairs inside one
     place; in the others every floor is a place of its own ("Name: Upstairs", "Name: Cellar"), joined
     the way the game often does it: a door in a wall going up, a trapdoor in the floor going down to a

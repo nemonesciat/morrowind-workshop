@@ -47,7 +47,10 @@ LANDMARK_NEAR = 350            # what stands this near a landmark is its scene's
 
 def _disk(db):
     import taste
-    folder = os.path.join(os.environ.get('WORKSHOP_HOME') or os.path.dirname(os.path.abspath(__file__)), 'cache')
+    # (the Workshop's own cache folder, beside projects: under app\ the Setup removed it with the program files at every
+    # install, and the strays, town dressing and town life were learnt again, minutes each, the user's 2026-11-09)
+    import project
+    folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, 'towndress_%s_v%d.json' % (taste.sig(db), VERSION))
 
@@ -1035,7 +1038,123 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
     out = _square_signs(db, _spaced_wells(_no_doubles(out, also), also), memo)
     for o in out:
         o.pop('pts', None)
+    _KEPT.clear()
+    _KEPT.update(plan=plan, L=L, space=space, memo=memo, rng=rng, amount=amount, mine={id(o) for o in out})
     return out
+
+
+_KEPT = {}                     # (the last dressing's space, for lamps)
+
+
+def lamps(db, plan, laid, also=()):
+    """The town's lamp posts, once all its dressing is laid (laid: dress's things and what the yards and the shack
+    fronts added since; their lights count, and their ground is kept clear): _street_lamps."""
+    if _KEPT.get('plan') is not plan:
+        return []
+    space, memo = _KEPT['space'], _KEPT['memo']
+    for o in laid:
+        if id(o) not in _KEPT['mine']:
+            pts, _b = _rect_of(o['id'], o['p'][0], o['p'][1], o['p'][5] if len(o['p']) > 5 else 0.0, o.get('s') or 1.0, memo, db)
+            if pts:
+                space.take(pts)
+    out = _street_lamps(db, plan, _KEPT['L'], plan.get('culture'), laid, also, space, memo, _KEPT['rng'], _KEPT['amount'])
+    for o in out:
+        o.pop('pts', None)
+    return out
+
+
+# lights a building in the game's towns, by culture (the median town of each; class LIGH, all of a town's, 106 towns
+# measured 2026-11-10). Made towns showed under half of it where the culture lights its streets from posts: a post high
+# over the ground is filed with the hung things when the dressing is learnt, and so never came back in a street group.
+LAMPS = {'Dunmer': 1.0, 'Hlaalu': 1.0, 'Redoran': 0.8, 'Indoril': 1.6, 'Velothi': 1.15, 'Telvanni': 2.25, 'Mournhold': 1.25,
+         'Anvil': 1.26, 'Gold Coast': 0.5, 'Common': 0.69, 'Imperial': 1.4, 'Nordic': 0.57, 'Reach': 0.94, 'Ashlander': 0.7}
+LAMP_APART = 600               # no lamp post nearer another light than this
+LAMP_ASIDE = 40                # (a door's lamp stands this far beside its clear way in, LAMP_OUT before its wall)
+LAMP_MORE = 170                # (and, where neither side takes one, this much further along the wall)
+LAMP_BY = 900                  # (a street's lamp within this of a building's middle)
+LAMP_OUT = 110
+
+
+def _is_light(db, id_, memo):
+    k = ('light', (id_ or '').lower())
+    v = memo.get(k)
+    if v is None:
+        ri = db.resolve_id(id_)
+        v = memo[k] = ri is not None and db.recs[ri][0] == 'LIGH'
+    return v
+
+
+def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
+    """Lamp posts for a town that shows fewer lights a building than its culture's towns do: the posts the game stands
+    by that culture's buildings, each with the lantern the game hangs on it, at the streets' edges and beside doors,
+    its arm toward the street, none near another light. A culture whose towns stand no post (its lights hang from
+    walls) gets none."""
+    rate = LAMPS.get(cult)
+    nb = sum(1 for q in plan['plots'] if q.get('b'))
+    if not rate or not nb:
+        return []
+    lit = [(o['p'][0], o['p'][1]) for o in out if _is_light(db, o['id'], memo)]
+    lit += [(p_[0], p_[1]) for i_, p_ in also or () if _is_light(db, i_, memo)]
+    want = int(round(rate * nb * amount)) - len(lit)
+    _count('lamps short', max(0, want))
+    if want <= 0:
+        return []
+    zs = {}
+    for key, scs in (L.get('around') or {}).items():
+        if townsurvey.town_style(key) != cult:
+            continue
+        for sc in scs:
+            for t in sc['things']:
+                i_ = t['id'].lower()
+                if not t['hang'] and i_ in POSTS and LIGHT_HOLDER.search(i_):
+                    zs.setdefault(i_, []).append(t['z'])
+    if not zs:
+        return []
+    ids = sorted(zs)
+    # (by the buildings, as the game stands them: beside a door first, then at the street's edge near a building, then
+    # the doors' other sides. On a street far from every building a lamp lit nothing, lab 2026-11-10)
+    first, by_street, second, third = [], [], [], []
+    cen = [(sum(p[0] for p in q['rect']) / 4.0, sum(p[1] for p in q['rect']) / 4.0) for q in plan['plots'] if q.get('b') and q.get('rect')]
+    roads = {tuple(r) for r in plan.get('roads') or ()}
+    for p in sorted(roads):
+        for i, j in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if (p[0] + i, p[1] + j) in roads:
+                continue
+            cx = p[0] * 512 + 256 + i * 300 + rng.uniform(-200, 200) * (j != 0)
+            cy = p[1] * 512 + 256 + j * 300 + rng.uniform(-200, 200) * (i != 0)
+            if any(math.hypot(cx - a, cy - b_) < LAMP_BY for a, b_ in cen):
+                by_street.append(_off_street(plan, cx, cy, math.atan2(i, j)))
+    for q in plan['plots']:
+        if q.get('b') and q.get('door'):
+            ang = q['face'] + math.pi
+            side = rng.choice((-1, 1))
+            for lst, sd, more in ((first, side, 0), (second, -side, 0), (third, side, LAMP_MORE), (third, -side, LAMP_MORE)):
+                x, y = _world(q['door'][0], q['door'][1], ang, sd * (DOOR_CLEAR[0] + LAMP_ASIDE + more + rng.uniform(-30, 30)), -LAMP_OUT)
+                lst.append((x, y, ang))
+    for lst in (first, by_street, second, third):
+        rng.shuffle(lst)
+    spots = first + by_street + second + third
+    res = []
+    for x, y, ang in spots:
+        if want <= 0:
+            break
+        if any(math.hypot(x - a, y - b_) < LAMP_APART for a, b_ in lit):
+            continue
+        pid = rng.choices(ids, [len(zs[i_]) for i_ in ids])[0]
+        lx, ly = POSTS[pid][1], POSTS[pid][2]
+        # (its arm, where its lantern hangs, toward the street: the frame's -y)
+        rz = (math.pi / 2 + math.atan2(ly, lx)) % (2 * math.pi) if math.hypot(lx, ly) > 8 else rng.uniform(0, 2 * math.pi)
+        z = sorted(zs[pid])[len(zs[pid]) // 2]
+        got = _lay(db, {'things': [{'id': pid, 'x': 0.0, 'y': 0.0, 'z': z, 'hang': False, 'rz': rz, 's': 1.0}]}, x, y, ang, space, memo)
+        if len(got) < 2:
+            continue
+        for g in got:
+            g['role'] = 'street'
+        res.extend(got)
+        lit.append((x, y))
+        want -= 1
+    _count('lamps laid', len(res) // 2)
+    return res
 
 
 STREET_MARGIN = 90             # a street group's middle stands this far out from the pavement's edge

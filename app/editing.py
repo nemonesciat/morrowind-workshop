@@ -73,12 +73,25 @@ class operation:
     def __enter__(self):
         me = threading.get_ident()
         if not _op.get(me):                 # (one inside another is part of the outer one)
+            if not _op and not BUSY:
+                # (long work about to start, none other under way: the marks of what was handed out before it are
+                # cleared, so its steps make again only the texts of the places it touches itself, project.Tracked)
+                try:
+                    import project
+                    if project.ACTIVE[0] is not None:
+                        project.ACTIVE[0].settle()
+                except Exception as e:
+                    print('settle:', e)
             _op[me], self.mine = '%s-%d' % (self.kind, int(time.time() * 1000)), True
         return self
 
     def __exit__(self, *_a):
         if self.mine:
             _op.pop(threading.get_ident(), None)
+            held = _writer.get('held')
+            if held is not None and not _op and WRITE_LOCK is None:
+                _writer['held'] = None
+                _write_now(held)             # (no writer thread: what the operation's steps held back, written now)
 
 
 # Long work (a town, a castle, furnishing many rooms) steps aside after each change it makes for the requests waiting
@@ -308,7 +321,15 @@ def _step_size(s):
 # places that need the files on disk: starting the game, packaging a release, switching mods, closing.
 WRITE_LOCK = None
 WRITE_DELAY = 0.3
-_writer = {'pending': None, 'thread': None, 'lock': threading.Lock(), 'done': threading.Event()}
+_writer = {'pending': None, 'thread': None, 'lock': threading.Lock(), 'done': threading.Event(), 'held': None, 'last': 0.0}
+# While long work is under way (a town, a castle) the mod is written to disk at most this often, and once when it is
+# done: each write is the whole mod, half a second on a 30 MB one, and a town's forty steps each had one, a third of
+# the whole Make (2026-11-09 profile). A crash loses at most this much of a half-made town.
+WRITE_HOLD = 20.0
+
+
+def _hold():
+    return bool(_op or BUSY) and time.time() - _writer['last'] < WRITE_HOLD
 
 
 def _write_now(db):
@@ -316,9 +337,21 @@ def _write_now(db):
     texts = None
     try:
         # (each place's text made once, for the project file and to tell which places' bytes are as they were)
-        texts = {ck: json.dumps(c) for ck, c in db.project.cells.items()}
+        # (every place's text made anew here, whatever the marks say: what goes to disk is the mod as it is. A place
+        # found changed with no mark was kept and changed after a settle: said, and what the Workshop reads and the
+        # Undo state put right from the texts just made)
+        p = db.project
+        texts, stale = p.part_texts('cells', full=True)
+        _rt, stale_r = p.part_texts('records', full=True)
+        if stale or stale_r:
+            print('changed without a mark (kept across a settle):', (stale + stale_r)[:8], len(stale) + len(stale_r))
+            db.sync_project(texts=texts)
+            p.last_state = p.snapshot(getattr(p, 'last_state', None))
+        if not _op and not BUSY and WRITE_LOCK is not None:
+            p.settle()                       # (every request done, no long work stepping aside: nothing holds a place)
     except Exception as e:
         print('could not read the places:', e)
+    _writer['last'] = time.time()
     try:
         db.project.save(texts)
     except Exception as e:
@@ -331,6 +364,10 @@ def _write_now(db):
 
 def _write_soon(db):
     if WRITE_LOCK is None:
+        if _hold():
+            _writer['held'] = db
+            return
+        _writer['held'] = None
         _write_now(db)
         return
     with _writer['lock']:
@@ -355,6 +392,11 @@ def _writer_run():
                     _writer['done'].set()
                     return
             continue
+        if _hold():                          # (long work under way and written not long ago: looked at again shortly)
+            with _writer['lock']:
+                if _writer['pending'] is None:
+                    _writer['pending'] = db
+            continue
         with WRITE_LOCK:
             _write_now(db)
 
@@ -362,6 +404,9 @@ def _writer_run():
 def flush(db=None):
     """Write any change still pending, now (and wait for it)."""
     if WRITE_LOCK is None:
+        held, _writer['held'] = _writer.get('held'), None
+        if held is not None:
+            _write_now(held)
         return
     with _writer['lock']:
         pending = _writer['pending']

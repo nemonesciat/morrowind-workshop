@@ -33,7 +33,7 @@ def _header(db, key):
     """(header subrecords, flags of the record, which of them are the project's) for a cell."""
     p = db.project
     if p and key in p.cells:
-        c = p.cells[key]
+        c = __import__('project').peek(p.cells, key)      # (looked at only, project.Tracked)
         return [(t, unb64(d)) for t, d in c['header']], c.get('flags', 0)
     lst = [v for v in db.by_key.get(('CELL', key), []) if v not in db.dead]
     if not lst:
@@ -68,7 +68,7 @@ def read(db, key):
             o['water_height'] = float(struct.unpack_from('<i', d)[0])
         elif t == 'RGNN':
             o['region'] = zstr(d)
-    o['mine'] = bool(db.project and key in db.project.cells and db.project.cells[key].get('props'))
+    o['mine'] = bool(db.project and (__import__('project').peek(db.project.cells, key) or {}).get('props'))
     return o
 
 

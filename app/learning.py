@@ -32,6 +32,9 @@ _SURVEYS = [
     ('tradesurvey', 'ready'),
     # (the game's whole stairwells, flight over flight: One stairwell takes its steps from them; 321 in about 8 s, 2026-10-31)
     ('stairwellsurvey', 'ready'),
+    # (the fittings of the game's one-piece shells, hooks and ropes and what hangs on them, in and round its shacks;
+    # and what its racks, hooks and sconces carry: about 80 s and 70 s, 2026-11-09)
+    ('shellfit', 'ready'), ('fitcarry', 'ready'),
 ]
 
 
@@ -91,7 +94,9 @@ def ruin_pending(db, kind='dwemer'):
 # the user's Estmorevale, floating beside its buildings, 2026-11-03)
 _TOWN = [('townsurvey', 'ready'), ('exteriorsurvey', 'ready'), ('strays', 'ready'), ('towndress', 'ready'), ('townlife', 'ready'),
          # (the game's rocks round its towns: the rocks set into a hill town's banks, 2026-11-08)
-         ('rockblend', 'ready')]
+         ('rockblend', 'ready'),
+         # (what the game sets round its shacks and huts outside, shellfit.dress_outside, 2026-11-09)
+         ('shellfit', 'ready')]
 
 
 def castle_plan_pending(db):

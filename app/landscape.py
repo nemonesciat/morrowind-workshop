@@ -115,7 +115,7 @@ def _project_ltex(db, ltex_id):
     """This mod's own number for a ground texture, adding a copy of its LTEX entry if needed."""
     p = db.project
     mine = {}
-    for k, rec in p.records.items():
+    for k, rec in list(__import__('project').quiet(p.records)):
         if k.startswith('LTEX|'):
             for st, sd in iter_subrecords(unb64(rec['data'])):
                 if st == 'INTV':

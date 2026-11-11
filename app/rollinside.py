@@ -54,6 +54,26 @@ def _leads_to(db, dcell, dk):
     return ((r or {}).get('to') or {}).get('key') or None
 
 
+def _shared(db, b, key):
+    """Another building's door leads into this place too: a town's joined houses made before each had its own interior
+    (the user's North Senchal, 2026-11-10). A roll then leaves the place alone: it is the other building's."""
+    if not key:
+        return False
+    mine = {x['k'] for x in b.get('doors') or ()} | {b['door']['k']}
+    c = b['door']['cell']
+    m = re.match(r'#(-?\d+),(-?\d+)$', c)
+    cells = ['#%d,%d' % (int(m.group(1)) + i, int(m.group(2)) + j) for i in (-1, 0, 1) for j in (-1, 0, 1)] if m else [c]
+    for ck in cells:
+        try:
+            refs = mapdata.cellmap(db, ck).get('refs') or ()
+        except Exception:
+            continue
+        for r in refs:
+            if r.get('type') == 'DOOR' and r['k'] not in mine and ((r.get('to') or {}).get('key') or '').lower() == key.lower():
+                return True
+    return False
+
+
 def _own_cell(db, key):
     """A place that exists only in this mod (made here): the only kind a roll may take out."""
     return bool(key) and key in db.project.cells and not any(v not in db.dead for v in db.by_key.get(('CELL', key.lower()), [])
@@ -271,7 +291,9 @@ def roll(db, cell, ref, kind=None, level=None, until=None, cellar=None):
     import frombuilding
     import towninside
     editing._require_project(db)
-    with editing.operation('roll'):
+    import ledger
+    # (a roll is its building's place's own: the town that made the building takes its rolls with it, ledger.py)
+    with editing.operation('roll'), ledger.open(db, 'interior', '', resume=ledger.top_of(db, ledger.owner(db, ref))):
         n0 = len(getattr(db.project, 'undo_stack', []))
         b = _building(db, cell, ref)
         d = b['door']
@@ -280,7 +302,10 @@ def roll(db, cell, ref, kind=None, level=None, until=None, cellar=None):
         cur = _leads_to(db, d['cell'], d['k'])
         st = R.get(k)
         if not st:
-            st = {'old': cur, 'name': _base_name(db, b, cur), 'rolls': [], 'picked': cur, 'kind': _kind_of(db, cur, b), 'level': None,
+            kind0 = _kind_of(db, cur, b)
+            if _shared(db, b, cur):
+                cur = None               # (the other building's place: not this one's to take out, rename or empty)
+            st = {'old': cur, 'name': _base_name(db, b, cur), 'rolls': [], 'picked': cur, 'kind': kind0, 'level': None,
                   'own_old': _own_cell(db, cur), 'n': 0}
         if kind is not None:
             st['kind'] = kind
@@ -416,7 +441,8 @@ def keep(db, cell, ref, key, people='move'):
     st = R.get(k)
     if not st or key not in st['rolls']:
         raise EditError('That roll is no longer there.')
-    with editing.operation('roll'):
+    import ledger
+    with editing.operation('roll'), ledger.open(db, 'interior', '', resume=ledger.top_of(db, ledger.owner(db, ref))):
         n0 = len(getattr(db.project, 'undo_stack', []))
         if _leads_to(db, d['cell'], d['k']) != key:
             _relink(db, b, key)
@@ -432,7 +458,8 @@ def keep(db, cell, ref, key, people='move'):
         db.sync_project()
         final = key
         # (the old name back, when it is free: "Smith (roll 3)" on the door tooltip would say how it was made)
-        if old and old != key and st.get('own_old') and not mapdata.cell_info(db, st['name']) and st['name'].lower() not in db.project.cells:
+        # (a building with no place of its own before takes the plain name too)
+        if ((old and old != key and st.get('own_old')) or not old) and not mapdata.cell_info(db, st['name']) and st['name'].lower() not in db.project.cells:
             try:
                 final = _rename(db, b, key, st['name'])
             except Exception as e:

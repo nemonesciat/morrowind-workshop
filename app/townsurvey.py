@@ -73,12 +73,33 @@ def town_style(main):
 KIN = {'Imperial': ('Common', 'Gold Coast')}         # (Common first: the game mixes the two, Pelagiad, Old Ebonheart)
 
 
+FORT_TOWN = re.compile(r'fort|legion|garrison|keep|barracks')
+
+
 def kind_of(name):
+    """The kind of place a cell's name tells: read from the place's own part, after the town's ("Firewatch, Dralas
+    House" is a house, not a guard post for its town's 'watch'; "Skaal Village, ..." no manor for its 'villa': a third
+    of a Common town's plots stood guard houses, the user's North Senchal, 2026-11-09). A fort's own rooms stay its."""
     low = (name or '').lower()
+    head, sep, tail = low.partition(', ')
+    if sep:
+        for k, rx in KINDS:
+            if re.search(rx, tail):
+                return k
+        return 'guard' if FORT_TOWN.search(head) else 'other'
     for k, rx in KINDS:
         if re.search(rx, low):
             return k
     return 'other'
+
+
+def _rekind(out):
+    """A learnt survey's kinds read again from its names (kind_of changed with no relearning)."""
+    for t in out.get('towns') or ():
+        for b in t.get('buildings') or ():
+            if b.get('name'):
+                b['kind'] = kind_of(b['name'])
+    return out
 
 
 def street_kind(low):
@@ -117,7 +138,7 @@ def survey(db):
     path = _disk(db)
     try:
         with open(path, encoding='utf-8') as f:
-            _mem[key] = json.load(f)
+            _mem[key] = _rekind(json.load(f))
             return _mem[key]
     except (OSError, ValueError):
         pass

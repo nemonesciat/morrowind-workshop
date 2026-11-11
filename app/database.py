@@ -852,8 +852,9 @@ class Database:
         import json
         from project import unb64
         p = self.project
+        from project import quiet, quiet_values
         if texts is None:
-            texts = {ck: json.dumps(c) for ck, c in p.cells.items()}
+            texts = p.part_texts('cells')        # (made again only for the places handed out since, project.Tracked)
         masters = self.compute_masters(texts)
         self.proj_masters = masters
         self.plugins[self.proj_pidx]['header']['masters'] = [m for m, _s in masters]
@@ -865,12 +866,12 @@ class Database:
             old = {'data': {}}
         memo = {'data': {}}
         wanted = {}
-        for r in p.records.values():
+        for r in list(quiet_values(p.records)):
             d = r['data']
             b = old['data'].get(d)
             memo['data'][d] = b = b if b is not None else unb64(d)
             wanted[(r['tag'], r['key'])] = (r['flags'], b)
-        for ck, c in p.cells.items():
+        for ck, c in list(quiet(p.cells)):
             if c['refs'] or c.get('props'):      # (props: the place's own settings were changed, e.g. lighting)
                 wanted[('CELL', ck)] = (c.get('flags', 0), p.cell_bytes_of(ck, c, lower, texts.get(ck)))
         self._sync_memo = memo

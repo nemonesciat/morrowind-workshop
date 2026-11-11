@@ -888,6 +888,10 @@ function v3Dist(){
   if (V3.dist == null){ let d = 1; try { d = +localStorage.getItem('ws-3d-dist') || 1; } catch (e) {} V3.dist = Math.max(1, Math.min(4, d)); }
   return V3.dist;
 }
+// (Very far reaches twice as far for pictures of whole scenes: the land 8 cells each way, and past 3 cells only the
+// big things, the buildings, trees and rocks; the user, 2026-11-10)
+const V3_REACH = [0, 1, 2, 3, 8], V3_SMALL_TO = 3, V3_FAR_SIZE = 600;
+function v3Reach(){ return V3_REACH[v3Dist()]; }
 function v3SetDist(d){
   V3.dist = Math.max(1, Math.min(4, d));
   try { localStorage.setItem('ws-3d-dist', String(V3.dist)); } catch (e) {}
@@ -895,7 +899,7 @@ function v3SetDist(d){
   if (W.ext){ v3Terrain(); loadAround(); }
 }
 function v3Terrain(){
-  const [cx, cy] = v3CamCell(), D = v3Dist();
+  const [cx, cy] = v3CamCell(), D = v3Reach();
   // nearest first, so the ground under the camera comes in before the far hills
   const spots = [];
   for (let dx = -D; dx <= D; dx++) for (let dy = -D; dy <= D; dy++) spots.push([dx, dy]);

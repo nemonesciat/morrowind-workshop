@@ -5,6 +5,8 @@ import json
 import os
 import re
 import struct
+import sys
+import threading
 import time
 
 from esm import ENC, iter_subrecords, zstr
@@ -185,8 +187,193 @@ def save_pending():
             print('save failed:', e)
 
 
+# The places ledger (ledger.py): while a maker works, the record of what it is making, by thread. The ref keys handed
+# out and the places and records put in new are written into the innermost open one, so a made town, castle, dungeon
+# or interior knows its own pieces: {thread ident: [record, ...]}.
+LEDGER = {}
+
+
+def _ledger_new(what, k):
+    st = LEDGER.get(threading.get_ident())
+    if st and isinstance(k, str):
+        if what == 'cells':
+            if not k.startswith('#'):                       # (interiors only: the land's cells are never a place's own)
+                st[-1].setdefault('cells', []).append(k)
+        elif k[:4] in ('NPC_', 'CREA', 'CONT'):
+            st[-1].setdefault('recs', []).append(k)
+
+
+class Tracked(dict):
+    """The mod's places (or its records) by key, remembering which were handed out or put in since the marks were last
+    cleared. Only those can have changed, so only their JSON texts are made again (Project.part_texts): making every
+    place's text at each step of a town was a quarter of the whole Make on a 30 MB mod, the town's own handful of
+    places changing and 650 others read again 137 times (2026-11-09 profile).
+    hot: the keys handed out. everything: all of them were (items(), values(), update()), by whom in `who`.
+    Marks are cleared only where nothing can still hold a place it means to change (Project.settle). What only reads
+    uses project.quiet() and quiet_values(), which mark nothing."""
+    __slots__ = ('hot', 'everything', 'who', 'what')
+
+    def __init__(self, *a, **k):
+        dict.__init__(self, *a, **k)
+        self.hot, self.everything, self.who, self.what = set(), True, {}, ''
+
+    def _all(self):
+        if not self.everything:
+            self.everything = True
+            try:
+                f = sys._getframe(2)
+                k = '%s:%d' % (os.path.basename(f.f_code.co_filename), f.f_lineno)
+                self.who[k] = self.who.get(k, 0) + 1
+            except Exception:
+                pass
+
+    def __getitem__(self, k):
+        self.hot.add(k)
+        return dict.__getitem__(self, k)
+
+    def get(self, k, d=None):
+        self.hot.add(k)
+        return dict.get(self, k, d)
+
+    def setdefault(self, k, d=None):
+        self.hot.add(k)
+        if LEDGER and k not in self:
+            _ledger_new(self.what, k)
+        return dict.setdefault(self, k, d)
+
+    def __setitem__(self, k, v):
+        self.hot.add(k)
+        if LEDGER and k not in self:
+            _ledger_new(self.what, k)
+        dict.__setitem__(self, k, v)
+
+    def __delitem__(self, k):
+        self.hot.add(k)
+        dict.__delitem__(self, k)
+
+    def pop(self, k, *d):
+        self.hot.add(k)
+        return dict.pop(self, k, *d)
+
+    def popitem(self):
+        self._all()
+        return dict.popitem(self)
+
+    def update(self, *a, **k):
+        self._all()
+        dict.update(self, *a, **k)
+
+    def clear(self):
+        self._all()
+        dict.clear(self)
+
+    def items(self):
+        self._all()
+        return dict.items(self)
+
+    def values(self):
+        self._all()
+        return dict.values(self)
+
+    def copy(self):
+        self._all()
+        return dict(dict.items(self))
+
+    def __iter__(self):                      # (its own, so dict(this) goes through __getitem__ and marks)
+        return dict.__iter__(self)
+
+    def __or__(self, o):
+        self._all()
+        return dict(dict.items(self)) | o
+
+    def __ior__(self, o):
+        self._all()
+        dict.update(self, o)
+        return self
+
+    def __reduce__(self):                    # (a copy made of it is a plain dict)
+        self._all()
+        return (dict, (dict(dict.items(self)),))
+
+
+def quiet(d):
+    """A table's items for reading only (a Tracked one's, unmarked)."""
+    return dict.items(d)
+
+
+def quiet_values(d):
+    return dict.values(d)
+
+
+def peek(d, k, default=None):
+    """One place or record looked at only (unmarked): never for one that is then changed."""
+    return dict.get(d, k, default)
+
+
+ACTIVE = [None]        # (the project open now, for editing.operation's settle)
+
+
 class Project:
+    # (the mod's places and records are Tracked whatever is put there: a state read back, another's state taken over)
+    @property
+    def cells(self):
+        return self._cells
+
+    @cells.setter
+    def cells(self, v):
+        self._cells = Tracked(dict.items(v))
+        self._cells.what = 'cells'
+        self.__dict__.pop('_texts_cells', None)
+
+    @property
+    def records(self):
+        return self._records
+
+    @records.setter
+    def records(self, v):
+        self._records = Tracked(dict.items(v))
+        self._records.what = 'records'
+        self.__dict__.pop('_texts_records', None)
+
+    def part_texts(self, which='cells', full=False):
+        """{key: JSON text} of the mod's places (or 'records'), made again only for those handed out since the marks
+        were cleared; the rest as they were made, the same strings. full: every one made again, and those found
+        changed without a mark returned too: (texts, [keys]) (a place kept and changed after Project.settle: the
+        save's own check, so nothing of it is ever missed on disk)."""
+        T = self._cells if which == 'cells' else self._records
+        name = '_texts_' + which
+        cache = self.__dict__.get(name) or {}
+        hot, everything = T.hot, T.everything or not cache
+        if os.environ.get('WORKSHOP_TRACKDBG') and cache:
+            print('texts %s: %d hot of %d, all %s %s' % (which, len(hot), len(T), T.everything, dict(T.who)), flush=True)
+            T.who.clear()
+        new, stale = {}, []
+        for k, v in list(dict.items(T)):
+            o = cache.get(k)
+            if o is None or full or everything or k in hot:
+                s = json.dumps(v)
+                if o is not None and o == s:
+                    s = o
+                elif o is not None and not everything and k not in hot:
+                    stale.append(k)
+            else:
+                s = o
+            new[k] = s
+        self.__dict__[name] = new
+        return (new, stale) if full else new
+
+    def settle(self):
+        """The marks cleared, the texts made up to now first: only where nothing still holds a place it means to
+        change later without asking for it again (the mod just opened, a long operation about to start, the writer
+        with every request done)."""
+        for which in ('cells', 'records'):
+            self.part_texts(which)
+            T = self._cells if which == 'cells' else self._records
+            T.hot.clear()
+            T.everything = False
+
     def __init__(self, path):
+        ACTIVE[0] = self
         self.path = path
         try:
             with open(path, encoding='utf-8') as f:
@@ -226,6 +413,7 @@ class Project:
         self.land = d.get('land', {})           # land shaping: {'marks': ['gx,gy', ...]} the cells marked on the land map
         self.scattered = set(d.get('scattered') or [])   # ref keys the Scatter brush placed (its Remove clears only these)
         self.town_parts = d.get('town_parts') or {}       # ref key -> its building's id, for the buildings a town built
+        self.places = d.get('places') or {}               # the places ledger (ledger.py): id -> what was made and its pieces
         self.quests = d.get('quests', {})       # the quest Board's plans: quest key -> {'cast': [ids picked before any move uses them]}
         self.rolls = d.get('rolls', {})         # interiors in limbo (rollinside.py): door 'cell|ref' -> {'old', 'name', 'rolls', ...}
         self.forged = d.get('forged', {})       # the Forge: piece id (lower) -> {'mat'} or {'between': [a, b, f]}, what it was
@@ -241,6 +429,7 @@ class Project:
         self.plugin_backup = d.get('plugin_backup')
         self.undo_stack = []
         self.last_state = self.snapshot()
+        self.settle()                           # (just opened: nothing holds a place yet)
         self.pending_write = None
         try:
             import backups
@@ -361,20 +550,23 @@ class Project:
             d['scattered'] = sorted(self.scattered)
         if self.town_parts:
             d['town_parts'] = self.town_parts
+        if getattr(self, 'places', None):
+            d['places'] = self.places
         if self.source:
             d.update({'source': self.source, 'masters': self.masters, 'tes3_version': self.tes3_version,
                       'plugin_backup': self.plugin_backup, 'order': self.order, 'hedr': self.hedr_raw})
         # (dumps, then one write: json.dump to a file runs the pure-Python encoder, ten times slower. A 32 MB mod
         # took 2-20 s a save, and every mark, shape and brush stroke saves: "knuckle draggingly slow", 2026-11-02)
-        if texts is None:
-            text = json.dumps(d)
-        else:
-            # (the same text json.dumps(d) makes, the places put in from texts)
-            def val(k, v):
-                if k != 'cells':
-                    return json.dumps(v)
-                return '{' + ', '.join('%s: %s' % (json.dumps(ck), texts.get(ck) or json.dumps(c)) for ck, c in v.items()) + '}'
-            text = '{' + ', '.join('%s: %s' % (json.dumps(k), val(k, v)) for k, v in d.items()) + '}'
+        texts = texts or {}
+
+        # (the same text json.dumps(d) makes, the places put in from texts; read without marking any)
+        def val(k, v):
+            if k == 'cells':
+                return '{' + ', '.join('%s: %s' % (json.dumps(ck), texts.get(ck) or json.dumps(c)) for ck, c in list(quiet(v))) + '}'
+            if k == 'records':
+                return '{' + ', '.join('%s: %s' % (json.dumps(rk), json.dumps(r)) for rk, r in list(quiet(v))) + '}'
+            return json.dumps(v)
+        text = '{' + ', '.join('%s: %s' % (json.dumps(k), val(k, v)) for k, v in d.items()) + '}'
         with open(tmp, 'w', encoding='utf-8') as f:
             f.write(text)
         os.replace(tmp, self.path)
@@ -385,16 +577,20 @@ class Project:
             print('backup failed:', e)
 
     def state(self):
-        return json.dumps({'records': self.records, 'cells': self.cells, 'next_ref': self.next_ref, 'lua': self.lua,
+        return json.dumps({'records': dict(quiet(self.records)), 'cells': dict(quiet(self.cells)), 'next_ref': self.next_ref, 'lua': self.lua,
                            'grass': self.grass, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts,
-                           'rolls': getattr(self, 'rolls', None) or {}})
+                           'rolls': getattr(self, 'rolls', None) or {}, 'places': getattr(self, 'places', None) or {}})
+
+    def meta(self):
+        """What a state holds beside its records, places and grass."""
+        return {'next_ref': self.next_ref, 'lua': self.lua, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts,
+                'rolls': getattr(self, 'rolls', None) or {}, 'places': getattr(self, 'places', None) or {}}
 
     def snapshot(self, prev=None):
         """The state in parts (Snap), sharing the parts that didn't change with prev (the last one by default)."""
         prev = prev if prev is not None else self.__dict__.get('last_state')
         prev = prev if isinstance(prev, Snap) else None
-        return Snap.of(self.records, self.cells, self.grass or {}, {'next_ref': self.next_ref, 'lua': self.lua,
-                       'scattered': sorted(self.scattered), 'town_parts': self.town_parts, 'rolls': getattr(self, 'rolls', None) or {}}, prev)
+        return Snap.of(None, None, self.grass or {}, self.meta(), prev, self.part_texts('records'), self.part_texts('cells'))
 
     def restore(self, state, cur=None):
         """Put the project back as a state was (a Snap, or a state() text). cur: a Snap of the project as it is now, so
@@ -407,6 +603,7 @@ class Project:
             self.scattered = set(d.get('scattered') or [])
             self.town_parts = d.get('town_parts') or {}
             self.rolls = d.get('rolls') or {}
+            self.places = d.get('places') or {}
             return
         cur = cur if isinstance(cur, Snap) else None
 
@@ -422,6 +619,7 @@ class Project:
         self.scattered = set(m.get('scattered') or [])
         self.town_parts = m.get('town_parts') or {}
         self.rolls = m.get('rolls') or {}
+        self.places = m.get('places') or {}
 
     def cell_bytes_of(self, key, c, masters, text=None):
         """cell_bytes, kept for each place by its JSON text: a place that didn't change isn't encoded again. Every change
@@ -529,7 +727,7 @@ class Project:
 
     def change_count(self):
         n = len(self.records)
-        for c in self.cells.values():
+        for c in quiet_values(self.cells):         # (asked twice a second by the window: marks nothing)
             n += len(c['refs'])
         # each script, and each cell with groundcover, counts as one change
         n += len(getattr(self, 'lua', None) or [])
@@ -545,6 +743,15 @@ class Project:
 
     def new_ref_key(self):
         k = '%s|%d' % (self.plugin.lower(), self.next_ref)
+        if LEDGER:
+            st = LEDGER.get(threading.get_ident())
+            if st:
+                # (into the place being made, as runs of numbers: [[first, last], ...])
+                rs = st[-1].setdefault('refs', [])
+                if rs and rs[-1][1] == self.next_ref - 1:
+                    rs[-1][1] = self.next_ref
+                else:
+                    rs.append([self.next_ref, self.next_ref])
         self.next_ref += 1
         return k
 
@@ -642,7 +849,7 @@ class Project:
                 data = land_in_order(data)
             body.append(r['tag'].encode('ascii') + struct.pack('<III', len(data), 0, r['flags']) + data)
 
-        cells = [(key, c) for key, c in self.cells.items() if c['refs'] or c.get('props')]
+        cells = [(key, c) for key, c in list(quiet(self.cells)) if c['refs'] or c.get('props')]
         if self.source and not self.records and not cells:
             # a plugin opened as the mod, with nothing in it (its opening was undone): the file is left as it
             # is rather than written over with an empty plugin; Redo puts everything back
@@ -652,7 +859,7 @@ class Project:
             data = self.cell_bytes_of(key, c, masters, texts.get(key) if texts else None)
             body.append(b'CELL' + struct.pack('<III', len(data), 0, c.get('flags', 0)) + data)
 
-        recs = self._emit_order(list(self.records.values()))
+        recs = self._emit_order(list(quiet_values(self.records)))
         if self.source:
             # a plugin opened as the mod: records and places in the order the file had them (places sit
             # among the records there), whatever is new at the end
@@ -744,8 +951,20 @@ class Snap:
         self.r, self.c, self.g, self.m, self.size = r, c, g, m, size     # (size: the bytes of the parts new in it)
 
     @staticmethod
-    def of(records, cells, grass, meta, prev=None):
+    def of(records, cells, grass, meta, prev=None, rtexts=None, ctexts=None):
+        """rtexts, ctexts: the records' and places' texts already made (Project.part_texts), used as they are."""
         size = [0]
+
+        def made(texts, old):
+            out = {}
+            for k, s in texts.items():
+                o = old.get(k) if old else None
+                if o is not None and (o is s or o == s):
+                    s = o
+                else:
+                    size[0] += len(s)
+                out[k] = s
+            return out
 
         def parts(d, old):
             out = {}
@@ -763,22 +982,26 @@ class Snap:
             m = prev.m
         else:
             size[0] += len(m)
-        return Snap(parts(records, prev and prev.r), parts(cells, prev and prev.c), parts(grass, prev and prev.g), m, size[0])
+        return Snap(made(rtexts, prev and prev.r) if rtexts is not None else parts(records, prev and prev.r),
+                    made(ctexts, prev and prev.c) if ctexts is not None else parts(cells, prev and prev.c),
+                    parts(grass, prev and prev.g), m, size[0])
 
     @staticmethod
     def from_text(s):
         d = json.loads(s)
         return Snap.of(d['records'], d['cells'], d.get('grass') or {}, {'next_ref': d['next_ref'], 'lua': d.get('lua', []),
-                       'scattered': d.get('scattered') or [], 'town_parts': d.get('town_parts') or {}})
+                       'scattered': d.get('scattered') or [], 'town_parts': d.get('town_parts') or {},
+                       'rolls': d.get('rolls') or {}, 'places': d.get('places') or {}})
 
     def text(self):
         """The whole state as Project.state() writes it."""
         def obj(parts):
             return '{' + ', '.join('%s: %s' % (json.dumps(k), v) for k, v in parts.items()) + '}'
         m = json.loads(self.m)
-        return '{"records": %s, "cells": %s, "next_ref": %s, "lua": %s, "grass": %s, "scattered": %s, "town_parts": %s}' % (
+        return '{"records": %s, "cells": %s, "next_ref": %s, "lua": %s, "grass": %s, "scattered": %s, "town_parts": %s, "rolls": %s, "places": %s}' % (
             obj(self.r), obj(self.c), json.dumps(m['next_ref']), json.dumps(m.get('lua', [])), obj(self.g),
-            json.dumps(m.get('scattered') or []), json.dumps(m.get('town_parts') or {}))
+            json.dumps(m.get('scattered') or []), json.dumps(m.get('town_parts') or {}), json.dumps(m.get('rolls') or {}),
+            json.dumps(m.get('places') or {}))
 
 
 _AS_SNAP = {}       # (a state text made into a Snap: the last one, by its text)
