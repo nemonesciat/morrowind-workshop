@@ -109,7 +109,32 @@ function csBind(){
   if (!C || C.key !== csKey(sel)) csSoon();
 }
 
-function csKey(L){ return JSON.stringify([L.pts, L.p.style || 'Imperial', L.p.size || 'medium', L.p.seed || 1, L.p.name || '', L.p.gate ?? null]); }
+function csKey(L){ return JSON.stringify([L.pts, L.p.style || 'Imperial', L.p.size || 'medium', L.p.seed || 1, L.p.name || '', L.p.gate ?? null, csToward(L)]); }
+// (a castle beside a town, or in its edge, stands in the town's wall: the castle is built first and the town's wall
+// planned onto it, townwalls._meld. Near: the two drawn shapes within this of each other, or one inside the other)
+const CS_TOWN_NEAR = 3000;
+function csSegDist(x, y, a, b){
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy);
+}
+function csShapesNear(A, B, d){
+  if (!A || !B || A.length < 3 || B.length < 3) return false;
+  const near = (P, Q) => P.some(p => lsInPoly(Q, p[0], p[1]) || Q.some((q, i) => csSegDist(p[0], p[1], q, Q[(i + 1) % Q.length]) <= d));
+  return near(A, B) || near(B, A);
+}
+function csTownsOf(L){
+  return ((LM.plan && LM.plan.layers) || []).filter(T => T.kind === 'town' && T.on !== false && T.pts && T.pts.length >= 3 && csShapesNear(L._fit || L.pts, T._fit || T.pts, CS_TOWN_NEAR));
+}
+function csCastlesOf(T){
+  return ((LM.plan && LM.plan.layers) || []).filter(L => L.kind === 'castle' && L.on !== false && L.pts && L.pts.length >= 3 && csShapesNear(L._fit || L.pts, T._fit || T.pts, CS_TOWN_NEAR));
+}
+// (the middle of the town it stands by: its gate opens that way unless the user chose)
+function csToward(L){
+  const T = csTownsOf(L)[0]; if (!T) return null;
+  const P = T._fit || T.pts;
+  return [Math.round(P.reduce((a, p) => a + p[0], 0) / P.length), Math.round(P.reduce((a, p) => a + p[1], 0) / P.length)];
+}
 function csSoon(){
   if (document.getElementById('lst-root')){
     for (const L of (LM.plan && LM.plan.layers) || []){
@@ -135,7 +160,7 @@ async function csPlans(){
       try {
         let plan;
         for (;;){
-          plan = await post('/api/castle/plan', {outline: L.pts, style: L.p.style || 'Imperial', size: L.p.size || 'medium', seed: L.p.seed || 1, name: L.p.name || '', gate: L.p.gate ?? null});
+          plan = await post('/api/castle/plan', {outline: L.pts, style: L.p.style || 'Imperial', size: L.p.size || 'medium', seed: L.p.seed || 1, name: L.p.name || '', gate: L.p.gate ?? null, toward: csToward(L)});
           if (!plan.learning || LM.castles[L.id].key !== key) break;
           LM.castles[L.id].learning = plan.learning;
           if (P.layers[LM.sel] === L && PNL.isShown('world', 'land')) renderWside();
@@ -143,6 +168,8 @@ async function csPlans(){
         }
         if (LM.castles[L.id].key === key && !plan.learning) LM.castles[L.id] = {key, plan};
       } catch (e){ if (LM.castles[L.id].key === key) LM.castles[L.id] = {key, err: e.message}; }
+      // (the towns beside it are planned again, their wall onto this castle's)
+      if (!LM.previewOnly && typeof lsTownsSoon === 'function' && csTownsOf(L).length) lsTownsSoon();
       drawMap();
       if (PNL.isShown('world', 'land') && P.layers[LM.sel] === L) renderWside();
     }
@@ -202,7 +229,7 @@ async function csMake(sel){
     let r;
     try {
       r = await post('/api/castle/make', {outline: sel._fit || sel.pts, style: sel.p.style || 'Imperial', size: sel.p.size || 'medium', seed: sel.p.seed || 1,
-        name: sel.p.name || '', people: !sel.p.nopeople, rooms: sel.p.rooms || 'furnished', gate: sel.p.gate ?? null});
+        name: sel.p.name || '', people: !sel.p.nopeople, rooms: sel.p.rooms || 'furnished', gate: sel.p.gate ?? null, toward: csToward(sel)});
     } finally { clearInterval(poll); }
     if (r.learning) throw new Error('Still learning ' + r.learning.join(', ') + ': try again in a minute.');
     toast(`Built ${esc(r.name)}: ${r.pieces} pieces outside${r.buildings ? `, ${r.buildings} buildings in its quarters` : ''}, ${r.interiors} rooms${r.people ? `, ${r.people} people` : ''}. One Undo takes it back.`);

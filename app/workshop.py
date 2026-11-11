@@ -2653,11 +2653,14 @@ class Handler(BaseHTTPRequestHandler):
                             (body.get('name') or '').strip()[:40])
                     gate = body.get('gate')
                     gate = float(gate) if isinstance(gate, (int, float)) else None
+                    # (toward: the middle of the town drawn beside it, for its gate, castle.plan)
+                    tw_ = body.get('toward')
+                    tw_ = [float(tw_[0]), float(tw_[1])] if isinstance(tw_, list) and len(tw_) >= 2 and all(isinstance(v, (int, float)) for v in tw_[:2]) else None
                     if u.path == '/api/castle/plan':
-                        pl = castle.plan(*args, gate=gate)
-                        return self._json({k: pl[k] for k in ('style', 'size', 'seed', 'name', 'preview', 'rooms', 'fig', 'game', 'faults', 'gate')})
+                        pl = castle.plan(*args, gate=gate, toward=tw_)
+                        return self._json({k: pl.get(k) for k in ('style', 'size', 'seed', 'name', 'preview', 'rooms', 'fig', 'game', 'faults', 'gate', 'fort')})
                     with editing.operation('castle'):
-                        return self._json(castle.make(*args, people=body.get('people') is not False, rooms=body.get('rooms') or 'furnished', gate=gate))
+                        return self._json(castle.make(*args, people=body.get('people') is not False, rooms=body.get('rooms') or 'furnished', gate=gate, toward=tw_))
                 if u.path == '/api/castle/snap':
                     # a castle's outline with its near side on the town wall beside it (castle.snap_to_walls)
                     import castle

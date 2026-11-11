@@ -510,8 +510,16 @@ async function lstMakePlacesRun(btn, todo, label){
   // stands; one at the town's edge after, to stand on the town's wall. The user's "a castle there, with a city built
   // around", 2026-11-09)
   const towns_ = todo.filter(L => L.kind === 'town');
-  const inTown = L => { const M = lsMarkerOf(L); return towns_.some(T => lsInPoly(T.pts, M.x, M.y)); };
+  // (and one beside a town, or in its edge: built first too, and the town's wall planned onto the castle's, one ring
+  // between them. Built after, the castle was slid at the town's wall and kept its own whole ring a lane away, the
+  // town's wall run through it: the user, 2026-11-11, "arent the walls supposed to meld")
+  const inTown = L => { const M = lsMarkerOf(L); return towns_.some(T => lsInPoly(T.pts, M.x, M.y)) || (typeof csTownsOf === 'function' && csTownsOf(L).some(T => towns_.includes(T))); };
   const castleFirst = todo.filter(L => L.kind === 'castle' && inTown(L));
+  // (a town previewed beside a castle is built with the wall the preview showed: its line goes with the build)
+  for (const L of towns_){
+    const Tn = LM.towns && LM.towns[L.id], W_ = Tn && Tn.plan && Tn.plan.walls;
+    L._ring = (W_ && W_.outline && W_.outline.length >= 4 && Tn.key === lsTownKey(L) && typeof csCastlesOf === 'function' && csCastlesOf(L).length) ? W_.outline : null;
+  }
   // (what stands already, asked of the mod before anything is built: a castle built first inside a city made the city
   // read as standing, and the city was left out, lab 2026-11-09)
   const stood = new Map();
@@ -587,18 +595,29 @@ async function lstPreview(i){
     const M = lsMarkerOf(L);
     try { const r = await post('/api/land/fit', {x: M.x, y: M.y, r: M.r}); if (r.outline && r.outline.length >= 3) L._fit = r.outline; } catch (e){}
   }
-  if (L.kind === 'town'){
-    if (LM.towns) delete LM.towns[L.id];
-    LM.towns = LM.towns || {}; LM.towns[L.id] = {key: '', busy: true};
+  // (a town and the castle beside it are one ring: the castle planned first, the town's wall onto it, so the preview is
+  // what Make places builds)
+  const town1 = async T => {
+    if (LM.towns) delete LM.towns[T.id];
+    LM.towns = LM.towns || {}; LM.towns[T.id] = {key: '', busy: true};
     renderWside();
-    LM.previewOnly = L.id;
+    LM.previewOnly = T.id;
     try { await lsTownsOnce(); } catch (e){ toast(e.message, true); } finally { LM.previewOnly = null; }
-  } else {
-    if (LM.castles) delete LM.castles[L.id];
-    LM.castles = LM.castles || {}; LM.castles[L.id] = {key: '', busy: true};
+  };
+  const castle1 = async (C, fresh) => {
+    LM.castles = LM.castles || {};
+    if (!fresh && LM.castles[C.id] && LM.castles[C.id].plan && LM.castles[C.id].key === csKey(C)) return;
+    delete LM.castles[C.id]; LM.castles[C.id] = {key: '', busy: true};
     renderWside();
-    LM.previewOnly = L.id;
+    LM.previewOnly = C.id;
     try { await csPlans(); } catch (e){ toast(e.message, true); } finally { LM.previewOnly = null; }
+  };
+  if (L.kind === 'town'){
+    for (const C of csCastlesOf(L)) if (!(C.p || {}).built) await castle1(C, false);
+    await town1(L);
+  } else {
+    await castle1(L, true);
+    for (const T of csTownsOf(L)) if (LM.towns && LM.towns[T.id] && LM.towns[T.id].plan && !(T.p || {}).built) await town1(T);
   }
   const T = (L.kind === 'castle' ? LM.castles : LM.towns)[L.id] || {};
   if (T.err) toast(T.err, true);

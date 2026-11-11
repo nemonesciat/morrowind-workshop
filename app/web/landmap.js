@@ -1402,7 +1402,7 @@ async function lsMakeTown(sel, bsel){
       const T = (LM.towns || {})[sel.id];
       let r_;
       try {
-        r_ = await post('/api/town/make', {outline: sel._fit || sel.pts, culture: sel.p.culture || (T && T.plan && T.plan.culture) || '', seed: sel.p.seed || 1, walls: lsTownWalls(sel), opts: lsTownOpts(sel), dress: !sel.p.bare,
+        r_ = await post('/api/town/make', {outline: sel._fit || sel.pts, culture: sel.p.culture || (T && T.plan && T.plan.culture) || '', seed: sel.p.seed || 1, walls: lsTownWalls(sel), opts: Object.assign(lsTownOpts(sel), sel._ring ? {ring: sel._ring} : {}), dress: !sel.p.bare,
           interiors: LM.laterMake ? 'later' : (lsInside(sel.p) || 'furnished'), people: !sel.p.nopeople, name: sel.p.name || ''});
       } finally { clearInterval(poll); }
       if (r_.learning) throw new Error('Still learning ' + r_.learning.join(', ') + ': try again in a minute.');
@@ -1455,6 +1455,11 @@ function lsTownOpts(T){
   if (p.counts && Object.keys(p.counts).length) o.counts = p.counts;
   if (p.skip && p.skip.length) o.skip = p.skip;
   if (p.sea) o.open_sea = true;
+  // (the castles drawn beside it, as planned: its wall runs onto theirs, townwalls._meld. Built ones the server knows)
+  if (typeof csCastlesOf === 'function') for (const C of csCastlesOf(T)){
+    const pl = LM.castles && LM.castles[C.id] && LM.castles[C.id].plan;
+    if (pl && pl.fort && !(C.p || {}).built) (o.forts = o.forts || []).push(pl.fort);
+  }
   for (const L of LM.plan.layers){
     if (L.on === false || !LS_KINDS[L.kind] || !LS_KINDS[L.kind].town || lsTownOf(L) !== T) continue;
     if (L.kind === 'street') (o.roads = o.roads || []).push(L.pts);

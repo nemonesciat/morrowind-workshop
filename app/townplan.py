@@ -425,19 +425,33 @@ def _paint(streets, poly, ground=None):
     return out
 
 
-def _obstacles(db, poly):
+def _obstacles(db, poly, forts=()):
     """What already stands inside the outline and must be kept clear: buildings, doors, walls and other big made
     things, as rects (trees, plants and rocks are left: a town is built among them). The first town laid on the game's
     own world went down over its buildings and statics, 2026-10-30."""
     import cliffrocks
     xs, ys = [q[0] for q in poly], [q[1] for q in poly]
     out = []
+    # (a castle the town's wall is laid to, townwalls._meld: what it is planned to stand as, the same whether it stands
+    # yet or not, so the town planned before it is built is the town built after; its own pieces are then not counted)
+    theirs = {ft.get('pid') for ft in forts or () if isinstance(ft, dict) and ft.get('pid')}
+    if theirs:
+        import ledger
+    for ft in forts or ():
+        if not isinstance(ft, dict):
+            continue
+        for cs_ in ([ft['ring']] if len(ft.get('ring') or ()) == 4 else []) + list(ft.get('solid') or ()):
+            pts = [(float(q[0]), float(q[1])) for q in cs_]
+            if any(_inside(poly, x, y) or _edge_dist(poly, x, y) <= 600 for x, y in pts):
+                out.append(pts)
     for gx in range(int(min(xs) // 8192), int(max(xs) // 8192) + 1):
         for gy in range(int(min(ys) // 8192), int(max(ys) // 8192) + 1):
             m = mapdata.cellmap(db, '#%d,%d' % (gx, gy))
             for r in m.get('refs') or ():
                 b = r.get('b')
                 if not b or r['type'] in ('NPC_', 'CREA', 'LEVC'):
+                    continue
+                if theirs and ledger.top_of(db, ledger.owner(db, r['k'])) in theirs:
                     continue
                 low = r['id'].lower()
                 if cliffrocks.is_rock(low) or re.search(r'flora|tree|plant|grass|bush|kelp|terrain_', low):
@@ -535,7 +549,7 @@ def plan_once(db, outline, culture, seed=1, F=None, ground=True, walled=False, r
                 memo[k] = mapdata.terrain_z(db, x, y)
             return memo[k]
         fig['ground'] = ground_at
-    fig['_obst'] = _obstacles(db, [(float(q[0]), float(q[1])) for q in outline]) if ground is not False else []
+    fig['_obst'] = _obstacles(db, [(float(q[0]), float(q[1])) for q in outline], O.get('forts') or ()) if ground is not False else []
     _OBST['now'] = fig['_obst']
     _BANK['now'] = None
     # (the seed mixed with the culture: Python's first draw for seeds 1, 3, 4 and 8 is under 0.24, and towns of those

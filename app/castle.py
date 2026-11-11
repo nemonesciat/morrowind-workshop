@@ -216,7 +216,7 @@ def _ground(db, x, y):
 
 
 # ------------------------------------------------------------------------------------------------ planning
-def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=None):
+def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=None, toward=None):
     """The castle laid out (nothing placed): {'style', 'name', 'frame', 'outline', 'W' (the wall), 'towers', 'modules',
     'preview', 'rooms', 'fig', 'faults'}. The same outline, style, size and seed give the same castle."""
     if style not in STYLES:
@@ -252,6 +252,10 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
         ty = sum(c[1] for q in town for c in q[0]) / (4.0 * len(town))
         if math.hypot(tx - F['x'], ty - F['y']) < 600:
             tx = ty = None                   # (the castle in the very middle of its town: by the ground, as alone)
+    elif toward is not None and len(toward) >= 2 and math.hypot(toward[0] - F['x'], toward[1] - F['y']) >= 600:
+        # (toward: the middle of a town drawn beside it and not yet built, the castle built first so the town's wall is
+        # planned onto the castle's, townwalls._meld: its gate opens to that town, as to one standing)
+        tx, ty = float(toward[0]), float(toward[1])
     # (never out onto the sea or over a cliff: a castle on an island or a headland had its gate at the water, the lowest
     # ground, and the user had to steer every one, 2026-11-03. gate: the way the user picked, an angle, kept to)
     # (a castle drawn beside a walled town shares the town's wall: turned to run with it, then, below, moved so its front
@@ -268,6 +272,11 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
                 angs.append(math.atan2(e[1][1] - e[0][1], e[1][0] - e[0][0]) % (math.pi / 2))
             angs.sort()
             F['a'] = angs[len(angs) // 2]
+    sock = _socket(db, F['x'], F['y'], gate) if size in SIZES and style != 'Stronghold' else None
+    if sock:
+        F['x'], F['y'], F['a'] = sock[0], sock[1], sock[2]
+        gate = sock[2] - math.pi / 2
+        near_town = []
     great = size == 'great'
     if size == 'great':
         # (a great castle: a square a cell across round the outline's middle, built as a drawn one is, in wards)
@@ -318,7 +327,7 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
             Wd, Dp = _extent(pts, F)
             room_w = Wd
         else:
-            Wd, Dp = a0 * f, b0 * f
+            Wd, Dp = (sock[3], sock[4]) if sock else (a0 * f, b0 * f)
             room_w = Wd
         # (room for the keep and what stands with it, turned with its door to the gate, and a yard before it)
         # (a keep that fits the size asked for, else the smallest)
@@ -382,7 +391,10 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
                     n_w = max(n_w, n_w2 + 2 * INNER_LANE)
                     n_d = max(n_d, n_d2 + 2 * INNER_LANE + 2)
                     court = (0.0, n_d * L / 2 - INNER_LANE * L, n_w2, n_d2)
+                if sock and court is None:
+                    n_w, n_d = max(4, int(round(sock[3] / L))), max(4, int(round(sock[4] / L)))
                 Wd, Dp = n_w * L, n_d * L
+                out['box'] = True
                 polyf = [(-Wd / 2, -Dp / 2), (Wd / 2, -Dp / 2), (Wd / 2, Dp / 2), (-Wd / 2, Dp / 2)]
                 u_gate = u_keep = 0.0
             else:
@@ -540,6 +552,7 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
         out['quarters'] = [w for w in out['wards'][:-1]] if cuts else []
     out['name'] = (name or '').strip() or castle_name(db, style, seed)
     out['preview'] = _preview(db, out)
+    out['fort'] = _fort(out)
     out['rooms'] = _rooms(db, S, out)
     out['fig'] = _figures(out)
     out['game'] = _game_figures(S, style)
@@ -2005,6 +2018,54 @@ def _game_figures(S, style):
             'examples': [f['name'] for f in fs][:8]}
 
 
+def _fort(P):
+    """What a town beside it needs to know to run its wall onto this castle's (townwalls._meld, _meet_forts): {'ring':
+    the outer wall's line, 'towers': [[x, y, r]] its own towers, 'blocks': [[x, y, r]] its keep and gate, where no
+    join's tower may stand}. None for a castle with no wall of its own."""
+    ring = (P.get('W') or {}).get('outline') or []
+    if len(ring) < 4:
+        return None
+    towers = [[round(t['x']), round(t['y']), 260] for t in P.get('towers') or ()]
+    blocks = []
+    for kind, cs_ in (P.get('preview') or {}).get('pieces') or ():
+        if kind in ('keep', 'gate', 'end') and cs_:
+            mx, my = sum(q[0] for q in cs_) / len(cs_), sum(q[1] for q in cs_) / len(cs_)
+            blocks.append([round(mx), round(my), round(max(math.hypot(q[0] - mx, q[1] - my) for q in cs_))])
+        elif kind == 'bigtower' and cs_:
+            towers.append([round(sum(q[0] for q in cs_) / len(cs_)), round(sum(q[1] for q in cs_) / len(cs_)), 260])
+    out = {'ring': [[round(x), round(y)] for x, y in ring], 'towers': towers, 'blocks': blocks,
+           # (what stands of it, for the town's planner: the same from a plan as from the castle built)
+           'solid': [[[round(q[0]), round(q[1])] for q in cs_] for _k, cs_ in (P.get('preview') or {}).get('pieces') or () if cs_]}
+    if P.get('box') and P.get('size_wd'):
+        # (its box, to stand in again: _socket)
+        out['frame'] = [round(P['frame']['x'], 1), round(P['frame']['y'], 1), round(P['frame']['a'], 5), P['size_wd'][0], P['size_wd'][1]]
+    return out
+
+
+SOCKET_NEAR = 1500             # (a castle drawn with its middle this near the middle of one a town's wall was laid to)
+
+
+def _socket(db, x, y, gate):
+    """The place a castle has in a standing town's wall, (x, y, turn, width, depth), or None: the town's wall was laid to
+    a castle here (townwalls._meld), so one made here again, another seed or a Try again, stands exactly where that one
+    stood, the wall still closed on it. Not when the user turns its gate another way."""
+    try:
+        import ledger
+        for rec in ledger._places(db.project).values() if getattr(db, 'project', None) is not None else ():
+            if rec.get('kind') != 'town':
+                continue
+            for ft in rec.get('forts') or ():
+                fr = ft.get('frame') if isinstance(ft, dict) else None
+                if not fr or len(fr) < 5 or math.hypot(fr[0] - x, fr[1] - y) > SOCKET_NEAR:
+                    continue
+                if gate is not None and abs(((fr[2] - math.pi / 2 - gate + math.pi) % (2 * math.pi)) - math.pi) > math.pi / 4:
+                    continue
+                return fr
+    except Exception as e:
+        print('socket:', e)
+    return None
+
+
 def _preview(db, P):
     """For the map: [[kind, [[x, y] x4]]] for every piece outside, the doors as points."""
     memo = {}
@@ -2056,7 +2117,7 @@ def progress():
     return out
 
 
-def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=True, rooms='furnished', gate=None):
+def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=True, rooms='furnished', gate=None, toward=None):
     """The castle built (plan() laid out), its rooms as ROOMS says. One Undo."""
     import ledger
     PROGRESS.update(on=True, what='Planning', frac=0.0)
@@ -2064,9 +2125,12 @@ def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=T
         # (written into the places ledger: what it is made from, and every piece it makes, ledger.py)
         with ledger.open(db, 'castle', name, outline, seed, {'style': style, 'size': size, 'people': bool(people),
                                                              'rooms': rooms, 'gate': gate}) as led:
-            out = _make(db, outline, style, size, seed, name, people, rooms if rooms in ROOMS else 'furnished', gate)
+            out = _make(db, outline, style, size, seed, name, people, rooms if rooms in ROOMS else 'furnished', gate, toward)
             if led is not None and isinstance(out, dict) and out.get('name'):
                 led['name'] = out['name']
+            if led is not None and isinstance(out, dict) and out.get('fort'):
+                # (its wall's line, kept with its record: a town made beside it later runs its wall onto it)
+                led['fort'] = out['fort']
             return out
     finally:
         PROGRESS.update(on=False, what='', frac=0.0)
@@ -2166,12 +2230,12 @@ def _facing(dx, dy):
     return math.atan2(dx, dy) % (2 * math.pi)
 
 
-def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=None):
+def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=None, toward=None):
     import editing
     import create
     import doors
     editing._require_project(db)
-    P = plan(db, outline, style, size, seed, name, gate)
+    P = plan(db, outline, style, size, seed, name, gate, toward)
     name = P['name']
     if rooms == 'furnished' and P['modules'] and P['modules'][0]['m'].get('tiered'):
         # (a tiered keep's rooms are made anew to its size, several storeys and the doors on its decks: the game
@@ -2535,6 +2599,7 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
         editing.fold(db, len(stack) - n0, 'Built %s, a %s: %d pieces outside, %d interiors%s' % (
             name, STYLES[style]['label'], len(wr.refs), n_in, (', %d people' % folks) if folks else ''))
     return {'name': name, 'pieces': len(wr.refs), 'cells': sorted(wr.cells), 'interiors': n_in, 'people': folks, 'furnished': placed,
+            'fort': P.get('fort'),
             'quarters': quarters, 'buildings': sum(q['buildings'] for q in quarters),
             'sources': [[k, g] for (mi, g), k in sorted(keys.items())],
             'rooms': sorted(set(names.values())) + ([tname] if tower_key else []) + (made['names'] if made else []), 'links': len(links), 'fig': P['fig'], 'game': P['game'],

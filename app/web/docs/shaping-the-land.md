@@ -508,6 +508,10 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **Wall:** none, its culture's own, or one you pick. The wall is made of the game's pieces, each joined to the
   next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out, or
   where you put them with **⛩ Gate** (below).
+  The wall stands on the outline you draw: each side you draw is one straight run of wall, its corner at your corner,
+  and the town fills it. A side drawn a little off square is laid straight through its middle; a slanting side
+  becomes one to three big steps, because the wall pieces turn square corners only. An outline of many corners (a
+  round shape) is walled round its buildings instead.
   Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
   the land round it), and the wall sunk deep enough that no foot shows; inside, the town's ground is brought level
   with the wall's foot for a way in, not left as a bank under the wall with the houses dug in below it. Where it must change height, Hlaalu and
@@ -683,8 +687,10 @@ out, you stand a step outside it, facing away.
 theirs: stores of crates and barrels, training dummies, a cart, a well, benches, a smith's anvil. Each group stands in
 the castle's own places, against a wall or in the yard, clear of the way from the gate to the keep.
 
-**Beside a town.** Drawn against a walled town, the castle's gate turns towards the town, and where the two walls
-meet only one is built: the wall already standing serves both. A town walled round a castle does the same.
+**Beside a town.** Drawn beside a walled town or in its edge, the castle stands in the town's wall: the two are built
+as one ring, the castle first, and its gate turns towards the town. They need not be lined up: the town's wall is
+brought to the castle's corners and closed on it, and the map shows the wall as it will be built. If you drop or move
+the castle later, make the town again to close its wall.
 
 **🏰 Make it** evens the ground under the wall and the keep, clears trees and rocks inside, and builds it all.
 One Undo takes it back. **✕ Remove** takes away what it built, rooms included; the ground stays.

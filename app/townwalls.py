@@ -277,7 +277,16 @@ def outline(plan, cell=1024.0, db=None, step=1.0):
     """An outline square to the town round its plots and MARGIN beyond, its sides whole cells: the town's box when
     the town fills it well, else grid squares of the town's frame with rows and columns filled (no holes, no notches
     into it); [(x, y)] counter-clockwise, and its frame angle."""
-    th = _town_frame(plan)
+    plan.pop('_led', None)
+    drawn = [(float(p[0]), float(p[1])) for p in plan.get('drawn') or () if len(p) >= 2]
+    if len(drawn) >= 3:
+        # (a palisade asks at a step of 1, its sections any length: a lattice of 256 then, not 76 million squares)
+        led = _drawn_outline(plan, drawn, db, step if step >= 64 else 256.0)
+        if led:
+            plan['_led'] = True
+            return led
+    forts = _forts_near(plan)
+    th = _fort_angle(forts[0]) if forts else _town_frame(plan)
     c, s = math.cos(th), math.sin(th)
     pts = [(x * c + y * s, -x * s + y * c) for x, y in _town_pts(plan)]
     if not pts:
@@ -302,6 +311,16 @@ def outline(plan, cell=1024.0, db=None, step=1.0):
     ny, cv = fit(ey)
     x0 -= (nx * cu - ex) / 2            # (what is to spare, half each side)
     y0 -= (ny * cv - ey) / 2
+    # (a castle standing in the wall: the squares cut into wall lengths, a length's corner set on the castle's, so the
+    # town's wall runs onto the castle's line by whole lengths)
+    mu, mv = max(1, int(round(cu / max(step, 128.0)))), max(1, int(round(cv / max(step, 128.0))))
+    pu, pv = cu / mu, cv / mv
+    if forts:
+        fx, fy = forts[0]['ring'][0]
+        fu, fv = fx * c + fy * s, -fx * s + fy * c
+        ru, rv = (fu - x0) % pu, (fv - y0) % pv
+        x0 += ru if ru <= pu / 2 else ru - pu
+        y0 += rv if rv <= pv / 2 else rv - pv
     on = set()
     for q in plan['plots']:
         r = [(x * c + y * s, -x * s + y * c) for x, y in (q.get('rect') or [(q['x'], q['y'])])]
@@ -338,16 +357,606 @@ def outline(plan, cell=1024.0, db=None, step=1.0):
     for ob in plan.get('obstacles') or ():
         ox = sum(p[0] for p in ob) / len(ob)
         oy = sum(p[1] for p in ob) / len(ob)
+        if any(_inside(g['ring'], (ox, oy)) or _ring_dist(g['ring'], ox, oy) <= 400 for g in forts):
+            continue                         # (the castle's own: the meld below sets the wall to it)
         u, v = ox * c + oy * s, -ox * s + oy * c
         blocked.add((int((u - x0) // cu), int((v - y0) // cv)))
     if db is not None:
         on = _on_land(db, on, x0, y0, (cu, cv), c, s, plots_on, blocked)
+    if forts:
+        melded = _meld(plan, db, on, forts, x0, y0, pu, pv, mu, mv, c, s)
+        if len(melded) >= 4:
+            return melded, th
     poly = _trace(on)
     out = []
     for i, j in poly:
         u, v = x0 + i * cu, y0 + j * cv
         out.append((u * c - v * s, u * s + v * c))
     return out, th
+
+
+# ------------------------------------------------------------------------------------------ the wall as the town is drawn
+# The wall stands on the town's drawn outline: a side drawn nearly straight along the town's square is one straight side
+# of wall, a slanting side a few big steps (the kits turn square corners only). It hugged the buildings on a grid of
+# squares and was cut back square by square at the water, so it ran in staircases along a shore or a slanting side,
+# wandered outside what was drawn and left whole sides out (the user, 2026-11-11: "why can't I just draw some walls and
+# you figure out something that fits", "two straight lines to the coast").
+AXIS_NEAR = math.radians(20)   # (a drawn side within this of the square's axes is one straight side)
+DRIFT = 1536.0                 # (and drifts no more than this across: the wall then stands within 768 of the line
+                               # drawn; a west side 15 degrees off over 9,300 stood 1,300 outside the drawing at one end,
+                               # lab 2026-11-11. In units, not wall lengths: a kit of 256 pieces stepped a side an
+                               # Imperial wall ran straight, and its one-handed corners could not turn the step)
+STAIR = 2048.0                 # (a slanting side: a step for every this much it runs across)
+STAIR_MOST = 3
+JOG_LEAST = 768.0              # (two sides in a row this far apart or less are one; no jog shorter than this)
+DRAWN_CORNERS = 16             # (more corners than this: a drawn blob, walled round its buildings as before)
+
+
+def _drawn_frame(pts):
+    """The square a drawn outline runs along: the way of its sides that most of its length lies near."""
+    n = len(pts)
+    sides = [(math.atan2(pts[(k + 1) % n][1] - pts[k][1], pts[(k + 1) % n][0] - pts[k][0]),
+              math.hypot(pts[(k + 1) % n][0] - pts[k][0], pts[(k + 1) % n][1] - pts[k][1])) for k in range(n)]
+    best = (None, 0.0)
+    for a, _l in sides:
+        th = a % (math.pi / 2)
+        sc = sum(l * max(0.0, math.cos(4.0 * (b - th))) for b, l in sides)
+        if best[0] is None or sc > best[0] + 1e-6:
+            best = (sc, th)
+    return best[1]
+
+
+def _straighten(P, step, ou, ov):
+    """A drawn outline (points in the town's square, P) as one of square corners on the lattice of wall lengths set at
+    (ou, ov): its corners as lattice points [(i, j)], or []. Near-straight sides each on one line through their middle,
+    slanting sides in steps about their own line."""
+    n = len(P)
+    subs = []                                   # [way, the line it lies on, from, to, length]
+    for k in range(n):
+        a, b = P[k], P[(k + 1) % n]
+        du, dv = b[0] - a[0], b[1] - a[1]
+        if abs(du) < 1 and abs(dv) < 1:
+            continue
+        ang = math.atan2(abs(dv), abs(du))
+        if ang <= AXIS_NEAR and abs(dv) <= DRIFT:
+            subs.append(['U', (a[1] + b[1]) / 2.0, a[0], b[0], abs(du)])
+        elif ang >= math.pi / 2 - AXIS_NEAR and abs(du) <= DRIFT:
+            subs.append(['V', (a[0] + b[0]) / 2.0, a[1], b[1], abs(dv)])
+        else:
+            m = max(1, min(STAIR_MOST, int(round(min(abs(du), abs(dv)) / STAIR))))
+            if abs(du) >= abs(dv):
+                for j in range(m + 1):
+                    u0, u1 = a[0] + du * max(0.0, j - 0.5) / m, a[0] + du * min(float(m), j + 0.5) / m
+                    subs.append(['U', a[1] + dv * j / m, u0, u1, abs(u1 - u0)])
+                    if j < m:
+                        subs.append(['V', u1, a[1] + dv * j / m, a[1] + dv * (j + 1) / m, abs(dv) / m])
+            else:
+                for j in range(m + 1):
+                    v0, v1 = a[1] + dv * max(0.0, j - 0.5) / m, a[1] + dv * min(float(m), j + 0.5) / m
+                    subs.append(['V', a[0] + du * j / m, v0, v1, abs(v1 - v0)])
+                    if j < m:
+                        subs.append(['U', v1, a[0] + du * j / m, a[0] + du * (j + 1) / m, abs(du) / m])
+    if len(subs) < 3:
+        return []
+    # (two in a row the same way: one side when their lines lie near, else a jog between them where they meet)
+    for _ in range(4 * len(subs) + 8):
+        m_ = len(subs)
+        for k in range(m_):
+            A, B = subs[k], subs[(k + 1) % m_]
+            if A[0] != B[0] or m_ < 3:
+                continue
+            if abs(A[1] - B[1]) <= max(JOG_LEAST, 1.5 * step):
+                w = (A[4] + B[4]) or 1.0
+                A[1], A[3], A[4] = (A[1] * A[4] + B[1] * B[4]) / w, B[3], A[4] + B[4]
+                subs.pop((k + 1) % m_)
+            else:
+                subs.insert(k + 1, ['V' if A[0] == 'U' else 'U', A[3], A[1], B[1], abs(B[1] - A[1])])
+            break
+        else:
+            break
+    m_ = len(subs)
+    if m_ < 4 or m_ % 2:
+        return []
+    q = lambda v, o: int(round((v - o) / step))
+    V = []
+    for k in range(m_):
+        A, B = subs[k], subs[(k + 1) % m_]
+        V.append((q(B[1], ou), q(A[1], ov)) if A[0] == 'U' else (q(A[1], ou), q(B[1], ov)))
+
+    def clean(V):
+        changed = True
+        while changed and len(V) >= 4:
+            changed = False
+            for k in range(len(V)):
+                a_, b_, c_ = V[k - 1], V[k], V[(k + 1) % len(V)]
+                if a_ == b_ or (a_[0] == b_[0] == c_[0]) or (a_[1] == b_[1] == c_[1]) or a_ == c_:
+                    V.pop(k)
+                    changed = True
+                    break
+        return V
+    V = clean(V)
+    # (a short jog between two sides running on the same way: the shorter side moved onto the longer's line)
+    for _ in range(64):
+        m_ = len(V)
+        if m_ < 6:
+            break
+        for k in range(m_):
+            p0, p1, p2, p3 = V[k - 1], V[k], V[(k + 1) % m_], V[(k + 2) % m_]
+            jog = (p2[0] - p1[0], p2[1] - p1[1])
+            if not 1 <= abs(jog[0]) + abs(jog[1]) <= max(1, int(JOG_LEAST // step)):
+                continue
+            d0, d1 = (p1[0] - p0[0], p1[1] - p0[1]), (p3[0] - p2[0], p3[1] - p2[1])
+            if d0[0] * d1[0] + d0[1] * d1[1] <= 0:
+                continue                         # (a bump, not a jog)
+            if abs(d0[0]) + abs(d0[1]) >= abs(d1[0]) + abs(d1[1]):
+                V[(k + 1) % m_] = p1
+                V[(k + 2) % m_] = (p3[0] - jog[0], p3[1] - jog[1])
+            else:
+                V[k] = p2
+                V[k - 1] = (p0[0] + jog[0], p0[1] + jog[1])
+            break
+        else:
+            break
+        V = clean(V)
+    return V if len(V) >= 4 else []
+
+
+def _lattice_cells(V):
+    """The lattice squares inside an outline of lattice corners: its biggest piece, holes filled."""
+    if len(V) < 4:
+        return set()
+    cells = {(i, j) for i in range(min(p[0] for p in V), max(p[0] for p in V)) for j in range(min(p[1] for p in V), max(p[1] for p in V))
+             if _inside(V, (i + 0.5, j + 0.5))}
+    best, seen = set(), set()
+    for t in sorted(cells):
+        if t in seen:
+            continue
+        comp, stack = set(), [t]
+        while stack:
+            u = stack.pop()
+            if u in seen or u not in cells:
+                continue
+            seen.add(u)
+            comp.add(u)
+            stack.extend(((u[0] + 1, u[1]), (u[0] - 1, u[1]), (u[0], u[1] + 1), (u[0], u[1] - 1)))
+        if len(comp) > len(best):
+            best = comp
+    if not best:
+        return set()
+    i0, i1 = min(t[0] for t in best) - 1, max(t[0] for t in best) + 1
+    j0, j1 = min(t[1] for t in best) - 1, max(t[1] for t in best) + 1
+    out_, stack = set(), [(i0, j0)]
+    while stack:
+        u = stack.pop()
+        if u in out_ or u in best or not (i0 <= u[0] <= i1 and j0 <= u[1] <= j1):
+            continue
+        out_.add(u)
+        stack.extend(((u[0] + 1, u[1]), (u[0] - 1, u[1]), (u[0], u[1] + 1), (u[0], u[1] - 1)))
+    return {(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1) if (i, j) not in out_}
+
+
+def _drawn_outline(plan, drawn, db, step):
+    """The wall's outline from the town as drawn, ([(x, y)], its square's turn), or None where the drawing gives none
+    (a blob of many corners): outline()'s own way then."""
+    forts = [f for f in _forts(plan)
+             if any(_inside(drawn, q) or _ring_dist(drawn, q[0], q[1]) <= FORT_NEAR for q in f['ring'])
+             or any(_ring_dist(f['ring'], x, y) <= FORT_NEAR for x, y in drawn)]
+    th = _fort_angle(forts[0]) if forts else _drawn_frame(drawn)
+    c, s = math.cos(th), math.sin(th)
+    P = [(x * c + y * s, -x * s + y * c) for x, y in drawn]
+    if forts:
+        fx, fy = forts[0]['ring'][0]
+        ou, ov = fx * c + fy * s, -fx * s + fy * c
+    else:
+        # (the lattice set on the longest side each way, so those stand where they were drawn)
+        n = len(P)
+        us = sorted(((abs(P[(k + 1) % n][1] - P[k][1]), (P[k][0] + P[(k + 1) % n][0]) / 2.0) for k in range(n)), reverse=True)
+        vs = sorted(((abs(P[(k + 1) % n][0] - P[k][0]), (P[k][1] + P[(k + 1) % n][1]) / 2.0) for k in range(n)), reverse=True)
+        ou, ov = us[0][1], vs[0][1]
+    V = _straighten(P, step, ou, ov)
+    cells = _lattice_cells(V)
+    if not cells:
+        return None
+    if forts:
+        out = _meld(plan, db, cells, forts, ou, ov, step, step, 1, 1, c, s, hug=False)
+    else:
+        out = []
+        for i, j in _trace(cells):
+            u, v = ou + i * step, ov + j * step
+            out.append((u * c - v * s, u * s + v * c))
+    if len(out) < 4 or len(out) > DRAWN_CORNERS:
+        return None
+    return out, th
+
+
+# ---------------------------------------------------------------------------------------- a castle in the town's wall
+# A castle beside a town, or inside its edge, stands in the town's wall: the town's wall runs to the castle's and stops,
+# the castle's own wall closing the ring there. Two rings a lane apart, the town's wall run through the castle's, were
+# what a castle drawn in a town's corner got (the user, 2026-11-11: "arent the walls supposed to meld"). The town is told
+# of the castle (plan['forts'], townbuild._forts_for): planned or standing, the same.
+FORT_NEAR = 2600               # (a castle whose wall comes this near the town's buildings stands in the town's wall)
+FORT_GAP = 1700                # (town ground this near a castle's wall is carried on to it: no lane between two walls)
+FORT_SLIVER = 1300             # (a strip of the town this thin between a castle's wall and the open goes: the castle's
+                               # wall is the town's there)
+FORT_TOL = 100                 # (a wall piece this near a castle's wall line stands in it)
+FORT_TOWER = 420               # (a castle's own tower this near a join covers it)
+FORT_BLOCK = 500               # (no tower set at a join this near the castle's keep or gate)
+FORT_TO_CORNER = 4             # (a join this many lengths or fewer short of the castle's corner is carried on to the corner)
+FORT_STUB = 2                  # (a town strip holding this few lengths of a castle's side, at its corner, is given up)
+FORT_NOFILL = 1.6               # (the town's lengths within this many wall lengths of a castle's wall stand on the ground
+                               # as it is: the castle's standing wall keeps the town's fill off its ground (wall_guard), and
+                               # a wall floated at the ring's level there hung 100 to 300 over it, its ground 142 and 290
+                               # where the fill wanted 440, the release check of 2.6.18, 2026-11-11)
+FORT_NOTCH = 8                 # (carried on to the corner only when the ground taken in is this many squares of a length
+                               # or fewer, a notch: a castle lapping a town's corner took in a block of 28, half a
+                               # cell of ground outside the town as drawn, lab 2026-11-11)
+
+
+def _forts(plan):
+    """The castles the town's wall is to meet: [{'ring': [(x, y)], 'towers': [(x, y, r)], 'blocks': [(x, y, r)]}]."""
+    out = []
+    for f in plan.get('forts') or ():
+        ring = f.get('ring') if isinstance(f, dict) else f
+        ring = [(float(q[0]), float(q[1])) for q in ring or ()]
+        if len(ring) < 4:
+            continue
+        g = f if isinstance(f, dict) else {}
+        out.append({'ring': ring, 'towers': [tuple(float(v) for v in t[:3]) for t in g.get('towers') or ()],
+                    'blocks': [tuple(float(v) for v in t[:3]) for t in g.get('blocks') or ()]})
+    return out
+
+
+def _seg_dist(x, y, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    l2 = dx * dx + dy * dy
+    t = 0.0 if l2 <= 0 else max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / l2))
+    return math.hypot(x - a[0] - t * dx, y - a[1] - t * dy)
+
+
+def _ring_dist(ring, x, y):
+    return min(_seg_dist(x, y, ring[i], ring[(i + 1) % len(ring)]) for i in range(len(ring)))
+
+
+def _on_fort(forts, x, y, tol=FORT_TOL):
+    """The fort on whose wall line (x, y) stands, or None."""
+    for f in forts:
+        if _ring_dist(f['ring'], x, y) <= tol:
+            return f
+    return None
+
+
+def _forts_near(plan):
+    """The plan's castles near enough to its buildings to stand in its wall."""
+    forts = _forts(plan)
+    if not forts:
+        return []
+    pts = _town_pts(plan)
+    return [f for f in forts if any(_ring_dist(f['ring'], x, y) <= FORT_NEAR or _inside(f['ring'], (x, y)) for x, y in pts)]
+
+
+def _fort_angle(f):
+    """The way a castle's wall runs, as a town frame's turn (0 to a quarter turn)."""
+    r = f['ring']
+    a, b = max(((r[i], r[(i + 1) % len(r)]) for i in range(len(r))), key=lambda e: math.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]))
+    return math.atan2(b[1] - a[1], b[0] - a[0]) % (math.pi / 2)
+
+
+def _meld(plan, db, on, forts, x0, y0, pu, pv, mu, mv, c, s, hug=True):
+    """The town's outline with its castles in it, [(x, y)]: on a lattice of wall lengths set on the castle's corner, the
+    town's squares less the castle's ground; a lane between the two filled, the town carried on to the castle's wall; a
+    thin strip of town between the castle and the open left out, the castle's wall the town's there. The outline runs
+    along the castle's wall where they meet: lay() leaves those lengths to the castle."""
+    town = {(i * mu + a, j * mv + b) for i, j in on for a in range(mu) for b in range(mv)}
+    if not town:
+        return []
+    fr = lambda x, y: (x * c + y * s, -x * s + y * c)
+    rings = [[fr(x, y) for x, y in f['ring']] for f in forts]
+    mid = lambda t: (x0 + (t[0] + 0.5) * pu, y0 + (t[1] + 0.5) * pv)
+    gu, gv = int(math.ceil(FORT_GAP / pu)), int(math.ceil(FORT_GAP / pv))
+    i0 = min(min(t[0] for t in town), min(int((u - x0) // pu) for r in rings for u, _v in r)) - gu - 2
+    i1 = max(max(t[0] for t in town), max(int((u - x0) // pu) for r in rings for u, _v in r)) + gu + 2
+    j0 = min(min(t[1] for t in town), min(int((v - y0) // pv) for r in rings for _u, v in r)) - gv - 2
+    j1 = max(max(t[1] for t in town), max(int((v - y0) // pv) for r in rings for _u, v in r)) + gv + 2
+    fort = {(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1) if any(_inside(r, mid((i, j))) for r in rings)}
+    # (the buildings' own squares: never cut; a first plan's building on the castle's ground is no building)
+    plots = set()
+    # (hug False, the town as drawn: its ground is what was drawn, the buildings planned into the wall after)
+    for q in plan['plots'] if hug else ():
+        r = [fr(x, y) for x, y in (q.get('rect') or [(q['x'], q['y'])])]
+        mx, my = sum(p_[0] for p_ in r) / len(r), sum(p_[1] for p_ in r) / len(r)
+        if any(_inside(g, (mx, my)) for g in rings):
+            continue
+        for i in range(int((min(p_[0] for p_ in r) - x0) // pu), int((max(p_[0] for p_ in r) - x0) // pu) + 1):
+            for j in range(int((min(p_[1] for p_ in r) - y0) // pv), int((max(p_[1] for p_ in r) - y0) // pv) + 1):
+                plots.add((i, j))
+    plots -= fort
+    town -= fort
+    town |= plots
+    memo = {}
+
+    def dry(t):
+        if t not in memo:
+            u, v = mid(t)
+            z = mapdata.terrain_z(db, u * c - v * s, u * s + v * c) if db is not None else 0.0
+            memo[t] = db is None or (z is not None and z >= DRY)
+        return memo[t]
+    su, sv = int(FORT_SLIVER // pu), int(FORT_SLIVER // pv)
+    for _ in range(3):
+        add, cut = set(), set()
+        for i, j in fort:
+            for di, dj, g, sl in ((1, 0, gu, su), (-1, 0, gu, su), (0, 1, gv, sv), (0, -1, gv, sv)):
+                t = (i + di, j + dj)
+                if t in fort:
+                    continue                 # (outward from the castle's wall only)
+                run, k = [], 1
+                if t in town:
+                    while t in town and k <= sl + 1:
+                        run.append(t)
+                        k += 1
+                        t = (i + di * k, j + dj * k)
+                    if t not in town and t not in fort and len(run) <= sl and not any(q in plots for q in run):
+                        cut.update(run)
+                else:
+                    while t not in town and t not in fort and k <= g:
+                        run.append(t)
+                        k += 1
+                        t = (i + di * k, j + dj * k)
+                    # (wet or dry: no wall stands on the lane itself, the castle's wall closes it; a lane left open
+                    # because its ground lay low put the town's wall end in the castle's gate)
+                    if t in town and run:
+                        add.update(run)
+        add -= cut
+        if not add and not cut:
+            break
+        town |= add
+        town -= cut
+    # (the town's wall leaves the castle at the castle's corners, where its own towers stand: a join a few lengths short
+    # of a corner is carried on to it, the town's ground beside the castle run on as deep as it lies; a strip of town
+    # that holds only a length or two of the castle's side at a corner is given up, the join at the corner the other
+    # way. A join left a length from the corner stood two towers side by side, and one by the gate stood in the way in)
+    def out_run(f, d):
+        k, run = 1, []
+        while (f[0] + d[0] * k, f[1] + d[1] * k) in town and k < 64:
+            run.append((f[0] + d[0] * k, f[1] + d[1] * k))
+            k += 1
+        return run
+    for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        edge = sorted((f for f in fort if (f[0] + d[0], f[1] + d[1]) not in fort), key=lambda f: (f[0], f[1]) if d[0] else (f[1], f[0]))
+        sides, cur = [], []
+        for f in edge:
+            # (one side: the cells in one line, one after another)
+            if cur and ((d[0] and f[0] == cur[-1][0] and f[1] == cur[-1][1] + 1) or (d[1] and f[1] == cur[-1][1] and f[0] == cur[-1][0] + 1)):
+                cur.append(f)
+            else:
+                if cur:
+                    sides.append(cur)
+                cur = [f]
+        if cur:
+            sides.append(cur)
+        for side in sides:
+            for run in (side, side[::-1]):
+                cov = [(f[0] + d[0], f[1] + d[1]) in town for f in run]
+                if not any(cov) or all(cov):
+                    continue
+                u = cov.index(True)
+                if 0 < u <= FORT_TO_CORNER:
+                    depth = len(out_run(run[u], d))
+                    fill = [(f[0] + d[0] * k, f[1] + d[1] * k) for f in run[:u] for k in range(1, depth + 1)]
+                    fill = [t for t in fill if t not in fort]
+                    rim = [(f[0] + d[0] * k, f[1] + d[1] * k) for f in run[:1] for k in range(1, depth + 1)]
+                    if fill and len([t for t in fill if t not in town]) <= FORT_NOTCH and sum(dry(t) for t in rim) >= 0.7 * len(rim):
+                        town.update(fill)
+                elif u == 0:
+                    c_ = cov.index(False)
+                    if c_ <= FORT_STUB and not any(cov[c_:]):
+                        strip = [t for f in run[:c_] for t in out_run(f, d)]
+                        if strip and not any(t in plots for t in strip):
+                            town.difference_update(strip)
+    # (a pocket of open ground the town and the castle close on three sides: the town's)
+    for _ in range(2):
+        more = set()
+        for i in range(i0, i1 + 1):
+            for j in range(j0, j1 + 1):
+                t = (i, j)
+                if t in town or t in fort:
+                    continue
+                nb = [(i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)]
+                if sum(q in town or q in fort for q in nb) >= 3 and any(q in town for q in nb):
+                    more.add(t)
+        if not more:
+            break
+        town |= more
+    # (a square joined by one side alone, no building on it: a jog of its own)
+    for _ in range(2):
+        lone = {t for t in town if t not in plots and
+                sum((t[0] + dx, t[1] + dy) in town for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))) <= 1}
+        if not lone:
+            break
+        town -= lone
+    # (two squares touching by a corner alone: no wall turns there)
+    for _ in range(4):
+        fixed = False
+        for i, j in sorted(town):
+            for dj in (1, -1):
+                a, b, o1, o2 = (i, j), (i + 1, j + dj), (i + 1, j), (i, j + dj)
+                if b in town and o1 not in town and o2 not in town:
+                    free = [o for o in (o1, o2) if o not in fort]
+                    if free:
+                        town.add(free[0])
+                    else:
+                        town.discard(b if b not in plots else a)
+                    fixed = True
+        if not fixed:
+            break
+    # (the piece with the most buildings on it)
+    best, seen = set(), set()
+    for t in sorted(town):
+        if t in seen:
+            continue
+        comp, stack = set(), [t]
+        while stack:
+            u = stack.pop()
+            if u in seen or u not in town:
+                continue
+            seen.add(u)
+            comp.add(u)
+            stack.extend(((u[0] + 1, u[1]), (u[0] - 1, u[1]), (u[0], u[1] + 1), (u[0], u[1] - 1)))
+        if (len(comp & plots), len(comp)) > (len(best & plots), len(best)):
+            best = comp
+    if not best:
+        return []
+    # (what the open can't reach is inside: a castle in the middle of its town is walled in with it)
+    box = {(i, j) for i in range(i0 - 1, i1 + 2) for j in range(j0 - 1, j1 + 2)}
+    out_, stack = set(), [(i0 - 1, j0 - 1)]
+    while stack:
+        u = stack.pop()
+        if u in out_ or u not in box or u in best:
+            continue
+        out_.add(u)
+        stack.extend(((u[0] + 1, u[1]), (u[0] - 1, u[1]), (u[0], u[1] + 1), (u[0], u[1] - 1)))
+    full = {t for t in box if t not in out_}
+    out = []
+    for i, j in _trace(full):
+        u, v = x0 + i * pu, y0 + j * pv
+        out.append((u * c - v * s, u * s + v * c))
+    return out
+
+
+def _side_share(forts, a, b):
+    """The share of the side a-b that runs along a castle's wall."""
+    n = 0
+    for k in range(1, 10):
+        t = k / 10.0
+        if _on_fort(forts, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t):
+            n += 1
+    return n / 9.0
+
+
+def _off_forts(forts, poly, streets, roads):
+    """streets and roads (as _street_crossings gives them) less the ways that would cross a castle's wall: the way from
+    town to castle is the castle's own gate."""
+    n = len(poly)
+    out = defaultdict(list)
+    for k, hs in streets.items():
+        a, b = poly[k], poly[(k + 1) % n]
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        keep = [h for h in hs if not _on_fort(forts, a[0] + d[0] * h, a[1] + d[1] * h, FORT_TOL + 300)]
+        if keep:
+            out[k] = keep
+    return out, [r for r in roads if not _on_fort(forts, r[1][0], r[1][1], FORT_TOL + 300)]
+
+
+def _meet_forts(db, fam, kit, poly, pieces, forts):
+    """The wall's pieces where it meets a castle's: (pieces, joins). The lengths on the castle's line are left to the
+    castle; where the town's wall runs up to the castle's and stops, a length carried on into the castle's wall, so no
+    gap stands between the two, and a guard tower over the join where the kit has one and the castle has none there
+    (the sections of a wall meet at towers)."""
+    n = len(poly)
+    L = kit['L']
+    on = [_on_fort(forts, v[0], v[1]) for v in poly]
+    share = [_side_share(forts, poly[k], poly[(k + 1) % n]) for k in range(n)]
+    drop_unit, joins = set(), []
+    for k in range(n):
+        if on[k] is None:
+            continue
+        s_in, s_out = share[k - 1] > 0.5, share[k] > 0.5      # (the side into the corner, the side out of it)
+        if not s_in and not s_out:
+            continue
+        drop_unit.add(k)
+        if s_in != s_out:
+            a = poly[k - 1] if not s_in else poly[(k + 1) % n]
+            joins.append((poly[k], _unit(poly[k][0] - a[0], poly[k][1] - a[1]), on[k], {'corner': k}))
+    # (and where the town's wall runs straight on into a castle's corner, no turn of its own there: the same join)
+    for f in forts:
+        for c_ in f['ring']:
+            for k in range(n):
+                a, b = poly[k], poly[(k + 1) % n]
+                if _seg_dist(c_[0], c_[1], a, b) > 24 or min(math.hypot(c_[0] - a[0], c_[1] - a[1]), math.hypot(c_[0] - b[0], c_[1] - b[1])) <= FORT_TOL:
+                    continue
+                e = _unit(b[0] - a[0], b[1] - a[1])
+                free = [sg for sg in (1, -1) if not _on_fort(forts, c_[0] + sg * e[0] * L, c_[1] + sg * e[1] * L)]
+                if len(free) == 1:
+                    joins.append((c_, (-free[0] * e[0], -free[0] * e[1]), f, {'run': k}))
+    keep = []
+    for p in pieces:
+        q = p['pose']
+        if p.get('corner') in drop_unit or _on_fort(forts, q.x, q.y) or any(_inside(f['ring'], (q.x, q.y)) for f in forts):
+            continue
+        keep.append(p)
+    B = BIG.get(fam)
+    n_j = 0
+    for v, d, f, tag in joins:
+        # (the last whole length of the free side, and half a length on from it: into the castle's wall, to its middle)
+        side = [p for p in keep if p['id'] == kit['straight'] and abs(-(p['pose'].x - v[0]) * d[1] + (p['pose'].y - v[1]) * d[0]) <= 24
+                and -4 * L <= (p['pose'].x - v[0]) * d[0] + (p['pose'].y - v[1]) * d[1] < 0]
+        side.sort(key=lambda p: math.hypot(p['pose'].x - v[0], p['pose'].y - v[1]))
+        if not side or math.hypot(side[0]['pose'].x - v[0], side[0]['pose'].y - v[1]) > 2.6 * L:
+            continue                         # (no wall comes up to the castle here: a side open to the water)
+        mine = {id(p) for p in side}
+        far = side[-1]['pose']
+        if len(side) < 3 and not any(id(p) not in mine and math.hypot(p['pose'].x - far.x, p['pose'].y - far.y) <= 1.3 * L for p in keep):
+            # (a length or two left standing alone by the castle, nothing beyond them, the rest of their side open to
+            # the water: they go too. A short leg that runs on to a corner of the wall is no such thing)
+            gone = {id(p) for p in side}
+            keep = [p for p in keep if id(p) not in gone]
+            continue
+        rz = side[0]['pose'].rz
+        near = math.hypot(side[0]['pose'].x - v[0], side[0]['pose'].y - v[1])
+        n_j += 1
+        m = 0
+        while near - (m + 1) * L >= L / 2.0 - 8 and m < 4:
+            # (whole lengths first, where the corner's own pieces left more than one out)
+            m += 1
+            keep.append(dict({'id': kit['straight'], 'pose': Pose(v[0] - d[0] * (near - m * L), v[1] - d[1] * (near - m * L), 0.0, rz, kit['straight']),
+                              'kind': 'wall', 'join': True}, **tag))
+        if near - m * L > L / 2.0 + 8:
+            keep.append(dict({'id': kit['straight'], 'pose': Pose(v[0] - d[0] * L / 2.0, v[1] - d[1] * L / 2.0, 0.0, rz, kit['straight']),
+                              'kind': 'wall', 'join': True}, **tag))
+        # (nor a length or so from the castle's own corner: two towers side by side)
+        crn = min(math.hypot(q[0] - v[0], q[1] - v[1]) for q in f['ring'])
+        if B and not FORT_TOL < crn < 1.6 * L and not any(math.hypot(t[0] - v[0], t[1] - v[1]) <= FORT_TOWER for t in f['towers']) and \
+                not any(math.hypot(t[0] - v[0], t[1] - v[1]) <= FORT_BLOCK + (t[2] if len(t) > 2 else 0.0) for t in f['blocks']):
+            keep.append({'id': B['tower'], 'pose': Pose(v[0], v[1], 0.0, rz, B['tower']), 'kind': 'bigtower', 'dz': B['tower_dz'], 'join': True})
+    # (and a tower or a length left standing by itself beside the castle, the wall either side of it gone to the castle
+    # or to the water: a lone guard tower stood a length off the keep's back, a gap between them, lab 2026-11-11)
+    lone = [p for p in keep if not p.get('join') and any(_ring_dist(f['ring'], p['pose'].x, p['pose'].y) <= 2.2 * L for f in forts)
+            and not any(q is not p and math.hypot(q['pose'].x - p['pose'].x, q['pose'].y - p['pose'].y) <= 1.3 * L for q in keep)]
+    if lone:
+        gone = {id(p) for p in lone}
+        keep = [p for p in keep if id(p) not in gone]
+    # (and no gap left anywhere: a length that ends short of a castle's wall on its own line, however it came to stand
+    # there (a wall run on to the water past the castle's corner had its first length on the castle's line, left out,
+    # and a gap of 100 beside the corner, lab 2026-11-11), is carried on into the castle's wall by half a length)
+    for p in list(keep):
+        if p['id'] != kit['straight'] or p.get('join'):
+            continue
+        q0 = p['pose']
+        for f in forts:
+            r = f['ring']
+            best = None
+            for i in range(len(r)):
+                a, b = r[i], r[(i + 1) % len(r)]
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                t = max(0.0, min(1.0, ((q0.x - a[0]) * dx + (q0.y - a[1]) * dy) / ((dx * dx + dy * dy) or 1.0)))
+                qx, qy = a[0] + t * dx, a[1] + t * dy
+                dq = math.hypot(qx - q0.x, qy - q0.y)
+                if best is None or dq < best[0]:
+                    best = (dq, qx, qy)
+            dq, qx, qy = best
+            if not L / 2.0 + 8 < dq <= L + 24:
+                continue
+            d = _unit(qx - q0.x, qy - q0.y)
+            if abs(math.sin(_rz_for(kit, d) - q0.rz)) > 0.05:
+                continue                     # (it runs along the castle's wall, not at it)
+            tx, ty = qx - d[0] * L / 2.0, qy - d[1] * L / 2.0
+            if any(math.hypot(o['pose'].x - tx, o['pose'].y - ty) <= 64 for o in keep):
+                continue
+            keep.append(dict({k: p[k] for k in ('run', 'corner') if k in p}, id=kit['straight'], pose=Pose(tx, ty, 0.0, q0.rz, kit['straight']), kind='wall', join=True))
+    # (the lengths by the castle stand on the ground as it is, no fill under them: grounded, _allow)
+    for p in keep:
+        if any(_ring_dist(f['ring'], p['pose'].x, p['pose'].y) <= FORT_NOFILL * L for f in forts):
+            p['nofill'] = True
+    return keep, n_j
 
 
 def _on_land(db, on, x0, y0, cell, c, s, plots_on=(), blocked=()):
@@ -505,7 +1114,10 @@ def lay(db, plan, family=None, cell=None):
         if any(need[t] not in kit['corners'] for t in turns):
             return {'family': fam, 'pieces': [], 'outline': poly, 'gates': 0, 'faults': ['This wall turns only one way']}
     pieces, faults = [], []
-    inside_ = sum(1 for ob in plan.get('obstacles') or () if _inside(poly, (sum(p[0] for p in ob) / len(ob), sum(p[1] for p in ob) / len(ob))))
+    forts_ = _forts(plan)
+    inside_ = sum(1 for ob in plan.get('obstacles') or () if _inside(poly, (sum(p[0] for p in ob) / len(ob), sum(p[1] for p in ob) / len(ob)))
+                  and not any(_inside(g['ring'], (sum(p[0] for p in ob) / len(ob), sum(p[1] for p in ob) / len(ob))) or
+                              _ring_dist(g['ring'], sum(p[0] for p in ob) / len(ob), sum(p[1] for p in ob) / len(ob)) <= 400 for g in forts_))
     if inside_:
         faults.append("%d of the game's own buildings stand inside the wall" % inside_)
     # every corner: S0 (in), its chain, S1 (out)
@@ -523,7 +1135,10 @@ def lay(db, plan, family=None, cell=None):
             p = p.then(e, t)
             chain.append(p)
         units.append(chain)
+    forts = _forts(plan)
     streets, roads = _street_crossings(plan, poly)
+    if forts:
+        streets, roads = _off_forts(forts, poly, streets, roads)
     # (a crossing on a side too short to hold a gate between its corners is no way in: the island town's one crossing
     # fell on a two-length jog of its outline and the wall closed with "0 ways in", the user 2026-11-06)
     gate_ = _best(kit, 'gate')
@@ -535,6 +1150,9 @@ def lay(db, plan, family=None, cell=None):
         d = _unit(c_[0] - b[0], c_[1] - b[1])
         if (in_.x - out_.x) * d[0] + (in_.y - out_.y) * d[1] >= span + 1.5 * kit['L']:
             ok_sides.add(k)
+    if forts:
+        # (nor on a side the castle's wall stands on: the way between them is the castle's gate)
+        ok_sides = {k for k in ok_sides if _side_share(forts, poly[k], poly[(k + 1) % n]) <= 0.34} or ok_sides
     # (open to the sea: no gate on a side that faces the water, its wall is left out below)
     sea = bool(plan.get('open_sea')) and db is not None
     if sea:
@@ -552,12 +1170,16 @@ def lay(db, plan, family=None, cell=None):
     # (the user's gates stand where they put them: not moved downhill, none added)
     if db is not None and not mine:
         streets, roads = _downhill_gates(db, poly, streets, roads)
+        if forts:
+            streets, roads = _off_forts(forts, poly, streets, roads)
     if not any(streets.values()) and not mine:
         # (no street reaches the wall line: on a big drawn outline the main street ended far inside it and the town had
         # "0 ways in", the user's island town of 2026-11-06. A gate all the same: at the main street's end carried on to
         # the nearest side however far, else in the middle of a side; the side chosen as gates are kept, dry, no cliff,
         # low; the road paved from the street's end to it)
         streets, roads = _fallback_gate(db, plan, poly, roads, kit['L'], ok_sides)
+        if forts:
+            streets, roads = _off_forts(forts, poly, streets, roads)
     # (and a wall that still comes out with no gate, its street's crossing too near a corner for one to stand, gets the
     # same one gate: one walled plan in six had none, a sealed town, the cold start of 2.6.17 and of 2.6.16 alike)
     gates = 0
@@ -581,6 +1203,8 @@ def lay(db, plan, family=None, cell=None):
         if gates or mine or _attempt:
             break
         streets, roads = _fallback_gate(db, plan, poly, roads, kit['L'], ok_sides)
+        if forts:
+            streets, roads = _off_forts(forts, poly, streets, roads)
     pieces.extend(sides_)
     for k, chain in enumerate(units):
         # (a tower beside each corner where the game stands one, in the place of the straight there: the sections of the
@@ -618,8 +1242,12 @@ def lay(db, plan, family=None, cell=None):
                               (lambda B: {'id': B['tower'], 'dz': B['tower_dz']} if B else None)(BIG.get(fam)))
         if n_g:
             gates = int(round(gates * sum(1 for p in pieces if p.get('kind') in ('gate', 'end')) / float(n_g)))
-    return {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': gates, 'faults': faults,
-            'roads': _gate_roads(poly, roads, pieces, L) if gates else []}
+    joins = 0
+    if forts:
+        # (after the sea's openings: a side left open to the water beside a castle needs no join, the town open there)
+        pieces, joins = _meet_forts(db, fam, kit, poly, pieces, forts)
+    return {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': gates, 'faults': faults, 'joins': joins,
+            'led': bool(plan.get('_led')), 'roads': _gate_roads(poly, roads, pieces, L) if gates else []}
 
 
 def _gate_roads(poly, roads, pieces, L):
@@ -1036,7 +1664,8 @@ def drop_doubled(db, W, skip=()):
     keep, n = [], 0
     for p in W['pieces']:
         cs, b = _box(db, p['id'], p['pose'], memo)
-        if cs and p.get('kind') not in ('stairs',):
+        # (nor a join: the length and the tower that carry the town's wall into a castle's stand in it by design)
+        if cs and p.get('kind') not in ('stairs',) and not p.get('join'):
             A = _quad_area(cs) or 1.0
             if any(_quad_area(_clip(cs, h[0]) or []) >= DOUBLED * A or
                    (_parallel(cs, h[0]) and _quad_area(_clip(cs, _widen(h[0], WALL_KEEP)) or []) >= DOUBLED_SIDE * A)
@@ -2219,6 +2848,8 @@ def _one_level(segs, W, span, keep):
             continue                                    # (too deep to fill: its own level, as before)
         if abs(z - seg[0]['pose'].z) < 1:
             continue
+        if z > hi and any(p.get('nofill') for p in seg):
+            continue                                    # (by a castle's wall, no fill: its own level)
         for p in seg:
             p['pose'].z = z
         if z > hi:
@@ -2242,6 +2873,8 @@ _FILL = [FILL_MAX]
 
 def _allow(p):
     """How much fill a wall piece may stand on."""
+    if p.get('nofill'):
+        return 0.0                               # (by a castle's wall: the ground there is the castle's, FORT_NOFILL)
     return GATE_FILL if p.get('kind') == 'gate' else _FILL[0]
 
 
@@ -2387,7 +3020,7 @@ def _cap_steps(segs, W):
                 continue
             low = A if d > 0 else B
             z = min(low[0]['pose'].z + abs(d) - STEP_HIDE, base[id(low)] + FILL_MAX)
-            if z - low[0]['pose'].z < 1:
+            if z - low[0]['pose'].z < 1 or any(p.get('nofill') for p in low):
                 continue
             for p in low:
                 p['pose'].z = z

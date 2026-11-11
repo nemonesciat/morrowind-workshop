@@ -1305,6 +1305,37 @@ def fit(db, plan, seed=1):
 
 
 WALL_BACK = 320                # a walled town's buildings stand back to its wall this close (its own depth ~250)
+FORT_REACH = 4500              # (a castle whose wall comes this near the town's outline is told to the town's wall)
+
+
+def _forts_for(db, outline, opts):
+    """The castles a town's wall is to meet (townwalls._meld): those the page sends with the plan (planned beside it,
+    not yet built) and those standing, by their records in the places ledger; one castle told both ways is the standing
+    one. [{'ring', 'towers', 'blocks'}]"""
+    import townwalls
+    out = []
+    try:
+        import ledger
+        for pid, rec in ledger._places(db.project).items() if getattr(db, 'project', None) is not None else ():
+            ft = rec.get('fort') if rec.get('kind') == 'castle' else None
+            if isinstance(ft, dict) and len(ft.get('ring') or ()) >= 4:
+                out.append(dict(ft, pid=pid))       # (pid: it stands, its pieces its own, townplan._obstacles)
+    except Exception as e:
+        print('forts:', e)
+    mid = lambda r: (sum(q[0] for q in r) / len(r), sum(q[1] for q in r) / len(r))
+    for ft in (opts or {}).get('forts') or ():
+        if isinstance(ft, dict) and len(ft.get('ring') or ()) >= 4:
+            m = mid(ft['ring'])
+            if not any(math.hypot(m[0] - mid(g['ring'])[0], m[1] - mid(g['ring'])[1]) < 1500 for g in out):
+                out.append(ft)
+    pts = [(float(q[0]), float(q[1])) for q in outline or ()]
+    near = []
+    for ft in out:
+        ring = [(float(q[0]), float(q[1])) for q in ft['ring']]
+        if any(townwalls._ring_dist(ring, x, y) <= FORT_REACH or townwalls._inside(ring, (x, y)) for x, y in pts) or \
+                any(townwalls._ring_dist(pts, x, y) <= FORT_REACH or townwalls._inside(pts, (x, y)) for x, y in ring):
+            near.append(ft)
+    return near
 
 
 def planned(db, outline, culture, seed=1, walls='', opts=None):
@@ -1324,6 +1355,10 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
         opts = dict(opts, roads=list(opts.get('roads') or []) + [[[cx, cy], [gx, gy]] for gx, gy in gates])
     # (the bar's planning share: a walled town is planned twice, its two plans the most of it)
     P = PLAN_END
+    led = False
+    forts = _forts_for(db, outline, opts) if walls else []
+    if forts or opts.get('forts'):
+        opts = dict(opts, forts=forts)
     pl = townplan.plan(db, outline, culture, seed, walled=bool(walls), opts=opts)
     if opts.get('own'):
         pl['own'] = opts['own']             # (built of your own style's prefabs, planned like `culture`'s towns)
@@ -1337,21 +1372,33 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
         return plan
     if gates:
         plan['user_gates'] = gates
+    if forts:
+        plan['forts'] = forts
     import townwalls
     _say('Planning inside the wall', P * 0.4)
     drawn = opts.get('wall') or []
-    if len(drawn) >= 3:
+    # (opts['ring']: the wall's line as the preview showed it, kept to: a town planned beside a castle is built after
+    # the castle, on ground the castle has shaped, and planned afresh there its wall came out another shape than the one
+    # shown, 19 of 61 pieces elsewhere. The user, 2026-11-11: "Either preview is exactly how itll turn out, or...")
+    fixed = [(float(q[0]), float(q[1])) for q in (opts.get('ring') or []) if len(q) >= 2]
+    if len(fixed) >= 4 and len(drawn) < 3:
+        poly = fixed
+    elif len(drawn) >= 3:
         # (drawn by the user, "like ridges that lock into a grid once you put down your first point", PIN2)
         K = townwalls.kits(db)
         fam = walls if walls in K else townwalls.pick_family(db, plan)
         poly = townwalls.square_up(drawn, K[fam]['L']) if fam else []
     else:
+        # (the wall on the town as drawn, townwalls._drawn_outline: opts['hug'] for the old wall round the buildings)
+        if len(outline) >= 3 and not opts.get('hug'):
+            plan['drawn'] = [[float(q[0]), float(q[1])] for q in outline]
         try:
             W = townwalls.lay(db, plan, None if walls == 'auto' else walls)
         except Exception as e:
             print('town wall:', e)
             return plan
         poly = W.get('outline') or []
+        led = bool(W.get('led'))
     if len(poly) < 4:
         return plan
     inner = townplan.inset(poly, WALL_BACK)
@@ -1365,11 +1412,13 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     _say('Choosing the buildings', P * 0.85)
     again = fit(db, pl, seed)
     built = lambda p_: sum(1 for q in p_['plots'] if q.get('b'))
-    if built(again) < 0.75 * built(plan) and len(drawn) < 3:
+    if built(again) < 0.75 * built(plan) and len(drawn) < 3 and len(fixed) < 4 and not led:
         return plan
     again['wall_outline'] = [list(p_) for p_ in poly]
     if gates:
         again['user_gates'] = gates
+    if forts:
+        again['forts'] = forts
     return again
 
 
@@ -1559,6 +1608,10 @@ def make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, p
         with ledger.open(db, 'town', name, outline, seed, {'culture': culture, 'walls': walls, 'dress': bool(dress),
                                                            'interiors': interiors, 'people': bool(people), 'opts': opts}) as led:
             out = _make(db, outline, culture, seed, walls, dress, interiors, people, name, opts)
+            if led is not None and (LAST.get('plan') or {}).get('forts'):
+                # (the castles its wall was laid to, their boxes: a castle made there again stands in the same place,
+                # castle._socket)
+                led['forts'] = [{k: ft[k] for k in ('ring', 'frame') if ft.get(k)} for ft in LAST['plan']['forts']]
             if led is not None and isinstance(out, dict) and out.get('name'):
                 led['name'] = out['name']
             return out
@@ -1990,6 +2043,16 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 life = townlife.people(db, plan, culture, seed, cells, new_refs, W, stall_refs)
             except Exception as e:
                 print('town life:', e)
+        # (a loose wall piece left with a hollow end to the open: out, once everything that could close it stands)
+        if dress:
+            try:
+                db.sync_project()
+                n_ow = _drop_open_walls(db, cells, new_refs)
+                if n_ow:
+                    print('town: %d loose wall pieces left out, an open end to nothing' % n_ow)
+                    db.sync_project()
+            except Exception as e:
+                print('town open walls:', e)
         _say('Saving', 0.98)
         editing.commit(db, 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s%s' % (
             culture, made, pieces, len(cells), ((', a wall of %d pieces' % wall) if wall else '') + ((', %d things set out' % dressed) if dressed else ''),
@@ -3921,6 +3984,51 @@ def _uncover(db, plan, skip=(), guard=()):
 
 HIGH_DOOR = 100                # a side door's foot this far over the ground before it, after the ground is done: left out
 DOOR_STEP = re.compile(r'entrance|porch|stoop|step|doorframe|door_frame|awning|sign', re.I)
+
+
+LOOSE_WALL = re.compile(r'drystonewall|stonewall|ruin\w*wall|wall\w*ruin|rubblewall', re.I)
+OPEN_END_OUT = 12.0            # (an open end is met by what stands this far beyond it)
+OPEN_END_BURIED = 24.0         # (or lies in the ground to within this of its top)
+
+
+def _drop_open_walls(db, cells, new_refs):
+    """The loose wall pieces the dressing set out (LOOSE_WALL: dry-stone and ruined walls, the game's yard walls) whose
+    hollow end meets nothing, taken out: such a piece is a shell open at its ends, and stood alone one sees into it
+    (edges.hollow_ends). An end is met when another thing's box holds the spot just beyond it or the ground covers it.
+    (The user's Blackrose town, 2026-11-11: one piece of ex_drystonewall_c_01 by a cart, "the naked wall edge ... use
+    something to close that model off, or use something else".) The count."""
+    import edges
+    p = db.project
+    n = 0
+    for ck in cells:
+        c = p.cells.get(ck)
+        if not c:
+            continue
+        refs = [r for r in mapdata.cellmap(db, ck).get('refs') or () if r.get('b')]
+        for r in refs:
+            if r['k'] not in new_refs or r.get('type') != 'STAT' or not LOOSE_WALL.search(r['id']):
+                continue
+            ri = db.resolve_id(r['id'])
+            ends = edges.hollow_ends(db, db.recs[ri][5]) if ri is not None else []
+            bare = False
+            for e in ends:
+                o = edges._to_world(r, e['out'], vec=True)
+                at = edges._to_world(r, e['at'])
+                pt = (at[0] + o[0] * OPEN_END_OUT, at[1] + o[1] * OPEN_END_OUT, at[2])
+                g = mapdata.terrain_z(db, pt[0], pt[1])
+                top = r['p'][2] + e['top'] * (r.get('s') or 1.0)
+                if g is not None and g >= top - OPEN_END_BURIED:
+                    continue
+                if any(q is not r and edges._inside(pt, edges._world_box(q, 4.0)) for q in refs):
+                    continue
+                bare = True
+                break
+            if bare and r['k'] in (c.get('refs') or {}):
+                c['refs'].pop(r['k'])
+                p.town_parts.pop(r['k'], None)
+                new_refs.discard(r['k'])
+                n += 1
+    return n
 
 
 def _drop_high_doors(db, plan, new_refs):

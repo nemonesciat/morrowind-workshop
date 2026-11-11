@@ -473,6 +473,44 @@ def _role(db, r):
     return 'piece'
 
 
+HOLLOW_TALL = 64       # an open end's two edges stand at least this tall
+HOLLOW_GAP = 16        # ... and this far apart: the wall's two faces with nothing between
+
+
+def hollow_ends(db, model):
+    """The ends of a model that show its inside: on one of its four side planes, two upright open edges facing away
+    from each other, the wall's two faces with nothing between them (a dry-stone wall piece ends so, a fence panel,
+    one sheet, does not). [{'at': (x, y, z) the end's middle, 'out': (x, y, 0) the way it faces, 'top': z}] in the
+    model's own space; [] when the mesh can't be read. (The user, 2026-11-11: a lone piece of dry-stone wall in a made
+    town, "that particular model has open edges".)"""
+    sg = model_segments(db, model)
+    if not sg:
+        return []
+    by = defaultdict(list)
+    for s_ in sg.get('segs') or ():
+        p = s_['p']
+        if s_.get('pl') in (0, 1, 2, 3) and abs(p[5] - p[2]) >= HOLLOW_TALL and abs(s_['o'][2]) < 0.5 and math.hypot(p[3] - p[0], p[4] - p[1]) < 8:
+            by[s_['pl']].append(s_)
+    out = []
+    for pl, ss in by.items():
+        for i, a in enumerate(ss):
+            for b in ss[i + 1:]:
+                if a['n'][0] * b['n'][0] + a['n'][1] * b['n'][1] > -0.7:
+                    continue
+                if math.hypot(a['p'][0] - b['p'][0], a['p'][1] - b['p'][1]) < HOLLOW_GAP:
+                    continue
+                o = ((a['o'][0] + b['o'][0]) / 2.0, (a['o'][1] + b['o'][1]) / 2.0)
+                h = math.hypot(*o) or 1.0
+                zs = (a['p'][2], a['p'][5], b['p'][2], b['p'][5])
+                out.append({'at': ((a['p'][0] + b['p'][0]) / 2.0, (a['p'][1] + b['p'][1]) / 2.0, (min(zs) + max(zs)) / 2.0),
+                            'out': (o[0] / h, o[1] / h, 0.0), 'top': max(zs)})
+                break
+            else:
+                continue
+            break
+    return out
+
+
 def _world_box(r, pad=0.0):
     b, s = r['b'], r.get('s') or 1.0
     c, sn = math.cos(r['p'][5]), math.sin(r['p'][5])
