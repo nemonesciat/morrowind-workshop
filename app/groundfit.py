@@ -29,6 +29,10 @@ LANDING_MAX = 160    # (a landing lower than this under the sill is raised, unle
 CLIMB = re.compile(r'stair|step|ramp|ladder|platform|walkway|bridge|dock|pier|entrance|porch|stoop')   # (an entrance piece
                      # carries its own steps: landed a step under the sill, the ground buried them and the door stood "sunk
                      # into the dirt", the user's Nargorewatch 2026-11-06; the ground meets the steps' foot instead)
+CLIMB_NEAR = 220     # (a way up this near the door is the door's own: its steps, its porch)
+PORCH = re.compile(r'entrance|porch|stoop')
+STEP_IN = 50         # (a porch's foot stands this far in the ground: ex_common_entrance_02's, the game's median 53 of 98)
+CLIMB_GAP = 24       # (the ground this far under the steps' foot, or more, is brought up to it)
 BLEND = 256          # changes fade back to the ground as it was over this far, or BLEND_RISE times their height
 BLEND_RISE = 3.0     # (a 200 drop to a landing faded over 256 left a trench of 50-70 degrees, the town practice of 2026-11-01;
                      # a smooth fade is steepest at its middle, 1.5 times its mean: 3x keeps that under 30 degrees)
@@ -86,6 +90,15 @@ def plan(db, b):
                                      for it in (b.get('items') or ()))
     # (the door's own sill: the frame may come from another, higher door)
     sill = (door['p'][2] + ((door.get('b') or [0, 0, 0])[2]) * (door.get('s') or 1.0)) if door is not None and door.get('p') else fr.z
+    # (and how far down that way up reaches, by the door: an entrance piece's two steps excused any drop, and a side door
+    # stood 140 over the ground with its steps in the air, the user's Senchal, 2026-11-11, "some of the ground is too low
+    # by the entrance". The ground comes up to the steps' foot: set in it as the game sets them, STEP_IN for a porch)
+    climb_foot = None
+    if climb and door is not None:
+        for it in (b.get('items') or ()):
+            if CLIMB.search(it['low']) and it.get('box') and math.hypot(it['p'][0] - door['p'][0], it['p'][1] - door['p'][1]) < CLIMB_NEAR:
+                f_ = it['box'][4] + (STEP_IN if PORCH.search(it['low']) else 8)
+                climb_foot = f_ if climb_foot is None else min(climb_foot, f_)
     reasons = {'sink': 0, 'landing': 0}
     for (x, y, lx, ly, gx, gy, ix, iy, z) in pts:
         c = (int(math.floor(lx / G)), int(math.floor(ly / G)))
@@ -109,6 +122,10 @@ def plan(db, b):
             # (the game's ground a tile out from a door is never over its sill; far under it only with a way up)
             if z > fr.z + 16 or (z < fr.z - LANDING_MAX and not climb):
                 target = fr.z - STEP
+                landing = True
+                reasons['landing'] += 1
+            elif climb_foot is not None and z < min(climb_foot, sill - STEP) - CLIMB_GAP:
+                target = min(climb_foot, sill - STEP)
                 landing = True
                 reasons['landing'] += 1
         if target is not None and abs(target - z) > 4:

@@ -515,8 +515,18 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
             gz_ = mapdata.terrain_z(db, wx, wy)
             sc_ = t.get('s') or 1.0
             if gz_ is not None and z + b[2] * sc_ < gz_ - SUNK_HELD:
+                # (only what reaches down to the ground by its nature, a root or a stem: a lantern hook or a sign stood
+                # up at the foot of a wall is no better than one in the ground, the user's Senchal, 2026-11-11: "what's
+                # wrong with these lantern sconces?". Those are left out, with what hangs from them)
+                if not STANDS_UP.search(t['id']):
+                    _count('refused: in the ground')
+                    continue
                 z = gz_ - b[2] * sc_ - 4
                 _count('stood up out of the ground')
+            # (nor a wall thing lower than a wall thing hangs: under LOW_HUNG over the ground at its middle)
+            elif gz_ is not None and ON_WALL_KIND.search(t['id']) and not GROUND_KIND.search(t['id']) and not STANDS_UP.search(t['id'])                     and HOLDER.search(t['id'].lower()) and z + (b[2] + b[5]) / 2.0 * sc_ < gz_ + LOW_HUNG:
+                _count('refused: hung too low')
+                continue
             # (held by the built town, checked before anything is stacked on it: a cup stayed in the air when the
             # counter it stood on was left out after, the town audit of 2026-11-01)
             foot = z + b[2] * (t.get('s') or 1.0)
@@ -792,6 +802,10 @@ STEEP_MAX = 64                 # (and never more: a firepit tilted over 70-96 of
 ON_WALL_KIND = re.compile(r'sign|lantern|lamp|light|banner|flag|ivy|vine|shield|torch|sconce|hook|bracket|chain|hanger|tapestry|wreath|rope', re.I)
 GROUND_KIND = re.compile(r'signbase|signway|sign_?post|lightpost|post_|_post|stand', re.I)
 ON_WALL = 120                   # a hung thing's building has a wall this near behind it
+ON_WALL_MIN, ON_WALL_PAD = 48, 32
+STANDS_UP = re.compile(r'root|stem|stalk|vine|ivy', re.I)
+LOW_HUNG = 110                 # a hook or bracket on a wall hangs at least this far over the ground
+HANGS = re.compile(r'lantern|lamp|light|chain|rope|hook|hanger|banner|flag|sign|net|cage|bell|ivy|vine|wreath|chandelier|basket_hang|meat|fish|carcass|hide|skin', re.I)
 
 
 def _held(db, g, face, memo):
@@ -810,14 +824,19 @@ def _held(db, g, face, memo):
     s = g.get('s') or 1.0
     # (a wall holds what hangs on walls; a cup or a crate by a wall still wants something under it)
     # (any way round: a lantern on a side wall hangs beside it, not in front of it, and was left out every time)
+    # (and no further than the thing's own reach: a wall 120 off held a sign 110 out in the air, the user's Senchal,
+    # "the floating tavern sign", 2026-11-11. Half its width and a hand more)
+    reach = min(ON_WALL, max(ON_WALL_MIN, max(b[3] - b[0], b[4] - b[1]) * s / 2.0 + ON_WALL_PAD))
     if ON_WALL_KIND.search(g['id']) and not GROUND_KIND.search(g['id']) and any(
-            sc.nearest_any((x, y, z), (math.cos(a * math.pi / 4), math.sin(a * math.pi / 4), 0.0), ON_WALL) is not None for a in range(8)):
+            sc.nearest_any((x, y, z), (math.cos(a * math.pi / 4), math.sin(a * math.pi / 4), 0.0), reach) is not None for a in range(8)):
         return True
     foot, top = g['p'][2] + b[2] * s, g['p'][2] + b[5] * s
     down = sc.nearest_any((x, y, foot + 8), (0.0, 0.0, -1.0), 40)
     if down is not None and CANOPY.search(_hit_id(db, sc, down, x, y, memo)):
         down = None                     # (a canopy, an awning or a roof holds nothing up: never stood on)
-    return down is not None or sc.nearest_any((x, y, top - 4), (0.0, 0.0, 1.0), 120) is not None
+    # (a beam over it holds only what hangs: a crate under a tavern's upper storey passed as held and stood in the air,
+    # the user's Senchal, 2026-11-11)
+    return down is not None or (bool(HANGS.search(g['id'])) and sc.nearest_any((x, y, top - 4), (0.0, 0.0, 1.0), 120) is not None)
 
 
 def _hit_id(db, sc, hit, x, y, memo):
@@ -944,7 +963,7 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
                 cut = _behind_door(own, q['door'][0], q['door'][1], q['face']) if not own_sc else []
                 if cut:
                     space.take(cut)
-            got = _lay(db, sc2, q['door'][0], q['door'][1], q['face'] + math.pi, space, memo, q.get('door_z'),
+            got = _lay(db, sc2, q['door'][0], q['door'][1], q['face'] + math.pi, space, memo, q.get('sill_z', q.get('door_z')),
                        keep=lambda t: abs(t['x']) <= lim, hold=lambda g, f=q['face']: _held(db, g, f, memo))
             if own is not None and own not in space.polys:
                 if cut:

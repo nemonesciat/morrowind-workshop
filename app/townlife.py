@@ -668,7 +668,7 @@ def _door_awnings(db, L, built, memo, space=None):
                 pts_, _bb = towndress._rect_of(t['id'], wx, wy, rz_, sc_, memo, db)
                 if pts_ and any(towndress._overlap(pts_, w_) for w_ in ways):
                     continue
-            out.append({'id': t['id'], 'p': [round(wx, 2), round(wy, 2), round(q['door_z'] + t['z'], 2), t.get('rx') or 0.0, t.get('ry') or 0.0,
+            out.append({'id': t['id'], 'p': [round(wx, 2), round(wy, 2), round(q.get('sill_z', q['door_z']) + t['z'], 2), t.get('rx') or 0.0, t.get('ry') or 0.0,
                                              round((t['rz'] + q['face'] + math.pi) % (2 * math.pi), 5)],
                         's': t.get('s') or 1.0, 'role': 'awning', 'hung': True, 'on': None, 'up': 0.0})
     return out
@@ -865,7 +865,7 @@ def _signs(db, L, cult, plan, rng, n, memo):
         for side in rng.sample((1, -1), 2):
             lx = side * rng.uniform(*SIGN_SIDE)
             wx, wy = towndress._world(q['door'][0], q['door'][1], ang, lx, SIGN_OUT)
-            z = q['door_z'] + rng.uniform(*SIGN_UP)
+            z = q.get('sill_z', q['door_z']) + rng.uniform(*SIGN_UP)       # (over the sill: the door's own height is its middle on some doors)
             g = {'id': sid, 'p': [round(wx, 2), round(wy, 2), round(z, 2), 0.0, 0.0, round(ang % (2 * math.pi), 5)], 's': 1.0}
             if not towndress._held(db, g, q['face'], memo):
                 continue

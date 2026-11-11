@@ -437,6 +437,29 @@ def _buildable(db, kit):
     return bool(kit) and kit in kits.kits(db) and bool((kits.kit_pieces(db, kit) or {}).get('pieces'))
 
 
+CHAPEL_KITS = (('t_imp_|ex_imp|ex_common|ex_nord', 't_imp_setchapel_i'),)     # (a chapel outside, by whose pieces: its kit inside)
+
+
+def own_set_kit(db, group, named=True):
+    """The interior kit of the set a building's outside is built of, when the builder can build in it: by its biggest
+    pieces first, a chapel's before all (townbuild.CHAPEL), then the kit named for the piece's own set
+    (t_imp_setchapel_x_... -> t_imp_setchapel_i). None when there is none."""
+    import townbuild
+    big = sorted(group, key=lambda it: -(it['box'][2] - it['box'][0]) * (it['box'][3] - it['box'][1]) * (it['box'][5] - it['box'][4]))[:4]
+    for it in big:
+        low = it['id'].lower()
+        if townbuild.CHAPEL.search(low):
+            for pat, kit in CHAPEL_KITS:
+                if re.search(pat, low) and _buildable(db, kit):
+                    return kit
+    for it in big[:2] if named else ():
+        fam = ss.family(it['id'].lower()) or ''
+        for cand in (fam + '_i', re.sub(r'(mw|sky|cyr)$', '', fam) + '_i'):
+            if fam and _buildable(db, cand):
+                return cand
+    return None
+
+
 def pick_style(db, b):
     """The kit to build in, what it was learnt from, and the prediction."""
     L = _learnt(db)
@@ -445,6 +468,16 @@ def pick_style(db, b):
            'style': ss.style_of_group(b['group']), 'height': max(g['box'][5] for g in b['group']) - (b['frame'].z if b['frame'] else 0)}
     pr = ss.predict(L, bld) if L else None
     kit = pr['kit'] if pr else None
+    # (the inside is the outside's own set wherever the builder has it, whatever the town round it is: a chapel of the
+    # chapel set, never learnt as a model, took its style's commonest kit and was a plaster house inside, its name and
+    # altar a chapel's; the user's Senchal, 2026-11-11: "a building's exteriors and interiors should ALWAYS match")
+    if not pr or pr.get('from') != 'model':
+        # (a set the game's own buildings taught a kit for keeps it: Stirk's houses are Gold Coast inside in the game)
+        own = own_set_kit(db, b['group'], named=not pr or pr.get('from') != 'family')
+        if own:
+            kit = own
+            if pr:
+                pr = dict(pr, kit=own, **{'from': 'set'})
     if not _buildable(db, kit):
         # the kit the game most often builds this style's interiors in, that the builder knows
         want = (pr or {}).get('style') or bld['style']

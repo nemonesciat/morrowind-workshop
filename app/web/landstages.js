@@ -104,6 +104,10 @@ function lstTool(k){
 }
 function lstActs(n, can, why){
   const st = lstStage();
+  // (a make under way stays on its button through every redraw, and no stage can be started meanwhile: the user pressed
+  // Make insides, a redraw put the plain button back, and nothing said it was working; 2026-11-11)
+  const R = LM.running;
+  if (R) return `<div class="lst-act"><button class="btn sm primary" id="${n === 0 ? 'ls-apply' : 'lst-make' + n}" disabled>${R.n === n ? `<span class="spin"></span>${esc(R.t)}` : LST_MAKE[n]}</button></div>`;
   if (n === 0) return `<div class="lst-act"><button class="btn sm primary" id="ls-apply" data-make="0" ${can && !st ? '' : 'disabled'} title="${esc(st ? 'Keep or drop the places on show first' : why + '. Pressed again, it makes the land again; Undo takes it back')}">${LST_MAKE[0]}</button></div>`;
   if (st && st.n === n) return `<div class="lst-act"><button class="btn sm primary" data-keep="${n}" title="Keep it. Its shapes leave the map">✓ Keep</button><button class="btn sm" data-retry="${n}" title="Undo it and make it again, rolled anew">↻ Try again</button><button class="btn sm" data-drop="${n}" title="Undo it">✕ Drop</button></div>`;
   return `<div class="lst-act"><button class="btn sm primary" id="${n === 0 ? 'ls-apply' : 'lst-make' + n}" data-make="${n}" ${can && !st ? '' : 'disabled'} title="${esc(st ? 'Keep or drop the stage on show first' : why)}">${LST_MAKE[n]}</button></div>`;
@@ -375,13 +379,15 @@ async function lstBind(i){
 // ----- making a stage, keeping it, trying again, dropping it
 async function lstMake(n, btn){
   if (!await needProject()) return;
-  if (lstStage()) return;
+  if (lstStage() || LM.running) return;
   if (n === 0){ const lb = await lstLandBack(btn); if (!lb){ renderWside(); return; } LM.landBack = lb === 'back'; }
   const d0 = await lstDepth();
   let ok = false;
   try {
+    LM.running = {n, t: 'Working…'};
     ok = n === 0 ? await lstMakeLand(btn) : n === 1 ? await lstMakePlaces(btn) : await lstMakeInsides(btn);
   } catch (e){ toast(e.message, true); }
+  finally { LM.running = null; }
   const d1 = await lstDepth();
   if (d1 > d0){
     if (d1 - d0 > 1){ try { await post('/api/fold', {n: d1 - d0, note: LST_NOTE[n]}); } catch (e){} }
@@ -430,13 +436,13 @@ async function lstMakeLand(btn){
   const P = LM.plan;
   const layers = P.layers.filter(L => lstOf(L) === 0);
   const send = Object.assign({}, P, {layers, start: LM.landBack ? 'now' : '', kept: [], protect: Object.assign({}, P.protect || {}, {fresh: false}), clear: lstClear()});
-  btn.disabled = true; btn.textContent = `Making ${cells.length} cells…`;
+  btn.disabled = true; btn.textContent = `Making ${cells.length} cells…`; if (LM.running) LM.running.t = btn.textContent;
   await lmKeepBefore('the land');
   const poll = setInterval(async () => {
     let p; try { p = await api('/api/land/progress'); } catch (e){ return; }
     if (!p || !p.on) return;
     const pct = Math.round(p.frac * 100), b = $('#ls-apply');
-    if (b){ b.disabled = true; b.textContent = `${p.what}… ${pct}%`; b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`; }
+    if (LM.running) LM.running.t = `${p.what}… ${pct}%`; if (b){ b.disabled = true; b.textContent = `${p.what}… ${pct}%`; b.style.background = `linear-gradient(90deg, var(--gold) ${pct}%, transparent ${pct}%)`; }
   }, 600);
   try {
     const r = cells.length ? await post('/api/land/plan/apply', {cells, plan: send}) : {cells: 0};
@@ -466,7 +472,7 @@ async function lstMakePlaces(btn){
   const todo = lstPlacesTodo();
   if (!todo.length) return false;
   let now = '';
-  const label = t => { now = t; const b = $('#lst-make1') || btn; if (b){ b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(t)}`; } };
+  const label = t => { now = t; if (LM.running) LM.running.t = t; const b = $('#lst-make1') || btn; if (b){ b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(t)}`; } };
   // (the step and how far it has got, on this button: a castle's 2 minutes said only "Building the castle…" here, its
   // bar on the castle's own panel, the user's "unclear progress bars", 2026-11-09)
   const tick = setInterval(async () => {
@@ -537,7 +543,7 @@ async function lstMakePlacesRun(btn, todo, label){
 }
 async function lstMakeInsides(btn){
   const I = LM.ins || {};
-  const label = t => { const b = $('#lst-make2') || btn; if (b){ b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(t)}`; } };
+  const label = t => { if (LM.running) LM.running.t = t; const b = $('#lst-make2') || btn; if (b){ b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(t)}`; } };
   const said = [];
   if ((I.interiors || I.people) && (LM.later || []).length){
     label('Making the interiors…');

@@ -93,7 +93,12 @@ MASS_SIZES = (1800.0, 1300.0, 900.0, 650.0)   # (the sizes tried, biggest first)
 MASS_OFFS = ((0.0, 0.0),) + tuple((r * math.cos(k * math.pi / 4), r * math.sin(k * math.pi / 4)) for r in (0.35, 0.7) for k in range(8))
 MASS_PLOT = 0.7                # (a big rock's body off the plots: it laps one by under a third of its half width)
 MASS_TRIES = 25                # (the spots tried a size a round, the barest first)
-BANK_SMALLEST = 200.0          # (the smallest bank rock across; banks rocks lap each other at OVERLAP, packed)
+BANK_BACK = 160.0              # (a bank's rock is stood back from a street at most this far from its bank's spot)
+ROAD_NEAR = 700.0              # (a paved patch this near a street is that street's: its bank may take rocks)
+BANK_SMALLEST = 200.0          # (the smallest bank rock across; banks rocks lap each other at OVERLAP, packed. 150, more tries
+                               # and a lean back against the bank were tried 2026-11-11: no rock more, the rim rule drops them)
+LEAN_MAX = 38.0
+STREET_SIDE = 220.0            # (a bank's rock this near a street is one of the street's side)
 TOP_SHARE = 0.2                # one model is at most this share of a town's rocks (the game's hill towns: the commonest
                                # 0.21 of a town's rocks, the three commonest 0.47; ours 0.26 to 0.36 and 0.58, lab 2026-11-10)
 CLONE_TURN = 0.5               # two touching rocks of one model turned within this of each other (radians) and within
@@ -416,7 +421,7 @@ def _ground(db, x, y, memo=None):
     return memo[k]
 
 
-def pose(rng, b, s, x, y, gr, bin_, P, tilt_scale=1.0, align=0.5, along=False):
+def pose(rng, b, s, x, y, gr, bin_, P, tilt_scale=1.0, align=0.5, along=False, sway=40.0, lean=0.0):
     """A rock's turn at a spot: its long axis down the slope (with chance `align`, within 30 degrees; else any way,
     the game's rocks lie nearly any way to their slope, cos p50 0.7), its top tipped the way the ground falls by the
     game's tilt for the slope's bin. (rx, ry, rz)."""
@@ -426,7 +431,7 @@ def pose(rng, b, s, x, y, gr, bin_, P, tilt_scale=1.0, align=0.5, along=False):
     if gr and slope > 0.03 and along:
         # (its long axis along the bank, across the fall: a bank's rocks shore it up the length of it)
         down = math.atan2(-gr[1], -gr[0])
-        rz = (-(down + math.pi / 2 - long_local) + (rng.random() - 0.5) * math.radians(40)) % (2 * math.pi)
+        rz = (-(down + math.pi / 2 - long_local) + (rng.random() - 0.5) * math.radians(sway)) % (2 * math.pi)
     elif gr and slope > 0.03 and rng.random() < align:
         down = math.atan2(-gr[1], -gr[0])          # (the world angle of the way downhill)
         # (local +X points along the world angle -rz: rz = -(angle wanted for +X))
@@ -437,6 +442,11 @@ def pose(rng, b, s, x, y, gr, bin_, P, tilt_scale=1.0, align=0.5, along=False):
     if gr and slope > 0.03:
         pct = (P['bins'].get(bin_) or {}).get('tilt') or [2, 4, 8, 14, 22]
         t = math.radians(min(28.0, max(0.0, _draw(rng, pct) * tilt_scale)))
+        if lean:
+            # (laid back against its bank: by this share of the slope's own angle at least, LEAN_MAX at most, as the
+            # land's cliff pieces lean, rockface.LEAN_K; level on a slope of one in one its downhill rim stood a rock's
+            # width in the air and it was dropped, 60 of a town's bank rocks, lab 2026-11-11)
+            t = max(t, min(math.radians(LEAN_MAX), math.atan(slope) * lean))
         c, sn = math.cos(rz), math.sin(rz)
         dx, dy = -gr[0] / slope, -gr[1] / slope      # (the way downhill)
         lx, ly = dx * c - dy * sn, dx * sn + dy * c    # (in the rock's own frame: Pose.local)
@@ -484,6 +494,9 @@ class _Space:
             cs = p_.get('corners')
             if cs and len(cs) >= 4:
                 self.wall.append(townbuild._grown([tuple(c) for c in cs[:4]], 32.0))
+        # (and the retaining walls along the streets' sheer sides, laid before the rocks: retain.py)
+        for q_ in plan.get('_retain') or ():
+            self.wall.append([tuple(c_) for c_ in q_])
         # door fronts: every door the town set (its buildings' front and back doors), a clear circle round each
         self.doors = []
         self.things = []
@@ -506,19 +519,24 @@ class _Space:
         self._in_rect = townbuild._in_rect
         self._street_dist = townbuild._street_dist
 
-    def free(self, x, y, half, loose=False, wall_ok=False):
-        """May a rock of this half-size stand at (x, y)? loose: an outcrop's, which may lap its neighbours."""
-        why = self._why(x, y, half, loose, wall_ok)
+    def free(self, x, y, half, loose=False, wall_ok=False, bank=False, cross=None):
+        """May a rock of this half-size stand at (x, y)? loose: an outcrop's, which may lap its neighbours. bank: a
+        bank's rock, which may stand in a street's paved patch, off the street itself."""
+        why = self._why(x, y, half, loose, wall_ok, bank, cross)
         if why:
             self.refused[why] += 1
         return not why
 
-    def _why(self, x, y, half, loose, wall_ok):
+    def _why(self, x, y, half, loose, wall_ok, bank=False, cross=None):
         r = half * 0.7
+        # (a bank's rock lies along its bank, its long side along the street or the house wall at the bank's foot or
+        # top: towards them it reaches its short side, cross. By its long side every spot on a bank 300 wide between a
+        # street and a house was refused, 278 for the street and 160 for the plot in one town, lab 2026-11-11)
+        cr = min(half, cross) if (bank and cross) else half
         if len(self.outline) >= 3 and not _inside_poly(self.outline, x, y) and _edge_dist(self.outline, x, y) > self.pad:
             return 'far'
         for q in self.rects:
-            if self._in_rect(q, x, y) or _rect_dist(q, x, y) < r * 0.5:
+            if self._in_rect(q, x, y) or _rect_dist(q, x, y) < cr * 0.7 * 0.5:
                 return 'plot'
         for q in self.ways:
             if self._in_rect(q, x, y) or _rect_dist(q, x, y) < r * 0.5:
@@ -535,10 +553,13 @@ class _Space:
         for dx, dy in self.doors:
             if math.hypot(x - dx, y - dy) < DOOR_CLEAR + half * BODY:
                 return 'door'
-        if (int(math.floor(x / self.PATCH)), int(math.floor(y / self.PATCH))) in self.roads:
-            return 'road'
         sd = self._street_dist(self.plan, x, y)
-        if sd is not None and sd < half * BODY:
+        # (a paved patch is a square of 512: the bank beside a street lies in its street's patches, and every rock for
+        # it was refused as on the road, the user's Senchal, 2026-11-11, "why did this get two rocks?". Where a street
+        # runs by, its own edge is the rule; a patch with no street near, a gate's road or the square, stays clear)
+        if (int(math.floor(x / self.PATCH)), int(math.floor(y / self.PATCH))) in self.roads and (not bank or sd is None or sd > ROAD_NEAR):
+            return 'road'
+        if sd is not None and sd < cr * BODY:
             return 'street'
         if self.square and math.hypot(x - self.square[0], y - self.square[1]) < self.square[2] + r:
             return 'square'
@@ -1159,14 +1180,18 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
     target = min(0.95, BANK_COVER * max(0.3, min(1.15, amount)))
     # (a vertex on a street, a road patch, the square or a footpath's tread is the walk itself: never a bank's rock)
     order = []
+    skip = Counter()
+    ref0 = Counter(S.refused)
     for (i, j), worst in steep.items():
         if (i, j) in covered:
             continue
         x, y = i * 128.0, j * 128.0
         sd = S._street_dist(plan, x, y)
         if sd is not None and sd <= 0:
+            skip['street'] += 1
             continue
-        if (int(math.floor(x / S.PATCH)), int(math.floor(y / S.PATCH))) in S.roads:
+        if (int(math.floor(x / S.PATCH)), int(math.floor(y / S.PATCH))) in S.roads and (sd is None or sd > ROAD_NEAR):
+            skip['road'] += 1
             continue
         lo = min(v for v in (vz(i + 2, j), vz(i - 2, j), vz(i, j + 2), vz(i, j - 2), vz(i, j)) if v is not None)
         hi = max(v for v in (vz(i + 2, j), vz(i - 2, j), vz(i, j + 2), vz(i, j - 2), vz(i, j)) if v is not None)
@@ -1210,7 +1235,7 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
                     sd2 = S._street_dist(plan, x, y)
                     g = _ground(db, x, y, memo)
                     gr2 = _grad(db, x, y, 256.0)
-                    w_ = S._why(x, y, half, True, False) or ('keep' if (sd2 is not None and sd2 < half * BANK_STREET_KEEP) else '')                         or ('plot' if any(_rect_dist(q, x, y) < half * MASS_PLOT for q in S.rects) else '')                         or ('ground' if (g is None or g < 0 or gr2 is None) else '')
+                    w_ = S._why(x, y, half, True, False, True) or ('keep' if (sd2 is not None and sd2 < half * BANK_STREET_KEEP) else '')                         or ('plot' if any(_rect_dist(q, x, y) < half * MASS_PLOT for q in S.rects) else '')                         or ('ground' if (g is None or g < 0 or gr2 is None) else '')
                     if not w_:
                         why = ''
                         break
@@ -1245,6 +1270,7 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
         if (i, j) in covered:
             continue
         if not any((i + di, j + dj) in steep and (i + di, j + dj) not in covered for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+            skip['lone'] += 1
             continue                               # (a lone bare vertex is no bank: no rock of its own)
         tried += 1
         x0, y0 = i * 128.0, j * 128.0
@@ -1267,11 +1293,22 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
             off = BANK_OFFS[_try % len(BANK_OFFS)] * half
             jit = (rng.random() - 0.5) * 96.0
             x, y = x0 + dx_ * off - dy_ * jit, y0 + dy_ * off + dx_ * jit
-            if not S.free(x, y, half, loose=True):
+            cross = min(b[3] - b[0], b[4] - b[1]) * s_ / 2.0
+            if S._why(x, y, half, True, False, True, cross) == 'street':
+                # (a hand's breadth too near the street: stood back from it up or down its bank, before a smaller rock is
+                # tried; 181 of a town's bank spots went for the street alone, lab 2026-11-11)
+                sd0 = S._street_dist(plan, x, y)
+                gx_ = (S._street_dist(plan, x + 32.0, y) or 0.0) - (S._street_dist(plan, x - 32.0, y) or 0.0)
+                gy_ = (S._street_dist(plan, x, y + 32.0) or 0.0) - (S._street_dist(plan, x, y - 32.0) or 0.0)
+                gl_ = math.hypot(gx_, gy_)
+                need_ = cross * BODY - (sd0 or 0.0) + 12.0
+                if gl_ > 1e-6 and 0 < need_ <= BANK_BACK:
+                    x, y = x + gx_ / gl_ * need_, y + gy_ / gl_ * need_
+            if not S.free(x, y, half, loose=True, bank=True, cross=cross):
                 smaller *= 0.75
                 continue
             sd2 = S._street_dist(plan, x, y)
-            if sd2 is not None and sd2 < half * BANK_STREET_KEEP:
+            if sd2 is not None and sd2 < cross * BODY:
                 S.refused['shoulder'] += 1
                 smaller *= 0.75
                 continue
@@ -1280,7 +1317,15 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
             if g is None or g < 0 or gr2 is None:
                 continue
             kb = slope_bin(math.hypot(*gr2))
-            rot = pose(rng, b, s_, x, y, gr2, kb, P, align=0.0, along=True)
+            # (by a street it lies true along its bank: swayed 20 degrees either way, its corners swung onto the paving)
+            rot = pose(rng, b, s_, x, y, gr2, kb, P, align=0.0, along=True, sway=10.0 if (sd2 is not None and sd2 < STREET_SIDE) else 40.0)
+            # (and as it lies, no corner of its body on the street: by its short side alone 15 of 35 lapped one)
+            c_, sn_ = math.cos(rot[2]), math.sin(rot[2])
+            if any(S._street_dist(plan, x + (lx_ * c_ + ly_ * sn_) * s_ * BODY, y + (-lx_ * sn_ + ly_ * c_) * s_ * BODY) == 0
+                   for lx_ in (b[0], b[3]) for ly_ in (b[1], b[4])):
+                S.refused['street corner'] += 1
+                smaller *= 0.75
+                continue
             sink = _draw(rng, P['bins'][kb]['sink'] or [20, 50, 100, 200, 400], 0.2, 0.6)
             if put(rid, b, s_, x, y, g - sink - b[2] * s_, rot, 'bank', loose=True):
                 laid += 1
@@ -1289,7 +1334,74 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
                 break
             taller *= 1.3
     return {'steep': len(steep), 'covered_before': round(before, 3), 'covered_after': round(len(covered) / float(len(steep)), 3),
-            'laid': laid, 'masses': masses, 'tried': tried, 'mass_refused': {'%d %s' % k: v for k, v in sorted(mwhy.items())}}
+            'laid': laid, 'masses': masses, 'tried': tried, 'mass_refused': {'%d %s' % k: v for k, v in sorted(mwhy.items())},
+            'skipped': dict(skip), 'refused': dict(S.refused - ref0),
+            'left': [(v[0] * 128.0, v[1] * 128.0) for v in steep if v not in covered]}
+
+
+CLAD_STREET = 96.0             # the cladding keeps this far off a street's edge
+CLAD_PLOT = 48.0               # ... and off a building's box
+CLAD_TALL = 260.0              # (a town bank's piece may always stand this tall: the land's gorges take 420)
+
+
+def clad_banks(db, plan, W, new_refs, cells, seed=1, outline=None, amount=1.0):
+    """The sheer ground a town cut for itself clad as the land's own steep ground is (rockface.clad: the region's
+    cliff pieces as faces and foot boulders, each settled by the rim rule), after the bank pass's rocks: inside the
+    town's reach, off its streets, plots, door fronts, ways, treads and wall. The land's steep ground was clad when
+    the land was made; the banks the town's terraces and streets cut after it had only the bank pass, whose rocks
+    are dropped where a rim would show, 45 in a town (the user's Senchal, 2026-11-11: "we spent hours on decorating
+    sheer cliffs and steep ground with rocks. So why did this get two rocks?"). The pieces join the town's own
+    (new_refs). rockface's answer, with 'refs'."""
+    import rockface
+    import landregion
+    import regions
+    S = _Space(db, plan, W, new_refs, cells, outline)
+    plan_ = plan
+
+    def keep(x, y):
+        sd = S._street_dist(plan_, x, y)
+        if sd is not None and sd < CLAD_STREET:
+            return True
+        if (int(math.floor(x / S.PATCH)), int(math.floor(y / S.PATCH))) in S.roads and (sd is None or sd > ROAD_NEAR):
+            return True
+        for q in S.rects:
+            if S._in_rect(q, x, y) or _rect_dist(q, x, y) < CLAD_PLOT:
+                return True
+        for qs in (S.ways, S.treads, S.wall):
+            for q in qs:
+                if S._in_rect(q, x, y) or _rect_dist(q, x, y) < 32.0:
+                    return True
+        for dx, dy in S.doors:
+            if math.hypot(x - dx, y - dy) < DOOR_CLEAR:
+                return True
+        if S.square and math.hypot(x - S.square[0], y - S.square[1]) < S.square[2] + 64.0:
+            return True
+        return False
+
+    def mask(x, y):
+        return len(S.outline) < 3 or _inside_poly(S.outline, x, y) or _edge_dist(S.outline, x, y) <= S.pad
+
+    keys = sorted({(int(k.lstrip('#').split(',')[0]), int(k.lstrip('#').split(',')[1])) for k in cells})
+    rm = regions.region_map(db)
+    rr = {k: landregion.rock_region(db, rm.get('%d,%d' % k) or '', '') for k in keys}
+    before = set()
+    for gx, gy in keys:
+        before.update(r['k'] for r in mapdata.cellmap(db, '#%d,%d' % (gx, gy)).get('refs') or ())
+    tall0 = rockface.TOWER_MIN
+    rockface.TOWER_MIN = CLAD_TALL
+    try:
+        rf = rockface.clad(db, keys, mask=mask, keep=keep, amount=float(amount), seed=seed, parts=('face', 'foot'),
+                           region_of=lambda x, y: rr.get((int(math.floor(x / 8192.0)), int(math.floor(y / 8192.0))), ''))
+    finally:
+        rockface.TOWER_MIN = tall0
+    refs = []
+    if rf.get('rocks'):
+        for gx, gy in keys:
+            for r in mapdata.cellmap(db, '#%d,%d' % (gx, gy)).get('refs') or ():
+                if r['k'] not in before:
+                    refs.append(r['k'])
+        new_refs.update(refs)
+    return dict({k: v for k, v in rf.items() if k not in ('zones',)}, refs=refs)
 
 
 def knoll(db, outline, memo=None):

@@ -280,6 +280,7 @@ def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, com
     c_, _refs = editing._cell(db, cell)
     placed, dressed = 0, 0
     taken = []
+    clear = _keep_clear(db, cell, m)
     # (a second pass keeps clear of the things lying there already: a cup set into the first pass's bowl)
     lying = [(p[0], p[1], p[2]) for p in small] if already and already > ALREADY else []
     for r, ak, b in anchors:
@@ -325,6 +326,19 @@ def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, com
                 continue
             ib = mapdata.object_bounds(db, ri)
             z = surf - (ib[2] * isc if ib else 0.0) if abs(rx) < 0.3 and abs(ry) < 0.3 else surf + max(0.0, lz - (want - bottom))
+            if ib and not top:
+                # (the user's Senchal, 2026-11-11: "crate in middle of stair landing", "crates in way of path", "make
+                # sure the clutter is at least arranged so it isn't in the way or clipping into walls")
+                rad = min(max(ib[3] - ib[0], ib[4] - ib[1]) * isc / 2.0, 70.0)
+                if _in_clear(clear, x, y, surf, rad):
+                    continue                  # (on a stair's foot or head, a door's floor or a way between them)
+                mid = z + (ib[2] + ib[5]) / 2.0 * isc
+                near_ = [sc.nearest_any((x, y, mid), (math.cos(a_ * math.pi / 4), math.sin(a_ * math.pi / 4), 0.0), max(rad, 30.0)) for a_ in range(8)]
+                near_ = [h_ for h_ in near_ if h_ is not None and sc.owner(h_[1]) != r['k']]
+                if rad >= BODY_MIN and any(h_[0] < rad * BODY_IN for h_ in near_):
+                    continue                  # (its body in a wall, a post or another piece)
+                if (abs(rx) > 0.3 or abs(ry) > 0.3) and not near_ and d > LEAN_REACH:
+                    continue                  # (it leaned on something that is not here: a book stood on its edge in the open floor)
             rk = db.project.new_ref_key()
             editing._store(c_, rk, mine, int(rk.rsplit('|', 1)[1]),
                            set_ref_pos([('NAME', zs(db.recs[ri][1]))], (x, y, z, rx, ry, (pos[5] + rrz) % (2 * math.pi)), isc))
@@ -352,6 +366,64 @@ CAMP_NEAR = 160                 # furniture this near a camp's anchor is the cam
 CAMP_APART = 380                # camps laid this far apart at least
 DOOR_CLEAR = 220                # and this far from a door
 CAMP_KINDS = ('bedroll', 'bed', 'fire', 'table')
+
+
+STAIR_ROUND = 0.75              # (and within this share of a tile of a flight's own footprint)
+STAIR_CLEAR = 150               # nothing is laid on the floor this near a stair's foot or head
+DOOR_FLOOR = 110                # ... or a door's floor
+BODY_MIN = 14                   # (a thing this big across at least is kept out of walls: a coin's box is nothing)
+BODY_IN = 0.7                   # (a wall nearer its middle than this share of its half width cuts into it)
+LEAN_REACH = 60                 # (a tilted thing this near its anchor leans on it)
+
+
+def _keep_clear(db, cell, m):
+    """The floor a made home keeps clear of loose things: ([(x0, y0, x1, y1, z)] along the ways between its doors and
+    stairs, [(x, y, z, r)] round each stair's foot and head and each door's floor). Interiors only; nothing where the
+    place has no rooms to read."""
+    if not cell or cell.startswith('#'):
+        return [], [], []
+    try:
+        import furnish
+        import walkroom
+        info = furnish.rooms(db, cell)
+        fl = walkroom.Floor(info)
+        if not fl.cells:
+            return [], [], []
+        discs = []
+        for o in walkroom.openings(fl, m['refs']):
+            pts = [fl.cells[nd] for nd in (o[1] if isinstance(o[1], (list, tuple, set, frozenset)) else [o[1]]) if nd in fl.cells]
+            if not pts:
+                continue
+            x, y, z = (sum(p_[k] for p_ in pts) / len(pts) for k in range(3))
+            discs.append((x, y, z, STAIR_CLEAR if o[0].startswith('stair') else DOOR_FLOOR))
+        # (and the floor round a flight, the tile before its foot and its head whichever way it runs: the roof stair's
+        # ends are read a little off, and a crate stood 190 before its foot, "in the middle of the stair landing")
+        T = info.get('tile') or 256
+        round_ = []
+        for r in m['refs']:
+            if r.get('b') and r['type'] in ('STAT', 'ACTI') and walkroom.STAIR.search(r['id'].lower()):
+                f = walkroom._fp(r)
+                if f[5] - f[4] >= 100:
+                    g = T * STAIR_ROUND
+                    round_.append((f[0] - g, f[1] - g, f[2] + g, f[3] + g, f[4] - 40, f[5] + 40))
+        return list(walkroom.clearings(info, m['refs'])), discs, round_
+    except Exception as e:
+        print('lived in, the ways:', cell, e)
+        return [], [], []
+
+
+def _in_clear(clear, x, y, z, rad):
+    boxes, discs, round_ = clear
+    for x0, y0, x1, y1, z0, z1 in round_:
+        if z0 <= z <= z1 and x0 < x < x1 and y0 < y < y1:
+            return True
+    for x0, y0, x1, y1, bz in boxes:
+        if abs(bz - z) < 60 and x0 - rad < x < x1 + rad and y0 - rad < y < y1 + rad:
+            return True
+    for dx, dy, dz, r in discs:
+        if abs(dz - z) < 60 and math.hypot(x - dx, y - dy) < r + rad:
+            return True
+    return False
 
 
 def _camps_of(db, p, things, band, camps, beds_per, people):

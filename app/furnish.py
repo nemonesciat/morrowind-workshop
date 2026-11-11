@@ -79,6 +79,10 @@ BARE_STONE = re.compile(r'(altar|shrine)[^a-z]*(base|block|slab|plinth|pedestal|
 # (the dreugh's own make, Tamriel Data's t_dreu_ altars and furniture: only in a dreugh's grotto, never
 # in a house; the user's "Dreugh altars and furniture don't go in land based dwellings")
 DREUGH_MAKE = re.compile(r'^t_dreu_|dreugh')
+# (and the Dwemer's own furniture, their stoves, stools, tables and shelves: in their ruins only. Their small
+# finds, a coin or a cup on a trader's shelf, are goods and stay)
+DWEMER_MAKE = re.compile(r'^furn_dwrv|^t_dwe_furn|^in_dwrv|^in_dwe_')
+DWEMER_SHELL = re.compile(r'^in_dwrv_|^in_dwe_|^t_dwe_dngruin|^ex_dwrv_', re.I)
 HANGING_KINDS = ('shelf',)      # the only furniture put up on a wall (at the height the game hangs it)
 BED_OFF_THE_WAY = True          # a bed in a small room never across the line from its doorway to its middle (for the lab: off to compare)
 WORK_TABLE_REACH = 300          # a kitchen's hearth has a table or counter this near (the game's median 249): 0 to leave it to the recipe
@@ -355,7 +359,8 @@ STYLE_KINDS = ('bed', 'table', 'chair', 'bench', 'chest', 'cupboard', 'shelf', '
 
 
 STAIR_LANDINGS = True    # (a stair keeps a landing clear at its foot and its head only: stair_landings)
-LANDING = 160            # (how deep a stair's landing is kept clear)
+LANDING = 232            # (how deep a stair's landing is kept clear: the tile before its foot and its head. At 160 a crate
+                         # stood 190 before a flight's foot, "in the middle of the stair landing", the user's Senchal 2026-11-11)
 WALK_WAYS = True         # (the ways between doors, stairs and rooms kept clear: walkroom.clearings)
 SMALL_ROOM_HUNG = (6.0, 2.5, 0.55)   # (a home's room of up to 6 tiles of 256 hangs one light at most; up to 2.5, one only this often)
 HOME_RACK = 0.05         # (the share of homes whose walls get a weapon rack: house_hangings)
@@ -2435,6 +2440,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
     # (a dreugh's grotto, by its name or its own dreugh-made building pieces: the only place for their altars)
     grotto = 'dreugh' in ((mapdata.cell_info(db, cell_key) or {}).get('name') or cell_key).lower() \
         or any(r['id'].lower().startswith('t_dreu_') and '_furn_' not in r['id'].lower() for r in mapdata.cellmap(db, cell_key).get('refs', []))
+    # (and a Dwemer place, by its own building pieces: the only place for Dwemer stoves, stools and tables)
+    dwemer_place = any(DWEMER_SHELL.search(r['id']) for r in mapdata.cellmap(db, cell_key).get('refs', []))
     if rough:
         for rm in info['rooms']:
             if re.match(r'^room \d+$', (rm['name'] or '').lower()) or not rm['name']:
@@ -2964,6 +2971,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             return None                      # (a bare stone block, slab or pedestal: never furniture in a house, by any path)
         if tag in ('STAT', 'ACTI', 'CONT') and not grotto and DREUGH_MAKE.search(rid.lower()):
             last_trace.append((room, 'set', rid, "the dreugh's make outside a dreugh grotto: left out"))
+            return None
+        if tag in ('STAT', 'ACTI', 'CONT', 'LIGH') and not dwemer_place and DWEMER_MAKE.search(rid.lower()):
+            # (the user's Senchal, 2026-11-11: "a dwemer stove in a house?"; three taverns had one, and 38 Dwemer stools)
+            last_trace.append((room, 'set', rid, 'the Dwemer make outside a Dwemer place: left out'))
             return None
         if RIDER_ONLY.search(rid.lower()) and not on_top and at_z is None:
             # (a bath's water sheet, a flame: only ever inside the piece it belongs to, a tub or a hearth

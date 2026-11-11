@@ -558,22 +558,30 @@ def lay(db, plan, family=None, cell=None):
         # the nearest side however far, else in the middle of a side; the side chosen as gates are kept, dry, no cliff,
         # low; the road paved from the street's end to it)
         streets, roads = _fallback_gate(db, plan, poly, roads, kit['L'], ok_sides)
+    # (and a wall that still comes out with no gate, its street's crossing too near a corner for one to stand, gets the
+    # same one gate: one walled plan in six had none, a sealed town, the cold start of 2.6.17 and of 2.6.16 alike)
     gates = 0
-    for k in range(n):
-        out_ = units[k][-1]
-        in_ = units[(k + 1) % n][0]
-        b, c_ = poly[k], poly[(k + 1) % n]
-        d = _unit(c_[0] - b[0], c_[1] - b[1])
-        D = (in_.x - out_.x) * d[0] + (in_.y - out_.y) * d[1]
-        lat = -(in_.x - out_.x) * d[1] + (in_.y - out_.y) * d[0]
-        if abs(lat) > SNAP:
-            faults.append('side %d: corners %.0f units off one line' % (k, lat))
-        off = (out_.x - b[0]) * d[0] + (out_.y - b[1]) * d[1]
-        side, g = _side(kit, out_, D, d, [c0 - off for c0 in streets.get(k) or []], faults, k)
-        gates += g
-        for q in side:
-            q['run'] = k
-        pieces.extend(side)
+    for _attempt in (0, 1):
+        sides_, gates = [], 0
+        for k in range(n):
+            out_ = units[k][-1]
+            in_ = units[(k + 1) % n][0]
+            b, c_ = poly[k], poly[(k + 1) % n]
+            d = _unit(c_[0] - b[0], c_[1] - b[1])
+            D = (in_.x - out_.x) * d[0] + (in_.y - out_.y) * d[1]
+            lat = -(in_.x - out_.x) * d[1] + (in_.y - out_.y) * d[0]
+            if abs(lat) > SNAP and not _attempt:
+                faults.append('side %d: corners %.0f units off one line' % (k, lat))
+            off = (out_.x - b[0]) * d[0] + (out_.y - b[1]) * d[1]
+            side, g = _side(kit, out_, D, d, [c0 - off for c0 in streets.get(k) or []], faults, k)
+            gates += g
+            for q in side:
+                q['run'] = k
+            sides_.extend(side)
+        if gates or mine or _attempt:
+            break
+        streets, roads = _fallback_gate(db, plan, poly, roads, kit['L'], ok_sides)
+    pieces.extend(sides_)
     for k, chain in enumerate(units):
         # (a tower beside each corner where the game stands one, in the place of the straight there: the sections of the
         # wall meet at towers, the user, 2026-10-31; Imperial corner_01's wall_tower_01 a step along)

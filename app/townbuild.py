@@ -642,6 +642,8 @@ def _game_catalog(db):
             continue
         if _roof_door(db, m, memo):
             continue
+        if _upper_door(db, m, memo):
+            continue
         # (the top of a tower stack, learnt as a building for the door on its platform: set on the ground it stood
         # sunk to its roof, the user's island town, test3. A stack part whose module holds no base piece)
         if STACK_PART.search(m['main']) and not any(BASE_PART.search(p_['id']) for p_ in m['fpieces']):
@@ -794,6 +796,29 @@ def _roof_door(db, m, memo):
     return top is not None and top - dz < ROOF_DOOR
 
 
+UPPER_DOOR = 300               # a building's own door this far under its front door: the front one is an upper door
+
+
+def _upper_door(db, m, memo):
+    """Is the module's front door an upper door of its building: another door of it stands UPPER_DOOR or more lower?
+    Old Ebonheart's Grand Chapel was learnt twice, from its doors on the ground and from its towers' door off the wall
+    walk, 573 over them; set by that one, the chapel stood sunk to its turret in the user's Senchal (2026-11-11: "tower
+    pieces as standalone buildings, the balconies pressed against the ground"). The building stays, by its ground door."""
+    front = min((p_ for p_ in m['fpieces'] if p_.get('door')), key=lambda p_: p_['x'] ** 2 + p_['y'] ** 2 + (p_['z'] * 3) ** 2, default=None)
+    if front is None:
+        return False
+    for p_ in m['fpieces']:
+        if p_ is front or re.search(r'trap|hatch|marker|frame|gate|cellar', p_['id'], re.I) or p_['z'] > front['z'] - UPPER_DOOR:
+            continue
+        k = ('type', p_['id'].lower())
+        if k not in memo:
+            ri = db.resolve_id(p_['id'])
+            memo[k] = db.recs[ri][0] if ri is not None else None
+        if memo[k] == 'DOOR':
+            return True
+    return False
+
+
 def _keep_whole(db, m, fortish, memo):
     """Can this keep stand on its own on level ground, whole? Most of the game's are a part of a bigger fort, their door
     up on a platform or a hillside: their towers reached 2,000 under the door and stood buried, and the lengths of fort
@@ -867,7 +892,9 @@ DOOR_SIDE = 220                # (along a door's own wall, past its frame: its b
 DOOR_OFFS = (0, 30, -30)       # (in its wall's plane and a little out or in: deeper in, a ray ran inside the house it
                                # stood off; 1 of the user's 5 found at 45)
 DOOR_EDGE = 0.75               # (its frame's edge: a wall met nearer the door's middle than this of its half width)
-DOOR_BEHIND = 800              # (straight out of the door and into it)
+DOOR_BEHIND = 120              # (straight out of the door and into it: its own wall, curved or set back. At 800 a house 300
+                               # behind a door held it, and the door stood free in the street with its step, an interior behind
+                               # it: the user's Senchal, 2026-11-11, "MAKE SURE THESE DOORS ARE ON BUILDINGS")
 LONE_WITH = 160                # (a lone door's step, frame, awning, sign or window over it: this near, they go with it)
 NOT_A_WAY_IN = re.compile(r'trap|hatch|grate|gate|marker', re.I)
 
@@ -973,7 +1000,7 @@ def _lone_path(sig):
     import project
     folder = os.path.join(project.APP_DIR, 'cache')
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'lonedoors_%s_v5.json' % sig)
+    return os.path.join(folder, 'lonedoors_%s_v6.json' % sig)
 
 
 def _lone_save():
@@ -1700,6 +1727,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             if p_.get('door'):
                 doors.append((key, rk))
                 q['door_z'] = pos[2]
+                # (the door's sill, the height its surroundings were learnt from: a door's own height is its middle on
+                # the Common and Imperial doors, 98 over the sill, and every lantern, sign and banner learnt round such
+                # a building hung 98 too high, a building's own banner set again over itself; the user's Senchal)
+                q['sill_z'] = z0
                 if p_ is front:
                     q['door_ref'] = (key, rk)        # (the way in, at the module's origin: its interior's door links here)
             elif db.recs[ri][0] == 'DOOR' and not re.search(r'trap|hatch|gate|marker', p_['id'], re.I):
@@ -1712,8 +1743,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     if pieces:
         _say('Fitting the ground to the buildings', 0.865)
         db.sync_project()
-        fitted = _fit_ground(db, doors, new_refs, [(tuple(q['door_ref']), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect')],
-                             guard=wall_guard)
+        # (every door of a building, not its front one alone: a side door up a step stood 140 over the ground)
+        own_ = [(tuple(q['door_ref']), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect')]
+        more_ = [(tuple(d_), q['rect']) for q in plan['plots'] if q.get('door_ref') and q.get('rect') for d_ in q.get('more_doors') or ()]
+        fitted = _fit_ground(db, doors + [d_ for d_, _r in more_ if d_ not in doors], new_refs, own_ + more_, guard=wall_guard)
         import os as _os
         if _os.environ.get('TOWN_UNCOVER', '1') != '0':
             try:
@@ -1810,6 +1843,17 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 print('town: %d kinked land points rounded' % n_sm)
         except Exception as e:
             print('town smooth:', e)
+    # (a building's other door left high over the ground once every pass has had its say, a street pinned level under
+    # it: taken out with its step, so no door hangs over a drop and no household is made behind one)
+    if pieces and made:
+        try:
+            db.sync_project()
+            n_hd = _drop_high_doors(db, plan, new_refs)
+            if n_hd:
+                print('town: %d side doors left out, too high over the street under them' % n_hd)
+                db.sync_project()
+        except Exception as e:
+            print('town high doors:', e)
     # (the culture's rocks set into the hill: behind the houses' cut banks, under perched floors, along the footpaths'
     # banks and the wall's, a crown outcrop on a knoll; each sunk until its mesh's bottom rim is under the ground.
     # rockblend.py, the user's lesson of 2026-11-08: "the cliff and rock palette ... a rugged and lofty appearance")
@@ -1819,10 +1863,44 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         try:
             import rockblend
             db.sync_project()
+            # (first the sheer sides of the streets regraded into a clean step and held by thick rock, tall as the soil
+            # behind it: retain.py, by the user's rules of 2026-11-11. The bank pass's rocks keep off them)
+            # (on since the user saw the lab's pictures and said so, 2026-11-11: rows of one make of rock, tops 47-64 over
+            # the soil; TOWN_RETAIN=0 leaves them out)
+            rw = None
+            if os.environ.get('TOWN_RETAIN', '1') != '0':
+                try:
+                    import retain
+                    rw = retain.revet(db, plan, W, new_refs, cells, plan.get('culture') or culture, seed, outline=plan.get('outline') or outline)
+                    if rw.get('rocks'):
+                        pieces += rw['rocks']
+                        print('town: %d rocks holding %d sheer sides of its streets (%d land points regraded, %d sides with a gap)'
+                              % (rw['rocks'], rw['runs'], rw['ground'], rw['bare']))
+                        db.sync_project()
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    print('town retaining walls:', e)
             rb = rockblend.blend(db, plan, plan.get('culture') or culture, seed, W, new_refs, cells, outline=plan.get('outline') or outline)
+            rb['walls'] = rw or {}
             if rb['rocks']:
                 rocks_n = rockblend.place(db, rb['rocks'], new_refs, cells)
                 pieces += rocks_n
+            # (and the sheer ground the town cut for itself clad as the land's own steep ground is: rockblend.clad_banks.
+            # Off: in the lab's Senchal it found 41 steep points free of streets, plots and doors and laid 4 pieces, one
+            # 2,000 across; the town's bare strips lie between a street's edge and a house, too narrow for it)
+            if os.environ.get('TOWN_CLAD', '0') == '1':
+                try:
+                    db.sync_project()
+                    cb = rockblend.clad_banks(db, plan, W, new_refs, cells, seed, outline=plan.get('outline') or outline)
+                    rb['clad'] = {k: v for k, v in cb.items() if k in ('rocks', 'parts', 'dropped', 'cover', 'steep_points', 'rejects', 'why')}
+                    rb['clad_placed'] = cb.get('placed') or []
+                    if cb.get('rocks'):
+                        rocks_n += cb['rocks']
+                        pieces += cb['rocks']
+                        print('town: %d cliff pieces over its sheer ground (%s), %s of it covered' % (cb['rocks'], ', '.join('%s %d' % kv for kv in sorted((cb.get('parts') or {}).items())), cb.get('cover')))
+                except Exception as e:
+                    print('town cladding:', e)
             plan['_rocks'] = rb
             if rocks_n or rb.get('dropped'):
                 print('town: %d rocks set into the hill (%s; rate factor %s, %d dropped for a naked bottom edge)'
@@ -2681,6 +2759,88 @@ def _street_profile(db, st, pinned):
             f = max(0.0, 1.0 - abs(k - i) * 128.0 / STREET_SMOOTH)
             eased.append((x, y, z + dz * f))
         out = eased
+    return _graded(out, pinned)
+
+
+def _is_ramp(st):
+    return bool(st.get('ramp')) and not st.get('stair')
+
+
+def _ramp_profile(db, st, pinned):
+    """[(x, y, z)] every 128 along a ramp: one even climb from the level at its first point to the level at its last
+    (the streets it joins, else the land). The ramps were levelled like any street, after the streets they join and
+    never over them: wherever a ramp lay in their width it was held at their level, and the whole climb fell on the two
+    or three points between, 184 up at 0.56 where its length gave 0.17 (the user's Senchal, 2026-11-11: "a path that
+    should be less steep"). Its own width is now its own (_level_streets)."""
+    pts = st.get('pts') or []
+    out, run = [], 0.0
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        L = math.hypot(bx - ax, by - ay)
+        if L < 1:
+            continue
+        for k in range(int(L // 128)):
+            out.append((ax + (bx - ax) * k * 128 / L, ay + (by - ay) * k * 128 / L, run + k * 128))
+        run += L
+    if len(pts) >= 2:
+        out.append((pts[-1][0], pts[-1][1], run))
+    if len(out) < 2 or run < 1:
+        return []
+
+    def level(x, y):
+        z = pinned(x, y)
+        return z if z is not None else mapdata.terrain_z(db, x, y)
+    z0, z1 = level(out[0][0], out[0][1]), level(out[-1][0], out[-1][1])
+    if z0 is None or z1 is None or z0 < 0 or z1 < 0:
+        return _street_profile(db, st, pinned)
+    return [(x, y, z0 + (z1 - z0) * d / run) for x, y, d in out]
+
+
+STREET_MAX_GRADE = 0.3         # a street climbs this much a unit at most along its length (17 degrees)
+
+
+def _graded(prof, pinned):
+    """A street's profile with its climb spread along it: no step of 128 rises or falls more than STREET_MAX_GRADE.
+    A street crossing the bank between two levels followed the bank, 184 up in a few steps at 0.6, and the bank pass
+    took the paved slope for a bare bank and set rocks on it (the user's Senchal, 2026-11-11: "a path that should be
+    less steep and not have rocks at all"). Each run of points takes the middle of the two gentlest lines that hold it
+    (cut above, fill below, alike); pinned levels, a junction's or the square's, stay, the points between them eased
+    to them."""
+    g = STREET_MAX_GRADE * 128.0
+    out = list(prof)
+    n = len(out)
+    i = 0
+    while i < n:
+        if out[i][2] is None:
+            i += 1
+            continue
+        j = i
+        while j < n and out[j][2] is not None:
+            j += 1
+        f = [out[k][2] for k in range(i, j)]
+        m = len(f)
+        if m >= 3 and any(abs(f[k + 1] - f[k]) > g for k in range(m - 1)):
+            pin = [pinned(out[i + k][0], out[i + k][1]) is not None for k in range(m)]
+            up = [max(f[b_] - g * abs(a_ - b_) for b_ in range(m)) for a_ in range(m)]
+            lo = [min(f[b_] + g * abs(a_ - b_) for b_ in range(m)) for a_ in range(m)]
+            z = [f[k] if pin[k] else (up[k] + lo[k]) / 2.0 for k in range(m)]
+            for _pass in range(3):
+                for k in range(1, m):
+                    if not pin[k]:
+                        z[k] = max(z[k - 1] - g, min(z[k - 1] + g, z[k]))
+                for k in range(m - 2, -1, -1):
+                    if not pin[k]:
+                        z[k] = max(z[k + 1] - g, min(z[k + 1] + g, z[k]))
+            # (between two pinned levels too near each other for the grade, a ramp 1,077 long whose ends lie in the
+            # streets it joins: the climb even over every point it has, the gentlest there is; it stood 184 up over
+            # two points at 0.56 with five level ones beside them)
+            fixed = [k for k in range(m) if pin[k]]
+            for a_, b_ in zip(fixed, fixed[1:]):
+                if b_ - a_ >= 2 and any(abs(z[k + 1] - z[k]) > g + 1.0 for k in range(a_, b_)):
+                    for k in range(a_ + 1, b_):
+                        z[k] = z[a_] + (z[b_] - z[a_]) * (k - a_) / float(b_ - a_)
+            for k in range(m):
+                out[i + k] = (out[i + k][0], out[i + k][1], z[k])
+        i = j
     return out
 
 
@@ -2693,7 +2853,8 @@ def _level_streets(db, plan, skip=()):
     import landscape
     G, N = landscape.CELL, landscape.N
     step = G / (N - 1.0)
-    streets = sorted(plan.get('streets') or (), key=lambda s: (not s.get('main'), bool(s.get('lane') or s.get('court'))))
+    # (the ramps last: a ramp's own width is its own, over the streets it joins)
+    streets = sorted(plan.get('streets') or (), key=lambda s: (_is_ramp(s), not s.get('main'), bool(s.get('lane') or s.get('court'))))
     target = {}                               # (gx, gy, i, j): (z, weight)
 
     def vkey(x, y):
@@ -2728,7 +2889,8 @@ def _level_streets(db, plan, skip=()):
                     w = 1.0 if d <= r else 0.5 + 0.5 * math.cos(math.pi * (d - r) / STREET_BLEND)
                     target[vkey(x, y)] = (zq, w, max(0.0, d - r), -1)
     for rank, st in enumerate(streets):
-        prof = _street_profile(db, st, pinned)
+        ramp = _is_ramp(st)
+        prof = _ramp_profile(db, st, pinned) if ramp else _street_profile(db, st, pinned)
         good = [(x, y, z) for x, y, z in prof if z is not None]
         if len(good) < 2:
             continue
@@ -2759,7 +2921,7 @@ def _level_streets(db, plan, skip=()):
                 w = 1.0 if dd <= 0 else 0.5 + 0.5 * math.cos(math.pi * min(1.0, dd / STREET_BLEND))
                 k = vkey(x, y)
                 old = target.get(k)
-                if old is None or w > old[1] + 1e-6:
+                if old is None or w > old[1] + 1e-6 or (ramp and d <= hw):
                     mine[k] = (z, w, dd, rank)
         target.update(mine)
     if os.environ.get('TOWN_EASE', '1') != '0':
@@ -3757,6 +3919,56 @@ def _uncover(db, plan, skip=(), guard=()):
     return moved
 
 
+HIGH_DOOR = 100                # a side door's foot this far over the ground before it, after the ground is done: left out
+DOOR_STEP = re.compile(r'entrance|porch|stoop|step|doorframe|door_frame|awning|sign', re.I)
+
+
+def _drop_high_doors(db, plan, new_refs):
+    """The buildings' other doors (more_doors) that ended up HIGH_DOOR or more over the ground in front of them, taken
+    out with their own steps, frames, awnings and signs: the ground is brought up to every door (groundfit), but a
+    street pinned level under a side door is put back, and the door stood 140 over it with its step in the air, an
+    interior behind it (the user's Senchal, 2026-11-11: "some of the ground is too low by the entrance"). The count."""
+    p = db.project
+    n = 0
+    for q in plan['plots']:
+        if not q.get('b') or not q.get('more_doors') or not q.get('rect'):
+            continue
+        cx, cy = sum(v[0] for v in q['rect']) / 4.0, sum(v[1] for v in q['rect']) / 4.0
+        keep = []
+        for key, rk in q['more_doors']:
+            refs = mapdata.cellmap(db, key).get('refs') or ()
+            r = next((x for x in refs if x['k'] == rk), None)
+            if r is None or not r.get('b'):
+                keep.append((key, rk))
+                continue
+            foot = r['p'][2] + r['b'][2] * (r.get('s') or 1.0)
+            ux, uy = r['p'][0] - cx, r['p'][1] - cy
+            h = math.hypot(ux, uy) or 1.0
+            # (out of the building, along the door's own facing: the way of the two that leads away from its middle)
+            fx, fy = -math.sin(r['p'][5]), -math.cos(r['p'][5])
+            if fx * ux + fy * uy < 0:
+                fx, fy = -fx, -fy
+            gs = [mapdata.terrain_z(db, r['p'][0] + fx * d_, r['p'][1] + fy * d_) for d_ in (70, 120)]
+            if None in gs or foot - max(gs) < HIGH_DOOR:
+                keep.append((key, rk))
+                continue
+            gid = p.town_parts.get(rk)
+            out = [(key, rk)]
+            for x in refs:
+                if x['k'] != rk and x['k'] in new_refs and p.town_parts.get(x['k']) == gid and DOOR_STEP.search(x['id'])                         and x['type'] != 'DOOR' and math.hypot(x['p'][0] - r['p'][0], x['p'][1] - r['p'][1]) <= LONE_WITH and abs(x['p'][2] - r['p'][2]) < 260:
+                    out.append((key, x['k']))
+            for ck, k_ in out:
+                c = p.cells.get(ck)
+                if c and k_ in (c.get('refs') or {}):
+                    c['refs'].pop(k_)
+                    p.town_parts.pop(k_, None)
+                    new_refs.discard(k_)
+            q['door_pieces'] = [dp for dp in q.get('door_pieces') or () if dp.get('rk') != rk]
+            n += 1
+        q['more_doors'] = keep
+    return n
+
+
 def _fit_ground(db, doors, skip, plots=(), guard=()):
     """The ground fitted to each new building the way the game's meet theirs (groundfit: raised where its foot would
     show a gap, a landing a step under its door; the game never levels the ground under a building), one after another
@@ -3775,7 +3987,8 @@ def _fit_ground(db, doors, skip, plots=(), guard=()):
             continue
         # (the ground inside the other buildings' plots left as it is: one building's landing faded out over its
         # neighbour and filled an open barn 300 deep, its goods buried, lab sg2)
-        others = [r for d, r in plots if d != (key, rk)]
+        mine_ = next((r for d, r in plots if d == (key, rk)), None)
+        others = [r for d, r in plots if r is not mine_ and d != (key, rk)]
         if others or guard:
             G, N = landscape.CELL, landscape.N
             st = G / (N - 1.0)

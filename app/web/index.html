@@ -317,7 +317,9 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 #v3land .v3lhead{display:flex;justify-content:space-between;align-items:center;color:var(--text);font-size:13.5px;cursor:move}
 /* (window chrome isn't text to pick up: titles, buttons, labels and the 3D view's own small windows don't
    highlight on a double-click or a drag; text boxes still do) */
-button,.btn,label,h1,h2,h3,h4,#v3wrap{-webkit-user-select:none;user-select:none}
+/* (and nothing else either: a drag in the view or over a panel highlighted labels and counts, and the highlight
+   was hard to get rid of; the user, 2026-11-11. Only boxes to type in and code to copy take a selection) */
+html,body,button,.btn,label,h1,h2,h3,h4,#v3wrap{-webkit-user-select:none;user-select:none}
 /* (a second view inside the Workshop, twowin.js: floating over the main view or docked beside it; the page in
    its frame shows only its World map / 3D view) */
 #twpanel{position:absolute;right:16px;top:56px;width:min(46%,760px);height:62%;z-index:30;display:flex;flex-direction:column;background:var(--bg2-b,var(--bg2));border:1px solid var(--line2);border-radius:9px;box-shadow:0 10px 30px #0008;overflow:hidden}
@@ -356,7 +358,7 @@ body.embed #v3tools .v3grp{flex:none;flex-wrap:nowrap;white-space:nowrap}
 body.embed #w-panels,body.embed #viewsw .tb-grip,body.embed #v3tools .tb-grip{display:none}
 body.embed header{display:none}
 body.embed #world>.pdock,body.embed #world .pcenter>.pdock,body.embed #world>.pfloat,body.embed #world>.pdrop{display:none}
-input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
+input,textarea,select,[contenteditable="true"],pre,code{-webkit-user-select:text;user-select:text}
 #v3land .v3lrow{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 #v3land input[type=range]{flex:1}
 #v3land .v3lrow span{min-width:34px;text-align:right;color:var(--text)}

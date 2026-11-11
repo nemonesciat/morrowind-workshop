@@ -535,7 +535,9 @@ def closing_pieces(db, cell_key):
     # and where walls meet. Measured 2026-10-22 on the user's Gold Coast house: 137 posts wanted and 19 of
     # 21 door jambs with bare ends while the gate held the builder back. Returns [(id, pos, scale, kind)])
     res = scan(db, cell_key, gate=())
-    res['issues'] = [i for i in res['issues'] if i['kind'] in ('post', 'jambend', 'hole') and i['fixes']
+    # (and the walls seen from behind, last: the builder left 37 of them in one town's interiors, the roof stair's back
+    # showing from the room beside it; the user's "phantom wall on back side again", 2026-11-11)
+    res['issues'] = [i for i in res['issues'] if i['kind'] in ('post', 'jambend', 'hole', 'backwall') and i['fixes']
                      and all(o.get('op') == 'place' for o in i['fixes'][0]['ops'])]
     if res['issues']:
         first = min(_rank(i) for i in res['issues'])       # (posts first; the builder looks again after)
@@ -2221,6 +2223,20 @@ def _hole_issues(db, m, tiles, floors, issues, cell_key):
     return out
 
 
+STAIR_PIECE = re.compile(r'stair|steps|ramp', re.I)
+BACK_WALL = {'in_c_thatch': 'in_c_wall_plain', 'in_c_plain': 'in_c_wall_plain', 'in_c_rich': 'in_c_wall_plain', 'in_c': 'in_c_wall_plain'}
+
+
+def _named_wall(db, rid, kp=None):
+    """A loose wall by its id, as an item like those in a kit's 'walls' (builder._loose_wall_ref takes it), or None."""
+    ri = db.resolve_id(rid) if rid else None
+    b = mapdata.object_bounds(db, ri) if ri is not None else None
+    if not b:
+        return None
+    w, d = b[3] - b[0], b[4] - b[1]
+    return {'id': db.recs[ri][1], 'ri': ri, 'uses': 0, 'thin_x': w < d, 'thick': min(w, d), 'zmin': b[2], 'width': max(w, d)}
+
+
 def _back_issues(db, m, tiles, sc, walled, known=()):
     """Walls seen from behind (seethrough.backs): the one-sided wall the player looks at from a tile shows
     its back, which the game doesn't draw (the user's Gold Coast "Big Ass Fail"). The fix stands a wall
@@ -2242,7 +2258,10 @@ def _back_issues(db, m, tiles, sc, walled, known=()):
         nx, ny = STEP[s]
         ex, ey = t['x'] + nx * t['T'] / 2.0, t['y'] + ny * t['T'] / 2.0
         ops = []
-        if r['k'] not in tile_keys and r.get('arch') and r.get('b'):
+        # (never a stair stood again behind itself: the roof storey's gable stair, in_c_stair_thatch_pend_01, with a room
+        # beside it had "the same piece turned round" for its fix, a second stair in the room; the builder skipped it
+        # and 37 of these stood in the user's Senchal, 2026-11-11: "phantom wall on back side again")
+        if r['k'] not in tile_keys and r.get('arch') and r.get('b') and not STAIR_PIECE.search(r['id']):
             # (the same wall turned round: its box's middle mirrored across the edge, so its face comes out
             # where the back is, a hand's breadth into this tile)
             wb = _world_box(r)
@@ -2256,9 +2275,14 @@ def _back_issues(db, m, tiles, sc, walled, known=()):
         else:
             prefix = kits.kit_prefix(t['id'])
             kp = kits.kit_pieces(db, prefix) if prefix else None
+            w = None
             if not kp or not kp['walls']:
-                continue
-            w = builder.plain_wall(kp, db)
+                # (a set with no loose wall under its own name: the Common rooms' is in_c_wall_plain, which the game
+                # stands against its thatch gable stairs, 5 of 6)
+                w = _named_wall(db, BACK_WALL.get((prefix or '').lower()), kp)
+                if not w:
+                    continue
+            w = w or builder.plain_wall(kp, db)
             rid, pos, _x = builder._loose_wall_ref(db, w, t['x'], t['y'], s, t['floor'], t['T'], kp)
             ops.append({'op': 'place', 'id': rid, 'p': [round(v, 4) for v in pos]})
             label = 'Add %s facing this room' % rid
