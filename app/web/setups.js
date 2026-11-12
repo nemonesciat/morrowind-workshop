@@ -136,7 +136,8 @@ async function qolSetups(){
     bg.innerHTML = `<div class="modal qs-modal" style="width:min(860px,96vw);max-height:92vh;overflow:auto"><h2>Test setups${typeof guideLink === 'function' ? guideLink('playing-and-testing.md', 'Test setups') : ''}</h2>
       <div class="msg">What you get on top when <b>Play here</b> starts the game, so you can try something without playing up to it. Pick one with the round button.</div>
       <div class="msg" style="margin-top:6px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">Playing as: <b>${esc(QOL.playAs || 'a new character')}</b> <button class="btn sm" id="qs-as">👤 Change…</button>
-        <label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Start invincible (god mode)"><input type="checkbox" id="qs-god" ${W.god ? 'checked' : ''}> God mode</label></div>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Start invincible (god mode)"><input type="checkbox" id="qs-god" ${W.god ? 'checked' : ''}> God mode</label>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Nobody can see you (Chameleon 100): people and creatures go about as if you weren't there"><input type="checkbox" id="qs-unseen" ${W.unseen ? 'checked' : ''}> Unseen</label></div>
       <div class="qol-setups" style="margin-top:12px"><div class="qs-side">
         <div data-pick="none" class="${!on ? 'on' : ''}"><input type="radio" name="qs-on" ${!on ? 'checked' : ''}> Nothing extra</div>
         <h4>Your setups</h4>
@@ -156,6 +157,8 @@ async function qolSetups(){
     // (God mode lives here with the rest of how you start, out of the Place panel's row: it spilled the
     // buttons into a third row)
     $$('#qs-god').onchange = e => { W.god = e.target.checked; try { localStorage.setItem('ws-god', W.god ? '1' : '0'); } catch (x){} qolSetupLabel(); };
+    // (Unseen: tosky0890, 2026-11-11, to watch a town's people without freezing them with tai)
+    $$('#qs-unseen').onchange = e => { W.unseen = e.target.checked; try { localStorage.setItem('ws-unseen', W.unseen ? '1' : '0'); } catch (x){} qolSetupLabel(); };
     $$('#qs-new').onclick = () => { keep(); list.push(blank('My setup ' + (list.length + 1))); cur = {kind: 'mine', n: list.length - 1}; draw(); };
     bg.querySelectorAll('[data-pick],[data-r],[data-m]').forEach(d => d.onclick = e => {
       keep();

@@ -397,6 +397,10 @@ def play(body):
     setup = _active_setup() if body.get('setup', True) else None
     if setup:
         cmds += _setup_commands(setup, god_already=bool(body.get('god')))
+    if body.get('unseen'):
+        # (Unseen: Chameleon 100 on the test character, the game's own rule for not being seen; people keep to their
+        # routines, where tai stops them all. Last, so nothing else waits on it)
+        cmds.append('player->SetChameleon 100')
     script =os.path.join(APP_DIR, 'play_commands.txt')
     with open(script, 'w', encoding='cp1252', errors='replace') as f:
         f.write('\n'.join(cmds) + '\n')

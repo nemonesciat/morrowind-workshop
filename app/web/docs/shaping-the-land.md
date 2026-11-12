@@ -509,9 +509,12 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   next as the game joins them, buttresses outwards, a tower at each corner, and gates where the streets go out, or
   where you put them with **⛩ Gate** (below).
   The wall stands on the outline you draw: each side you draw is one straight run of wall, its corner at your corner,
-  and the town fills it. A side drawn a little off square is laid straight through its middle; a slanting side
-  becomes one to three big steps, because the wall pieces turn square corners only. An outline of many corners (a
-  round shape) is walled round its buildings instead.
+  and the town fills it. With the Imperial wall a side runs at whatever angle you drew it, and a round tower stands
+  over every corner to close the joint, so a five-sided town, a slanted side or a town beside a castle that stands at
+  another angle all come out as drawn; the town's wall ends at the castle's corners. A drawing that is square already
+  keeps the wall's own square corner pieces. A corner sharper than about 65 degrees is cut off across, and a round
+  shape of many short sides is given fewer, longer ones, so a gate fits. The other wall kinds have no round tower: with
+  them a slanting side still becomes one to three big steps.
   Each side stands level, as the game's walls do: the ground under it is evened out a little first (fading back into
   the land round it), and the wall sunk deep enough that no foot shows; inside, the town's ground is brought level
   with the wall's foot for a way in, not left as a bank under the wall with the houses dug in below it. Where it must change height, Hlaalu and

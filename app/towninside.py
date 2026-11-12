@@ -430,31 +430,52 @@ def _own_doors(db, q):
 
 def _own_building(db, dr, name, seed, n, kit=None, floors=None):
     """The plot's building given an interior of the Workshop's own (frombuilding.build): planned from its footprint
-    in its own style, its doors linked both ways. {'key', 'name'}, or None when the builder has no plan for it."""
+    in its own style, its doors linked both ways. {'key', 'name'}, or None when the builder has no plan for it.
+    Each layout is walked by the Workshop's own finder before it is kept (_open_faults): one with a wall open to the
+    void or a doorway to nowhere was handed over as a house (the user's Headland, 2026-11-11). The ways tried, in
+    order: the usual one, rolled again up to OWN_TRIES times while the rolls differ; planned from the outline alone
+    (a ready-made shell of the game's, a tower's, is copied with its open sides and no roll changes it); the same on
+    one storey (a tall narrow house's stacked floors and stairs are what the builder cannot always close). Then None:
+    the game's own interior stands in."""
     import frombuilding
     import zlib
-    out = None
-    for go in range(OWN_TRIES):
-        out = frombuilding.build(db, dr[0], dr[1], name, door_key=dr[1], kit=kit, floors=floors,
-                                 seed=zlib.crc32(('%s|%s|%d' % (seed, name, n + 1000 * go)).encode()) % 100000)
+    ways = [{} for _ in range(OWN_TRIES)] + [{'route': 'plan'}] + ([{'route': 'plan', 'floors': 1}] if floors != 1 else [])
+    seen_ = None
+    go = 0
+    while go < len(ways):
+        way = ways[go]
+        kw = dict(door_key=dr[1], kit=kit, floors=way.get('floors', floors), seed=zlib.crc32(('%s|%s|%d' % (seed, name, n + 1000 * go)).encode()) % 100000)
+        if way.get('route'):
+            kw['route'] = way['route']
+        try:
+            out = frombuilding.build(db, dr[0], dr[1], name, **kw)
+        except EditError as e:
+            if not way:
+                raise
+            print('town own layout: %s, %s: %s' % (name, 'from its outline' + (', one storey' if way.get('floors') else ''), e))
+            go += 1
+            continue
         if not out or not out.get('key'):
-            return None
-        # (walked by the Workshop's own finder before it is kept: a layout with a wall open to the void, a doorway to
-        # nowhere, was handed over as a house; another layout is tried, then the game's own interior stands in)
+            if not way:
+                return None
+            go += 1
+            continue
         bad = _open_faults(db, out['key'])
         if not bad:
-            break
-        print('town own layout: %s has %d open faults (%s), %s' % (name, len(bad), ', '.join(sorted({i.get('kind') or '?' for i in bad})),
-                                                                  'made again' if go + 1 < OWN_TRIES else 'left out'))
+            if way:
+                print('town own layout: %s made from its outline%s' % (name, ', on one storey' if way.get('floors') else ''))
+            return {'key': out['key'], 'name': name, 'own_layout': True,
+                    'ready': (out.get('plan') or {}).get('style_name') == 'Ready-made interiors'}
+        print('town own layout: %s has %d open faults (%s)' % (name, len(bad), ', '.join(sorted({i.get('kind') or '?' for i in bad}))))
         p = db.project
         p.cells.pop(out['key'], None)
         p.records.pop('PGRD|' + out['key'], None)
         db.sync_project()
-        out = None
-    if out is None:
-        return None
-    return {'key': out['key'], 'name': name, 'own_layout': True,
-            'ready': (out.get('plan') or {}).get('style_name') == 'Ready-made interiors'}
+        # (the same faults again: it is the footprint, another roll will not mend it; on to the next way)
+        same_ = not way and seen_ is not None and len(bad) == seen_
+        seen_ = len(bad)
+        go = OWN_TRIES if (same_ and go < OWN_TRIES) else go + 1
+    return None
 
 
 OWN_TRIES = 3                  # (layouts tried for a building before the game's own interior stands in)

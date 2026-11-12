@@ -3173,6 +3173,7 @@ async function playHere(body){
     return;
   }
   body.god = W.god;
+  body.unseen = !!W.unseen;
   try { const r = await gameStart('/api/play', body); if (r) toast((r.as ? `Starting OpenMW with ${QOL.playAs || 'your character'}'s latest save, then moving them to ` : 'Starting OpenMW in ') + (r.label || r.start) + (r.setup ? ', with the test setup "' + r.setup + '"' : '') + '. The live link connects once you\'re in game.'); }
   catch (err){ toast(err.message, true); }
 }

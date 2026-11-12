@@ -31,6 +31,9 @@ playing up to it.
 - **Variables**: global variables your scripts or quests check.
 - **Invincible (god mode)**, **Level**, and **Other console commands**, one per line.
 
+Beside **God mode** at the top is **Unseen**: you start with Chameleon 100, so people and creatures cannot see you
+and go about as they do. Use it to watch a town you made live its day. Neither tick changes your mod.
+
 Make as many setups as you like (**+ New setup**), and pick the one Play here uses with its round button
 (**Nothing extra** for none). There are ready-made ones too; **Make a copy to change** one of them.
 **▶ Give it now in game** hands a setup's items (and quest stages) to the game that's already running.

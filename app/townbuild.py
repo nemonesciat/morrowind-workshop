@@ -1543,6 +1543,7 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     # (the bar's planning share: a walled town is planned twice, its two plans the most of it)
     P = PLAN_END
     led = False
+    angled = None
     forts = _forts_for(db, outline, opts) if walls else []
     if forts or opts.get('forts'):
         opts = dict(opts, forts=forts)
@@ -1586,6 +1587,7 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
             return plan
         poly = W.get('outline') or []
         led = bool(W.get('led'))
+        angled = W.get('angled')
     if len(poly) < 4:
         return plan
     inner = townplan.inset(poly, WALL_BACK)
@@ -1607,6 +1609,8 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     if built(again) < 0.75 * built(plan) and len(drawn) < 3 and len(fixed) < 4 and not led:
         return plan
     again['wall_outline'] = [list(p_) for p_ in poly]
+    if angled:
+        again['wall_angled'] = angled        # (laid at any angle: townwalls.lay, wallangle.py)
     if gates:
         again['user_gates'] = gates
     if forts:

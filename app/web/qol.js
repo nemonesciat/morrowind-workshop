@@ -516,6 +516,7 @@ CF_ACT.push(
 
 // the Test setup button: the setup in use, and God mode when it's on (God mode lives in Test setups)
 try { if (W.god === undefined) W.god = localStorage.getItem('ws-god') === '1'; } catch (e){}
+try { if (W.unseen === undefined) W.unseen = localStorage.getItem('ws-unseen') === '1'; } catch (e){}
 // the toolbar at the top fits its row: no button squeezes; when the row is too long, words fold away to their
 // icons one button at a time (Build together's first, the AI button's last) until it fits (the user: "Me" lost
 // its sides and the reload button fell off the screen with the game linked)
@@ -541,5 +542,5 @@ function hdrFit(){
 
 function qolSetupLabel(){
   const b = $('#q-setup'); if (!b) return;
-  b.textContent = '🧪 ' + (QOL.setupOn || 'Test setup…') + (W.god ? ' · god' : '');
+  b.textContent = '🧪 ' + (QOL.setupOn || 'Test setup…') + (W.god ? ' · god' : '') + (W.unseen ? ' · unseen' : '');
 }

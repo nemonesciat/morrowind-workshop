@@ -278,7 +278,17 @@ def outline(plan, cell=1024.0, db=None, step=1.0):
     the town fills it well, else grid squares of the town's frame with rows and columns filled (no holes, no notches
     into it); [(x, y)] counter-clockwise, and its frame angle."""
     plan.pop('_led', None)
+    plan.pop('_angled', None)
     drawn = [(float(p[0]), float(p[1])) for p in plan.get('drawn') or () if len(p) >= 2]
+    if len(drawn) >= 3 and step >= 64 and plan.get('_fam') in BIG and not plan.get('square_walls') and not _square_drawn(plan, drawn):
+        # (off the square, or beside a castle that stands at another angle: the drawing's own lines, straight runs at
+        # any angle with a round tower over every corner, wallangle.py. Squared to one frame it came out in steps)
+        import wallangle
+        A = wallangle.outline(drawn, _forts_by(plan, drawn), step)
+        if A:
+            plan['_led'] = True
+            plan['_angled'] = A
+            return A['poly'], 0.0
     if len(drawn) >= 3:
         # (a palisade asks at a step of 1, its sections any length: a lattice of 256 then, not 76 million squares)
         led = _drawn_outline(plan, drawn, db, step if step >= 64 else 256.0)
@@ -390,6 +400,63 @@ STAIR = 2048.0                 # (a slanting side: a step for every this much it
 STAIR_MOST = 3
 JOG_LEAST = 768.0              # (two sides in a row this far apart or less are one; no jog shorter than this)
 DRAWN_CORNERS = 16             # (more corners than this: a drawn blob, walled round its buildings as before)
+
+
+SQUARE_NEAR = math.radians(5)  # (a drawn side this near its frame's square, drifting SQUARE_DRIFT at most, is square)
+SQUARE_DRIFT = 256.0
+
+
+def _forts_by(plan, drawn):
+    """The castles that stand by a drawn outline (in it, or within FORT_NEAR of it)."""
+    return [f for f in _forts(plan)
+            if any(_inside(drawn, q) or _ring_dist(drawn, q[0], q[1]) <= FORT_NEAR for q in f['ring'])
+            or any(_ring_dist(f['ring'], x, y) <= FORT_NEAR for x, y in drawn)]
+
+
+def _square_drawn(plan, drawn):
+    """Is the drawing square already: every side within SQUARE_NEAR of one frame's axes (the castle's beside it, else
+    its own)? Then the kit's own corner pieces wall it best."""
+    forts = _forts_by(plan, drawn)
+    th = _fort_angle(forts[0]) if forts else _drawn_frame(drawn)
+    c, s = math.cos(th), math.sin(th)
+    P = [(x * c + y * s, -x * s + y * c) for x, y in drawn]
+    n = len(P)
+    for k in range(n):
+        du, dv = abs(P[(k + 1) % n][0] - P[k][0]), abs(P[(k + 1) % n][1] - P[k][1])
+        if du < 1 and dv < 1:
+            continue
+        a = math.atan2(dv, du)
+        if not ((a <= SQUARE_NEAR and dv <= SQUARE_DRIFT) or (a >= math.pi / 2 - SQUARE_NEAR and du <= SQUARE_DRIFT)):
+            return False
+    return True
+
+
+def _rectilinear(poly):
+    """Does an outline turn square at every corner?"""
+    n = len(poly)
+    for k in range(n):
+        a, b, c_ = poly[k - 1], poly[k], poly[(k + 1) % n]
+        u = math.atan2(b[1] - a[1], b[0] - a[0])
+        v = math.atan2(c_[1] - b[1], c_[0] - b[0])
+        t = abs((math.degrees(v - u) + 180.0) % 360.0 - 180.0)
+        if abs(t - 90.0) > 3.0:
+            return False
+    return True
+
+
+def angled_info(poly, forts):
+    """wallangle's notes for an outline handed over without them (the wall's line as a preview showed it): the sides
+    whose two ends are corners of one castle's ring are that castle's wall."""
+    import wallangle
+    keys, bare = [], []
+    n = len(poly)
+    for f in forts or ():
+        at = [k for k in range(n) if any(math.hypot(poly[k][0] - q[0], poly[k][1] - q[1]) <= 4 for q in f['ring'])]
+        for k in at:
+            bare.append([int(round(poly[k][0])), int(round(poly[k][1]))])
+            if (k + 1) % n in at:
+                keys.append(list(wallangle._key(poly[k], poly[(k + 1) % n])))
+    return {'poly': [tuple(p) for p in poly], 'fort': keys, 'no_tower': bare}
 
 
 def _drawn_frame(pts):
@@ -1104,8 +1171,17 @@ def lay(db, plan, family=None, cell=None):
     G = cell or L * max(1, round(1024.0 / L))
     # (a town planned inside its wall keeps that wall: traced again round its new plots, at their own slant, the box came
     # out a row wider all round, townbuild.planned)
+    plan['_fam'] = fam
     poly, th = ([tuple(p) for p in plan['wall_outline']], 0.0) if plan.get('wall_outline') else outline(plan, G, db, L)
-    if len(poly) < 4:
+    if len(poly) < 3:
+        return {'family': fam, 'pieces': [], 'outline': [], 'gates': 0, 'faults': ['No plots to wall']}
+    # (at any angle: wallangle.py)
+    ang = (plan.get('wall_angled') if plan.get('wall_outline') else plan.get('_angled')) or None
+    if ang is None and plan.get('wall_outline') and fam in BIG and not _rectilinear(poly):
+        ang = angled_info(poly, _forts(plan))
+    if fam not in BIG:
+        ang = None
+    if len(poly) < 4 and not ang:
         return {'family': fam, 'pieces': [], 'outline': [], 'gates': 0, 'faults': ['No plots to wall']}
     # (counter-clockwise: turns at outer corners are to the left, +90 in the game's clockwise rz... measured per kit)
     n = len(poly)
@@ -1121,10 +1197,30 @@ def lay(db, plan, family=None, cell=None):
     # way the wall stood inside out, buttresses to the town, the user's first town, 2026-10-31)
     dom = max(kit['corners'], key=lambda h: kit['corners'][h]['n'])
     maj = 1 if sum(turns) >= 0 else -1
-    if need[maj] != dom and all(need[-t] in kit['corners'] for t in turns):
+    fort_k, bare_v = set(), set()
+    if ang:
+        # (walked so its outer corners turn as the kit's commonest corner does: the straights' buttresses face out)
+        import wallangle
+        if need[maj] != dom:
+            poly = poly[::-1]
+        turns = []
+        for k in range(n):
+            a, b, c_ = poly[k - 1], poly[k], poly[(k + 1) % n]
+            turns.append(1 if (b[0] - a[0]) * (c_[1] - b[1]) - (b[1] - a[1]) * (c_[0] - b[0]) > 0 else -1)
+        fort_k = wallangle.fort_sides(poly, ang)
+        # (no tower of the town's on a castle's corner between two of the castle's own sides; where the town's wall
+        # ends at a castle's corner, a tower over the join unless the castle stands one of its own there)
+        ftw_ = [t for f in _forts(plan) for t in f['towers']]
+        bare_v = set()
+        for k in range(n):
+            if (k - 1) % n in fort_k and k in fort_k:
+                bare_v.add((int(round(poly[k][0])), int(round(poly[k][1]))))
+            elif ((k - 1) % n in fort_k) != (k in fort_k) and any(math.hypot(t[0] - poly[k][0], t[1] - poly[k][1]) <= FORT_TOWER for t in ftw_):
+                bare_v.add((int(round(poly[k][0])), int(round(poly[k][1]))))
+    if not ang and need[maj] != dom and all(need[-t] in kit['corners'] for t in turns):
         poly = poly[::-1]
         turns = [-t for t in turns[::-1]]
-    if any(need[t] not in kit['corners'] for t in turns):
+    if not ang and any(need[t] not in kit['corners'] for t in turns):
         # (walk the other way round: a kit with only one corner hand fits a convex outline walked either way)
         poly = poly[::-1]
         turns = [-t for t in turns[::-1]]
@@ -1142,6 +1238,19 @@ def lay(db, plan, family=None, cell=None):
     for k in range(n):
         a, b, c_ = poly[k - 1], poly[k], poly[(k + 1) % n]
         din = _unit(b[0] - a[0], b[1] - a[1])
+        if ang:
+            # (no corner piece: the last length of the side in and the first of the side out, each on its own line,
+            # their ends inside the tower stood over the corner; none on a castle's own side)
+            chain = []
+            if (k - 1) % n not in fort_k:
+                _m, off_ = wallangle.run_of(a, b, L)
+                chain.append(Pose(b[0] - din[0] * off_, b[1] - din[1] * off_, 0.0, _rz_for(kit, din), kit['straight']))
+            if k not in fort_k:
+                dout = _unit(c_[0] - b[0], c_[1] - b[1])
+                _m, off_ = wallangle.run_of(b, c_, L)
+                chain.append(Pose(b[0] + dout[0] * off_, b[1] + dout[1] * off_, 0.0, _rz_for(kit, dout), kit['straight']))
+            units.append(chain)
+            continue
         co = kit['corners'][need[turns[k]]]
         rz = _rz_for(kit, din)
         # S0 stands co['p'] before the vertex on the incoming line
@@ -1162,6 +1271,8 @@ def lay(db, plan, family=None, cell=None):
     span = gate_[1]['span'] if gate_ else 2 * kit['L']
     ok_sides = set()
     for k in range(n):
+        if k in fort_k:
+            continue
         out_, in_ = units[k][-1], units[(k + 1) % n][0]
         b, c_ = poly[k], poly[(k + 1) % n]
         d = _unit(c_[0] - b[0], c_[1] - b[1])
@@ -1203,6 +1314,8 @@ def lay(db, plan, family=None, cell=None):
     for _attempt in (0, 1):
         sides_, gates = [], 0
         for k in range(n):
+            if k in fort_k:
+                continue
             out_ = units[k][-1]
             in_ = units[(k + 1) % n][0]
             b, c_ = poly[k], poly[(k + 1) % n]
@@ -1242,7 +1355,22 @@ def lay(db, plan, family=None, cell=None):
         for q in chain:
             # (the corner at vertex k stands between side k - 1's run and side k's)
             pieces.append({'id': q.id, 'pose': q, 'kind': 'corner' if q.id != kit['straight'] else 'wall', 'corner': k})
-    pieces += _big_towers(db, fam, kit, poly, [need[t] == dom for t in turns], pieces)
+    if ang:
+        # (a round tower over every corner, an inner one too: it is what closes the joint. No keep: it is square)
+        tw_ = _big_towers(db, fam, kit, poly, [(int(round(v[0])), int(round(v[1]))) not in bare_v for v in poly], pieces)
+        for p_ in tw_:
+            if p_.get('kind') == 'keep':
+                p_.update(id=BIG[fam]['tower'], kind='bigtower', dz=BIG[fam]['tower_dz'])
+                p_['pose'].id = BIG[fam]['tower']
+        # (and none left out for a gate near it: with no tower the corner stands open, two wall ends in the air)
+        for k_, v_ in enumerate(poly):
+            if (int(round(v_[0])), int(round(v_[1]))) in bare_v or any(p_.get('kind') == 'bigtower' and math.hypot(p_['pose'].x - v_[0], p_['pose'].y - v_[1]) <= 64 for p_ in tw_):
+                continue
+            d_ = _unit(poly[(k_ + 1) % n][0] - v_[0], poly[(k_ + 1) % n][1] - v_[1])
+            tw_.append({'id': BIG[fam]['tower'], 'pose': Pose(v_[0], v_[1], 0.0, _rz_for(kit, d_), BIG[fam]['tower']), 'kind': 'bigtower', 'dz': BIG[fam]['tower_dz']})
+        pieces += tw_
+    else:
+        pieces += _big_towers(db, fam, kit, poly, [need[t] == dom for t in turns], pieces)
     pieces = _once(pieces)
     if sea:
         # (a coastal town: the wall on the land side only, the lengths that face the water left out, the user 2026-11-09)
@@ -1260,10 +1388,22 @@ def lay(db, plan, family=None, cell=None):
         if n_g:
             gates = int(round(gates * sum(1 for p in pieces if p.get('kind') in ('gate', 'end')) / float(n_g)))
     joins = 0
-    if forts:
+    if forts and not ang:
         # (after the sea's openings: a side left open to the water beside a castle needs no join, the town open there)
         pieces, joins = _meet_forts(db, fam, kit, poly, pieces, forts)
+    elif ang:
+        joins = 2 if fort_k or bare_v else 0
+        # (by a castle: the tower over the join is no double of the castle's own corner piece (drop_doubled), and the
+        # lengths beside the castle stand on the ground as it is, the castle's level, no bank of fill under them: _allow)
+        ends_ = [poly[k] for k in range(n) if ((k - 1) % n in fort_k) != (k in fort_k)]
+        for p_ in pieces:
+            q_ = p_['pose']
+            if p_.get('kind') == 'bigtower' and any(math.hypot(q_.x - v_[0], q_.y - v_[1]) <= 64 for v_ in ends_):
+                p_['join'] = True
+            elif any(_ring_dist(f['ring'], q_.x, q_.y) <= FORT_NOFILL * L for f in forts):
+                p_['nofill'] = True
     return {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': gates, 'faults': faults, 'joins': joins,
+            'angled': dict(ang, poly=[list(p) for p in poly]) if ang else None,
             'led': bool(plan.get('_led')), 'roads': _gate_roads(poly, roads, pieces, L) if gates else []}
 
 
