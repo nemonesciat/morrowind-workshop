@@ -989,6 +989,9 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/release/info':
                 editing._require_project(db)
                 self._json(release.info(db))
+            elif u.path == '/api/release/pictures':
+                # (the pictures a zip would hold that the page is to make DDS: web/ddsmake.js)
+                self._json(release.dds_wanted(db))
             elif u.path == '/api/release/readme':
                 editing._require_project(db)
                 self._json({'text': release.readme(db), 'bbcode': release.readme(db, bbcode=True)})
@@ -1610,6 +1613,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(library.save_icon(db, q.get('id', ''), self.rfile.read(n)))
             except editing.EditError as e:
                 return self._json({'error': str(e)}, 400)
+        if u.path == '/api/release/dds':
+            # (a DDS the page made of one of the mod's pictures, for the zip: web/ddsmake.js, release.dds_take)
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            if n > 200 * 1024 * 1024:
+                return self._json({'error': 'That picture is too big.'}, 400)
+            try:
+                return self._json(release.dds_take(db, q.get('file', ''), self.rfile.read(n)))
+            except editing.EditError as e:
+                return self._json({'error': str(e)}, 400)
         if u.path == '/api/pack/open':
             # a shared pack (a zip), as it is
             import pack
@@ -2105,7 +2117,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(release.fix(db, body.get('action')))
                 if u.path == '/api/release/package':
                     editing.flush(db)       # (the zip takes the plugin from disk)
-                    return self._json(release.package(db))
+                    return self._json(release.package(db, bool(body.get('dds'))))
                 if u.path == '/api/release/clean_test':
                     return self._json(clean_test(body))
                 if u.path == '/api/release/open':

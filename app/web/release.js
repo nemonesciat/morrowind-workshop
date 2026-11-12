@@ -47,7 +47,9 @@ function rlRender(){
       <p class="msg" style="line-height:1.6">Makes <b>${esc(i.name.replace(/[^\w\-]+/g, '_'))}-${esc(i.version)}.zip</b> with ${esc(i.plugin)}, your own files and the readme, laid out the way mod managers expect.
         Files that aren't used by your records but should go in too (e.g. new music) can go in your
         <a href="#" id="rl-extra">extra files folder</a>.</p>
-      <div class="actions"><button class="btn primary" id="rl-pack">📦 Make the zip</button><button class="btn" id="rl-openrel">📂 Open the releases folder</button></div>
+      <div class="actions"><button class="btn primary" id="rl-pack">📦 Make the zip</button>
+        <label class="msg" style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Your pictures (.png .jpg .bmp .tga) go into the zip as DDS with mipmaps: less video memory, no shimmer far off. Your own files stay as they are."><input type="checkbox" id="rl-dds" ${i.dds ? 'checked' : ''}> Pictures as DDS</label>
+        <button class="btn" id="rl-openrel">📂 Open the releases folder</button></div>
       <div id="rl-packmsg"></div>
       ${i.releases.length ? `<table class="t" style="margin-top:10px">${i.releases.map(r => `<tr><td>${esc(r.file)}</td><td class="msg">${(r.size / 1024).toFixed(0)} KB</td><td class="msg">${esc(r.t)}</td></tr>`).join('')}</table>` : ''}
     </section>`;
@@ -65,6 +67,8 @@ function rlRender(){
   $('#rl-copy').onclick = async () => { try { await navigator.clipboard.writeText($('#rl-readme').textContent); toast('Copied'); } catch (e){ toast('Select the text and copy it with Ctrl+C.'); } };
   $('#rl-clean').onclick = rlClean;
   $('#rl-pack').onclick = rlPack;
+  // (pictures as DDS in the zip: tosky0890, 2026-11-11; kept with the mod)
+  $('#rl-dds').onchange = e => post('/api/release/info', {dds: e.target.checked}).then(r => { RL.info = r; }).catch(err => toast(err.message, true));
   $('#rl-openrel').onclick = () => post('/api/release/open', {what: 'releases'}).catch(e => toast(e.message, true));
   $('#rl-extra').onclick = e => { e.preventDefault(); post('/api/release/open', {what: 'extra'}).then(r => toast('Opened ' + r.path)).catch(err => toast(err.message, true)); };
   rlReadme();
@@ -116,8 +120,16 @@ async function rlPack(){
   await rlSaveInfo();
   const b = $('#rl-pack'); b.disabled = true; b.innerHTML = '<span class="spin"></span>Packing…';
   try {
-    const r = await post('/api/release/package', {});
-    $('#rl-packmsg').innerHTML = `<div class="cnote" style="margin-top:10px">✓ Made <b>${esc(r.file)}</b> (${(r.size / 1024).toFixed(0)} KB, ${r.files} files).
+    const dds = $('#rl-dds').checked;
+    let kept = 0;
+    if (dds){
+      // the zip's pictures made DDS here in the page (ddsmake.js), then packed in their place
+      const w = await api('/api/release/pictures');
+      kept = await ddsConvert(w.pictures, (k, n) => { b.innerHTML = `<span class="spin"></span>Pictures to DDS… ${k}/${n}`; });
+      b.innerHTML = '<span class="spin"></span>Packing…';
+    }
+    const r = await post('/api/release/package', {dds});
+    $('#rl-packmsg').innerHTML = `<div class="cnote" style="margin-top:10px">✓ Made <b>${esc(r.file)}</b> (${(r.size / 1024).toFixed(0)} KB, ${r.files} files${r.dds ? `, ${r.dds} picture${r.dds === 1 ? '' : 's'} as DDS` : ''}).${kept ? ` ${kept} picture${kept === 1 ? '' : 's'} went in as ${kept === 1 ? 'it is' : 'they are'}.` : ''}
       Upload it to Nexus Mods, and paste the <b>Nexus description</b> from step 2 into the mod's page.</div>`;
     toast('Packed ' + r.file);
     RL.info = await api('/api/release/info');

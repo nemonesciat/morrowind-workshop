@@ -5,6 +5,7 @@ installed can still use it."""
 import math
 import os
 import re
+import shutil
 import struct
 import time
 import zipfile
@@ -1325,6 +1326,8 @@ def save_info(db, o):
     for k in ('version', 'start', 'credits', 'permissions'):
         if k in o:
             p.release[k] = (o.get(k) or '').strip()
+    if 'dds' in o:
+        p.release['dds'] = bool(o.get('dds'))
     if 'notes' in o:
         p.release['notes'] = (o.get('notes') or '').strip()
     p.save()
@@ -1339,6 +1342,7 @@ def info(db):
     return {'name': p.name, 'plugin': p.plugin, 'author': p.author, 'description': p.description,
             'version': r.get('version') or '1.0', 'start': r.get('start', ''), 'credits': r.get('credits', ''),
             'permissions': r.get('permissions', ''), 'notes': r.get('notes', ''), 'changelog': r.get('changelog', []),
+            'dds': bool(r.get('dds', True)),      # (ticked until unticked: the user, 2026-11-11, "i meant toggleable")
             'releases': releases(db), 'extra_dir': extra_dir(db)}
 
 
@@ -1359,8 +1363,93 @@ def releases(db):
     return out
 
 
-def package(db):
-    """Build the plugin, then zip it with your own files and the readme."""
+# ------------------------------------------------------------------ pictures as DDS in the zip
+# (tosky0890, 2026-11-11: the conversion belongs to publishing, as an option, not to bringing a picture in. The mod's
+# own pictures stay PNG, TGA and so on, as the picture editor wants them; only the zip's copies become DDS.)
+DDS_FROM = ('.png', '.jpg', '.jpeg', '.bmp', '.tga')
+_DDS = {}            # project name -> {'dir', 'want': {zip path (lower): the picture's file}, 'made': {zip path: (size, time, DDS file)}}
+
+
+def _dds_whole(raw):
+    """Whether these bytes are a DXT1 or DXT5 DDS of exactly its header's size, its mip chain down to one pixel."""
+    if len(raw) < 128 or raw[:4] != b'DDS ' or struct.unpack_from('<I', raw, 4)[0] != 124:
+        return False
+    h, w = struct.unpack_from('<II', raw, 12)
+    mips, four = struct.unpack_from('<I', raw, 28)[0], raw[84:88]
+    if four not in (b'DXT1', b'DXT5') or not (1 <= w <= 8192 and 1 <= h <= 8192) or not 1 <= mips <= 14:
+        return False
+    need = 128
+    for k in range(mips):
+        need += max(1, (w + 3) // 4) * max(1, (h + 3) // 4) * (8 if four == b'DXT1' else 16)
+        if k < mips - 1:
+            w, h = max(1, w >> 1), max(1, h >> 1)
+    return need == len(raw) and w == 1 and h == 1
+
+
+def _dds_drop(name):
+    old = _DDS.pop(name, None)
+    if old:
+        shutil.rmtree(old['dir'], ignore_errors=True)
+
+
+def dds_wanted(db):
+    """The pictures a zip made now would hold that the page is to make DDS: the mod's own textures that are no DDS,
+    with no DDS of the same name going in beside them. A ground texture stays as it is (its record names the file,
+    and records are not rewritten for a zip). Starts afresh: what was made for an earlier zip is dropped."""
+    _require_project(db)
+    import tempfile
+    p = db.project
+    _dds_drop(p.name)
+    a = assets(db)
+    names = [r.lower().replace('\\', '/') for r in a['yours']]
+    ground = {rel.lower().replace('\\', '/') for rel, what in _asset_refs(db) if what.startswith('ground texture')}
+    want = {}
+    for rel, full in a['yours'].items():
+        low = rel.lower().replace('\\', '/')
+        stem, ext = os.path.splitext(low)
+        if low.startswith('textures/') and ext in DDS_FROM and low not in ground and \
+                not any(n != low and os.path.splitext(n)[0] == stem for n in names):
+            want[low] = full
+    _DDS[p.name] = {'dir': tempfile.mkdtemp(prefix='ws_dds_'), 'want': want, 'made': {}}
+    return {'pictures': [{'file': r} for r in sorted(want)]}
+
+
+def dds_take(db, rel, raw):
+    """One DDS the page made (web/ddsmake.js) of a picture dds_wanted named, kept for the zip."""
+    _require_project(db)
+    st = _DDS.get(db.project.name)
+    low = (rel or '').lower().replace('\\', '/')
+    full = st['want'].get(low) if st else None
+    if not full:
+        raise EditError('That picture is not one the zip takes.')
+    if not _dds_whole(raw):
+        raise EditError('The DDS picture could not be made.')
+    path = os.path.join(st['dir'], '%d.dds' % len(st['made']))
+    with open(path, 'wb') as f:
+        f.write(raw)
+    s = os.stat(full)
+    st['made'][low] = (s.st_size, s.st_mtime, path)
+    return {'ok': True, 'size': len(raw)}
+
+
+def _dds_swaps(db, a):
+    """{a picture's path in the zip: the DDS made of it}, for those that still stand as they were when it was made."""
+    made = (_DDS.get(db.project.name) or {}).get('made') or {}
+    out = {}
+    for rel, full in a['yours'].items():
+        m = made.get(rel.lower().replace('\\', '/'))
+        try:
+            s = os.stat(full)
+        except OSError:
+            continue
+        if m and (s.st_size, s.st_mtime) == m[:2] and os.path.isfile(m[2]):
+            out[rel] = m[2]
+    return out
+
+
+def package(db, dds=False):
+    """Build the plugin, then zip it with your own files and the readme. dds: the pictures the page made DDS of
+    (dds_wanted, dds_take) go in as those, and the zip's copies of your models name them."""
     _require_project(db)
     p = db.project
     ver = (p.release.get('version') or '1.0').strip()
@@ -1373,6 +1462,12 @@ def package(db):
     if getattr(p, 'pending_write', None):
         raise EditError('Your mod file is in use (is the game running?). Close the game and try again.')
     a = assets(db)
+    swap = _dds_swaps(db, a) if dds else {}
+    renamed = {}                                     # as a model names a picture -> its DDS
+    for rel in swap:
+        t = rel.replace('/', '\\')[len('textures\\'):]
+        renamed[t.lower()] = os.path.splitext(t)[0] + '.dds'
+        renamed['textures\\' + t.lower()] = 'textures\\' + os.path.splitext(t)[0] + '.dds'
     os.makedirs(releases_dir(), exist_ok=True)
     zname = '%s-%s.zip' % (re.sub(r'[^\w\-]+', '_', p.name), ver)
     zpath = os.path.join(releases_dir(), zname)
@@ -1396,13 +1491,27 @@ def package(db):
             if os.path.isfile(gp):
                 z.write(gp, gf)
         for rel, full in sorted(a['yours'].items()):
+            if rel in swap:
+                z.write(swap[rel], os.path.splitext(rel)[0] + '.dds')
+                continue
+            if renamed and rel.lower().endswith('.nif'):
+                import nifwrite
+                try:
+                    with open(full, 'rb') as f:
+                        data, n = nifwrite.retexture(f.read(), renamed)
+                except (OSError, ValueError):
+                    n = 0
+                if n:
+                    z.writestr(rel, data)
+                    continue
             z.write(full, rel)
         ex = extra_dir(db)
         for rel in a['extra']:
             z.write(os.path.join(ex, *rel.split('/')), rel)
         z.writestr('%s Readme.txt' % p.name, text.replace('\n', '\r\n'))
     os.replace(tmp, zpath)
-    return {'zip': zpath, 'file': zname, 'size': os.path.getsize(zpath), 'files': 2 + len(a['yours']) + len(a['extra']),
+    _dds_drop(p.name)
+    return {'zip': zpath, 'file': zname, 'size': os.path.getsize(zpath), 'files': 2 + len(a['yours']) + len(a['extra']), 'dds': len(swap),
             'errors': [c['title'] for c in errors], 'readme': text, 'bbcode': readme(db, bbcode=True)}
 
 

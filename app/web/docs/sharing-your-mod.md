@@ -52,7 +52,8 @@ Four steps:
    too. Your normal setup and saves are untouched.
 4. **Pack it**: **📦 Make the zip** with your mod, your own files (models, textures, sounds it uses) and the readme,
    laid out the way mod managers expect. Files your records don't use but should go in too (new music, say) go in the
-   **extra files folder**.
+   **extra files folder**. With **Pictures as DDS** ticked, your .png, .jpg, .bmp and .tga textures go into the zip
+   as DDS with mipmaps; your own files stay as they are.
 
 ## Health check
 
