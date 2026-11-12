@@ -362,6 +362,65 @@ def _game_over_ground(db, low):
 DOOR_TO_WALL = 220             # (a building's other door this near the town wall, looking at it, keeps the building unbuilt)
 
 
+SQUARE_PARTS = True            # (off: the catalogue as it was, for measuring the rule)
+OFF_SQUARE = 8.0               # a loose part turned this many degrees off its house's square is no part of it
+DIAGONAL = 40.0                # (but one on a diagonal is a bay's or an eight-sided chapel's own: 7 Indoril windows, lab)
+LOOSE_PART = re.compile(r'window|_win_|awning|overhang|chimney|balcony|dormer|shutter', re.I)
+
+
+def _rel_main(m, p):
+    """A piece's place and turn in the frame of its module's main shell, or None."""
+    main = next((q for q in m['fpieces'] if q['id'].lower() == str(m.get('main') or '').lower()), None)
+    if main is None:
+        return None
+    dx, dy = p['x'] - main['x'], p['y'] - main['y']
+    a = main.get('rz') or 0.0
+    c_, s_ = math.cos(a), math.sin(a)
+    return dx * c_ - dy * s_, dx * s_ + dy * c_, p['z'] - main['z'], math.degrees((p.get('rz') or 0.0) - a) % 360.0
+
+
+def _square_parts(m, others=()):
+    """The module without the loose parts turned off its own square that no other game example of its shell has. A
+    game house is learnt with what stands against it, and where the house next door stands at another angle, its
+    window, awning or chimney came along: set down alone they stood loose by the house, turned 20 and 30 degrees off
+    its walls (the user's Blackrose, 2026-11-11: "I can never tell if there was supposed to be a whole building that
+    goes with this"). The square is the door's. A part the game sets at the same place on another example of the
+    shell (others: their modules) is the building's own, a bay's window, and stays (9 of 67 turned parts, lab); so
+    does every part of a shell with one example, and of a shell most of whose parts are turned (a round tower)."""
+    if not SQUARE_PARTS or not others:
+        return m
+    door = next((p for p in m['fpieces'] if p.get('door')), None)
+    if door is None:
+        return m
+    base = door.get('rz') or 0.0
+    loose = [p for p in m['fpieces'] if not p.get('door') and LOOSE_PART.search(p['id']) and 'smoke' not in p['id'].lower()]
+    turned = [p for p in loose if OFF_SQUARE < abs((math.degrees((p.get('rz') or 0.0) - base) + 45.0) % 90.0 - 45.0) < DIAGONAL]
+    if not turned or 2 * len(turned) >= len(loose):
+        return m
+
+    def again(p):
+        r = _rel_main(m, p)
+        if r is None:
+            return True
+        for o in others:
+            for q in o.get('fpieces') or ():
+                if q['id'].lower() != p['id'].lower():
+                    continue
+                r3 = _rel_main(o, q)
+                if r3 and math.hypot(r[0] - r3[0], r[1] - r3[1]) <= 48 and abs(r[2] - r3[2]) <= 48 and abs((r[3] - r3[3] + 180.0) % 360.0 - 180.0) <= 6:
+                    return True
+        return False
+    turned = [p for p in turned if not again(p)]
+    if not turned:
+        return m
+    gone = {id(p) for p in turned}
+    # (and the smoke over a chimney that goes)
+    for p in m['fpieces']:
+        if 'smoke' in p['id'].lower() and any('chimney' in t['id'].lower() and math.hypot(t['x'] - p['x'], t['y'] - p['y']) <= 80 for t in turned):
+            gone.add(id(p))
+    return dict(m, fpieces=[p for p in m['fpieces'] if id(p) not in gone])
+
+
 def _door_to_wall(db, m, q, dx, dy, c, sn, wall_boxes, rmemo):
     """Whether one of the building's doors other than its front would open against the town wall: the way out of it,
     from the building's middle through the door, meets a wall piece within DOOR_TO_WALL."""
@@ -607,9 +666,14 @@ def _game_catalog(db):
     except Exception as e:
         print('wall kits:', e)
         runs, fortish = set(), set()
+    by_main = defaultdict(list)          # (the game's examples of each shell: _square_parts)
+    for m in s.get('modules') or ():
+        if m.get('fpieces') and m.get('main'):
+            by_main[str(m['main']).lower()].append(m)
     for m in s.get('modules') or ():
         if not m.get('fpieces') or not any(p.get('door') for p in m['fpieces']):
             continue
+        raw = m
         # (a building that brings lengths of town wall with it, two or more of a wall kit's straights or a curved wall:
         # set down alone, its walls stood about the town as strays, a guard tower's three straights seven times over in
         # an Imperial town and Hlaalu's curved yard wall snaking between houses, the Tamriel practice 2026-10-31)
@@ -628,6 +692,7 @@ def _game_catalog(db):
         m = _no_repeats(m)
         m = _drop_apart(db, m, memo)
         m = _explained(db, m, memo)          # (a porch holds a door of its own building; a window sits on its shell)
+        m = _square_parts(m, [o for o in by_main.get(str(raw.get('main') or '').lower(), ()) if o is not raw])     # (and turned as its house is)
         m = _without_lone_doors(db, m, memo, tri)
         if m is None:
             continue
@@ -1192,8 +1257,12 @@ def fit(db, plan, seed=1):
     used = {}
     spot_used = set()
     import townplan
+    import townwalls
     placed = [[tuple(p_) for p_ in r] for r in plan.get('obstacles') or ()]
     roads = {tuple(r) for r in plan.get('roads') or ()}
+    # (inside a wall: the lines no building's outline and no door's way out may cross, planned())
+    room = [tuple(p_) for p_ in plan.get('wall_room') or ()]
+    room_way = [tuple(p_) for p_ in plan.get('wall_way') or ()]
     # (and the streets' own middle lines, every 64: a building whose corners missed the road squares still stood
     # across a street, the in-game walk 2026-11-03)
     street_pts = _street_points(plan)
@@ -1256,6 +1325,15 @@ def fit(db, plan, seed=1):
                 way = _doorway(dx, dy, c, sn)
                 if any(townplan._overlap(rect, w_) for w_ in ways) or any(townplan._overlap(way, o) for o in placed):
                     continue
+                # (a game building bigger than its plot stood out of it against the wall, 3 to 5 a town; and a door's
+                # way out past its building's own outline, into the wall or another building)
+                if len(room) >= 4 and not all(townwalls._inside(room, p_) for p_ in rect):
+                    continue
+                past = _way_past(dx, dy, c, sn, fp)
+                if len(room_way) >= 4 and not all(townwalls._inside(room_way, p_) for p_ in past):
+                    continue
+                if fp[1] < -DOOR_BACK and any(townplan._overlap(past, o) for o in placed):
+                    continue
                 if (nx_ or ny_) and any((int(x_ // townplan.PATCH), int(y_ // townplan.PATCH)) in roads for x_, y_ in rect[2:4] + [
                         ((rect[0][0] + rect[2][0]) / 2, (rect[0][1] + rect[2][1]) / 2)]):
                     continue                             # (nudged onto a street: its far corners and middle stay off them)
@@ -1270,6 +1348,8 @@ def fit(db, plan, seed=1):
             continue
         placed.append(rect)
         ways.append(way)
+        if fp[1] < -DOOR_BACK:
+            ways.append(past)
         keep.append(q)
         used[b['key']] = used.get(b['key'], 0) + 1
         if b.get('spot'):
@@ -1410,6 +1490,11 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     pl['skip'] = list(opts.get('skip') or ())
     pl['nokeep'] = bool(opts.get('nokeep'))     # (a castle's quarter: no keep building in it)
     _say('Choosing the buildings', P * 0.85)
+    try:
+        pl['wall_room'] = [list(p_) for p_ in townplan.inset(poly, WALL_ROOM)]
+        pl['wall_way'] = [list(p_) for p_ in townplan.inset(poly, WALL_WAY)]
+    except Exception as e:
+        print('wall room:', e)
     again = fit(db, pl, seed)
     built = lambda p_: sum(1 for q in p_['plots'] if q.get('b'))
     if built(again) < 0.75 * built(plan) and len(drawn) < 3 and len(fixed) < 4 and not led:
@@ -1425,6 +1510,9 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
 GATE_CLEAR = 1200              # the ground inside a gate kept free of buildings, this deep
 DOOR_CLEAR = 320               # the ground straight out of a door kept free of buildings, this deep
 DOOR_WAY = 224                 # and this wide
+WALL_ROOM = 256                # a walled town's buildings, roofs and all, come no nearer its wall's line than this
+WALL_WAY = 140                 # and the way out of a door ends this short of the line (the wall's own half depth and a bit)
+DOOR_BACK = 64                 # (a door standing this far back in its building's own outline, the corner of an L)
 
 
 def _off_streets(plan, street_pts, when):
@@ -1456,6 +1544,32 @@ def _street_points(plan):
             n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) // 64))
             out += [(a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n) for i in range(n + 1)]
     return out
+
+
+def _way_past(dx, dy, c, sn, fp):
+    """The way out of a door past its own building's outline (fp, in the door's frame): the strip of ground DOOR_CLEAR
+    deep from the outline's front edge. A door on the front face has it where _doorway's is; an L-shaped building's
+    door stands back in its corner, _doorway's strip all inside the building's own outline, and what stood at the
+    outline's edge was never looked at: a tavern set against the town wall, its door in a slot (the user's 2618)."""
+    h = DOOR_WAY / 2.0
+    y0 = min(-16.0, fp[1])
+    return [_world(dx, dy, c, sn, fx, fy) for fx, fy in ((-h, y0 - DOOR_CLEAR), (h, y0 - DOOR_CLEAR), (h, y0), (-h, y0))]
+
+
+def _past_of(q):
+    """_way_past for a fitted plot, from its rect and its way as they stand now (moved with the building since)."""
+    w, r = q.get('way'), q.get('rect')
+    if not w or not r or len(w) < 4:
+        return None
+    ox, oy = w[0][0] - w[3][0], w[0][1] - w[3][1]
+    h = math.hypot(ox, oy)
+    if h < 1:
+        return None
+    ox, oy = ox / h, oy / h
+    t0 = max(0.0, max((p[0] - w[3][0]) * ox + (p[1] - w[3][1]) * oy for p in r))
+    t1 = t0 + DOOR_CLEAR
+    return [(w[3][0] + ox * t1, w[3][1] + oy * t1), (w[2][0] + ox * t1, w[2][1] + oy * t1),
+            (w[2][0] + ox * t0, w[2][1] + oy * t0), (w[3][0] + ox * t0, w[3][1] + oy * t0)]
 
 
 def _doorway(dx, dy, c, sn):
@@ -1730,6 +1844,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                                                 for w_ in wall_boxes):
             q['b'] = None                # (into the wall, a tower or the keep, or its door against them: houses back onto
             continue                     # the wall now, 2 clashes in 5 towns, lab jwclash)
+        past_ = _past_of(q) if wall_boxes else None
+        if past_ and any(townplan._overlap(past_, w_) for w_ in wall_boxes):
+            q['b'] = None                # (its door's way out, past its own outline, into the wall: _way_past)
+            continue
         m = b['m']
         c, sn, yaw = _frame(q['face'])
         dx, dy = q['door']

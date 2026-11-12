@@ -846,6 +846,17 @@ def _off_forts(forts, poly, streets, roads):
     return out, [r for r in roads if not _on_fort(forts, r[1][0], r[1][1], FORT_TOL + 300)]
 
 
+LINE_KINDS = ('corner', 'tower')          # (pieces that can stand in a wall's line besides its plain lengths)
+
+
+def _in_line(kit, p, d):
+    """Whether a wall piece stands in the line of a run going the way d: a plain length, or a corner unit's or the run's
+    tower piece turned along it."""
+    if p['id'] == kit['straight']:
+        return True
+    return p.get('kind') in LINE_KINDS and abs(math.sin(_rz_for(kit, d) - p['pose'].rz)) <= 0.05
+
+
 def _meet_forts(db, fam, kit, poly, pieces, forts):
     """The wall's pieces where it meets a castle's: (pieces, joins). The lengths on the castle's line are left to the
     castle; where the town's wall runs up to the castle's and stops, a length carried on into the castle's wall, so no
@@ -887,7 +898,10 @@ def _meet_forts(db, fam, kit, poly, pieces, forts):
     n_j = 0
     for v, d, f, tag in joins:
         # (the last whole length of the free side, and half a length on from it: into the castle's wall, to its middle)
-        side = [p for p in keep if p['id'] == kit['straight'] and abs(-(p['pose'].x - v[0]) * d[1] + (p['pose'].y - v[1]) * d[0]) <= 24
+        # (a plain length, or a piece of the wall's line that is none: the tower piece of the town's own corner a step
+        # along, a wall tower in the run. Only plain lengths were looked for, and a wall whose corner stood two lengths
+        # from the castle's was left open beside it: the user's 2618 at Blackrose, 2026-11-11)
+        side = [p for p in keep if _in_line(kit, p, d) and abs(-(p['pose'].x - v[0]) * d[1] + (p['pose'].y - v[1]) * d[0]) <= 24
                 and -4 * L <= (p['pose'].x - v[0]) * d[0] + (p['pose'].y - v[1]) * d[1] < 0]
         side.sort(key=lambda p: math.hypot(p['pose'].x - v[0], p['pose'].y - v[1]))
         if not side or math.hypot(side[0]['pose'].x - v[0], side[0]['pose'].y - v[1]) > 2.6 * L:
@@ -914,7 +928,10 @@ def _meet_forts(db, fam, kit, poly, pieces, forts):
                               'kind': 'wall', 'join': True}, **tag))
         # (nor a length or so from the castle's own corner: two towers side by side)
         crn = min(math.hypot(q[0] - v[0], q[1] - v[1]) for q in f['ring'])
-        if B and not FORT_TOL < crn < 1.6 * L and not any(math.hypot(t[0] - v[0], t[1] - v[1]) <= FORT_TOWER for t in f['towers']) and \
+        # (nor where the town's own corner tower stands two lengths off, its tower piece between: three in a row)
+        crowd = side[0]['id'] != kit['straight'] and any(o.get('kind') == 'bigtower' and math.hypot(o['pose'].x - v[0], o['pose'].y - v[1]) <= 2.2 * L
+                                                         for o in keep)
+        if B and not crowd and not FORT_TOL < crn < 1.6 * L and not any(math.hypot(t[0] - v[0], t[1] - v[1]) <= FORT_TOWER for t in f['towers']) and \
                 not any(math.hypot(t[0] - v[0], t[1] - v[1]) <= FORT_BLOCK + (t[2] if len(t) > 2 else 0.0) for t in f['blocks']):
             keep.append({'id': B['tower'], 'pose': Pose(v[0], v[1], 0.0, rz, B['tower']), 'kind': 'bigtower', 'dz': B['tower_dz'], 'join': True})
     # (and a tower or a length left standing by itself beside the castle, the wall either side of it gone to the castle
@@ -928,7 +945,7 @@ def _meet_forts(db, fam, kit, poly, pieces, forts):
     # there (a wall run on to the water past the castle's corner had its first length on the castle's line, left out,
     # and a gap of 100 beside the corner, lab 2026-11-11), is carried on into the castle's wall by half a length)
     for p in list(keep):
-        if p['id'] != kit['straight'] or p.get('join'):
+        if p.get('join') or not (p['id'] == kit['straight'] or p.get('kind') in LINE_KINDS):
             continue
         q0 = p['pose']
         for f in forts:
