@@ -95,7 +95,10 @@ def palette(db, region):
                 w = _what(low)
                 if w not in got or STANDIN.search(low) or r['type'] not in ('STAT', 'ACTI'):
                     continue
-                g = mapdata.terrain_z(db, r['p'][0], r['p'][1])
+                # (over the ground of the plugin that set it there, mapdata.own_heights: Sky_Main's trees and rocks, read
+                # over Tamriel.esm's land that won their cells, came out up to 5,000 up and 2,300 down, and each
+                # stand-in swapped for one was set that far off the ground: 93 trees in the sky over 15 cells, p34)
+                g = mapdata.own_ground(db, str(r.get('k') or '').split('|')[0], r['p'][0], r['p'][1])
                 got[w].append((r['id'], _size(r) or 128.0, (r['p'][2] - g) if g is not None else 0.0))
         return got
     out = read(region)
@@ -209,8 +212,18 @@ def clear(db, cells, scope='standins', seed=1, say=None, rocks=True, trees_k=1.0
                     c2, _r2 = (c, None) if ck == key else editing._cell(db, ck)
                 except editing.EditError:
                     continue
+                z = g + sink * sc
+                tb = mapdata.object_bounds(db, ri)
+                if tb:
+                    # (whatever was learnt: a tree's foot at the ground, a rock neither on it nor under it)
+                    foot, top, tall = z + tb[2] * sc, z + tb[5] * sc, (tb[5] - tb[2]) * sc
+                    if w == 'tree':
+                        if foot > g + 32.0 or foot < g - 0.35 * tall:
+                            z = g - tb[2] * sc - 16.0
+                    elif foot > g + 8.0 or top < g + 0.3 * tall:
+                        z = g - tb[2] * sc - 0.4 * tall
                 editing._store(c2, rk, mine, int(rk.rsplit('|', 1)[1]),
-                               set_ref_pos([('NAME', zs(db.recs[ri][1]))], (x, y, g + sink * sc, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc))
+                               set_ref_pos([('NAME', zs(db.recs[ri][1]))], (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc))
                 replaced += 1
     if removed:
         db.sync_project()

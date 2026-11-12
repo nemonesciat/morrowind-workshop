@@ -380,6 +380,12 @@ def plan(db, outline, style='Imperial', size='medium', seed=1, name='', gate=Non
                 Dp = max(Dp, ev + g_back + g_front)
                 # (whole lengths round it, never fewer than its keep needs: rounded down, a compound stood into the wall)
                 n_w, n_d = max(4, int(math.ceil(Wd / L - 0.1))), max(4, int(math.ceil(Dp / L - 0.1)))
+                # (and never fewer than its gate needs between the front's corners: a castle drawn four lengths wide
+                # had its gate moved to a side wall, its keep's door facing a blank front and no way through to the
+                # town it was drawn against; practice 2, 2026-11-11)
+                g_ = tw._best(kit, 'gate')
+                if g_ and not sock:
+                    n_w = max(n_w, int(math.ceil((g_[1]['span'] + 3.5 * L) / L - 0.01)))
                 if n_w % 2:
                     n_w += 1                 # (an even count: the gate stands in the middle of its side)
                 if size == 'large' and bool(d.get('towers')) and not d.get('keep_apart'):
@@ -899,6 +905,14 @@ DECK_TOWER_IN = 102            # (its middle this far from the block's middle ea
 # Pelagiad's run to the ground, and hung off the column theirs ended in flat bottoms in the air, the user 2026-11-05)
 SLIT_FACE = 0.65               # (a block's face takes a window pattern this often, else it stands bare)
 SLIT_DOOR_CLEAR = 340          # (no window this near a door or a walk arch on the block's face: windows clipped into doors, the user 2026-11-05)
+# (a slit against the ground: "Windows are clipping into the dirt here", the user 2026-11-12, Fort Urasek made Great:
+# 17 of its 29 slits with the foot under the yard, 7 more than half buried, lab gw1. A block sunk beside its
+# neighbours, TIER_DROPS, took its pattern down with it, and nothing looked at the yard)
+SLIT_FOOT, SLIT_HEAD = 129, 160      # (the slit's model under and over its own middle)
+SLIT_OVER = 80                 # (a pattern's lowest slit has its foot this far over the yard, or the deck before its face, at least:
+                               # a keep block's origin lies 151 under its yard and its corbel band begins 523 over the origin, where the
+                               # game's highest slit ends, so a slit of 289 has its foot 83 over the yard at the most, lab gw5, gw6)
+SLIT_CLEAR = 48                # (and any slit is left out whose foot is nearer the ground than this where it is set)
 
 
 def _slit_pool(keeps):
@@ -1247,6 +1261,10 @@ def _tiered(db, km, rng, n_c=3, T=3, pool=None):
         slit = (SLIT_ID, 0.0, -SLIT_OUT, 240.0, 0.0, 0.0, 0.0, 1.0)
     pool = [p for p in (pool or []) if p] or ([[(0, 240)]] if slit else [])
     DIRS = ((0, -1), (-1, 0), (0, 1), (1, 0))
+    # (how high on a block the game's own slits reach, with the most a pattern is shifted: a lifted slit goes no higher.
+    # Lifted as far as the parapet, its head ran through the corbel band under the deck, lab gw2's picture)
+    # (the game's five patterns stand 128 to 363 over a block's origin: a head at 523 at the most)
+    slit_top = max([sz for pat_ in pool for _t, sz in pat_] or [240]) + SLIT_HEAD
     if slit:
         for P in body:
             if P.get('main'):
@@ -1259,11 +1277,21 @@ def _tiered(db, km, rng, n_c=3, T=3, pool=None):
                 a = q * math.pi / 2
                 ca, sa = math.cos(a), math.sin(a)
                 dz_, flip = rng.choice((-96, -48, 0, 0, 48, 96)), rng.choice((1, -1))
-                for t_, sz in rng.choice(pool):
+                pat_ = rng.choice(pool)
+                # (the pattern lifted whole until its lowest slit stands clear of what lies before the face: the yard,
+                # or a lower block's deck; a slit with no room left under the parapet is left out)
+                ox_, oy_ = P['x'] + dx * (G / 2 + 60), P['y'] + dy * (G / 2 + 60)
+                under_ = max([z_pad] + [Q['z'] + DECK * sc(Q) for Q in body if Q is not P and Q['kind'] == 'k1' and abs(ox_ - Q['x']) <= G / 2
+                                        and abs(oy_ - Q['y']) <= G / 2 and Q['z'] + DECK * sc(Q) < P['z'] + TOP[P['kind']] - 300])
+                low_ = P['z'] + min(sz for _t, sz in pat_) + dz_ - SLIT_FOOT
+                lift_ = max(0.0, math.ceil((under_ + SLIT_OVER - low_) / 16.0) * 16.0)
+                for t_, sz in pat_:
+                    if sz + dz_ + lift_ + SLIT_HEAD > ((slit_top if P['kind'] == 'k1' else TOP[P['kind']] - 160) if lift_ else TOP[P['kind']] - 40):
+                        continue
                     t_ *= flip
                     out_ = (SLIT_OUT - G / 2) + G / 2 * sc(P)   # (as far out of the face as the game's)
                     px, py = t_ * ca + (-out_) * sa, -t_ * sa + (-out_) * ca
-                    pieces.append((slit[0], P['x'] + px, P['y'] + py, P['z'] + sz + dz_, a, 0.0, 0.0, 1.0, 'slit'))
+                    pieces.append((slit[0], P['x'] + px, P['y'] + py, P['z'] + sz + dz_ + lift_, a, 0.0, 0.0, 1.0, 'slit'))
     # ---- doors: where a wall of a higher piece stands on a keep_01's deck, a door onto the deck, with its frame
     RZF = {(0, -1): 0.0, (-1, 0): math.pi / 2, (0, 1): math.pi, (1, 0): 1.5 * math.pi}
     fvi = (int(round(fv[0])), int(round(fv[1])))
@@ -2387,9 +2415,9 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
         Pz = (M['x'], M['y'], Z, M['rz'])
         M['pose'] = Pz
         for pc in m['pieces']:
-            if len(pc) > 8 and pc[8] == 'slit':
-                slits_later.append((mi, pc))     # (the mass's windows: after the doors, clear of them)
-                continue
+            if (len(pc) > 8 and pc[8] == 'slit') or re.search(r'arrowslit', pc[0], re.I):
+                slits_later.append((mi, pc))     # (the mass's windows: after the doors, clear of them; and the game
+                continue                         # keep's own, with them, set once the ground round the keep is final)
             x, y = _place(Pz, pc[1], pc[2])
             wr.put(pc[0], (x, y, Z + pc[3], pc[5], pc[6], M['rz'] + pc[4]), pc[7])
         upper = None
@@ -2435,16 +2463,6 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
                 mdoors.append((mi, dd, got))
     if W is not None:
         mdoors += _walk_doors(db, wr, P, W, walk_cand, every=(rooms == 'made'))
-    # (the tiered keep's windows now, none where a door or a walk arch stands on the face)
-    near = [g[2][:3] for _mi, _dd, g in mdoors]
-    for mi, pc in slits_later:
-        M = P['modules'][mi]
-        Pz = M['pose']
-        x, y = _place(Pz, pc[1], pc[2])
-        z = Pz[2] + pc[3]
-        if any(math.hypot(x - nx, y - ny) < SLIT_DOOR_CLEAR and abs(z - nz) < 450 for nx, ny, nz in near):
-            continue
-        wr.put(pc[0], (x, y, z, pc[5], pc[6], M['rz'] + pc[4]), pc[7])
     editing.commit(db, 'Built %s outside: %d pieces' % (name, len(wr.refs)))
     # ---- the lower wards: quarters of streets and houses, planned round what stands (the walls, towers, halls and
     # gates are its obstacles now), as the game's big castles are towns inside their walls
@@ -2475,6 +2493,27 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
             print('castle bailey:', e)
         if len(wr.refs) > nb0:
             editing.commit(db, 'Set out the bailey of %s: %d things' % (name, len(wr.refs) - nb0))
+    # (the keep's windows now, last of what stands outside: none where a door or a walk arch stands on the face, and
+    # none with its foot in the ground as the ground lies now, the quarters' and the yard's passes done. The land at
+    # the slit's own spot and a step round it, the highest of them)
+    near = [g[2][:3] for _mi, _dd, g in mdoors]
+    ns0, sunk_ = len(wr.refs), 0
+    for mi, pc in slits_later:
+        M = P['modules'][mi]
+        Pz = M['pose']
+        x, y = _place(Pz, pc[1], pc[2])
+        z = Pz[2] + pc[3]
+        if len(pc) > 8 and pc[8] == 'slit' and any(math.hypot(x - nx, y - ny) < SLIT_DOOR_CLEAR and abs(z - nz) < 450 for nx, ny, nz in near):
+            continue
+        gz = max(_ground(db, x + ax, y + ay) for ax, ay in ((0, 0), (80, 0), (-80, 0), (0, 80), (0, -80)))
+        if z - SLIT_FOOT < gz + SLIT_CLEAR:
+            sunk_ += 1
+            continue
+        wr.put(pc[0], (x, y, z, pc[5], pc[6], M['rz'] + pc[4]), pc[7])
+    if sunk_:
+        print('castle: %d arrow slits left out, their feet in the ground' % sunk_)
+    if len(wr.refs) > ns0:
+        editing.commit(db, 'Set the windows of %s: %d' % (name, len(wr.refs) - ns0))
     db.sync_project()
     # ---- inside
     _say('Copying the rooms', 0.5)
@@ -2596,8 +2635,8 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     if made:
         folks += made.get('people', 0)
     if len(stack) > n0:
-        editing.fold(db, len(stack) - n0, 'Built %s, a %s: %d pieces outside, %d interiors%s' % (
-            name, STYLES[style]['label'], len(wr.refs), n_in, (', %d people' % folks) if folks else ''))
+        editing.fold(db, len(stack) - n0, 'Built %s, %s %s: %d pieces outside, %d interiors%s' % (
+            name, 'an' if STYLES[style]['label'][:1].lower() in 'aeiou' else 'a', STYLES[style]['label'], len(wr.refs), n_in, (', %d people' % folks) if folks else ''))
     return {'name': name, 'pieces': len(wr.refs), 'cells': sorted(wr.cells), 'interiors': n_in, 'people': folks, 'furnished': placed,
             'fort': P.get('fort'),
             'quarters': quarters, 'buildings': sum(q['buildings'] for q in quarters),
@@ -3395,13 +3434,53 @@ def _made_inside(db, P, W, mdoors, tdoors, name, size, seed, people, free, say):
     # (the mass's footprint from its door in, for the halls to keep within: its width class's half width, and the depth
     # from the keep's front face to the wall line behind)
     box = [{3: 1400, 5: 2000, 7: 2600}.get(ti.get('n'), 1400), BLOCK * 2.5] if ti else None
-    R = keepmaker.make(db, name, size, seed=seed, outs=max(1, len(keep_doors)), people=people, commit=False, progress=lambda w, f: say(w, 0.6 * f), box=box)
+    # (and the keep's own blocks as they stand outside, behind its lowest door: the Great Hall is grown inside them)
+    blocks = None
+    try:
+        if keep_doors:
+            z_, dd_, got_, out_, mi_ = keep_doors[0]
+            blocks = keepmaker.masses(db, got_[0], [float(v) for v in got_[2][:3]], out_) or None
+    except Exception as e:
+        print('keep blocks:', e)
+    R = keepmaker.make(db, name, size, seed=seed, outs=max(1, len(keep_doors)), people=people, commit=False, progress=lambda w, f: say(w, 0.6 * f), box=box,
+                       masses=blocks)
     if R.get('learning'):
         raise EditError('The Workshop is still learning the game\'s forts; try again in a minute.')
     cells += R['cells']
     names += [m['name'] for m in R['interiors']]
     kout = sorted([o for o in R['outs'] if o['kind'] != 'trap'], key=lambda o: o['z'])
     hatches = [o for o in R['outs'] if o['kind'] == 'trap']
+    # (each door outside to the door inside that stands nearest it in the keep's own space, the front door to the
+    # hall's own: by side as well as by height. By height alone a walk arch on the keep's left wall led to a room on
+    # its right)
+    if blocks and keep_doors and all(o.get('kp') for o in kout) and len(kout) >= 1:
+        try:
+            p0, o0 = [float(v) for v in keep_doors[0][2][2][:3]], keep_doors[0][3]
+            ln_ = math.hypot(p0[0] - o0[0], p0[1] - o0[1]) or 1.0
+            ix_, iy_ = (p0[0] - o0[0]) / ln_, (p0[1] - o0[1]) / ln_
+            g_ = float(R.get('grow') or 1.0)
+            ext = []
+            for t in keep_doors:
+                q = [float(v) for v in t[2][2][:3]]
+                ext.append((((q[0] - p0[0]) * ix_ + (q[1] - p0[1]) * iy_) * g_, ((q[0] - p0[0]) * iy_ - (q[1] - p0[1]) * ix_) * g_, q[2] - p0[2]))
+            left_e, left_i, pairs_ = list(range(1, len(keep_doors))), [o for o in kout], []
+            front_ = next((o for o in kout if o['role'] == 'hall' and o['kind'] == 'front'), None)
+            if front_ is not None:
+                pairs_.append((0, front_))
+                left_i.remove(front_)
+            else:
+                left_e.insert(0, 0)
+            while left_e and left_i:
+                e_, o_ = min(((e, o) for e in left_e for o in left_i),
+                             key=lambda q: math.hypot(ext[q[0]][0] - q[1]['kp'][0], ext[q[0]][1] - q[1]['kp'][1]) + 2.0 * abs(ext[q[0]][2] - q[1]['kp'][2]))
+                pairs_.append((e_, o_))
+                left_e.remove(e_)
+                left_i.remove(o_)
+            order_e = [e for e, _o in pairs_] + left_e
+            keep_doors = [keep_doors[e] for e in order_e]
+            kout = [o for _e, o in pairs_] + left_i
+        except Exception as e:
+            print('keep doors by place:', e)
     for (z, dd, got, out, mi), o in zip(keep_doors, kout):
         links.append((got[0], got[1], o['name'], o['arrive']))
         links.append((o['cell'], o['k'], '', out))

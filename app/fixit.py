@@ -1762,9 +1762,12 @@ def _open_posts(db, m, tiles):
         rooms_kp = {'pieces': [p for p in t['kit']['pieces'] if builder._family(p['id']) == 'room'], 'walls': t['kit']['walls']}
         piece, q, missing, _p = builder._pick(rooms_kp, {s: pat[s] for s in kits.SIDES}, 'room')
         fixes = []
-        # (a room piece with the same walls; where none has them, a hall_center's two walls, a second room
-        # piece on the same spot turned to the walls the first lacks, as the game stacks two pieces, before
-        # loose walls: those left slits at the ends of the user's hall_center swapped for a side, 2 holes)
+        # (a room piece with the same walls; where none has them, a hall_center's two walls, the room piece
+        # with loose walls on the sides it lacks. A second room piece on the same spot, turned to those walls,
+        # came first here, "as the game stacks two pieces": it does not, 0 of 4,897 Hlaalu spots in 345 of its
+        # interiors, 0 of 1,359 common, 0 of 2,938 Velothi (lab stack1, 2026-11-11), and two floors and two
+        # ceilings in one spot flicker: the user's Tharen Rise, "overlapping hlaalu pieces". It is offered only
+        # where the style has no loose wall, last)
         swap = [{'op': 'swap', 'ref': t['ref'], 'id': piece['id'], 'rz': q * math.pi / 2}] + \
             [{'op': 'delete', 'ref': r} for r in t.get('mates', [])] if piece else []
         if piece and builder._family(piece['id']) == 'room' and not missing:
@@ -1780,12 +1783,12 @@ def _open_posts(db, m, tiles):
                     score = (round(sum(r_['cover'].get(s, 0) for s in kits.SIDES if s not in missing), 2), -p_['uses'])
                     if st is None or score < st[3]:
                         st = (p_, q_, r_, score)
-            if st:
-                fixes.append({'label': 'Swap for %s, with a %s on the same spot for the other wall' % (piece['id'], st[0]['id']),
-                              'ops': swap + [{'op': 'place', 'id': st[0]['id'], 'p': [t['x'], t['y'], t['z'], 0, 0, round(st[1] * math.pi / 2, 4)]}]})
             wf = _wall_fix(db, t, missing)
             if wf:
                 fixes.append({'label': 'Swap for %s and add walls' % piece['id'], 'ops': swap + wf['ops']})
+            elif st and not t['kit']['walls']:
+                fixes.append({'label': 'Swap for %s, with a %s on the same spot for the other wall' % (piece['id'], st[0]['id']),
+                              'ops': swap + [{'op': 'place', 'id': st[0]['id'], 'p': [t['x'], t['y'], t['z'], 0, 0, round(st[1] * math.pi / 2, 4)]}], 'stack': True})
         for s in sides:
             x0, y0, x1, y1 = _edge(t, s)
             out.append({'kind': 'openpost', 'side': s, 'ref': t['ref'], 'id': t['id'], 'x': (x0 + x1) / 2, 'y': (y0 + y1) / 2,

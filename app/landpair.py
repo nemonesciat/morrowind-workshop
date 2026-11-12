@@ -21,6 +21,8 @@ REACH = 400.0
 MIN_ROCK = 256.0
 SAMPLE = 80
 STEEP_MAX = 38.0            # (no tree set on ground steeper than this by a rock)
+FOOT_UP = 32.0              # (a set tree's lowest point is never more than this over the ground,
+FOOT_DOWN = 0.35            #  nor deeper under it than this share of the tree's height: p34, trees stood 4,000 up)
 _mem = {}
 
 
@@ -63,7 +65,8 @@ def learn(db, region):
         area += (8192.0 * 8192.0) / 1e6
         if ('#' + k) not in proj:
             for t in trees:
-                g = mapdata.terrain_z(db, t['p'][0], t['p'][1])
+                # (over the ground of the plugin that set it there: mapdata.own_heights)
+                g = mapdata.own_ground(db, str(t.get('k') or '').split('|')[0], t['p'][0], t['p'][1])
                 if g is not None:
                     sink[t['id'].lower()].append(t['p'][2] - g)
         for r in rocks:
@@ -150,9 +153,15 @@ def pair(db, cells, region_of, seed=1, hold=None, amount=1.0):
                 except editing.EditError:
                     break
                 z = g + L['sink'].get(tid.lower(), -8.0)
+                sc = rng.uniform(0.85, 1.15)
+                tb = mapdata.object_bounds(db, ri)
+                if tb:
+                    foot, tall = z + tb[2] * sc, (tb[5] - tb[2]) * sc
+                    if foot > g + FOOT_UP or foot < g - FOOT_DOWN * tall:
+                        z = g - tb[2] * sc - 16.0          # (its foot a little in the ground, whatever was learnt)
                 rk = db.project.new_ref_key()
                 editing._store(c_, rk, mine, int(rk.rsplit('|', 1)[1]),
-                               set_ref_pos([('NAME', zs(db.recs[ri][1]))], (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), rng.uniform(0.85, 1.15)))
+                               set_ref_pos([('NAME', zs(db.recs[ri][1]))], (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc))
                 trees.append((x, y))
                 laid += 1
                 want -= 1

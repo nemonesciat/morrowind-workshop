@@ -106,25 +106,19 @@ _req = threading.local()
 
 def request_started():
     _req.t = time.time()
-    _run.key = None
 
 
-# Many changes as one Undo step, so the big ones stay within reach (Undo keeps about 100 steps, and an evening of
-# ground strokes pushed the town made before them out: the user, 2026-11-02):
-# - a group the user opens and closes (the toolbar's Group, My mod's switch): every change meanwhile goes into it;
-#   the last one stays a step of its own, so Undo still takes back just that, and the rest are folded into one;
-# - strokes of the ground brush, or moves of one thing, in a row (no group open): folded as they come, until
-#   something else is done or RUN_GAP seconds go by.
+# One press of Undo takes back one change, always. Keeping the big changes within reach (Undo keeps about 100 steps,
+# and an evening of ground strokes pushed the town made before them out: the user, 2026-11-02) is done two ways:
+# - a group the user opens and closes (the toolbar's Group, My mod's switch): what was done meanwhile becomes one
+#   step when it is closed. While it is open its changes are steps like any other;
+# - when the history is full, two like steps at its far end become one instead of the oldest being let go
+#   (_make_room): a long run of strokes or moves folds where nobody is looking.
+# Until 2.7.1 strokes and moves in a row folded as they came, and an open group folded all but its last change: ten
+# moves, then Undo twice, stood the thing back at its first spot. Reported as a fault twice, 2026-11-12; the user: "He
+# has a point."
 # Not recording changes at all was the first idea: Undo goes back to the mod as it was, so a change it didn't know
 # of would have been taken away with the step before it.
-RUN_GAP = 180
-_run = threading.local()
-
-
-def run_key(key):
-    """The kind of change this request makes, for folding a run of them ('ground', 'move|cell|ref')."""
-    _run.key = key
-
 
 def group_open(db, name=''):
     p = db.project
@@ -133,8 +127,10 @@ def group_open(db, name=''):
         if name:
             p._grp['name'] = name.strip()[:80]          # (named while open, on My mod)
         return group_state(db)
+    # ('old': what Undo had already taken back when the group was opened; put back by Redo, it is not the group's)
     p._grp = {'manual': True, 'start': len(getattr(p, 'undo_stack', [])), 'since': time.time(), 'total': 0,
-              'name': (name or '').strip()[:80]}
+              'name': (name or '').strip()[:80],
+              'old': {r[3] for r in getattr(p, 'redo_stack', []) if len(r) > 3}}
     return group_state(db)
 
 
@@ -193,40 +189,77 @@ def _merge(db, i, j, note):
     return entry
 
 
-def _run_ends(p, undoing=False):
+# The open group holds what was done while it was open, and nothing from before it. Where it begins in the history
+# (g['start']) stays put when Undo goes back past it, so that Redo puts the earlier steps back as their own. (Until
+# 2.7.2-test6 the start followed Undo down: three moves, Group on, three more, Undo six times, Redo six times, Group
+# off made one step of all six, the three from before the group among them; tosky0890 on Discord, 2026-11-12: "the
+# Undo stack gets messed up when the Group function is enabled afterward".)
+def _group_undone(p, i):
+    """Undo is taking back the step at stack position i."""
     g = getattr(p, '_grp', None)
     if g and not g.get('manual'):
         p._grp = None
-    elif g and undoing:
-        stack = getattr(p, 'undo_stack', None) or []
-        if len(stack) > g['start']:
-            g['total'] = max(0, g['total'] - 1)        # (a step of the group taken back)
-        g['start'] = min(g['start'], max(0, len(stack) - 1))
-    elif g:
+    elif g and i >= g['start']:
+        g['total'] = max(0, g['total'] - 1)            # (a step of the group taken back)
+
+
+def _group_redone(p, i, undid):
+    """Redo is putting a step back at stack position i (undid: the Undo that had taken it back)."""
+    g = getattr(p, '_grp', None)
+    if g and not g.get('manual'):
+        p._grp = None
+    elif g and undid in g.get('old', ()):
+        g['start'] = max(g['start'], i + 1)            # (taken back before the group was opened: it stays outside)
+    elif g and i >= g['start']:
         g['total'] += 1
 
 
 def _grouped(db, entry, note, trimmed):
-    """After a commit: into the open group, or onto the run of strokes or moves it continues."""
+    """After a commit: counted into the open group. Its steps stay steps (one Undo, one change) until it is closed."""
     p = db.project
-    stack = p.undo_stack
-    key, _run.key = getattr(_run, 'key', None), None
     g = getattr(p, '_grp', None)
     if g and g.get('manual'):
         g['start'] = max(0, g['start'] - trimmed)
+        at = len(getattr(p, 'undo_stack', [])) - 1     # (where this change stands in the history)
+        if at < g['start']:
+            # (Undo had gone back past where the group began, and work went on from there: it begins here)
+            g['start'], g['total'] = max(0, at), 0
         g['total'] += 1
-        n = len(stack) - g['start']
-        if n >= 3:
-            _merge(db, g['start'], len(stack) - 1, _group_label(g))     # (all but the last one)
-        return
-    now = time.time()
-    if key and g and g.get('key') == key and now - g['t'] < RUN_GAP and g['depth'] == len(stack) - 1:
-        g['total'] += 1
-        g['t'] = now
-        _merge(db, len(stack) - 2, len(stack), '%s (%d in a row)' % (g['note'], g['total']))
-        g['depth'] = len(stack)
-        return
-    p._grp = {'key': key, 't': now, 'depth': len(stack), 'total': 1, 'note': note or 'change'} if key and note else None
+    elif g:
+        p._grp = None
+
+
+_ROW_RE = re.compile(r' \((\d+) in a row\)$')
+UNDO_STEPS = 100
+
+
+def _make_room(db, stack):
+    """The history is full and a step is about to be added: two steps at its far end become one, so that no step is
+    let go. The oldest two that stand side by side and are both of the open group, or carry the same note (ground
+    strokes in a row, a thing moved again and again). True when room was made; False when no two are alike (the
+    oldest step is then let go, as ever) or an operation is under way (it folds its own steps when it ends)."""
+    p = db.project
+    if _cur_op() or len(stack) < UNDO_STEPS:
+        return False
+    g = getattr(p, '_grp', None)
+    start = g['start'] if g and g.get('manual') else None
+    base = [_ROW_RE.sub('', str(it[1])) for it in stack]
+    for i in range(len(stack) - 1):
+        if start is not None and i + 1 == start:
+            continue                                  # (the step before the group and the group's first: never one)
+        ingroup = start is not None and i >= start
+        if not ingroup and base[i] != base[i + 1]:
+            continue
+        if ingroup:
+            note = _group_label(g)
+        else:
+            n = sum(int(m.group(1)) if m else 1 for m in (_ROW_RE.search(str(it[1])) for it in stack[i:i + 2]))
+            note = '%s (%d in a row)' % (base[i], n)
+        _merge(db, i, i + 2, note)
+        if start is not None and i < start:
+            g['start'] -= 1
+        return True
+    return False
 
 
 def breathe():
@@ -281,10 +314,12 @@ def commit(db, note=None, reverts=None):
         op_ = _cur_op()
         if op_ and (p.__dict__.get('_op_before') or (None,))[0] != op_:
             p._op_before = (op_, before)
+            p._op_steps = [op_, 0, 0]       # (the operation's steps on the stack, and how many the stack has let go since)
         stack = p.__dict__.setdefault('undo_stack', [])
+        _make_room(db, stack)               # (before the step goes on: last_state is still the state after the last one)
         was = len(stack)
         stack.append((before, note or 'change', entry['id'] if entry else None))
-        del stack[:-100]
+        del stack[:-UNDO_STEPS]
         p.redo_stack = []                   # (a new change after an Undo: what was undone can't come back)
         p.redo_together = []
         # big projects (lots of grass) make big undo steps: keep the history within ~300 MB (a Snap counts the parts
@@ -293,6 +328,10 @@ def commit(db, note=None, reverts=None):
         while len(stack) > 5 and total > 300_000_000:
             total -= _step_size(stack.pop(0)[0])
         trimmed = was + 1 - len(stack)
+        os_ = p.__dict__.get('_op_steps')
+        if op_ and os_ and os_[0] == op_:
+            os_[1] += 1
+            os_[2] += max(0, trimmed)
     p.last_state = after
     db.sync_project(texts=after.c)
     _write_soon(db)
@@ -523,10 +562,33 @@ def _placed_by(p, text, entry_id=None):
     return 0
 
 
+TOUCHED_MOST = 200
+
+
+def _touched(diff):
+    """The placed things a step of Undo or Redo changed, as [{cell, ref}]: the page selects those that are still
+    there. (All of them, not only those the mod still holds: a thing of the game's put back where the game has it is
+    no longer in the mod, and is the very thing to select.) None when there are too many to be a selection (a town
+    taken back and put back)."""
+    out = []
+    for ck, cd in ((diff or {}).get('c') or {}).items():
+        for rk in (cd.get('refs') or {}):
+            out.append({'cell': ck, 'ref': rk})
+            if len(out) > TOUCHED_MOST:
+                return []
+    return out
+
+
+def touched(db):
+    """What the last Undo or Redo changed (see _touched)."""
+    return list(getattr(db.project, '_touched', None) or []) if db.project else []
+
+
 def undo(db, to_depth=None):
     """Undo the last change, or every change back to a recorded depth."""
     _require_project(db)
     p = db.project
+    p._touched = []
     try:
         import together
         if together.active() and to_depth is None:
@@ -544,12 +606,12 @@ def undo(db, to_depth=None):
     stack = getattr(p, 'undo_stack', [])
     if not stack:
         raise EditError('Nothing to undo.')
-    _run_ends(p, undoing=True)
     target = len(stack) - 1 if to_depth is None else max(0, int(to_depth))
     undone, ids, redo = [], [], []
     before = p.last_state
     cur = p.snapshot(before)
     while len(stack) > target:
+        _group_undone(p, len(stack) - 1)
         item = stack.pop()
         state, note = item[0], item[1]
         # (Redo puts back the state as it was before this Undo, step by step: the earliest step on top)
@@ -562,8 +624,10 @@ def undo(db, to_depth=None):
     for i in ids:
         _set_active(p, i, False)
     after = p.snapshot(cur if isinstance(cur, Snap) else before)
+    diff = state_diff(before, after)
     entry = p.note('Undid: ' + '; '.join(undone[:5]) + (' (+%d more)' % (len(undone) - 5) if len(undone) > 5 else ''),
-                   state_diff(before, after))
+                   diff)
+    p._touched = _touched(diff)
     entry['reverts'] = ids
     p.__dict__.setdefault('redo_stack', []).extend(r + (entry['id'],) for r in redo)
     p.last_state = after
@@ -577,6 +641,7 @@ def redo(db):
     """Put back the last change Undo took back, exactly as it was. Returns its note."""
     _require_project(db)
     p = db.project
+    p._touched = []
     try:
         import together
         if together.active():
@@ -596,10 +661,10 @@ def redo(db):
     redo_stack = getattr(p, 'redo_stack', [])
     if not redo_stack:
         raise EditError('Nothing to redo.')
-    _run_ends(p)
     state, note, orig, undid = redo_stack.pop()
     before = p.last_state
     stack = p.__dict__.setdefault('undo_stack', [])
+    _group_redone(p, len(stack), undid)
     now = p.snapshot(before)
     stack.append((now, note, orig))
     p.restore(state, now)
@@ -609,7 +674,9 @@ def redo(db):
     if u and all(not x.get('undone') for x in p.log if x.get('id') in u.get('reverts', [])):
         u['undone'] = True                 # (every step that Undo took back is in effect again)
     after = p.snapshot(state if isinstance(state, Snap) else now)
-    entry = p.note('Redid: ' + note, state_diff(before, after))
+    diff = state_diff(before, after)
+    entry = p.note('Redid: ' + note, diff)
+    p._touched = _touched(diff)
     entry['reverts'] = [undid] if undid else []
     p.last_state = after
     db.sync_project(texts=after.c)
@@ -625,7 +692,8 @@ def fold(db, n, note):
     _require_project(db)
     p = db.project
     stack = getattr(p, 'undo_stack', [])
-    n = min(int(n), len(stack))
+    asked = int(n)
+    n = min(asked, len(stack))
     if n <= 0:
         return None
     items = stack[-n:]
@@ -634,10 +702,20 @@ def fold(db, n, note):
     ids = {it[2] for it in items if len(it) > 2 and it[2]}
     op_ = _cur_op()
     ob = p.__dict__.get('_op_before')
-    if op_ and ob and ob[0] == op_:
+    os_ = p.__dict__.get('_op_steps')
+    if os_ and os_[0] != op_:
+        os_ = None
+    # (the whole operation only when the fold asks for all of its steps: a maker inside it that folds its own, a
+    # castle's keep made anew, took the operation's start for its own and left the castle's one Undo step starting
+    # half way, its record still 'making' and most of it standing after Drop; practice 2, 2026-11-11. The start is
+    # kept for the folds that follow in the same operation)
+    if op_ and ob and ob[0] == op_ and (os_ is None or asked + os_[2] >= os_[1]):
         before = ob[1]                               # (the whole operation, however many steps the stack kept)
         ids |= {e.get('id') for e in p.log if e.get('op') == op_}
-        p._op_before = None
+        if os_:
+            os_[1], os_[2] = 1, 0
+    elif os_:
+        os_[1] -= n - 1
     p.log[:] = [e for e in p.log if e.get('id') not in ids]
     after = p.snapshot()
     entry = p.note(note, state_diff(before, after))
@@ -1151,18 +1229,38 @@ def _store(c, refkey, origin, idx, subs, deleted=False):
     c['refs'][refkey] = {'origin': origin, 'idx': idx, 'subs': [[t, b64(d)] for t, d in subs], 'deleted': deleted}
 
 
+def _same_turn(a, b):
+    """Two (rx, ry, rz) that stand a thing the same way. The page works a thing's turn out anew from the view on every
+    move, so the same turn can come back as other figures: the stances are compared, not the angles."""
+    import math
+
+    def m(r):
+        cx, sx, cy, sy, cz, sz = (math.cos(r[0]), math.sin(r[0]), math.cos(r[1]), math.sin(r[1]),
+                                  math.cos(r[2]), math.sin(r[2]))
+        return (cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx,
+                sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx,
+                -sy, cy * sx, cy * cx)
+    return all(abs(p - q) < 1e-4 for p, q in zip(m(a), m(b)))
+
+
 def move_ref(db, cell_key, refkey, pos, scale=None):
     c, refs = _cell(db, cell_key)
     ref = refs.get(refkey)
     if not ref:
         raise EditError('That object is no longer in this cell.')
+    _rid, was_p, was_s, _gone = ref_info(ref['subs'])
     if len(pos) < 6:
-        pos = list(pos) + list(ref_info(ref['subs'])[1][len(pos):])
+        pos = list(pos) + list(was_p[len(pos):])
+    # Every move, turn and new size of a thing is its own Undo step, named for what it was. They folded as "moves in a
+    # row" until 2.7.1: a bottle moved, then turned, came back to where it began on one Undo (reported 2026-11-12; the
+    # user: "they should be separate unless grouped by the button by the player").
+    kind = ('turn' if not _same_turn(pos[3:6], was_p[3:6])
+            else 'size' if scale is not None and abs(float(scale) - was_s) > 1e-4 else 'move')
     import doors
     was = doors.door_spots(db, [(cell_key, refkey)])
     _store(c, refkey, ref['origin'], ref['idx'], set_ref_pos(ref['subs'], tuple(pos[:6]), scale))
     rid = ref_info(ref['subs'])[0]
-    note = 'Moved "%s" in %s' % (rid, cell_label(db, cell_key))
+    note = '%s "%s" in %s' % ({'turn': 'Turned', 'size': 'Resized', 'move': 'Moved'}[kind], rid, cell_label(db, cell_key))
     commit(db, note)
     if was and doors.follow(db, was):
         fold(db, 2, note)

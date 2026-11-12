@@ -79,8 +79,10 @@ const CF_ACT = [
   }},
   {id: 'turn90', label: 'Turn what\'s selected 90°', keys: [], world: true, run: () => W.sel ? groupDo('turn') : false},
   {id: 'objwin', label: 'Open the window of what\'s selected (record and placement)', keys: [], world: true, run: () => W.sel && typeof owOpen === 'function' ? owOpen(W.sel.cell, W.sel.k) : false},
-  {id: 'move', label: '3D: move handles', keys: ['G', '1'], v3: true, run: () => cfMode('translate')},
-  {id: 'rotate', label: '3D: turn handles', keys: ['R', '2'], v3: true, run: () => cfMode('rotate')},
+  {id: 'move', label: '3D: move handles', keys: ['G', '1'], blender: ['1'], v3: true, run: () => cfMode('translate')},
+  {id: 'rotate', label: '3D: turn handles', keys: ['R', '2'], blender: ['2'], v3: true, run: () => cfMode('rotate')},
+  {id: 'grab', label: '3D: move what\'s selected with the mouse', keys: [], blender: ['G'], v3: true, run: () => v3GrabStart('grab')},
+  {id: 'spin', label: '3D: turn what\'s selected with the mouse', keys: [], blender: ['R'], v3: true, run: () => v3GrabStart('spin')},
   {id: 'scalehandles', label: '3D: scale handles', keys: ['3'], v3: true, run: () => { if (W.multi.size > 1) return qolScale(); V3.tilt = false; cfMode('scale'); }},
   {id: 'drop', label: '3D: set it down on what\'s below', keys: ['End'], v3: true, run: () => v3DropToFloor()},
   {id: 'view3d', label: 'Switch between the flat map and 3D', keys: [], world: true, run: () => { const b = document.querySelector(`[data-view3d="${V3.on ? 0 : 1}"]`); if (b) b.click(); }},
@@ -95,8 +97,23 @@ const CF_FIXED = [
   ['Wheel', 'Zoom (3D: fly forward; turns what you place)'], ['Shift + click', 'Add to or take from the selection'],
   ['Drag on empty space', '3D: draw a box to select (Shift+drag on the flat map; Shift adds)'], ['Right-click', 'A menu for what\'s under the mouse'],
   ['Double-click', 'An object\'s window: its record and its placement, over the view'],
+  ['X  Y  Z', '3D, moving or turning with the mouse: keep to that axis (Shift: the other two). Ctrl: onto what\'s under the mouse'],
 ];
-const cfKeysOf = a => CF.user[a.id] || a.keys;
+// (with Blender's controls chosen, the keys an action has there unless you gave it your own: G and R move and turn
+// with the mouse, and the handles keep 1 and 2)
+const cfKeysOf = a => CF.user[a.id] || (a.blender && cfMouse() === 'blender' ? a.blender : a.keys);
+// The mouse in the 3D views: '' as the Workshop has it (the middle button slides the view), 'blender' as Blender has
+// it (the middle button circles, with Shift it slides, with Ctrl it moves in and out). Chosen in the Keyboard
+// shortcuts window; world3d.js and bench.js ask here.
+function cfMouse(){
+  if (CF.mouse == null){ let s = ''; try { s = localStorage.getItem('ws-mouse') || ''; } catch (e){} CF.mouse = s === 'blender' ? 'blender' : ''; }
+  return CF.mouse;
+}
+// (the 3D view's own list of controls says what the middle button does now)
+function cfMouseHelp(){ document.querySelectorAll('.v3help-mid').forEach(x => { x.textContent = cfMouse() === 'blender' ? 'circle (Shift: slide, Ctrl: in and out)' : 'slide'; }); }
+setTimeout(cfMouseHelp, 0);
+const CF_BLENDER = [['Middle-drag', '3D: circle around what\'s selected, or what\'s under the mouse'], ['Shift + middle-drag', '3D: slide the view'],
+                    ['Ctrl + middle-drag', '3D: move in and out (slower near things)']];
 
 function cfKeyName(e){
   // (a key event with no key name, as a controller or an autofill sends: nothing to match; it threw on the My mod page)
@@ -117,6 +134,7 @@ function cfTyping(e){
 }
 window.addEventListener('keydown', e => {
   if (CF.capture){ CF.capture(e); return; }
+  if (typeof v3GrabKey === 'function' && v3GrabKey(e)) return;     // a thing following the mouse: X Y Z, Enter (world3d.js)
   if (typeof peKey === 'function' && peKey(e)) return;       // editing walking paths: Delete, Ctrl+Z, Esc are its own
   if (typeof lsKey === 'function' && lsKey(e)) return;       // the land's shapes, when one was the last thing changed
   // (a tool with keys of its own, like the room planner: Ctrl+Z there undoes the plan, not your mod)
@@ -146,10 +164,13 @@ function cfKeysModal(){
       <div class="msg">Click <b>+</b> and press the keys you want. A key can only do one thing, so giving it to something else takes it from where it was.</div>
       <table class="cf-keys" style="width:100%;border-collapse:collapse;margin-top:10px">${CF_ACT.map(a => `<tr><td>${esc(a.label)}${a.world ? ' <span class="msg">(World map)</span>' : ''}</td>
         <td>${cfKeysOf(a).map(k => `<kbd class="cf">${esc(k)}<button data-kdel="${a.id}|${esc(k)}" title="Remove">✕</button></kbd>`).join('')}<button class="btn sm" data-kadd="${a.id}" style="margin-left:6px" title="Add a key">+</button></td></tr>`).join('')}</table>
+      <table class="cf-keys" style="width:100%;border-collapse:collapse;margin-top:18px"><tr><td>3D controls</td>
+        <td><select id="cf-mouse" style="width:auto" title="Blender: middle-drag circles, Shift + middle-drag slides, Ctrl + middle-drag moves in and out; G and R move and turn what's selected with the mouse"><option value="">Workshop</option><option value="blender" ${cfMouse() === 'blender' ? 'selected' : ''}>Blender</option></select></td></tr></table>
       <h3 style="margin-top:18px">Always the same</h3>
-      <table class="cf-keys" style="width:100%;border-collapse:collapse">${CF_FIXED.map(([k, t]) => `<tr><td>${esc(t)}</td><td><kbd class="cf">${esc(k)}</kbd></td></tr>`).join('')}</table>
+      <table class="cf-keys" style="width:100%;border-collapse:collapse">${(cfMouse() === 'blender' ? CF_FIXED.flatMap(r => r[0] === 'Middle-drag' ? CF_BLENDER : [r]) : CF_FIXED).map(([k, t]) => `<tr><td>${esc(t)}</td><td><kbd class="cf">${esc(k)}</kbd></td></tr>`).join('')}</table>
       <div class="foot"><button class="btn" id="cf-kreset">Back to the usual keys</button><button class="btn primary" id="cf-kclose">Done</button></div></div>`;
     bg.querySelector('#cf-kclose').onclick = close;
+    bg.querySelector('#cf-mouse').onchange = e => { CF.mouse = e.target.value === 'blender' ? 'blender' : ''; try { localStorage.setItem('ws-mouse', CF.mouse); } catch (x){} cfMouseHelp(); draw(); };
     bg.querySelector('#cf-kreset').onclick = () => { CF.user = {}; cfSaveKeys(); draw(); toast('Shortcuts are back to the usual keys.'); };
     bg.querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => {
       const [id, k] = b.dataset.kdel.split('|'), a = CF_ACT.find(x => x.id === id);

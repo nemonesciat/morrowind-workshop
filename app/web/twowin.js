@@ -479,6 +479,7 @@ async function twGoTo(key, to){
   if (W.key !== key) await worldOpen(key);
   if (V3.on){
     if (typeof qolWaitFor3D === 'function') await qolWaitFor3D(key);
+    if (W.key !== key && !(W.ext && String(key).startsWith('#'))) return;
     V3.pos.set(to.x - V3.origin[0], to.y - V3.origin[1], (to.z || 0) + 100 - V3.origin[2]); V3.yaw = to.rz || 0; V3.pitch = -0.1; v3Refresh();
   } else { W.cam.x = to.x; W.cam.y = to.y; if (W.cam.z < 0.3) W.cam.z = 0.6; drawMap(); }
 }

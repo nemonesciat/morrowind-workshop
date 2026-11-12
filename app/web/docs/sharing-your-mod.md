@@ -15,10 +15,11 @@ The **My mod** page (or click the mod's name at the top) shows:
 
 **Keeping Undo for the big changes.** Undo keeps about a hundred steps. So that a long run of small edits doesn't push
 a town or a big shape out of reach:
-- **Strokes of the ground brush in a row, and moves of one thing in a row,** become one step by themselves. A run
-  ends when you do something else, or after three minutes without one.
-- **⧉ Group** (beside Undo and Redo, or **Group changes into one step** on this page) puts everything you do next
-  into one step, until you click it again. Its last change stays a step of its own, so Undo still takes back just that.
+- **Undo always takes back one change**: one stroke, one move, one turn. When the history is full, runs of the same
+  change at its far end become one step, so nothing older is pushed out by them. Undo and Redo leave what they
+  changed selected.
+- **⧉ Group** (beside Undo and Redo, or **Group changes into one step** on this page): click it, work, click it
+  again, and what you did in between becomes one step. Until you close it, Undo takes back one change at a time.
   Name the group on this page if you like. Undo and switching mods wait while a town is being made, and so does Group.
 
 | Button | What it does |

@@ -37,6 +37,9 @@ SMALL = {'MISC', 'INGR', 'ALCH', 'BOOK', 'APPA', 'WEAP', 'ARMO', 'CLOT', 'LOCK',
 # lichen as a small container, and the first camps grew kanet on their tables, lab jcamp3)
 NOT_THING = re.compile(r'^key_|_key$|_key_|^bk_.*(note|letter)_|marker|(^|_)mark_|^sound|propylon|^misc_soulgem_azura|^t_.*_unique'
                        r'|flora|kollop|_egg|egg_|corpse|_dead|plant|kanet|lichen|mushroom|bittergreen|_bush|^bm_.*_(berry|herb)')
+# (a whole body, a skeleton or a corpse: a scene's member only in a dungeon. The game's lived-in interiors hold one in
+# 38 of 2,068, most of them hideouts with a proper name; furnish.REMAINS, lab 2026-11-11)
+REMAINS = re.compile(r'corpse|skeleton_?\d|^dead_|_dead_|_dead$')
 _mem = {}
 
 
@@ -300,6 +303,8 @@ def apply(db, cell, band='', amount=1.0, seed=None, setting=None, only=None, com
         for rid, lx, ly, lz, rx, ry, rrz, isc, top in scene['items']:
             if top and abs(scene['h'] - h) > max(12.0, 0.15 * h):
                 continue                      # (it lay on a table of another height: nothing to set it on here)
+            if setting not in castsurvey.DUNGEONS and REMAINS.search(rid.lower()):
+                continue                      # (someone's remains in a place people live in: REMAINS)
             x, y = pos[0] + c * lx + sn * ly, pos[1] - sn * lx + c * ly
             if any(math.hypot(x - tx, y - ty) < 6 for tx, ty in taken):
                 continue

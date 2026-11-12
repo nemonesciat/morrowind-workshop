@@ -509,6 +509,16 @@ def _make_of(rid):
 
 ROUGH_SHELLS = {'Cave': 'camp', 'Ashlander': 'camp', 'Mine': 'camp', 'Dwemer': 'ruin', 'Daedric': 'ruin', 'Ruin': 'ruin'}
 ROUGH_NAMES = re.compile(r'tomb|crypt|catacomb|barrow|burial|ossuary|sepulch|mausoleum')
+# (a whole body: a skeleton or a corpse, as a container or a static. The game's lived-in interiors, a bed and people in
+# them and no dungeon, hold one in 1.8% (38 of 2,068, lab 2026-11-11: most of them hideouts with a proper name); loose
+# bones and cattle skulls are decoration and stay)
+WALL_FOOT = __import__('os').environ.get('FURNISH_WALL_FOOT', '1') != '0'      # (off: as it was, for measuring the rule)
+WALL_FOOT_LOW = 80.0           # (things lower than this: a tall one's back goes to the wall above its foot, as the game's shelves do)
+WALL_FOOT_IN = 6.0             # (its side this far into the wall's foot or more: stepped out)
+WALL_FOOT_MOST = 40.0          # (a step further than this: no place for it there)
+WALL_FOOT_NOT = re.compile(r'shelf|tapestry|rug|carpet|banner|door|ladder|stair|step|hearth|fireplace|chimney|pillar|column|post|beam|rail', re.I)
+REMAINS = re.compile(r'corpse|skeleton_?\d|^dead_|_dead_|_dead$')
+REMAINS_PLACE = re.compile(r'prison|dungeon|crypt|tomb|vault|undercroft|catacomb|cell(s|ar)?\b|morgue|quarantine')
 
 
 def rough_kind(db, cell_key, refs):
@@ -2969,6 +2979,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 return None
         if tag in ('STAT', 'ACTI') and theme != 'temple' and BARE_STONE.search(rid.lower()):
             return None                      # (a bare stone block, slab or pedestal: never furniture in a house, by any path)
+        if tag in ('STAT', 'ACTI', 'CONT') and not rough and REMAINS.search(rid.lower()) and not REMAINS_PLACE.search(str(cell_key).lower()):
+            # (by every path a piece comes in: a bed's dressing, a table's, a scene, a hearth set)
+            last_trace.append((room, 'set', rid, "someone's remains in a place people live in: left out"))
+            return None
         if tag in ('STAT', 'ACTI', 'CONT') and not grotto and DREUGH_MAKE.search(rid.lower()):
             last_trace.append((room, 'set', rid, "the dreugh's make outside a dreugh grotto: left out"))
             return None
@@ -3214,6 +3228,38 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if down_ is not None and down_[0] < 100:
                 last_trace.append((room, 'light', rid, 'hung %.0f over the floor there: left out' % down_[0]))
                 return None
+        if WALL_FOOT and tag in ('STAT', 'ACTI', 'CONT') and not on_top and at_z is None and hang_from is None and not flat                 and 16 <= (b[5] - b[2]) * scale < WALL_FOOT_LOW and min(b[3] - b[0], b[4] - b[1]) * scale >= 20                 and not WALL_FOOT_NOT.search(low_) and tuple(tilt) == (0, 0):
+            # (a low thing on the floor stands clear of the wall's foot: by the pieces' boxes a basket's side was at
+            # the wall, and the wall's foot, 29 further into the room at the floor than at knee height in a Hlaalu
+            # room, stood 16 into the basket: the user's Tharen Rise, 2026-11-11, "basket clipped into wall". Low
+            # things with their foot over 10 into a wall: 16 of 119 in that town's homes, about 2 in 100 in the
+            # game's Hlaalu homes, its low wall shelves aside (lab inwall3). Stepped out of it, or left out)
+            if not _scene:
+                floor_by_mesh(x, y, z)
+            if _scene[0].tris:
+                c_, s_ = math.cos(rot), math.sin(rot)
+                lx_, ly_ = (b[0] + b[3]) / 2 * scale, (b[1] + b[4]) / 2 * scale
+                hx_, hy_ = (b[3] - b[0]) / 2 * scale, (b[4] - b[1]) / 2 * scale
+                zl_ = z + b[2] * scale + 3.0
+                for try_ in range(4):
+                    cx_, cy_ = x + lx_ * c_ + ly_ * s_, y - lx_ * s_ + ly_ * c_
+                    px_ = py_ = 0.0
+                    shut_ = False
+                    for ax_, ay_, h_ in ((c_, -s_, hx_), (s_, c_, hy_)):
+                        dp_ = [0.0, 0.0]
+                        for k_, sg_ in enumerate((1.0, -1.0)):
+                            hit_ = _scene[0].nearest_any((cx_, cy_, zl_), (ax_ * sg_, ay_ * sg_, 0.0), h_)
+                            if hit_ is not None and hit_[0] > 1.0 and h_ - hit_[0] > WALL_FOOT_IN:
+                                dp_[k_] = h_ - hit_[0] + 2.0
+                        shut_ = shut_ or bool(dp_[0] and dp_[1])
+                        px_ -= ax_ * (dp_[0] - dp_[1])
+                        py_ -= ay_ * (dp_[0] - dp_[1])
+                    if math.hypot(px_, py_) < 0.5 or shut_:
+                        break                    # (clear; or between two walls' feet, a bench in its alcove: as it is)
+                    if math.hypot(px_, py_) > WALL_FOOT_MOST:
+                        last_trace.append((room, 'wall foot', rid, 'its foot stands in the wall: left out'))
+                        return None
+                    x, y = round(x + px_, 2), round(y + py_, 2)
         nk = db.project.new_ref_key()
         editing._store(c, nk, mine, int(nk.rsplit('|', 1)[1]),
                        set_ref_pos([('NAME', zs(rid))], (x, y, z, tilt[0], tilt[1], rot), scale))

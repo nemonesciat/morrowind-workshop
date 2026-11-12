@@ -24,7 +24,8 @@ import random
 
 import mapdata
 
-VERSION = 4                     # (4: 'cover', the share of each steep band's ground under the region's rocks)
+VERSION = 5                     # (4: 'cover', the share of each steep band's ground under the region's rocks;
+                                #  5: a cell read on the land its rocks were set on, mapdata.own_heights)
 BANDS = (0.0, 15.0, 30.0, 45.0, 60.0, 91.0)
 STEEP_BAND = 3                  # bands from this (45 degrees) on are faces the game covers with rocks, or not
 COVER_TRIES = 4                 # rocks tried a steep point still bare, at most, while covering faces
@@ -166,6 +167,17 @@ def learn(db, region, sample=90):
         if not L.get('exists'):
             continue
         H = L['h']
+        refs, _h = db.cell_refs('#' + ck)
+        # (the land its rocks were set on, where a stranger's land won the cell: Tamriel.esm over Sky_Main's Reach, whose
+        # rocks then lay up to 2,500 under "the ground" and were learnt sunk that deep; 80 of 517 buried whole, p34)
+        made = {}
+        for ref in refs.values():
+            if is_rock(ref_info(ref['subs'])[0].lower()):
+                made[ref['origin']] = made.get(ref['origin'], 0) + 1
+        if made:
+            own = mapdata.own_heights(db, gx, gy, max(made, key=made.get))
+            if own is not None:
+                H = own
         sl = _slopes(H)
         pl = _places(H)
         used += 1
@@ -173,7 +185,6 @@ def learn(db, region, sample=90):
             if s is not None and H[i] > 0:
                 area[_band(s)] += 128.0 * 128.0
                 parea[_band(s)][pl[i]] += 128.0 * 128.0
-        refs, _h = db.cell_refs('#' + ck)
         feet = _Feet()
         for ref in refs.values():
             rid, pos, sc, dead = ref_info(ref['subs'])

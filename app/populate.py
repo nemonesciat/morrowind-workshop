@@ -316,6 +316,48 @@ def _clear(info, taken, x, y):
     return True
 
 
+STAND_HEAD = 118.0             # (clear over a floor for a person to stand on it)
+STAND_EDGE = 20.0              # (floor this far round the spot too: not on a floor's edge, not in a wall's foot)
+
+
+def _stand(db, info, x, y, hint):
+    """The height of the place's own floor under a spot, read off its geometry: the level nearest hint that has floor
+    round the spot, head room over it and a roof somewhere above; None where there is none (off the floor's edge, in a
+    wall, in the void beside the room). A person's height was the one 'floor' of the traced room, or a piece of
+    furniture's own origin, and the spot was never looked at: in the user's Fort Urasek 12 of 70 people stood with their
+    feet under the floor (to 112 under, "Woman clipped in floor", 2026-11-12) and 16 over no floor at all, a step
+    outside their room's pieces; the game's forts: 1 of 635 and none. hint itself when the place's shape can't be read."""
+    sc = info.get('_scene')
+    if sc is None:
+        try:
+            import seethrough
+            sc = info['_scene'] = seethrough.place_scene(db, {'refs': info['refs']})
+        except Exception:
+            sc = info['_scene'] = False
+    if not sc or not getattr(sc, 'tris', None):
+        return hint
+    top, low = hint + 420.0, hint - 420.0
+    levels, z = [], top
+    for _n in range(14):
+        h = sc.nearest_any((x, y, z), (0.0, 0.0, -1.0), z - low)
+        if h is None:
+            break
+        z -= h[0]
+        levels.append(z)
+        z -= 2.0
+    best = None
+    for fz in levels:
+        up = sc.nearest_any((x, y, fz + 8.0), (0.0, 0.0, 1.0), 3000.0)
+        if up is None or up[0] + 8.0 < STAND_HEAD:
+            continue                              # (open to the void above, or no head room: a slab's underside, a low arch)
+        if any((lambda g: g is None or abs(g[0] - 40.0) > 14.0)(sc.nearest_any((x + ox, y + oy, fz + 40.0), (0.0, 0.0, -1.0), 80.0))
+               for ox, oy in ((STAND_EDGE, 0.0), (-STAND_EDGE, 0.0), (0.0, STAND_EDGE), (0.0, -STAND_EDGE))):
+            continue
+        if best is None or abs(fz - hint) < abs(best - hint):
+            best = fz
+    return best
+
+
 def spot(db, info, p, rng, taken, used):
     """Where a person stands: by a piece of furniture the game stands their role at, at the game's own
     offset in its frame and facing; else somewhere clear on a room's floor. (x, y, z, rz, by)."""
@@ -343,7 +385,11 @@ def spot(db, info, p, rng, taken, used):
         if not _clear(info, taken, x, y):
             continue
         rm = _room_of(info, x, y)
-        z = (rm['floor'] if rm else f['p'][2]) + 4
+        # (the floor the piece itself stands on, under the spot)
+        fz = _stand(db, info, x, y, f['p'][2] + (f['b'][2] * (f.get('s') or 1.0) if f.get('b') else 0.0))
+        if fz is None:
+            continue
+        z = fz + 4
         rz = (f['p'][5] + (st.get('turn') or 0) * math.pi / 2) % (2 * math.pi)
         used.add(f['k'])
         return [round(x, 1), round(y, 1), round(z, 1), round(rz, 4), f['fam']]
@@ -362,8 +408,11 @@ def spot(db, info, p, rng, taken, used):
             rm = _room_of(info, x, y)
             if rm is None or not _clear(info, taken, x, y):
                 continue
+            fz = _stand(db, info, x, y, f['p'][2] + b[2] * s_)
+            if fz is None:
+                continue
             used.add(f['k'])
-            return [round(x, 1), round(y, 1), round(rm['floor'] + 4, 1), round(math.atan2(f['p'][0] - x, f['p'][1] - y) % (2 * math.pi), 4), f['fam']]
+            return [round(x, 1), round(y, 1), round(fz + 4, 1), round(math.atan2(f['p'][0] - x, f['p'][1] - y) % (2 * math.pi), 4), f['fam']]
     # open floor: a clear spot in one of the rooms
     rooms = list(info['rooms'])
     rng.shuffle(rooms)
@@ -372,7 +421,10 @@ def spot(db, info, p, rng, taken, used):
             x = rng.uniform(rm['x_min'] + 40, rm['x_max'] - 40) if rm['x_max'] - rm['x_min'] > 90 else (rm['x_min'] + rm['x_max']) / 2
             y = rng.uniform(rm['y_min'] + 40, rm['y_max'] - 40) if rm['y_max'] - rm['y_min'] > 90 else (rm['y_min'] + rm['y_max']) / 2
             if _clear(info, taken, x, y):
-                return [round(x, 1), round(y, 1), round(rm['floor'] + 4, 1), round(rng.uniform(0, 2 * math.pi), 4), '']
+                fz = _stand(db, info, x, y, rm['floor'])
+                if fz is None:
+                    continue
+                return [round(x, 1), round(y, 1), round(fz + 4, 1), round(rng.uniform(0, 2 * math.pi), 4), '']
     return None
 
 

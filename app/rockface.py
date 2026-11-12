@@ -505,6 +505,11 @@ def _pick(rng, items, weights):
     return items[-1]
 
 
+POSE_OFF = 0.5                  # (a learnt pose that would leave the piece's top this share of its height under the
+                                #  ground, or its foot that far over it, is not used: the piece is sunk by its
+                                #  band's figure instead. Poses learnt over land that lost its cell, p34b)
+
+
 def _pose(F, it, x, y, g, place, rng, sunk=None):
     """A piece as the game set one of it on such ground: one of its learnt poses turned to this spot's own downhill
     (cliffrocks' way); without poses, its long axis down the slope, leaning with the ground up to its tilt, sunk
@@ -517,6 +522,11 @@ def _pose(F, it, x, y, g, place, rng, sunk=None):
     if poses:
         here = [p for p in poses if p[5] == place] or poses
         rx, ry, turn, dz, s0, _plc = here[rng.randrange(len(here))]
+        tall = it['size'][2] * s0
+        foot = dz + it['zmin'] * s0
+        if foot + tall < -POSE_OFF * tall or foot > POSE_OFF * tall:
+            poses = []
+    if poses:
         if turn is None or not steep:
             rz = rng.random() * 2 * math.pi
         else:

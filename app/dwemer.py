@@ -251,6 +251,9 @@ KITS = {
         # nobody, not one hostile band, lab j_fortcast 2026-11-05), so the band of an abandoned one is the game's hideouts'
         # (bandits in 31 of 37), living in the rooms as a garrison would, 'camp': 'rooms', as many as the game's forts hold)
         'setting': 'hideout', 'empty': 0.11, 'camp': 'rooms', 'prize': [['chest_small_02_lev_gold', 'com_chest_02_lev_gold'], []],
+        # (rooms of one theme, hall tiles dressed to their walls, _dress_refs; no hanging without its wall, no rug off its
+        # floor, nothing set down on the floor when its table goes, _keep_tidy and _orphans; shelves with their wall)
+        'themes': True, 'tidy': True, 'unbacked': True,
         'more': None, 'outside': ('imp',), 'example': 'Fort Vanvuld',
         'ambi': ((48, 44, 40), (90, 84, 72), (26, 24, 22))},
     # the sewers under the cantons (in_sewer: the Underworks of Vivec and Molag Mar, 21 game places): small corridors of
@@ -1004,6 +1007,13 @@ class _Layout:
         self.too_deep = 0                     # (pieces refused for going deeper than the game's own go)
         self.last_loops = 0                   # (how many open openings the last piece laid closed a loop with)
         self.bound = None                     # ((dx, dy) the way in from the door, half width, depth): a keep's footprint
+        # (a keep's own outer blocks, keepmaker.masses: ((x, y, z) the front door's sill, (dx, dy) the way in from it,
+        # [(a0, c0, z0, a1, c1, z1)] each block along that way, across it to the right, and up from the sill): every piece
+        # stands inside them. The user's Fort Urasek, 2026-11-12: a keep 3,300 wide outside with its bulk and a tower
+        # 3,240 high to the right of the door, a Great Hall inside 5,300 wide on one storey running left, 48% of it
+        # within the keep's walls)
+        self.mass = None
+        self.avoid = []                       # (boxes in that frame nothing stands in: the Great Hall, for what lies beside and over it)
         self.too_wide = 0                     # (pieces refused for standing outside it)
 
     def bounds(self, pid):
@@ -1032,7 +1042,26 @@ class _Layout:
         pieces overlap at the join, a hall's exit piece over its corridor by 128); and within the footprint, when one
         is set (a keep's interior under the mass that stands outside: its rooms "veered off where there's nothing
         outside", the user 2026-11-06)."""
-        if self.bound:
+        if self.mass:
+            (ox, oy, oz), (dx, dy), blocks = self.mass
+            for b in boxes:
+                # (a plate that closes a doorway, 7 thick, stands where its doorway does: measured like a piece, a tower's
+                # stair had "an opening onto nothing" at every doorway in the tower's own face, lab gp2)
+                if min(b[3] - b[0], b[4] - b[1]) < 40:
+                    continue
+                cx, cy = (b[0] + b[3]) / 2, (b[1] + b[4]) / 2
+                top, bot = b[5] - oz, b[2] - oz
+                for px, py in ((cx + MASS_IN, cy), (cx - MASS_IN, cy), (cx, cy + MASS_IN), (cx, cy - MASS_IN)):
+                    a, c = (px - ox) * dx + (py - oy) * dy, (px - ox) * dy - (py - oy) * dx
+                    if not any(M[0] - 8 <= a <= M[3] + 8 and M[1] - 8 <= c <= M[4] + 8 and top <= M[5] + MASS_OVER and bot >= M[2] - MASS_UNDER for M in blocks):
+                        self.too_wide += 1
+                        return False
+                if self.avoid:
+                    a, c = (cx - ox) * dx + (cy - oy) * dy, (cx - ox) * dy - (cy - oy) * dx
+                    if any(A[0] <= a <= A[3] and A[1] <= c <= A[4] and bot < A[5] and top > A[2] + 8 for A in self.avoid):
+                        self.too_wide += 1
+                        return False
+        elif self.bound:
             (dx, dy), hw, depth = self.bound
             for b in boxes:
                 cx, cy = (b[0] + b[3]) / 2, (b[1] + b[4]) / 2
@@ -1369,7 +1398,7 @@ def _tall(K, tid):
     return bool(K.get('tall') and re.search(K['tall'], tid))
 
 
-def _lay_room(L, target, w, h, depth, hall_no, rng, tall=False):
+def _lay_room(L, target, w, h, depth, hall_no, rng, tall=False, k0=None):
     """A room of w x h tiles joined to the open opening target by the room's entry piece (a room's edge
     tile with the doorway in it), floor, side and corner tiles turned so their walls face out, a roof over
     every tile the game roofs; all of one height (tall: a Velothi tomb's two-storey rooms). True when it
@@ -1409,7 +1438,8 @@ def _lay_room(L, target, w, h, depth, hall_no, rng, tall=False):
         L.open = [o for o in L.open if o['owner'] != e]
         ux, uy = SIDES[into]
         vx, vy = -uy, ux                        # (along the near edge)
-        k0 = rng.randint(1, w - 2) if w >= 3 else 0     # (the entry tile has the one wall, the doorway's: never a corner)
+        # (k0: which tile of the near edge the doorway is, where a plan has set it, _grow_plan)
+        k0 = (rng.randint(1, w - 2) if k0 is None else int(k0)) if w >= 3 else 0     # (the entry tile has the one wall, the doorway's: never a corner)
         if w < 3:
             return False
         laid = []
@@ -1486,9 +1516,24 @@ def _exits(db, S, K, lay, n):
              and q.get('id') and q.get('of') is None and q['id'] != K.get('plate') and seam_of(k) is not None]
     anchors = ([(e['x'], e['y'], e['z'])] if 'x' in e else []) + [(x['x'], x['y'], x['z']) for x in lay['exits']]
     made, tried, kept = 0, set(), {}
+    # (in a keep's own blocks: a dead end the keep goes on beyond first, a door that leads on to what hangs from it;
+    # those at the keep's outer face after, the doors to the outside)
+    mass_ = lay.get('mass')
+
+    def inward(k):
+        if not mass_:
+            return 0
+        seam = seam_of(k)
+        if seam is None:
+            return 0
+        side = seam[3] if seam[5] == k else OPP[seam[3]]
+        (ox, oy, _oz), (dx, dy), blocks = mass_
+        px, py = seam[0] + SIDES[side][0] * 470.0, seam[1] + SIDES[side][1] * 470.0
+        a, c = (px - ox) * dx + (py - oy) * dy, (px - ox) * dy - (py - oy) * dx
+        return 1 if any(M[0] <= a <= M[3] and M[1] <= c <= M[4] for M in blocks) else 0
     while made < n and len(tried) < len(cands):
         far = lambda k: min((math.hypot(P[k]['p'][0] - a[0], P[k]['p'][1] - a[1]) + (160 if abs(P[k]['p'][2] - a[2]) > 64 else 0)
-                             for a in anchors), default=1e9)
+                             for a in anchors), default=1e9) + 900.0 * inward(k)
         k = max((k for k in cands if k not in tried), key=far)
         tried.add(k)
         seam = seam_of(k)
@@ -1594,7 +1639,7 @@ def _close_rings(L, rng, want, pool):
     return closed
 
 
-def _lay_spiral(L, port, depth, rng, turns):
+def _lay_spiral(L, port, depth, rng, turns, order=None):
     """A spiral stair tower at an open opening (K['spiral']): turns of the spiral piece one over another, the floor piece
     under the lowest and the cap over the top, the trap door to the roof noted on the cap. The opening is met by the top
     turn's upper doorway in a place that goes down from its way in, by the lowest turn's lower doorway in one that
@@ -1606,7 +1651,8 @@ def _lay_spiral(L, port, depth, rng, turns):
     if len(ports) < 2 or L.db.resolve_id(pid) is None:
         return False
     up = L.way == 'up'
-    order = sorted(range(len(ports)), key=lambda k: rng.random())
+    # (order: which of its doorways meets the opening, where the caller tries each in turn, _grow_plan)
+    order = sorted(range(len(ports)), key=lambda k: rng.random()) if order is None else order
     snap = L.snapshot()
     S0 = L.S
     L.S = dict(S0, rels=None)
@@ -1653,7 +1699,7 @@ def _lay_spiral(L, port, depth, rng, turns):
         L.S = S0
 
 
-def _lay_big(L, target, w, h, depth, hall_no, rng):
+def _lay_big(L, target, w, h, depth, hall_no, rng, exits=0, centre=False, at=None, ways_least=2):
     """A big hall of w x h in_impbig tiles (K['big']) joined to the open opening target by its doorway slab, with a wall
     slab in every other outer opening, as the game's great halls, libraries and chapels are put together. True when it
     fits."""
@@ -1675,8 +1721,36 @@ def _lay_big(L, target, w, h, depth, hall_no, rng):
         t0 = (ep['p'][0] + wx, ep['p'][1] + wy, ep['p'][2] - bz)
         ux, uy = _rot(1.0, 0.0, trz)                 # (into the hall from its doorway)
         vx, vy = _rot(0.0, 1.0, trz)                 # (along the doorway's edge)
-        k0 = rng.randint(0, h - 1)
+        # (centre: the way in on the hall's own axis, its length ahead of you; exits: ways on out of the hall, each a
+        # doorway slab like the one you came in by, at the far end first, then half way down either side: a keep's
+        # Great Hall is the room behind its door, and the rest of the keep leads off it)
+        k0 = at if at is not None else h // 2 if centre else rng.randint(0, h - 1)
+        ways = [(w - 1, k0, 'E'), (w // 2, 0, 'S'), (w // 2, h - 1, 'N')]
+        if L.mass:
+            # (in a keep's own blocks: only where a passage has room beyond the doorway, tried round the hall's rim; the
+            # way on at the far end of Fort Urasek's hall ran straight into the keep's back wall, and nothing led up)
+            def beyond_(i, j, s_):
+                x = t0[0] + i * T * ux + (j - k0) * T * vx
+                y = t0[1] + i * T * uy + (j - k0) * T * vy
+                sx, sy = _rot(SIDES[s_][0], SIDES[s_][1], trz)
+                cx, cy, zf = x + sx * (T / 2 + 256), y + sy * (T / 2 + 256), t0[2] + bz
+                return L.fits([(cx - 100, cy - 100, zf, cx + 100, cy + 100, zf + 240)])
+            rim_ = ways + [(i, 0, 'S') for i in range(w)] + [(i, h - 1, 'N') for i in range(w)] + [(w - 1, j, 'E') for j in range(h)] \
+                + [(0, j, 'W') for j in range(h) if j != k0]
+            ways = []
+            for c_ in rim_:
+                if c_ not in ways and len(ways) < int(exits) and beyond_(*c_):
+                    ways.append(c_)
+            # (a hall that fills the keep's ground leaves no way on: a hall of nine tiles in a middling keep had its
+            # front door and nothing else, lab kr_try. Two ways on at least, where any are asked for; a smaller hall
+            # or one to the side is tried next)
+            if int(exits) >= 2 and len(ways) < ways_least:
+                L.restore(snap)
+                return False
+        ways = ways[:max(0, int(exits))]
+        turn_of = {'W': 0.0, 'N': math.pi / 2.0, 'E': math.pi, 'S': 3.0 * math.pi / 2.0}
         laid = []
+        outs_ = []
         for i in range(w):
             for j in range(h):
                 x = t0[0] + i * T * ux + (j - k0) * T * vx
@@ -1684,6 +1758,14 @@ def _lay_big(L, target, w, h, depth, hall_no, rng):
                 laid.append((tile, x, y, t0[2], trz))
                 sides = (['W'] if i == 0 and j != k0 else []) + (['E'] if i == w - 1 else []) + (['S'] if j == 0 else []) + (['N'] if j == h - 1 else [])
                 for s_ in sides:
+                    if (i, j, s_) in ways:
+                        a_ = trz + turn_of[s_]
+                        ox, oy = _rot(bx, by, a_)
+                        lx, ly, lz, dq = B['wall_at'][s_]
+                        qx, qy = _rot(lx, ly, trz)
+                        outs_.append((blend, x + ox, y + oy, t0[2] + bz, (a_ + math.radians(bq)) % (2 * math.pi),
+                                      (wall, x + qx, y + qy, t0[2] + lz, (trz + math.radians(dq)) % (2 * math.pi))))
+                        continue
                     lx, ly, lz, dq = B['wall_at'][s_]
                     ox, oy = _rot(lx, ly, trz)
                     laid.append((wall, x + ox, y + oy, t0[2] + lz, (trz + math.radians(dq)) % (2 * math.pi)))
@@ -1694,6 +1776,11 @@ def _lay_big(L, target, w, h, depth, hall_no, rng):
             # (the hall's tiles and walls go with the doorway slab: one place, their floor 128 under the doorway's, not
             # a storey over the way in as their origins would have them read, dgrules.heights)
             L.pieces[L.add(t, x, y, z, rz, depth, hall=hall_no)]['of'] = e
+        for t, x, y, z, rz, back_ in outs_:
+            k_ = L.add(t, x, y, z, rz, depth, hall=hall_no)
+            L.pieces[k_]['hall_exit'] = back_ + (e,)       # (the wall slab that closes it again when nothing grows from it)
+            for o in L.ports_of(t, x, y, z, rz)[:1]:
+                L.open.append(dict(o, owner=k_, depth=depth + 1))
         return True
     finally:
         L.S = S0
@@ -1816,6 +1903,28 @@ def _generate(db, size='medium', levels='some', twist='branching', seed=None, ki
         # growth with four halls of five, the Halls choice's "many" with three of four)
         score = (dgrules.ok(lay['rules']), lay['final'] is not None and lay['tunnels'] >= 0.5 * target,
                  min(lay['tunnels'], target) + 10 * min(lay['halls'], want_halls), lay['final'] is not None, -lay['open_left'], -attempt)
+        if lay.get('planned'):
+            # (a layout by plan: whole when its rooms stand, most of them at least; ranked by how many do)
+            pl_ = lay['planned']
+            score = (score[0], pl_['laid'] >= 1, pl_['laid'], lay['final'] is not None, -lay['open_left'], -attempt)
+            if score[0] and pl_['laid'] >= max(1, int(math.ceil(0.75 * pl_['asked']))) and rayed(lay):
+                best = (score, lay)
+                break
+            if score[0]:
+                keep.append((score, lay))
+            elif best is None or score > best[0]:
+                best = (score, lay)
+            # (after a few growths the best so far that keeps every rule: where the keep's blocks hold half the
+            # programme, forty growths found the same half each time, 128 growths for one Great Hall, lab gp2)
+            if attempt >= 5 and keep:
+                for sc_, ly_ in sorted(keep, key=lambda k_: k_[0], reverse=True)[:4]:
+                    if rayed(ly_):
+                        best = (sc_, ly_)
+                        break
+                if best and best[0][0]:
+                    break
+                keep = []
+            continue
         if score[0] and score[1] and lay['tunnels'] >= 0.8 * target and lay['halls'] >= want_halls and rayed(lay):
             best = (score, lay)
             break
@@ -1840,6 +1949,9 @@ def _generate(db, size='medium', levels='some', twist='branching', seed=None, ki
                 break
             if best is None or not best[0][0]:
                 best = ((False,) + score[1:], lay)
+    if best is None:
+        # (every growth kept the rules but the rays, and none was kept: said, not a crash)
+        raise EditError('No %s with these choices keeps the rules (seed %d): every layout tried shows the void somewhere. Try another seed or size.' % (K['label'], seed))
     out = best[1]
     if not best[0][0]:
         raise EditError('No %s with these choices keeps the rules (seed %d): %s Try another seed or size.'
@@ -1850,6 +1962,418 @@ def _generate(db, size='medium', levels='some', twist='branching', seed=None, ki
         out['said'].append('Kept within the climb of the game\'s own: no higher than %d over the way in.' % dgrules.climb_cap(K) if way == 'up' else
                            'Kept within the depth of the game\'s own: no deeper than %d below the way in.' % dgrules.deep_cap(K))
     return out
+
+
+# ---- a keep's interior by plan
+# (the brief of 2026-11-12, part 2: "the rooms are planned before any piece is laid". Grown by chance and named after,
+# most rooms of a keep were whatever the growth left: a first round named 26 of 60 guard rooms. Here the programme
+# comes first: for each of a keep's interiors its rooms in order from the door, each with its purpose, its size in
+# tiles and whether it begins a storey up; the planner lays the passage to reach them, a T for each room with the
+# room off its side, two stair pieces before a room a storey up, and leaves the passage's ends for the doors. The
+# Great Hall, where the interior has one, stands first (hall_first) and the passages lead off its ways on.)
+PLAN_ROOMS = {
+    # (purpose, (tiles wide, tiles deep), a storey up from the last)
+    'hall': (('kitchen', (3, 3), 0), ('guard room', (3, 2), 0), ('stores', (3, 2), 0), ('servants', (3, 2), 1)),
+    'chambers': (('chamber', (3, 2), 0), ('study', (3, 2), 0), ('chamber', (3, 2), 1), ("lord's chamber", (4, 3), 1)),
+    'household': (('kitchen', (3, 3), 0), ('stores', (3, 2), 0), ('servants', (3, 2), 1), ('dining', (3, 3), 0)),
+    'garrison': (('barracks', (4, 3), 0), ('armoury', (3, 2), 0), ('guard room', (3, 2), 0), ('mess', (3, 3), 1), ('barracks', (3, 3), 0)),
+    'library': (('study', (3, 2), 0),),
+    'chapel': (('vestry', (3, 2), 0),),
+    'tower': (('guard room', (3, 2), 0), ('armoury', (3, 2), 0), ('stores', (3, 2), 0), ('watch room', (3, 2), 0)),
+    # (below ground, where a keep's blocks do not bound them: the gaoler's room by the door and the cells beyond and
+    # below it; the undercroft's stores; the treasure chamber behind its guard room)
+    'prison': (('guard room', (3, 2), 0), ('cells', (4, 3), 0), ('cells', (3, 3), 1), ('stores', (3, 2), 0)),
+    'undercroft': (('stores', (3, 3), 0), ('stores', (3, 2), 0), ('stores', (4, 3), 1), ('stores', (3, 2), 0)),
+    'treasury': (('guard room', (3, 2), 0), ('treasury', (3, 3), 0)),
+}
+
+
+GRID = 256.0                   # (a cell of the plan: one passage piece, one room tile; a storey is one cell up)
+GRID_DRAWS = 60                # (plans drawn at each opening, the best laid)
+GRID_REACH = 9                 # (cells from the opening at most, where the keep's blocks do not bound it)
+GRID_DIRS = ((1, 0), (0, 1), (-1, 0), (0, -1))
+
+
+def _grow_plan(L, K, S, rng, keep, hall_no, pool):
+    """The rooms of keep['rooms'], drawn on a grid before any piece is laid, then laid to the drawing. The grid: cells of
+    256 from an opening on, a storey a cell up, a cell free where a piece would stand inside the keep's blocks and clear
+    of what stands already. The drawing: a passage from the opening, each room a rectangle of cells with its doorway on
+    the passage, a stair of two pieces to the storey over it, an end of passage for each door asked for; many drawn, the
+    one that holds most of the programme kept. The laying: for each passage cell the piece its joins make it (straight,
+    corner, T, crossing), the stairs, each room at its doorway. (rooms laid, hall_no after, {hall number: purpose}, the
+    last room's number or None, a few counts)."""
+    import dgrules
+    role = keep.get('role')
+    best = {}
+    for pid, r_, w_ in pool:
+        if r_ not in best or w_ > best[r_][1]:
+            best[r_] = (pid, w_)
+    T_, ST_, R_ = (best.get('T') or (None,))[0], (best.get('straight') or (K['base'],))[0], (best.get('ramp') or (None,))[0]
+    C_, X_ = (best.get('corner') or (None,))[0], (best.get('cross') or (None,))[0]
+    up = L.way == 'up'
+    sg = 1.0 if up else -1.0
+    purposes, final, laid = {}, None, 0
+    said = {'drawn': 0, 'refused': 0, 'rooms_refused': 0, 'ends': 0}
+    if keep.get('trace') is not None:
+        keep['trace'].append('---')
+    opens = lambda n: [o for o in L.open if o['owner'] == n and not o.get('cap')]
+    key = lambda o: (round(o['x']), round(o['y']), round(o['z']), o['side'])
+    step = lambda c, d, n=1: (c[0] + GRID_DIRS[d][0] * n, c[1] + GRID_DIRS[d][1] * n, c[2])
+    over = lambda c: (c[0], c[1], c[2] + 1)
+
+    def piece(pid, port, sides=None, dz=None, want=None):
+        """(the piece joined at the opening by whichever of its own openings leaves it as wanted: its openings facing
+        the sides given, one of them dz higher than the opening)"""
+        if not pid:
+            return None
+        ks = list(range(len(S['ports'].get(pid, []))))
+        rng.shuffle(ks)
+        for k in ks:
+            snap = L.snapshot()
+            n = L.place_at(pid, k, port, port['depth'])
+            if n is None:
+                continue
+            P = L.pieces[n]['p']
+            ps = L.ports_of(pid, P[0], P[1], P[2], P[5])
+            if (sides is None or {o['side'] for o in ps} == sides) and (dz is None or any(abs(o['z'] - port['z'] - dz) < 8 for o in ps)) \
+                    and (want is None or want(opens(n))):
+                return n
+            L.restore(snap)
+        return None
+
+    def grid(start):
+        """(the cells from an opening on: 0 the way the opening leads, 1 to its left, a storey up (down in a place that
+        goes down); where each stands and whether a piece may)"""
+        U = SIDES[start['side']]
+        vec = [(U[0] * a - U[1] * b, U[1] * a + U[0] * b) for a, b in GRID_DIRS]
+        x0, y0, z0 = start['x'] + U[0] * GRID / 2, start['y'] + U[1] * GRID / 2, start['z']
+        ez = L.ez if L.ez is not None else z0
+        hi, lo = ez + dgrules.climb_cap(K), ez - dgrules.deep_cap(K)
+        seen = {}
+
+        def free(c):
+            if c not in seen:
+                i, j, s = c
+                x, y, z = x0 + GRID * (i * vec[0][0] + j * vec[1][0]), y0 + GRID * (i * vec[0][1] + j * vec[1][1]), z0 + sg * GRID * s
+                if s < 0 or s > 5 or abs(i) > GRID_REACH or abs(j) > GRID_REACH or (z > hi if up else z < lo):
+                    seen[c] = False
+                else:
+                    wide = L.too_wide
+                    seen[c] = L.fits([(x - 118, y - 118, z - 128, x + 118, y + 118, z + 108)])
+                    L.too_wide = wide
+            return seen[c]
+        return {'free': free, 'side': [_dir_of(*v) for v in vec]}
+
+    def draw(g, prog, need, plain, r):
+        """(one plan drawn at random from the opening: {'links': {passage cell: the ways it joins on}, 'rooms', 'stairs',
+        'score'})"""
+        used, links, par, rooms, stairs = {}, {}, {}, [], []
+        prog = list(prog)
+        ok = lambda c: c not in used and g['free'](c)
+
+        def room(pc, d, strict=True):
+            if not prog:
+                return False
+            purpose, size, up_ = prog[0]
+            # (a room the programme has a storey up: over the last room's storey, while the drawing can still climb)
+            if strict and up_ and rooms and pc[2] <= rooms[-1]['s']:
+                return False
+            e, v = step(pc, d), (d + 1) % 4
+            sizes = []
+            for s_ in (tuple(size), (size[1], size[0]), (3, 2)):
+                if s_ not in sizes and s_[0] >= 3 and s_[1] >= 2:
+                    sizes.append(s_)
+            for w, h in sizes:
+                k0s = list(range(1, w - 1))
+                r.shuffle(k0s)
+                for k0 in k0s:
+                    cells = [(e[0] + GRID_DIRS[v][0] * (i - k0) + GRID_DIRS[d][0] * j, e[1] + GRID_DIRS[v][1] * (i - k0) + GRID_DIRS[d][1] * j, e[2])
+                             for i in range(w) for j in range(h)]
+                    if all(ok(c) for c in cells):
+                        for c in cells:
+                            used[c] = 'r'
+                        rooms.append({'purpose': purpose, 'w': w, 'h': h, 'k0': k0, 'from': pc, 'd': d, 's': pc[2],
+                                      'asked': w * h >= size[0] * size[1], 'up': bool(up_), 'prog': prog[0]})
+                        links[pc].add(d)
+                        prog.pop(0)
+                        return True
+            return False
+        heads = [(None, (0, 0, 0), 0, plain)]
+        while heads:
+            pr, c, d, pl = heads.pop(0 if r.random() < 0.7 else r.randrange(len(heads)))
+            if used.get(c) == 'held':
+                del used[c]
+            n_free = 0
+            while n_free < 7 and ok(step(c, d, n_free)):
+                n_free += 1
+            if not n_free:
+                if pr and pr[0] == 's':
+                    # (a stair to nothing: out again)
+                    st = stairs[pr[1]]
+                    st['gone'] = True
+                    links[st['from']].discard(st['d'])
+                    for q in st['cells']:
+                        used.pop(q, None)
+                continue
+            n = n_free if r.random() < 0.5 else r.randint(1, n_free)
+            run = [step(c, d, k) for k in range(n)]
+            back = (d + 2) % 4
+            for k, pc in enumerate(run):
+                used[pc] = 'p'
+                links[pc] = {back}
+                par[pc] = ('p', run[k - 1]) if k else pr
+                if k:
+                    links[run[k - 1]].add(d)
+            if pr and pr[0] == 'p':
+                links[pr[1]].add(d)
+            elif pr and pr[0] == 's':
+                stairs[pr[1]]['top'] = c
+            # (plain: the opening is a great hall's doorway. Any piece may stand there: a straight, a corner, a T, a
+            # crossing, a stair and a room were each set at one and none showed the void, lab gp9. Held to a plain
+            # length first, a hall with one row of cells beside it had no side room and one door, lab kr_grid3. Only
+            # the doorway's own cell is no door's place: a hall's way on that leads nowhere is walled again)
+            for k, pc in enumerate(run):
+                sides = [(d + 1) % 4, (d + 3) % 4]
+                r.shuffle(sides)
+                for sd in sides:
+                    if prog and r.random() < 0.85:
+                        room(pc, sd)
+            t = run[-1]
+            # (a stair straight on, or to one side from the passage's end: a keep block is three or four cells across,
+            # and a stair straight on with the passage before it and the landing after wants four in a row, lab gp2)
+            opts = ['room', 'stair', 'stair left', 'stair right', 'left', 'right']
+            r.shuffle(opts)
+            for o_ in opts:
+                if not prog:
+                    break
+                if o_ == 'room':
+                    if d not in links[t]:
+                        room(t, d)
+                elif o_.startswith('stair'):
+                    sd = d if o_ == 'stair' else (d + 1) % 4 if o_.endswith('left') else (d + 3) % 4
+                    a1, a2 = step(t, sd, 1), step(t, sd, 2)
+                    cs, top = [a1, a2, over(a1), over(a2)], over(step(t, sd, 3))
+                    if R_ and sd not in links[t] and all(ok(q) for q in cs) and ok(top) and r.random() < 0.75:
+                        for q in cs:
+                            used[q] = 's'
+                        used[top] = 'held'
+                        links[t].add(sd)
+                        stairs.append({'from': t, 'd': sd, 'cells': cs})
+                        heads.append((('s', len(stairs) - 1), top, sd, False))
+                else:
+                    sd = (d + 1) % 4 if o_ == 'left' else (d + 3) % 4
+                    if sd not in links[t] and ok(step(t, sd)) and r.random() < 0.6:
+                        heads.append((('p', t), step(t, sd), sd, False))
+            for k, pc in enumerate(run[:-1]):
+                for sd in ((d + 1) % 4, (d + 3) % 4):
+                    if prog and sd not in links[pc] and ok(step(pc, sd)) and r.random() < 0.12:
+                        heads.append((('p', pc), step(pc, sd), sd, False))
+        # (what the programme still holds: at any side of the passage left, whichever storey it is on)
+        first = None
+        again = True
+        while prog and again:
+            again = False
+            cells = [pc for pc in links if pc != first]
+            r.shuffle(cells)
+            for pc in cells:
+                for d in r.sample(range(4), 4):
+                    if d not in links[pc] and room(pc, d, strict=False):
+                        again = True
+                        break
+                if again:
+                    break
+        # the ends, one for each door: a passage cell with no way on is one (left unlaid, the kit's dead end closes it
+        # and a door takes its place); a passage that leads to nothing more is taken back, an end wanting is added
+        def leaves():
+            return [pc for pc, ds in links.items() if len(ds) == 1 and not (plain and pc == (0, 0, 0))]
+
+        def drop(pc):
+            pr = par.get(pc)
+            back = next(iter(links[pc]))
+            del links[pc]
+            used.pop(pc, None)
+            if pr and pr[0] == 'p' and pr[1] in links:
+                links[pr[1]].discard((back + 2) % 4)
+            elif pr and pr[0] == 's':
+                st = stairs[pr[1]]
+                st['gone'] = True
+                if st['from'] in links:
+                    links[st['from']].discard(st['d'])
+                for q in st['cells']:
+                    used.pop(q, None)
+        for _k in range(80):
+            lv = leaves()
+            if len(lv) <= need or len(links) <= 1:
+                break
+            # (the nearest first: the doors stay far from the way in and from one another)
+            drop(min(lv, key=lambda pc: (abs(pc[0]) + abs(pc[1]) + 2 * pc[2], r.random())))
+        for _k in range(need):
+            lv = leaves()
+            if len(lv) >= need:
+                break
+            cands = [(pc, d) for pc in links if pc != first and len(links[pc]) > 1 for d in range(4) if d not in links[pc] and ok(step(pc, d))]
+            if not cands:
+                break
+            far = lambda q: min([abs(q[0][0] - e[0]) + abs(q[0][1] - e[1]) + 2 * abs(q[0][2] - e[2]) for e in lv] or [9]) + 0.5 * (abs(q[0][0]) + abs(q[0][1])) + r.random()
+            pc, d = max(cands, key=far)
+            e = step(pc, d)
+            used[e] = 'p'
+            links[e] = {(d + 2) % 4}
+            par[e] = ('p', pc)
+            links[pc].add(d)
+        ends = len(leaves())
+        stairs = [st for st in stairs if not st.get('gone') and st.get('top')]
+        score = 100 * len(rooms) + 12 * sum(1 for rm in rooms if rm['asked']) + 15 * sum(1 for k, rm in enumerate(rooms) if rm['up'] and k and rm['s'] > rooms[k - 1]['s']) \
+            + 30 * min(ends, need) - len(links) - 3 * len(stairs) - 8 * sum(rm['s'] for rm in rooms if not rm['up'])     # (a room low where it can be: a kitchen two storeys over its hall, lab kr_grid1)
+        return {'links': links, 'rooms': rooms, 'stairs': stairs, 'ends': ends, 'score': score, 'used': used}
+
+    def lay(g, plan, start, plain):
+        nonlocal hall_no, laid, final
+        links, done = plan['links'], []
+        room_at = {(rm['from'], rm['d']): rm for rm in plan['rooms']}
+        stair_at = {(st['from'], st['d']): st for st in plan['stairs']}
+        todo = [(start, (0, 0, 0))]
+        while todo:
+            port, c = todo.pop(0)
+            D = links.get(c) or set()
+            if len(D) <= 1:
+                if not (plain and c == (0, 0, 0)):
+                    said['ends'] += 1           # (an end: the opening left for the kit's dead end, a door's place)
+                continue
+            pid = (ST_ if (max(D) - min(D)) == 2 else C_) if len(D) == 2 else T_ if len(D) == 3 else X_
+            n = piece(pid, port, sides={g['side'][d] for d in D})
+            if n is None:
+                said['refused'] += 1
+                continue
+            for d in sorted(D):
+                o = next((o for o in L.open if o['owner'] == n and o['side'] == g['side'][d]), None)
+                if o is None:
+                    continue                    # (the way it was entered by, or one that met a passage laid already)
+                if (c, d) in room_at:
+                    rm = room_at[(c, d)]
+                    if _lay_room(L, o, rm['w'], rm['h'], o['depth'], hall_no, rng, k0=rm['k0']):
+                        purposes[hall_no] = rm['purpose']
+                        final = hall_no
+                        hall_no += 1
+                        laid += 1
+                        done.append(rm['prog'])
+                    else:
+                        said['rooms_refused'] += 1
+                elif (c, d) in stair_at:
+                    snap, p = L.snapshot(), o
+                    for _k in range(2):
+                        m = piece(R_, p, dz=sg * 128.0)
+                        p = (opens(m) or [None])[0] if m is not None else None
+                        if p is None:
+                            break
+                    if p is None:
+                        L.restore(snap)
+                        said['refused'] += 1
+                    else:
+                        todo.append((p, stair_at[(c, d)]['top']))
+                else:
+                    todo.append((o, step(c, d)))
+        return done
+    def spiral_at(port):
+        """(the spiral stair at the opening, by either of its doorways: by the one tried first alone, a stair that had
+        no room that way round was given up where it stood the other way)"""
+        ks = list(range(len(S['ports'].get(K['spiral']['piece']) or [])))
+        rng.shuffle(ks)
+        return any(_lay_spiral(L, port, port['depth'], rng, 12, order=[k]) for k in ks)
+    if role == 'tower' and K.get('spiral'):
+        # a tower: the spiral stair where its tower stands, as high as the tower lets it; its rooms off the stair's foot
+        if L.mass:
+            (ox_, oy_, _oz), (idx_, idy_), blocks_ = L.mass
+            cols_ = [M_ for M_ in blocks_ if M_[3] - M_[0] < 700 and M_[4] - M_[1] < 700 and M_[5] > 700]
+            if cols_:
+                top_ = max(cols_, key=lambda M_: M_[5])
+                ta_, tc_ = (top_[0] + top_[3]) / 2.0, (top_[1] + top_[4]) / 2.0
+                far_ = lambda o: math.hypot((o['x'] - ox_) * idx_ + (o['y'] - oy_) * idy_ - ta_, (o['x'] - ox_) * idy_ - (o['y'] - oy_) * idx_ - tc_)
+                # (the stair tried at each step of the way: it stands whole inside the tower only from the tower's near
+                # face, 474 of the tower's 526 across; walked on to the tower's middle first it had no room, lab gp2.
+                # Three turns at least: two stand in the keep's body beside the tower as well)
+                tall_ = lambda: sum(1 for p_ in L.pieces if not p_.get('gone') and p_.get('id') == K['spiral']['piece'])
+                for _k in range(8):
+                    ends_ = sorted([o for o in L.open if not o.get('cap')], key=far_)
+                    if not ends_:
+                        break
+                    snap_ = L.snapshot()
+                    if spiral_at(ends_[0]):
+                        if tall_() >= 3:
+                            break
+                        L.restore(snap_)
+                    if far_(ends_[0]) <= 140.0:
+                        break
+                    d0_ = far_(ends_[0])
+                    n_ = piece(ST_, ends_[0], want=lambda os_: len(os_) == 1 and far_(os_[0]) < d0_ - 60.0) or \
+                        piece(C_, ends_[0], want=lambda os_: len(os_) == 1 and far_(os_[0]) < d0_ - 60.0)
+                    if n_ is None:
+                        break
+                if not tall_():
+                    for port in sorted([o for o in L.open if not o.get('cap')], key=far_):
+                        if spiral_at(port):
+                            break
+        if not any(p_.get('role') == 'spiral' for p_ in L.pieces if not p_.get('gone')):
+            for port in sorted([o for o in L.open if not o.get('cap')], key=lambda o: o['depth']):
+                if spiral_at(port):
+                    break
+    prog = [(r_[0], tuple(r_[1]), r_[2]) for r_ in keep['rooms']]
+    need = int(keep.get('exits', 0))
+    tried = set()
+    first_ = {key(o) for o in L.open if not o.get('cap')}       # (the openings to plan from: those that stand before any plan is laid)
+    for _round in range(10):
+        cands = [o for o in L.open if not o.get('cap') and key(o) in first_ and key(o) not in tried]
+        if not cands or (not prog and need <= 0):
+            break
+        # (at each opening the best of the plans drawn there; the opening whose plan holds most first)
+        picks = []
+        slab = lambda o: L.pieces[o['owner']].get('role') == 'blend' or bool(L.pieces[o['owner']].get('hall_exit'))
+        grids = {key(o): grid(o) for o in cands}
+        # (which openings can end in a door: one with room for a passage's end beyond it, a plain length first at a
+        # great hall's doorway. A hall with three ways on, one of them a cell from the keep's wall, had three doors of
+        # the four it needed, lab gp2: the share of an opening that cannot is the others')
+        can = {key(o): bool(grids[key(o)]['free']((0, 0, 0)) and (not slab(o) or any(grids[key(o)]['free'](c_) for c_ in ((1, 0, 0), (0, 1, 0), (0, -1, 0))))) for o in cands}
+        # (a tower's rooms two to a landing: all four off the stair's foot, the tower was a stair past a row of rooms)
+        prog_ = prog[:2] if role == 'tower' and any(p_.get('role') == 'spiral' for p_ in L.pieces if not p_.get('gone')) else prog
+        for o in cands:
+            plain = slab(o)
+            g = grids[key(o)]
+            others = sum(1 for q in cands if q is not o and can[key(q)])
+            share = max(1 if need > 0 else 0, int(math.ceil(need / float(others + 1))), need - others) if can[key(o)] else 0
+            # (more drawn while the best holds less than the programme: the stair that reaches the storey with room on
+            # it is one drawing in dozens)
+            got = None
+            for _t in range(GRID_DRAWS * 6):
+                pl_ = draw(g, prog_, share, plain, rng)
+                said['drawn'] += 1
+                if got is None or pl_['score'] > got['score']:
+                    got = pl_
+                if _t + 1 >= GRID_DRAWS and (len(got['rooms']) >= len(prog_) or not g['free']((0, 0, 0))):
+                    break
+            picks.append((got['score'], -o['depth'], rng.random(), o, g, got, plain))
+        _sc, _dp, _r, o, g, got, plain = max(picks, key=lambda q: q[:3])
+        tried.add(key(o))
+        if keep.get('trace') is not None:
+            # (the drawing as text, a storey a block: # passage, a letter a room, ^ stair, . free, blank not)
+            for s_ in range(0, 6):
+                if not any(c_[2] == s_ for c_ in got['used']) and s_:
+                    continue
+                rows = ['opening %s storey %d (score %s, rooms %s, ends %d)' % (key(o), s_, got['score'], [rm_['purpose'] for rm_ in got['rooms']], got['ends'])]
+                for i_ in range(GRID_REACH, -2, -1):
+                    row = ''
+                    for j_ in range(GRID_REACH, -GRID_REACH - 1, -1):
+                        c_ = (i_, j_, s_)
+                        u_ = got['used'].get(c_)
+                        row += ('#' if c_ in got['links'] else '^' if u_ == 's' else 'r' if u_ == 'r' else '.' if g['free'](c_) else ' ')
+                    if row.strip():
+                        rows.append(row)
+                keep['trace'].append(chr(10).join(rows))
+        e0 = said['ends']
+        done = lay(g, got, o, plain)
+        for q in done:
+            prog.remove(q)
+        need -= said['ends'] - e0
+    return laid, hall_no, purposes, final, said
 
 
 def _lay_any(L, port, depth, hall_no, rng, final=False):
@@ -1950,7 +2474,7 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     # the tunnel pieces to grow with, as often as the game uses each (with the asked-for mix)
     mix = {'linear': {'T': 0.3, 'cross': 0.15, 'straight': 1.3, 'corner': 1.0, 'dead end': 0.3},
            'branching': {}, 'maze': {'T': 1.6, 'cross': 1.8, 'dead end': 1.2, 'straight': 0.8}}.get(twist, {})
-    ramp_k = {'flat': 0.0, 'some': 1.0, 'steep': 2.5}.get(levels, 1.0)
+    ramp_k = {'flat': 0.0, 'some': 1.0, 'steep': 2.5}.get(levels, 1.0) * (1.6 if keep.get('mass') else 1.0)     # (a keep in its blocks climbs)
     pool = []
     for pid, ps in S['ports'].items():
         r = role_of(pid, K, S)
@@ -1984,7 +2508,32 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
                 L.ez = o['z']
             else:
                 L.open.append(dict(o, owner=first, depth=1))
-    if keep.get('box') and entrance and entrance.get('side'):
+    if keep.get('mass') and entrance and entrance.get('side'):
+        dx, dy = SIDES[OPP[entrance['side']]]
+        L.mass = ((float(entrance['x']), float(entrance['y']), float(L.ez if L.ez is not None else entrance.get('z', 0.0))), (dx, dy),
+                  [tuple(float(v) for v in b) for b in keep['mass']])
+        if keep.get('rooms'):
+            # (a tower's sections, one block each as the outside has them, taken as one column: a turn of the spiral
+            # stair is 492 high and stood in no one section of 256, so a tower of twelve sections had no stair, lab gp2)
+            cols_, rest_ = {}, []
+            for M_ in L.mass[2]:
+                if M_[3] - M_[0] < 700 and M_[4] - M_[1] < 700:
+                    cols_.setdefault((round((M_[0] + M_[3]) / 400.0), round((M_[1] + M_[4]) / 400.0)), []).append(M_)
+                else:
+                    rest_.append(M_)
+            for ms_ in cols_.values():
+                ms_.sort(key=lambda M_: M_[2])
+                run_ = list(ms_[0])
+                for M_ in ms_[1:]:
+                    if M_[2] <= run_[5] + 16:
+                        run_ = [max(run_[0], M_[0]), max(run_[1], M_[1]), run_[2], min(run_[3], M_[3]), min(run_[4], M_[4]), max(run_[5], M_[5])]
+                    else:
+                        rest_.append(tuple(run_))
+                        run_ = list(M_)
+                rest_.append(tuple(run_))
+            L.mass = (L.mass[0], L.mass[1], rest_)
+        L.avoid = [tuple(float(v) for v in b) for b in keep.get('avoid') or ()]
+    elif keep.get('box') and entrance and entrance.get('side'):
         # (the footprint from the door in: the keep's mass outside, a little over for the pieces' own reach)
         dx, dy = SIDES[OPP[entrance['side']]]
         L.bound = ((dx, dy), float(keep['box'][0]) + 128, float(keep['box'][1]) + 128)
@@ -1995,6 +2544,70 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     hall_no = 0
     tunnels = 1
     tries = 0
+    planned = None
+    if keep.get('rooms') and K.get('halls') == 'tiled' and keep.get('hall_first') and K.get('big') and L.open and L.mass:
+        # (a planned keep: the hall's size chosen with the plan. The biggest hall that fits took the whole ground of a
+        # keep of four blocks, twelve tiles, and left the plan nowhere to begin: no side room and one door of the four
+        # the Great Hall was to have, lab kr_grid1. Each size that stands behind the door is planned from; the one whose
+        # plan holds most rooms and doors is kept, the bigger of two that hold the same)
+        port0_, snap0_, sizes_ = L.open[0], L.snapshot(), []
+        ex_ = int(keep.get('hall_exits', 3))
+        for least_ in (2, 1):
+            for w_, h_ in sorted(K['big']['sizes'], key=lambda s_: (-(s_[0] * s_[1]), -s_[0])):
+                if w_ < h_ or any(q_[:2] == (w_, h_) for q_ in sizes_):
+                    continue
+                for at_ in sorted(range(h_), key=lambda q: abs(q - h_ // 2)):
+                    if _lay_big(L, port0_, w_, h_, 1, 0, rng, exits=ex_, centre=True, at=at_, ways_least=least_):
+                        L.restore(snap0_)
+                        sizes_.append((w_, h_, at_, least_))
+                        break
+        need_, best_ = int(keep.get('exits', 0)), None
+        quiet_ = dict(keep, trace=None)
+        for n_, (w_, h_, at_, least_) in enumerate(sizes_[:5]):
+            sub_ = random.Random('%s|hall|%d' % (seed, n_))
+            _lay_big(L, port0_, w_, h_, 1, 0, sub_, exits=ex_, centre=True, at=at_, ways_least=least_)
+            got_ = _grow_plan(L, K, S, sub_, quiet_, 1, pool)
+            L.restore(snap0_)
+            val_ = 2 * got_[0] + 2 * min(got_[4]['ends'], need_) + 0.25 * w_ * h_
+            if best_ is None or val_ > best_[0]:
+                best_ = (val_, n_)
+            if got_[0] >= len(keep['rooms']) and got_[4]['ends'] >= need_:
+                break
+        if best_ is not None:
+            w_, h_, at_, least_ = sizes_[best_[1]]
+            sub_ = random.Random('%s|hall|%d' % (seed, best_[1]))
+            _lay_big(L, port0_, w_, h_, 1, 0, sub_, exits=ex_, centre=True, at=at_, ways_least=least_)
+            halls_at = []
+            n_laid_, hall_no, purposes_, final_plan_, said_ = _grow_plan(L, K, S, sub_, keep, 1, pool)
+            planned = {'laid': n_laid_, 'asked': len(keep['rooms']), 'purposes': purposes_, 'final': final_plan_, 'said': said_, 'hall': [w_, h_]}
+            tunnels = sum(1 for p_ in L.pieces if not p_.get('gone') and p_.get('hall') is None)
+    if planned is None and keep.get('hall_first') and K.get('big') and L.open:
+        # (a keep's Great Hall begins at its door: the hall first, at the entrance's own opening, the longest that
+        # fits, its ways on at the far end and the sides. The game's: a median 315 from the door from outdoors to the
+        # hall in 46 fort interiors with one, lab hall1; grown like any room the hall lay 747 off, up a stair
+        # corridor, the user's Tharen Rise, 2026-11-11)
+        port0_ = L.open[0]
+        done_ = False
+        # (the biggest hall that leaves two ways on from it; failing any, one way; failing that the biggest that fits:
+        # a great keep's Great Hall had no hall in it when every size was refused for its ways, lab kr_after)
+        for least_ in ((2, 1, 0) if L.mass else (0,)):
+            for w_, h_ in sorted(K['big']['sizes'], key=lambda s_: (-(s_[0] * s_[1]), -s_[0])):
+                # (on the door's own line first; then to one side of it, where the keep's blocks stand to one side of the door)
+                for at_ in sorted(range(h_), key=lambda q: abs(q - h_ // 2)) if L.mass else (None,):
+                    if w_ >= h_ and _lay_big(L, port0_, w_, h_, 1, hall_no, rng, exits=int(keep.get('hall_exits', 3)), centre=True, at=at_, ways_least=least_):
+                        hall_no += 1
+                        done_ = True
+                        break
+                if done_:
+                    break
+            if done_:
+                break
+        if not done_ and L.mass and L.open:
+            # (a small keep's one block holds no hall of big tiles, and a one-tile hall filled it, leaving a Great Hall
+            # of seven pieces, lab castle_made: the room behind the door is one of the kit's own rooms then, the
+            # passages and stairs round it)
+            if _lay_any(L, L.open[0], 1, hall_no, rng):
+                hall_no += 1
     # (a keep's spiral stair towers, K['spiral']: as many as asked for, else one in half the large keeps; each a few
     # turns, from a third of the way in; a room at a landing or two straight after)
     spirals = keep.get('spirals')
@@ -2002,8 +2615,27 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
         spirals = 1 if K.get('spiral') and L.big and rng.random() < 0.5 else 0
     spirals = int(spirals) if K.get('spiral') else 0
     spiral_at = max(4, int(target * 0.3))
+    # (in a keep's own blocks, L.mass: the keep climbs by a spiral stair, as the game's do, up each tower that stands
+    # against the blocks, where it stands (the user's Fort Urasek: a stair to a small room and a door out where the tower
+    # is, "Exit only? No tower?"); with no tower, one somewhere in the blocks. The stair goes as high as its block)
+    towers_ = []
+    if L.mass and K.get('spiral'):
+        cols_ = {}
+        for M_ in L.mass[2]:
+            if M_[3] - M_[0] < 700 and M_[4] - M_[1] < 700:
+                k_ = (round((M_[0] + M_[3]) / 400.0), round((M_[1] + M_[4]) / 400.0))
+                cols_[k_] = ((M_[0] + M_[3]) / 2.0, (M_[1] + M_[4]) / 2.0, max(M_[5], cols_.get(k_, (0, 0, -1e9))[2]))
+        towers_ = [t_ for t_ in sorted(cols_.values(), key=lambda t_: -t_[2]) if t_[2] > 700][:2]
+        spirals = max(spirals, len(towers_), 1)
+        spiral_at = 3
     rings_closed = 0
-    while any(not o.get('cap') for o in L.open) and tunnels < target and tries < target * 60:
+    if planned is None and keep.get('rooms') and K.get('halls') == 'tiled':
+        # (a keep's interior by plan, _grow_plan: its rooms as the programme has them, no growth by chance)
+        halls_at = []
+        n_laid_, hall_no, purposes_, final_plan_, said_ = _grow_plan(L, K, S, rng, keep, hall_no, pool)
+        planned = {'laid': n_laid_, 'asked': len(keep['rooms']), 'purposes': purposes_, 'final': final_plan_, 'said': said_}
+        tunnels = sum(1 for p_ in L.pieces if not p_.get('gone') and p_.get('hall') is None)
+    while planned is None and any(not o.get('cap') for o in L.open) and tunnels < target and tries < target * 60:
         tries += 1
         # which opening grows next: the newest mostly for a long winding route, any for a branching one
         grow = [o for o in L.open if not o.get('cap')]
@@ -2011,7 +2643,40 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
             port = max(grow, key=lambda o: (o['depth'], rng.random()))
         else:
             port = rng.choice(grow)
-        if spirals and tunnels >= spiral_at and L.pieces[port['owner']].get('role') not in ('spiral', 'blend'):
+        if spirals and L.mass and tunnels >= spiral_at:
+            (ox_, oy_, _oz), (idx_, idy_), _bl = L.mass
+            spot_ = lambda o: ((o['x'] - ox_) * idx_ + (o['y'] - oy_) * idy_, (o['x'] - ox_) * idy_ - (o['y'] - oy_) * idx_)
+            ok_ = [o for o in grow if L.pieces[o['owner']].get('role') not in ('spiral', 'blend')]
+            laid_ = False
+            if towers_ and ok_:
+                ta_, tc_, _tt = towers_[0]
+                far_ = lambda o: math.hypot(spot_(o)[0] - ta_, spot_(o)[1] - tc_)
+                ok_.sort(key=far_)
+                near_ = [o for o in ok_[:3] if far_(o) <= 520.0]
+                if not near_ and tunnels < 0.6 * target:
+                    port = ok_[0]                     # (towards the tower: the opening nearest it grows next)
+                    ok_ = []
+                else:
+                    ok_ = near_ or ok_[:2]
+            for o in ok_[:3]:
+                n0_ = len(L.pieces)
+                if _lay_spiral(L, o, o['depth'], rng, 12):
+                    got_ = sum(1 for p_ in L.pieces[n0_:] if p_.get('id') == K['spiral']['piece'])
+                    spirals -= 1
+                    tunnels += got_
+                    spiral_at = tunnels + 6
+                    if towers_:
+                        towers_.pop(0)
+                    for o2 in [o2 for o2 in L.open if L.pieces[o2['owner']].get('role') == 'spiral' and not o2.get('cap')][:6]:
+                        if rng.random() < 0.5 and _lay_any(L, o2, o2['depth'], hall_no, rng):
+                            hall_no += 1
+                    laid_ = True
+                    break
+            if laid_:
+                continue
+            if ok_ and not towers_:
+                spiral_at = tunnels + 2               # (no room for it at these openings: tried again a little further on)
+        elif spirals and tunnels >= spiral_at and L.pieces[port['owner']].get('role') not in ('spiral', 'blend'):
             lo_, hi_ = keep.get('turns') or (2, 3)
             turns = rng.randint(int(lo_), int(hi_))
             if _lay_spiral(L, port, port['depth'], rng, turns):
@@ -2052,6 +2717,13 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
                 tunnels += 1
                 break
         else:
+            # (in a keep's own blocks, with no more floor this way: up, by a stair)
+            if L.mass:
+                ramps_ = [c for c in pool if c[1] == 'ramp']
+                rng.shuffle(ramps_)
+                if any(L.place_at(c[0], k, port, port['depth']) is not None for c in ramps_ for k in range(len(L.S['ports'][c[0]]))):
+                    tunnels += 1
+                    continue
             # (nothing fits here: this opening is left for a dead end)
             port['stuck'] = True
             if all(o.get('stuck') or o.get('cap') for o in L.open):
@@ -2061,7 +2733,7 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     if keep.get('rings') is not None:
         want_r = keep['rings']
     want_n = int(want_r) + (1 if rng.random() < want_r - int(want_r) else 0)
-    if want_n:
+    if want_n and planned is None:
         rings_closed = _close_rings(L, rng, want_n, pool)
     # (the halls still owed when the size was reached: at the open ends, the shallower first, the deepest kept for the
     # last one)
@@ -2074,12 +2746,12 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
         if any(_lay_any(L, port, port['depth'], hall_no, rng) for port in ends):
             hall_no += 1
     # the last hall at the far end: the deepest opening that takes one
-    final = None
-    if K.get('room_lead'):
+    final = planned['final'] if planned else None
+    if K.get('room_lead') and planned is None:
         if _keep_room(L, rng, hall_no, final=True) is not None:
             final = hall_no
             hall_no += 1
-    for port in ([] if K.get('room_lead') else sorted((o for o in L.open if not o.get('cap')), key=lambda o: -o['depth'])):
+    for port in ([] if K.get('room_lead') or planned is not None else sorted((o for o in L.open if not o.get('cap')), key=lambda o: -o['depth'])):
         if _lay_any(L, port, port['depth'], hall_no, rng, final=True):
             final = hall_no
             hall_no += 1
@@ -2089,6 +2761,15 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     # onto the void, 'open' in a third of the made layouts, dgrules)
     deads = [K['dead_end']] + [c[0] for c in pool if c[1] == 'dead end' and c[0] != K['dead_end']]
     left = [0]
+    # (a Great Hall's way on that nothing grew from: its doorway slab out again, the hall's own wall slab back in the
+    # opening, _lay_big; capped like a corridor's end it stood a dead end behind a doorway, or took the hall away)
+    for o in [o for o in L.open if L.pieces[o['owner']].get('hall_exit')]:
+        k_ = o['owner']
+        w_ = L.pieces[k_]['hall_exit']
+        dep_, hall_ = L.pieces[k_].get('depth', 1), L.pieces[k_].get('hall')
+        L.pieces[k_] = dict(L.pieces[k_], gone=True, box=(0, 0, 0, 0, 0, 0))
+        L.pieces[L.add(w_[0], w_[1], w_[2], w_[3], w_[4], dep_, hall=hall_)]['of'] = w_[5]
+        L.open.remove(o)
 
     def take_away(nodes):
         """Pieces taken out of the layout; every join they had with the rest opened again on the other side."""
@@ -2157,7 +2838,8 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     # a side branch that climbs or drops only to end is taken back to where it left, and capped there (the
     # user: "a bed at the end of a descending staircase hallway ... who would build that just to put a bed
     # there and no room?"); a level stub stays, an alcove
-    for _cut in range(40):
+    # (not in a planned keep: its only ends are the ones its plan left for doors, some up a stair, _grow_plan)
+    for _cut in range(40 if planned is None else 0):
         inv = defaultdict(list)
         for s in L.seams:
             inv[s[4]].append(s)
@@ -2193,7 +2875,7 @@ def _grow(db, S, K, size, levels, twist, seed, way='down', keep=None):
     pieces = [p for p in L.pieces if not p.get('gone')]
     halls = len({p['hall'] for p in pieces if p.get('hall') is not None})
     return {'seed': seed, 'grown_from': seed, 'pieces': L.pieces, 'seams': L.seams, 'entrance': entrance, 'halls': halls, 'final': final,
-            'open_left': len(L.open) + left[0], 'tunnels': sum(1 for p in pieces if p['hall'] is None), 'too_deep': L.too_deep, 'too_wide': L.too_wide, 'way': way,
+            'planned': planned, 'mass': L.mass, 'open_left': len(L.open) + left[0], 'tunnels': sum(1 for p in pieces if p['hall'] is None), 'too_deep': L.too_deep, 'too_wide': L.too_wide, 'way': way,
             'rings': rings_closed, 'spirals': sum(1 for p in pieces if p.get('role') == 'spiral' and p.get('of') is None),
             'ring_debug': getattr(L, 'ring_debug', None)}
 
@@ -2558,6 +3240,572 @@ FLAT_ON_FLOOR = re.compile(r'rubble|debris|decal|_dirt|_scorch')
 FLAT_LIFT = 1.5
 
 
+# ---- a fort's rooms dressed for what they are, and each thing only with what it leaned or stood on
+# (the user, 2026-11-12, on a made Great Hall: "tapestries hanging all throughout the middle of the room. Items on the
+# floor. Rugs clipped into walls", and of keeps: "it's rarely ever planned out like a believable castle". Three causes.
+# The game's big-hall tile is most often a room of its own with a wall slab on every side (97 of its 289 tiles), and its
+# set was laid on the open tiles in the middle of a made hall. Every piece drew its set from any room of any fort, a
+# library's shelves beside a dining table. And what lost its table was set down on the floor, a ruin's way (_orphans).
+# The game's forts: 2.1% of 2,480 hangings with no wall behind them, 2.1% of 238 rugs off their floor, 12.7% of 16,410
+# loose things on the floor; 24 made halls before: 19%, and a third of the loose things on the floor)
+HANGING = re.compile(r'tapestry|_c_t_|banner')
+RUG = re.compile(r'rug|carpet')
+SEAT = re.compile(r'chair|stool|bench')
+HALL_EDGE = 112.0              # (furniture this near a hall tile's side stood against the wall there)
+HANG_EDGE = 72.0               # (a hanging this near it hung on that wall)
+HANG_REACH = 30.0              # (a wall face this far behind a hanging's cloth at most, _keep_tidy)
+STAIR_FITTING = re.compile(r'torch_ring|sconce')
+ON_RUG_NOT = re.compile(r'crate|barrel|sack|keg|basket')
+RUIN_THINGS = re.compile(r'furn_bone|skeleton|skull|furn_web|_web_|spiderweb')
+THEME_RX = (('bed', re.compile(r'_bed|bunk|bedroll|hammock')), ('shrine', re.compile(r'altar|shrine|_pew|kneel')),
+            ('cook', re.compile(r'kettle|cauldron|cooking|_oven|spit_|ladle|fireplace|hearth|pot_0')),
+            ('shelf', re.compile(r'bookshelf|bookcase')), ('arms', re.compile(r'weaponrack|weapon_rack|armou?r_?stand|mannequin|shieldrack')),
+            ('table', re.compile(r'table|_bar_|counter')), ('store', re.compile(r'crate|barrel|sack|keg')))
+# (what each of a keep's interiors holds, keepmaker.ROLES; 'plain' sets, lights and hangings and the odd chest, go anywhere)
+ROLE_THEMES = {'hall': ('dining',), 'chambers': ('beds', 'books', 'dining'), 'household': ('dining', 'stores', 'beds'), 'library': ('books',),
+               'chapel': ('shrine',), 'garrison': ('beds', 'arms', 'dining'), 'prison': ('stores',), 'treasury': ('stores', 'arms'),
+               'undercroft': ('stores',), 'tower': ('arms', 'stores', 'beds'), 'walls': ('arms', 'stores')}
+_THEME = {}
+# (the rooms of each of a keep's interiors, the brief of 2026-11-12: one purpose a room, the public ones nearest the
+# door and lowest, the private ones farthest and highest; in order from the door, the last repeating. A guide, as the
+# user had it, not a rule to the letter)
+# (an interior of one room is that role's own room: the barracks' a barracks, the chambers' a chamber; most rooms of
+     # a first round were guard rooms, first in every list, lab kr_after)
+ROOM_PLAN = {'hall': ('kitchen', 'guard room', 'stores', 'servants'),
+             'chambers': ('chamber', 'study', 'audience', 'chamber'),
+             'household': ('kitchen', 'servants', 'stores', 'dining'),
+             'garrison': ('barracks', 'armoury', 'guard room', 'mess', 'barracks'),
+             'tower': ('guard room', 'armoury', 'stores', 'watch room'),
+             'walls': ('guard room', 'armoury', 'stores'),
+             'library': ('study',), 'chapel': ('vestry',), 'treasury': ('treasury',), 'undercroft': ('stores',),
+             'prison': ('cells', 'guard room', 'stores')}
+# (and what furnishes each: the themes of the game's own sets, the first that the piece has any of)
+PURPOSE_THEMES = {'guard room': ('arms', 'dining'), 'kitchen': ('kitchen', 'dining', 'stores'), 'stores': ('stores',), 'servants': ('beds',),
+                  'audience': ('dining',), 'chamber': ('beds',), 'study': ('books',), "lord's chamber": ('beds', 'books'), 'dining': ('dining',),
+                  'barracks': ('beds',), 'armoury': ('arms',), 'mess': ('dining',), 'watch room': ('arms', 'beds'), 'vestry': ('books', 'stores'),
+                  'treasury': ('stores', 'arms'), 'cells': ('stores',)}
+
+
+def _set_theme(st):
+    """What kind of room a dressing set furnishes: 'beds', 'shrine', 'books', 'arms', 'dining', 'stores', or 'plain'."""
+    k = id(st)
+    if k not in _THEME:
+        c = Counter()
+        for row in _set_items(st):
+            low = row[0].lower()
+            if row[1] == 'BOOK':
+                c['book'] += 1
+            for nm, rx in THEME_RX:
+                if rx.search(low):
+                    c[nm] += 1
+        _THEME[k] = ('beds' if c['bed'] else 'shrine' if c['shrine'] else 'kitchen' if c['cook'] and (c['table'] or c['store']) else
+                     'books' if (c['shelf'] and c['book'] >= 4) or c['book'] >= 8
+                     else 'arms' if c['arms'] else 'dining' if c['table'] else 'stores' if c['store'] >= 3 else 'plain')
+    return _THEME[k]
+
+
+def _hall_walls(lay, K):
+    """{piece number of a big hall's tile: {side in the tile's own frame: 'open' (the hall goes on), 'door' (a doorway
+    slab) or 'wall'}}."""
+    B = K.get('big')
+    if not B:
+        return {}
+    T = B['pitch']
+    tiles = [(n, p) for n, p in enumerate(lay['pieces']) if not p.get('gone') and p.get('id') == B['tile']]
+    blends = [p for p in lay['pieces'] if not p.get('gone') and p.get('id') == B['blend']]
+    out = {}
+    for n, p in tiles:
+        x, y, z, rz = p['p'][0], p['p'][1], p['p'][2], p['p'][5]
+        d = {}
+        for s_, (sx, sy) in SIDES.items():
+            wx, wy = _rot(sx, sy, rz)
+            if any(abs(q['p'][0] - (x + wx * T)) < 40 and abs(q['p'][1] - (y + wy * T)) < 40 and abs(q['p'][2] - z) < 40 for _n, q in tiles):
+                d[s_] = 'open'
+            elif any(math.hypot(b['p'][0] - (x + wx * T / 2), b['p'][1] - (y + wy * T / 2)) < 200 for b in blends):
+                d[s_] = 'door'
+            else:
+                d[s_] = 'wall'
+        out[n] = d
+    return out
+
+
+def _side_of(lx, ly, T):
+    """(the side of a tile a spot lies nearest, how far from that side)"""
+    s_ = max(SIDES, key=lambda k: lx * SIDES[k][0] + ly * SIDES[k][1])
+    return s_, T / 2.0 - (lx * SIDES[s_][0] + ly * SIDES[s_][1])
+
+
+def _to_walls(db, items, walls, T, rng):
+    """A hall tile's set turned to the tile's own walls and thinned to what they carry: the quarter turn that keeps the
+    most of what stood against a wall in the game, then every hanging and piece of furniture that would stand against an
+    open side or a doorway left out, with what stood on it and a table's seats. (the rows, turned; how many left out)"""
+    def bound(row):
+        b = mapdata.object_bounds(db, db.resolve_id(row[0]))
+        return b if b and row[1] in ('STAT', 'ACTI', 'CONT') else None
+    info = []
+    for row in items:
+        low, b = row[0].lower(), bound(row)
+        hang = bool(b) and bool(HANGING.search(low))
+        rug = bool(b) and bool(RUG.search(low)) and (b[5] - b[2]) * row[8] < 24
+        furn = bool(b) and not hang and not rug and max(b[3] - b[0], b[4] - b[1]) * row[8] >= 50 and (b[5] - b[2]) * row[8] >= 24
+        info.append((hang, rug, furn, b))
+
+    def lost(q):
+        out = set()
+        for i, row in enumerate(items):
+            hang, rug, furn, b = info[i]
+            if not (hang or furn):
+                continue
+            lx, ly = _rot(row[2], row[3], q * math.pi / 2.0)
+            s_, e = _side_of(lx, ly, T)
+            if hang and (e > HANG_EDGE or walls.get(s_) != 'wall'):
+                out.add(i)                        # (hung on something the set does not bring, or on a wall not here)
+            elif furn and e <= HALL_EDGE and walls.get(s_) != 'wall':
+                out.add(i)
+        return out
+    turns = [(len(lost(q)), rng.random(), q) for q in range(4)]
+    q = min(turns)[2]
+    gone = lost(q)
+    # (and what stood on a piece that goes, and the seats round a table that goes)
+    for i in sorted(gone):
+        hang, rug, furn, b = info[i]
+        if not furn:
+            continue
+        f = items[i]
+        for j, row in enumerate(items):
+            if j in gone or j == i:
+                continue
+            lx, ly = _rot(row[2] - f[2], row[3] - f[3], -f[7])
+            on = b[0] * f[8] - 10 <= lx <= b[3] * f[8] + 10 and b[1] * f[8] - 10 <= ly <= b[4] * f[8] + 10 \
+                and f[4] + b[2] * f[8] - 8 <= row[4] <= f[4] + b[5] * f[8] + 48
+            if on and not info[j][2]:
+                gone.add(j)
+            elif TABLES.search(f[0].lower()) and SEAT.search(row[0].lower()) and math.hypot(row[2] - f[2], row[3] - f[3]) <= 130:
+                gone.add(j)
+    out = []
+    for i, row in enumerate(items):
+        if i in gone:
+            continue
+        lx, ly = _rot(row[2], row[3], q * math.pi / 2.0)
+        out.append([row[0], row[1], lx, ly, row[4], row[5], row[6], (row[7] + q * math.pi / 2.0) % (2 * math.pi), row[8]])
+    return out, len(gone)
+
+
+def _keep_tidy(db, key, K):
+    """Hangings with no wall face behind their cloth and rugs not wholly on a floor go (K['tidy']): whatever brought them,
+    a set from a piece whose wall stood elsewhere, a neighbour's partition, the room above. The game's forts: 2.1% of
+    each. The number taken out."""
+    import seethrough
+    c = db.project.cells.get(key)
+    if not c:
+        return 0
+    m = mapdata.cellmap(db, key)
+    refs = [r for r in m['refs'] if r.get('b') and r.get('ri') is not None]
+    soft = lambda r: r['type'] in ('STAT', 'ACTI') and (HANGING.search(r['id'].lower()) or (RUG.search(r['id'].lower()) and (r['b'][5] - r['b'][2]) * (r.get('s') or 1.0) < 24))
+    arch = [r for r in refs if r.get('arch') and not soft(r)]
+    if not arch:
+        return 0
+    sc = seethrough.place_scene(db, dict(m, refs=arch))
+    big = [r for r in refs if not r.get('arch') and not soft(r) and r['type'] in ('STAT', 'ACTI', 'CONT')
+           and max(r['b'][3] - r['b'][0], r['b'][4] - r['b'][1]) * (r.get('s') or 1.0) >= 100]
+    sc_f = seethrough.place_scene(db, dict(m, refs=[dict(r, arch=True) for r in big]))
+    gone = []
+    for r in refs:
+        if not soft(r):
+            continue
+        b, s = r['b'], r.get('s') or 1.0
+        ex, ey, ez = (b[3] - b[0]) * s, (b[4] - b[1]) * s, (b[5] - b[2]) * s
+        base = r['p'][2] + b[2] * s
+        if HANGING.search(r['id'].lower()):
+            ux, uy = _rot(1.0, 0.0, r['p'][5]) if ex < ey else _rot(0.0, 1.0, r['p'][5])
+            mx, my = _rot((b[0] + b[3]) / 2 * s, (b[1] + b[4]) / 2 * s, r['p'][5])
+            best = None
+            for f in (0.3, 0.5, 0.75):
+                for sg in (1.0, -1.0):
+                    for sc_ in (sc, sc_f):
+                        h = sc_.nearest_any((r['p'][0] + mx, r['p'][1] + my, base + ez * f), (ux * sg, uy * sg, 0.0), 300)
+                        if h is not None and (best is None or h[0] < best):
+                            best = h[0]
+            if best is None or best > min(ex, ey) / 2 + HANG_REACH:
+                gone.append(r)
+        elif abs(r['p'][3]) + abs(r['p'][4]) < 0.2:
+            bad = 0
+            for i in range(5):
+                for j in range(5):
+                    lx, ly = _rot((b[0] + (b[3] - b[0]) * (0.04 + 0.92 * i / 4.0)) * s, (b[1] + (b[4] - b[1]) * (0.04 + 0.92 * j / 4.0)) * s, r['p'][5])
+                    h = sc.nearest_any((r['p'][0] + lx, r['p'][1] + ly, base + ez + 60), (0.0, 0.0, -1.0), 110)
+                    if h is None or h[0] < 50:
+                        bad += 1
+            if bad >= 3:
+                gone.append(r)
+    # (and no crate, barrel or sack on a rug: one piece's rug ran under the next piece's stores, two barrels on a
+    # room's octagonal rug in Fort Urasek's remade hall. The game's forts: 46 of 2,671; made keeps 5 to 8%)
+    out_k = {r['k'] for r in gone}
+    rugs_ = [r for r in refs if soft(r) and not HANGING.search(r['id'].lower()) and r['k'] not in out_k]
+    for r in refs:
+        if r['type'] not in ('CONT', 'STAT') or not ON_RUG_NOT.search(r['id'].lower()) or soft(r):
+            continue
+        base = r['p'][2] + r['b'][2] * (r.get('s') or 1.0)
+        for g in rugs_:
+            gb, gs = g['b'], g.get('s') or 1.0
+            lx, ly = _rot(r['p'][0] - g['p'][0], r['p'][1] - g['p'][1], -g['p'][5])
+            if gb[0] * gs <= lx <= gb[3] * gs and gb[1] * gs <= ly <= gb[4] * gs and abs(base - g['p'][2]) < 30:
+                gone.append(r)
+                break
+    for r in gone:
+        c['refs'].pop(r['k'], None)
+    if gone:
+        db.sync_project()
+    return len(gone)
+
+
+# ---- a big hall laid out as one room
+# (a hall tile dressed to its walls keeps the rules but stands near empty: what the game puts in that tile stands against
+# walls a wide hall has only at its rim, and six made halls held 12 pieces of furniture each. So a hall of two tiles and
+# more is planned whole, the Workshop's own layout from the pieces the game's halls are furnished with (read off the
+# survey's sets: which tables, benches, hangings, lights; how a hanging stands to its wall, how high a chandelier
+# hangs): tables in rows down the hall with a way between them from the door, a high table across the far end, a
+# hanging on each wall slab, lamps in the corners, chandeliers overhead; a library's shelves round its walls with
+# reading tables between, a chapel's benches facing its altar)
+HALL_FEAST = (None, 'hall', 'chambers', 'household', 'garrison')
+HALL_AISLE = 190.0             # (from the way down the hall to the middle of the first row of tables either side)
+HALL_LANE = 100.0              # (a bay's two rows of tables: this far either side of its middle)
+HALL_WALL = 21.0               # (a wall slab's face: this far in from its tile's side)
+HALL_POST = 81.0               # (the corner post of a hall tile: this far in from its tile's sides)
+HALL_RIM = 70.0                # (nothing on the floor nearer a wall's side of its tile than this)
+HALL_PILLAR = 92.0             # (half the pillar that stands where four hall tiles meet, with room to pass)
+ALTARS = ('furn_imp_altar_cure_01', 'furn_imp_altar_01', 'active_imp_altar_01')
+_PARTS = {}
+
+
+def _hall_class(low, t, ex, ey, ez):
+    if HANGING.search(low):
+        return 'hanging'
+    if RUG.search(low):
+        return 'rug' if ez < 24 and max(ex, ey) >= 200 else None
+    if t == 'LIGH' or low.startswith('light_'):
+        return 'chandelier' if 'chandel' in low else 'sconce' if 'sconce' in low else 'lamp' if re.search(r'lamp|candelab|brazier', low) and ez >= 90 else None
+    if 'coatofarms' in low:
+        return 'arms'
+    if 'chest' in low:
+        return 'chest' if ez >= 25 and max(ex, ey) >= 60 else None
+    if re.search(r'barrel|keg', low):
+        return 'barrel'
+    if re.search(r'sack|basket', low):
+        return 'sack'
+    if 'bookshelf' in low or 'bookcase' in low:
+        return 'bookshelf' if ez >= 150 else None
+    if 'table' in low:
+        return 'long table' if max(ex, ey) >= 150 and min(ex, ey) <= 110 else 'table' if max(ex, ey) <= 140 and min(ex, ey) >= 50 else None
+    if 'bench' in low:
+        return 'bench' if max(ex, ey) >= 100 else None
+    if 'chair' in low:
+        return 'chair' if ez >= 60 else None
+    if 'planter' in low:
+        return 'planter'
+    return None
+
+
+def _hall_parts(db, S, K):
+    """What the game's own fort halls are furnished with, read off the survey's sets: {'ids': {class: [id, most used
+    first]}, 'wall': {id: (quarter turns from facing into the room, how far in from its tile's side, height)}, 'hung':
+    {id: (x, y, z in its tile)}, 'floor': the floor's height in a hall tile's frame}."""
+    key = (id(S), K['kind'])
+    if key in _PARTS:
+        return _PARTS[key]
+    B = K['big']
+    T = float(B['pitch'])
+    uniq = set(S.get('uniques') or [])
+    n = defaultdict(Counter)
+    wall, hung, rug_z, beside = defaultdict(list), defaultdict(list), [], defaultdict(list)
+    for pid, sets in S['dress'].items():
+        big = pid == B['tile']
+        for st in sets:
+            for row in _set_items(st):
+                low, t = row[0].lower(), row[1]
+                ri = db.resolve_id(row[0])
+                if t not in ('STAT', 'ACTI', 'CONT', 'LIGH') or ri is None or low in uniq or abs(row[5]) + abs(row[6]) > 0.1:
+                    continue
+                b = mapdata.object_bounds(db, ri)
+                if not b:
+                    continue
+                c = _hall_class(low, t, b[3] - b[0], b[4] - b[1], b[5] - b[2])
+                if not c:
+                    continue
+                if abs(row[8] - 1.0) <= 0.05:
+                    n[c][low] += 3 if big else 1
+                if not big:
+                    continue
+                if c == 'rug':
+                    rug_z.append(row[4] + b[2])
+                s_, e = _side_of(row[2], row[3], T)
+                lat_ = abs(row[2] * SIDES[s_][1]) + abs(row[3] * SIDES[s_][0])
+                if c in ('hanging', 'bookshelf') and 20.0 <= e <= HALL_EDGE and lat_ <= 150.0:
+                    inward = math.atan2(-SIDES[s_][0], -SIDES[s_][1])
+                    wall[low].append((int(round(math.degrees(inward - row[7]) / 90.0)) % 4, e, row[4]))
+                if c in ('arms', 'sconce') and 8.0 <= e <= HALL_EDGE and lat_ <= 175.0:
+                    inward = math.atan2(-SIDES[s_][0], -SIDES[s_][1])
+                    beside[low].append((int(round(math.degrees(inward - row[7]) / 90.0)) % 4, e, row[4], lat_))
+                if c == 'chandelier':
+                    hung[low].append((row[2], row[3], row[4]))
+    med = lambda v: sorted(v)[len(v) // 2]
+    out = {'ids': {c: [i for i, _n in cn.most_common()] for c, cn in n.items()},
+           'wall': {i: (Counter(w[0] for w in ws).most_common(1)[0][0], med([w[1] for w in ws]), med([w[2] for w in ws])) for i, ws in wall.items()},
+           'hung': {i: (med([h[0] for h in hs]), med([h[1] for h in hs]), med([h[2] for h in hs])) for i, hs in hung.items()},
+           # (what hangs beside a hanging on a wall slab, a coat of arms, a sconce: its turn, how far in, how high, how far along)
+           'beside': {i: (Counter(w[0] for w in ws).most_common(1)[0][0], med([w[1] for w in ws]), med([w[2] for w in ws]), med([w[3] for w in ws]))
+                      for i, ws in beside.items() if len(ws) >= 3},
+           'floor': med(rug_z) if rug_z else -T / 2.0}
+    _PARTS[key] = out
+    return out
+
+
+def _hall_compose(db, S, K, lay, hall_no, walls, rng, role):
+    """A big hall's furnishing, laid out as one room for what the interior is (role: a keep's Great Hall and the like a
+    feast hall, its library, its chapel): [(id, pose, [], scale)] in the place's frame, or None for a hall this does
+    not plan (one tile, not a rectangle, another role: its tiles are dressed one by one, to their walls)."""
+    B = K['big']
+    T = float(B['pitch'])
+    tiles = [(n, p) for n, p in enumerate(lay['pieces']) if not p.get('gone') and p.get('id') == B['tile'] and p.get('hall') == hall_no]
+    if len(tiles) < 2 or not (role in HALL_FEAST or role in ('library', 'chapel')):
+        return None
+    e = tiles[0][1].get('of')
+    if e is None or lay['pieces'][e].get('gone'):
+        return None
+    ep = lay['pieces'][e]['p']
+    trz, tz = tiles[0][1]['p'][5], tiles[0][1]['p'][2]
+    ux, uy = _rot(1.0, 0.0, trz)                      # (down the hall from its doorway: the tile's own east)
+    vx, vy = _rot(0.0, 1.0, trz)
+    t0 = min(tiles, key=lambda q: math.hypot(q[1]['p'][0] - ep[0], q[1]['p'][1] - ep[1]))[1]['p']
+    ij = {}
+    for n, p in tiles:
+        dx, dy = p['p'][0] - t0[0], p['p'][1] - t0[1]
+        ij[(int(round((dx * ux + dy * uy) / T)), int(round((dx * vx + dy * vy) / T)))] = n
+    i0, i1 = min(k[0] for k in ij), max(k[0] for k in ij)
+    j0, j1 = min(k[1] for k in ij), max(k[1] for k in ij)
+    w, h = i1 - i0 + 1, j1 - j0 + 1
+    if len(ij) != w * h or i0 != 0 or any(n not in walls for n in ij.values()):
+        return None
+    P = _hall_parts(db, S, K)
+    ids = P['ids']
+    L, Wd = w * T, h * T
+    floor = tz + P['floor']
+    Ve = (0 - j0 + 0.5) * T                           # (the way in: across the hall, where its doorway stands)
+    head = lambda du, dv: math.atan2(du * ux + dv * vx, du * uy + dv * vy)     # (the turn whose own +y points that way in the hall)
+    box = {}
+
+    def dims(rid):
+        if rid not in box:
+            b = mapdata.object_bounds(db, db.resolve_id(rid))
+            box[rid] = b
+        return box[rid]
+    pick = lambda c, k=1: [i for i in ids.get(c, []) if dims(i)][:k]
+    out, taken, ways = [], [], []
+    # (kept clear: the way in from every doorway, and the way down the hall from the front one)
+    for (i, j), n in ij.items():
+        for s_, st in walls[n].items():
+            if st != 'door':
+                continue
+            sx, sy = SIDES[s_]
+            cu, cv = (i + 0.5) * T + sx * T / 2, (j - j0 + 0.5) * T + sy * T / 2
+            du, dv = -sx * DOORWAY_DEEP, -sy * DOORWAY_DEEP
+            hw = DOORWAY_WIDE / 2
+            ways.append((min(cu, cu + du) - (hw if sy else 0), min(cv, cv + dv) - (hw if sx else 0), max(cu, cu + du) + (hw if sy else 0), max(cv, cv + dv) + (hw if sx else 0)))
+    aisle = (0.0, Ve - 95.0, L, Ve + 95.0)
+    # (a pillar stands where four tiles meet, and part of one at the rim: nothing through it)
+    for i in range(0, w + 1):
+        for j in range(0, h + 1):
+            ways.append((i * T - HALL_PILLAR, j * T - HALL_PILLAR, i * T + HALL_PILLAR, j * T + HALL_PILLAR))
+
+    def free(u, v, hu, hv, rug=False, aisle_ok=False, rim=HALL_RIM):
+        if not (rim + hu <= u <= L - rim - hu and rim + hv <= v <= Wd - rim - hv):
+            return False
+        r = (u - hu, v - hv, u + hu, v + hv)
+        hit = lambda q: r[0] < q[2] and q[0] < r[2] and r[1] < q[3] and q[1] < r[3]
+        if rug:
+            return not any(hit(q) for q in taken if q[4])
+        return not any(hit(q) for q in ways) and (aisle_ok or not hit(aisle)) and not any(hit(q) for q in taken if not q[4])
+
+    def put(rid, u, v, rz, z=None, hu=0.0, hv=0.0, rug=False):
+        b = dims(rid)
+        a, c = u - T / 2, v - T / 2 + j0 * T
+        out.append((rid, (t0[0] + a * ux + c * vx, t0[1] + a * uy + c * vy, floor - b[2] if z is None else z, 0.0, 0.0, rz % (2 * math.pi)), [], 1.0))
+        if hu or hv:
+            taken.append((u - hu, v - hv, u + hu, v + hv, rug))
+
+    def along(rid, du, dv):
+        """(the turn that lays a piece's long side along that way in the hall; its half length and half width)"""
+        b = dims(rid)
+        ex, ey = b[3] - b[0], b[4] - b[1]
+        if ex >= ey:
+            return math.atan2(-(du * uy + dv * vy), du * ux + dv * vx), ex / 2.0, ey / 2.0
+        return head(du, dv), ey / 2.0, ex / 2.0
+    lt, bn, ch, tb = (pick('long table') or [None])[0], (pick('bench') or [None])[0], (pick('chair') or [None])[0], (pick('table') or [None])[0]
+    rugs = pick('rug', 4)
+    lamp = (pick('lamp') or [None])[0]
+
+    def table_row(u, v, du, dv, seats='both'):
+        """(a long table at a spot, its length along (du, dv), benches along both sides or chairs along one)"""
+        rz, hl, hw = along(lt, du, dv)
+        reach = hw + 46.0                         # (the table with its seats)
+        hu, hv = (hl, reach) if du else (reach, hl)
+        if not free(u, v, hu, hv, rim=HALL_WALL + 14):
+            return False
+        put(lt, u, v, rz, hu=hu, hv=hv)
+        if seats == 'both' and bn:
+            brz, _bl, bw = along(bn, du, dv)
+            for sg in (1, -1):
+                off = (hw + 10 + bw) * sg
+                put(bn, u + (0 if du else off), v + (off if du else 0), brz)
+        elif ch:
+            # (chairs along the far side, facing back down the hall: their front is their own -y, as the game's stand
+            # to their tables)
+            cb = dims(ch)
+            for k in (-1, 1) if hl >= 80 else (0,):
+                off = hw + 12 + (cb[4] - cb[1]) / 2.0
+                cu, cv = (u + off, v + k * hl * 0.5) if not du else (u + k * hl * 0.5, v + off)
+                fu, fv = (-1.0, 0.0) if not du else (0.0, -1.0)
+                put(ch, cu, cv, head(-fu, -fv))
+        return True
+    if role in HALL_FEAST and lt:
+        # the high table across the far end: one in each bay there, chairs behind it facing down the hall (none where
+        # a way out stands)
+        n_high = 0
+        for jj in sorted(range(h), key=lambda q: abs((q + 0.5) * T - Ve)):
+            vc = (jj + 0.5) * T
+            if table_row(L - 235.0, vc, 0, 1, seats='far'):
+                n_high += 1
+                if rugs and n_high == 1 and free(L - 235.0, vc, 80, 80, rug=True):
+                    rr, rl, rw = along(rugs[0], 0, 1)
+                    put(rugs[0], L - 235.0, vc, rr, hu=rw, hv=rl, rug=True)
+        # rows of tables down the hall: two rows in every bay but the one the way from the door runs down
+        hl = along(lt, 1, 0)[1]
+        end = L - (470.0 if n_high else 170.0)
+        for jj in range(h):
+            vc = (jj + 0.5) * T
+            for off in ((-HALL_LANE, HALL_LANE) if abs(vc - Ve) > 1.0 else (-HALL_AISLE, HALL_AISLE)):
+                u = 150.0 + hl
+                while u + hl <= end:
+                    if table_row(u, vc + off, 1, 0):
+                        if rugs and abs(vc - Ve) > 1.0 and free(u, vc, 60, 60, rug=True):
+                            rr, rl, rw = along(rugs[1 % len(rugs)], 1, 0)
+                            if rl <= T / 2.0 - HALL_POST and u - rl >= HALL_RIM and u + rl <= L - HALL_RIM:
+                                put(rugs[1 % len(rugs)], u, vc, rr, hu=rl, hv=rw, rug=True)
+                        u += 2 * hl + 64.0
+                    else:
+                        u += 32.0
+    elif role == 'library':
+        # reading tables down the middle, a chair either side
+        t_ = tb or lt
+        for (i, j), n in sorted(ij.items()):
+            u, v = (i + 0.5) * T, (j - j0 + 0.5) * T
+            if t_ and free(u, v, 110, 110):
+                rz, hl, hw = along(t_, 1, 0)
+                put(t_, u, v, rz, hu=hl + 10, hv=hw + 70)
+                if ch:
+                    cb = dims(ch)
+                    for sg in (1, -1):
+                        put(ch, u, v + sg * (hw + 14 + (cb[4] - cb[1]) / 2.0), head(0.0, float(sg)))
+                if rugs and free(u, v, 60, 60, rug=True):
+                    rr, rl, rw = along(rugs[len(out) % len(rugs)], 1, 0)
+                    put(rugs[len(out) % len(rugs)], u, v, rr, hu=rl, hv=rw, rug=True)
+    elif role == 'chapel':
+        altar = next((a for a in ALTARS if db.resolve_id(a) is not None and dims(a)), None) or tb or lt
+        if altar and free(L - 210.0, Ve, 60, 60, aisle_ok=True):
+            put(altar, L - 210.0, Ve, along(altar, 0, 1)[0], hu=70, hv=110)
+        if bn:
+            brz, bl, bw = along(bn, 0, 1)
+            u = 260.0
+            while u <= L - 470.0:
+                for sg in (1, -1):
+                    for k in range(0, 4):
+                        v = Ve + sg * (105.0 + bl + k * (2 * bl + 24))
+                        if free(u, v, bw + 30, bl):
+                            put(bn, u, v, brz, hu=bw + 30, hv=bl)
+                u += 150.0
+    # a rug on the way down the hall, by the door and half way
+    for u in (300.0, L / 2.0):
+        if rugs and free(u, Ve, 100, 60, rug=True):
+            rid = rugs[-1] if len(rugs) > 1 else rugs[0]
+            rr, rl, rw = along(rid, 1, 0)
+            if u - rl >= HALL_RIM and u + rl <= L - HALL_RIM and Ve - rw >= 20 and Ve + rw <= Wd - 20:
+                put(rid, u, Ve, rr, hu=rl, hv=rw, rug=True)
+    # the walls: a hanging on each slab (a library: shelves either side of its middle, a hanging on every third)
+    # (only the hangings the game hangs flat on a hall's wall slab, their pose read off it: one laid by a guessed pose,
+    # or by one the game turns another way, stood off its wall and was taken out again, half of a hall's, lab kc_after3)
+    posed = [i for i in ids.get('hanging', []) if dims(i) and i in P['wall'] and P['wall'][i][0] == 0]
+    hang_ids = [i for i in posed if role != 'chapel' or '_c_t_' in i][:3] or posed[:3]
+    shelf = next((i for i in ids.get('bookshelf', []) if dims(i) and i in P['wall']), None)
+    slot = 0
+    for (i, j), n in sorted(ij.items()):
+        for s_ in ('W', 'N', 'E', 'S'):
+            if walls[n].get(s_) != 'wall':
+                continue
+            sx, sy = SIDES[s_]
+            cu, cv = (i + 0.5) * T + sx * T / 2, (j - j0 + 0.5) * T + sy * T / 2
+            slot += 1
+            if role == 'library' and shelf and slot % 3:
+                q, e_, z_ = P['wall'][shelf]
+                b = dims(shelf)
+                half = max(b[3] - b[0], b[4] - b[1]) / 2.0 + 6
+                for sg in (1, -1):
+                    put(shelf, cu - sx * e_ + (0 if sx else sg * half), cv - sy * e_ + (sg * half if sx else 0), head(-sx, -sy) - q * math.pi / 2.0, z=tz + z_)
+                continue
+            if not hang_ids:
+                continue
+            hid = hang_ids[slot % len(hang_ids)]
+            b = dims(hid)
+            q, e_, z_ = P['wall'].get(hid) or (0, 60.0, P['floor'] + 100.0 - b[2])
+            put(hid, cu - sx * e_, cv - sy * e_, head(-sx, -sy) - q * math.pi / 2.0, z=tz + z_)
+            # (beside it as the game hangs them: a coat of arms either side, a sconce; the game's halls hold 1.3 hangings
+            # and 2.7 lights a tile, the planned hall held 0.4 and 1.1 and 8.6 things a tile to the game's 23)
+            au, av = (0.0, 1.0) if sx else (1.0, 0.0)          # (along the wall)
+            # (arms on every third slab: either side of every hanging made 2.3 a tile, the game's halls hold 0.2)
+            for cls_, sides_ in (('arms', (1, -1) if slot % 3 == 0 else ()), ('sconce', (1 if slot % 2 else -1,))):
+                xid = next((i for i in ids.get(cls_, []) if i in P['beside'] and dims(i)), None)
+                if not xid:
+                    continue
+                q2, e2, z2, lat2 = P['beside'][xid]
+                lat2 = max(lat2, (b[3] - b[0]) / 2.0 + 30.0) + (40.0 if cls_ == 'sconce' else 0.0)
+                for sg in sides_:
+                    put(xid, cu - sx * e2 + au * lat2 * sg, cv - sy * e2 + av * lat2 * sg, head(-sx, -sy) - q2 * math.pi / 2.0, z=tz + z2)
+            if role in HALL_FEAST and bn and slot % 2 == 0:
+                # (a bench along the wall under every other hanging, for those who wait on the tables)
+                brz, bl, bw = along(bn, 0 if sx else 1, 1 if sx else 0)
+                bu, bv = cu - sx * (HALL_WALL + 12 + bw), cv - sy * (HALL_WALL + 12 + bw)
+                if free(bu, bv, bw if sx else bl, bl if sx else bw, rim=HALL_WALL):
+                    put(bn, bu, bv, brz, hu=bw if sx else bl, hv=bl if sx else bw)
+            elif role in HALL_FEAST or role == 'chapel':
+                # (and under the others what the game keeps along a hall's walls: a chest, or barrels, or sacks and baskets)
+                kinds_ = [k_ for k_ in ('chest', 'barrel', 'sack') if pick(k_)]
+                if kinds_:
+                    k_ = kinds_[(slot // 2) % len(kinds_)]
+                    sid = pick(k_, 3)[slot % len(pick(k_, 3))]
+                    srz, sl, sw = along(sid, au, av)
+                    for sg in ((0,) if k_ == 'chest' else (-1, 1)):
+                        off = sg * (sl + 8.0)
+                        su, sv = cu - sx * (HALL_WALL + 14 + sw) + au * off, cv - sy * (HALL_WALL + 14 + sw) + av * off
+                        if free(su, sv, sw if sx else sl, sl if sx else sw, rim=HALL_WALL):
+                            put(sid, su, sv, srz + (0.0 if k_ == 'chest' else rng.uniform(-0.5, 0.5)), hu=sw if sx else sl, hv=sl if sx else sw)
+    # light: a standing lamp at each pillar along the way down the hall, on the side the way passes; a chandelier over
+    # every other tile
+    if lamp:
+        for jl in range(1, h):
+            vl = jl * T
+            if abs(vl - Ve) > T / 2.0 + 1.0:
+                continue
+            sg = 1.0 if Ve > vl else -1.0
+            for il in range(1, w):
+                put(lamp, il * T, vl + sg * (HALL_POST + 26.0), 0.0)
+    chand = next((i for i in ids.get('chandelier', []) if i in P['hung'] and dims(i)), None)
+    if chand:
+        hx, hy, hz = P['hung'][chand]
+        for (i, j), n in sorted(ij.items()):
+            if (i + j - j0) % 2 == 0 or len(ij) <= 2:
+                put(chand, (i + 0.5) * T + hx, (j - j0 + 0.5) * T + hy, 0.0, z=tz + hz)
+    return out
+
+
 def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
     """What stands in each piece: a whole set copied from a real piece of the same kind in the game's places
     (or none, as often as the game leaves that kind bare), turned and moved to this piece. Kwama egg sacs and
@@ -2574,8 +3822,77 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
     is_loot = lambda t: t not in ('CREA', 'LEVC', 'LIGH', 'STAT', 'ACTI')
     more = K.get('more')
     n_crea = 0
+    # (the way in from each doorway of a big hall, K['big']: from the doorway slab DOORWAY_DEEP into the hall,
+    # DOORWAY_WIDE across: a hall tile's set, copied from a game tile with a wall on that side, stood a bookshelf at
+    # the foot of the Great Hall's entrance steps with its back to the door; only what lies flat stays there)
+    ways_in = []
+    blend_ = (K.get('big') or {}).get('blend')
+    for p in lay['pieces'] if blend_ else ():
+        if p.get('gone') or p.get('id') != blend_:
+            continue
+        for _px, _py, _pz, ps in S['ports'].get(blend_) or ():
+            dx_, dy_ = _rot(*SIDES[ps], p['p'][5])
+            ways_in.append((p['p'][0], p['p'][1], -dx_, -dy_))
+            break
+
+    def in_way(rid, wx, wy, t=None):
+        if not ways_in:
+            return False
+        b_ = mapdata.object_bounds(db, db.resolve_id(rid))
+        if t == 'STAT' and b_ and b_[5] - b_[2] < 24:
+            return False                         # (a rug; the books and plates of a shelf that goes, go with it)
+        for ox_, oy_, ux_, uy_ in ways_in:
+            t_ = (wx - ox_) * ux_ + (wy - oy_) * uy_
+            if -160.0 <= t_ <= DOORWAY_DEEP and abs(-(wx - ox_) * uy_ + (wy - oy_) * ux_) <= DOORWAY_WIDE / 2.0:
+                return True
+        return False
+    themed = bool(K.get('themes'))
+    role_themes = ROLE_THEMES.get(lay.get('role') or '') or ()
+    hall_theme = {}
+    hall_walls = _hall_walls(lay, K) if themed else {}
+    big_tile, big_T = (K.get('big') or {}).get('tile'), (K.get('big') or {}).get('pitch', 512)
+    # (a hall of two tiles and more: planned whole, _hall_compose; its tiles and slabs then take no sets of their own)
+    composed = set()
+    if themed and big_tile:
+        hall_rng = random.Random(rng.random())
+        for hk in sorted({p.get('hall') for p in lay['pieces'] if not p.get('gone') and p.get('id') == big_tile and p.get('hall') is not None}):
+            try:
+                rows_ = _hall_compose(db, S, K, lay, hk, hall_walls, hall_rng, lay.get('role'))
+            except Exception as ex:
+                rows_ = None
+                print('hall layout:', ex)
+            if rows_:
+                out += rows_
+                composed.add(hk)
+    big_ids = set((K.get('big') or {}).get(k_) for k_ in ('tile', 'wall', 'blend'))
+    spiral_piece = (K.get('spiral') or {}).get('piece')
+    # (each room its purpose by where it lies, ROOM_PLAN: lowest and nearest the door first; the chambers' highest room
+    # the lord's. Kept with the place, c['ruin']['rooms'])
+    room_want, plan_rooms = {}, []
+    if themed:
+        groups_ = {}
+        for p_ in lay['pieces']:
+            if not p_.get('gone') and p_.get('hall') is not None and p_.get('box') and p_.get('id'):
+                groups_.setdefault(p_['hall'], []).append(p_)
+        box_ = lambda ps: [int(round(f(q['box'][k_] for q in ps))) for k_, f in ((0, min), (1, min), (2, min), (3, max), (4, max), (5, max))]
+        prog_ = ROOM_PLAN.get(lay.get('role') or '')
+        rest_ = sorted((hk for hk in groups_ if hk not in composed),
+                       key=lambda hk: (round(min(q['p'][2] for q in groups_[hk]) / 128.0), min(q.get('depth', 0) for q in groups_[hk])))
+        planned_ = (lay.get('planned') or {}).get('purposes') or {}
+        for idx_, hk in enumerate(rest_ if prog_ or planned_ else ()):
+            # (as planned, _grow_plan; a room the plan did not lay, by where it lies as before)
+            pur_ = planned_.get(hk) or planned_.get(str(hk)) or (
+                "lord's chamber" if lay.get('role') == 'chambers' and len(rest_) > 1 and idx_ == len(rest_) - 1 else (prog_ or ('stores',))[idx_ % len(prog_ or ('stores',))])
+            room_want[hk] = PURPOSE_THEMES.get(pur_) or ()
+            plan_rooms.append({'hall': hk, 'purpose': pur_, 'box': box_(groups_[hk]), 'pieces': len(groups_[hk])})
+        for hk in sorted(composed):
+            plan_rooms.append({'hall': hk, 'purpose': {'library': 'library', 'chapel': 'chapel'}.get(lay.get('role'), 'great hall'),
+                               'box': box_(groups_[hk]), 'pieces': len(groups_[hk])})
+        lay['rooms_plan'] = plan_rooms
     for n, p in enumerate(lay['pieces']):
         if p.get('gone') or not p.get('id'):
+            continue
+        if p.get('hall') in composed and p['id'] in big_ids:
             continue
         sets = S['dress'].get(p['id'])
         if not sets:
@@ -2599,7 +3916,48 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
         # (one draw, whatever the loot: the most-loot of several draws brought the fullest sets, statues,
         # platforms and machines with them, and a doubled shrine platform in the user's Zajamima. "It should just
         # make more valuable loot and better loot in chests": richer fills what's there, below)
-        chosen = _set_items(rng.choice(pool_))
+        if themed:
+            # (a room's pieces all of one theme, the interior's own (ROLE_THEMES) when it has a role, else the first
+            # furnished set's; a corridor's from any of the role's; plain sets anywhere)
+            hk = p.get('hall')
+            want = (hall_theme.get(hk),) if hall_theme.get(hk) else role_themes
+            if hk in room_want:
+                # (a room with a purpose: a set of its purpose's first theme the piece has any of, now and then a plain
+                # one; with neither, the piece stays bare rather than take what belongs to another kind of room)
+                got_ = None
+                for th_ in room_want[hk] + ('plain',):
+                    for cand in (same, more_, sets):
+                        fit = [st for st in cand if isinstance(st, dict) and _set_theme(st) == th_]
+                        if fit:
+                            got_ = fit
+                            break
+                    if got_:
+                        break
+                plain_ = [st for st in sets if isinstance(st, dict) and _set_theme(st) == 'plain']
+                if got_ and plain_ and rng.random() < 0.25:
+                    got_ = plain_
+                if not got_:
+                    continue
+                pool_ = got_
+            elif want:
+                for cand in (same, more_, sets):
+                    fit = [st for st in cand if isinstance(st, dict) and _set_theme(st) in want + ('plain',)]
+                    if fit:
+                        pool_ = fit
+                        break
+        if p['id'] == big_tile and n in hall_walls:
+            # (a hall tile: of a few draws, the set that loses the least to this tile's open sides)
+            best_ = None
+            for st_ in [rng.choice(pool_) for _ in range(5)]:
+                rows_, lost_ = _to_walls(db, _set_items(st_), hall_walls[n], big_T, rng)
+                if best_ is None or lost_ < best_[0]:
+                    best_ = (lost_, rows_, st_)
+            chosen, st0 = best_[1], best_[2]
+        else:
+            st0 = rng.choice(pool_)
+            chosen = _set_items(st0)
+        if themed and p.get('hall') is not None and not hall_theme.get(p.get('hall')) and isinstance(st0, dict) and _set_theme(st0) != 'plain':
+            hall_theme[p.get('hall')] = _set_theme(st0)
         x, y, z, rz = p['p'][0], p['p'][1], p['p'][2], p['p'][5]
         got = []
         bx = p.get('box')
@@ -2615,6 +3973,14 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
                 continue
             if not mine and t not in ('CREA', 'LEVC', 'INGR') and (EGG_MINE.search(low) or EGG_MINE.search((db.recs[db.resolve_id(rid)][5] or '').lower())):
                 continue                         # (an egg mine's, not a cave's; kwama foragers still roam)
+            # (a spiral stair's turns: only what lights them and what hangs on their wall. The game's sets for the
+            # piece hold bones, stone blocks, crates and loose things, 210 of 273 not lights; the user: "items in the
+            # middle of stairwells". The store under the lowest turn stays, as the game keeps one there)
+            if themed and p['id'] == spiral_piece and not (t == 'LIGH' or HANGING.search(low) or STAIR_FITTING.search(low)):
+                continue
+            # (and in a keep with its household, no bones and no webs: an abandoned fort's)
+            if themed and lay.get('role') and RUIN_THINGS.search(low):
+                continue
             if t in ('CREA', 'LEVC') and rng.random() >= keep_crea:
                 continue
             if is_loot(t) and rng.random() >= keep_loot:
@@ -2626,6 +3992,8 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
                 rid, lz = _richer(db, S, rid, t, lz, s, rich_rng)
             n_crea += t in ('CREA', 'LEVC')
             wx, wy = _rot(lx, ly, rz)
+            if t not in ('CREA', 'LEVC') and in_way(rid, x + wx, y + wy, t):
+                continue
             # (rubble and debris lying flat at the piece's own height share the floor's face and flicker: the
             # user's Daedric ruin, in_dae_rubble_01a at the foot of a stair. The game lays most of them so too,
             # 98 of its 186; lifted a hair here)
@@ -2651,6 +4019,9 @@ def _dress_refs(db, S, lay, rng, loot='usual', creatures='usual', K=None):
     return out
 
 
+DOORWAY_DEEP, DOORWAY_WIDE = 420.0, 300.0     # (the way in from a big hall's doorway kept clear, _dress_refs)
+MASS_IN = 64.0                 # (a piece's middle this far inside the keep's outer blocks, _Layout.fits)
+MASS_OVER, MASS_UNDER = 48.0, 300.0           # (its top this far over a block's usable top at most; its foot this far under the block's)
 RICHER_TYPES = ('MISC', 'ALCH', 'INGR', 'APPA', 'BOOK', 'CONT')
 RICHER_NOT = re.compile(r'^gold_|key|_uni|unique|_q_|quest|soulgem')
 # (a chest for a chest, a crate for a crate: what kind of container it is, by its name)
@@ -3367,6 +4738,9 @@ def _lay_tops(db, key, S, rng, loot='usual'):
     learnt = S.get('tops') or []
     loot_x = amount('loot', loot)
     share = min(0.95, TOP_SHARE['usual'] * loot_x)
+    kept = bool(kit(S.get('kind') or 'dwemer').get('tidy'))
+    if kept:
+        share = max(share, 0.95)                # (a kept fort's tables are laid: the game's halls hold 11 loose things a tile)
     c = db.project.cells.get(key)
     if not learnt or not c:
         return 0
@@ -3391,6 +4765,8 @@ def _lay_tops(db, key, S, rng, loot='usual'):
         if not (same or fit):
             continue
         e = rng.choice(same or fit)
+        if kept:
+            e = max([e] + [rng.choice(same or fit) for _ in range(2)], key=lambda q: len(q['d']))
         laid = 0
         for rid, typ, lx, ly, dz, rx, ry, rz, ts in e['d']:
             if typ not in ('LIGH', 'APPA') and rng.random() < 0.8 * max(0.0, 1.0 - loot_x):
@@ -3626,8 +5002,10 @@ def _orphans(db, key, K):
         ref = refs.get(r['k'])
         if not ref:
             continue
-        if h is not None and h[0] - 6 <= 140:
-            # (down onto it, level: what was on a table lies on the floor)
+        if h is not None and h[0] - 6 <= 140 and not K.get('tidy'):
+            # (down onto it, level: what was on a table lies on the floor; in a ruin. A kept place, K['tidy'], a fort
+            # with its garrison: it goes with its table. Made halls had a third of their loose things on the floor,
+            # the game's forts 12.7%)
             set_z = r['p'][2] - (h[0] - 6)
             editing._store(c, r['k'], ref['origin'], ref['idx'], set_ref_pos(ref['subs'], (x, y, set_z, 0.0, 0.0, r['p'][5]), None))
             dropped += 1
@@ -3640,6 +5018,7 @@ def _orphans(db, key, K):
 
 DOORWAY = re.compile(r'ndoor|doorway|doorjam|_dj_0|door_?frame')
 DOOR_FRONT = 120              # (the game's own places have 1-2% of their furniture this close in front of a door)
+DOOR_SIDE = 110               # (in a kept place: this far out from a door frame's face, over its whole width, _door_fronts)
 
 
 def _door_fronts(db, key, K):
@@ -3667,6 +5046,34 @@ def _door_fronts(db, key, K):
             a, w = (lx, ly) if thin == 0 else (ly, lx)
             if abs(a) < DOOR_FRONT and w0 - 10 < w < w1 + 10 and d['p'][2] + b[2] - 40 < r['p'][2] < d['p'][2] + b[5]:
                 out.add(r['k'])
+    if K.get('tidy'):
+        # (a kept place: nothing over knee height anywhere within a door frame's own width and DOOR_SIDE of its face,
+        # by the thing's whole footprint. By its middle alone a chest of drawers 137 long stood against the wall just
+        # inside the front door of four of Fort Urasek's interiors, the same set drawn for each way in, and a shelf
+        # scaled half again reached to 45 from an inner door: the user's "Counter blocking door", 2026-11-12. The game's
+        # forts have something there at 124 of 919 doors, stone blocks and shelves; a made keep's front doors none)
+        for d in doors:
+            rz = d['p'][5]
+            cs, sn = math.cos(-rz), math.sin(-rz)
+            b = [v * (d.get('s') or 1.0) for v in d['b']]
+            thin = 0 if (b[3] - b[0]) <= (b[4] - b[1]) else 1
+            w0, w1 = (b[1], b[4]) if thin == 0 else (b[0], b[3])
+            for r in furn:
+                if r['k'] in out:
+                    continue
+                rb, rs = r['b'], r.get('s') or 1.0
+                if r['p'][2] + rb[5] * rs < d['p'][2] + b[2] + 40 or r['p'][2] + rb[2] * rs > d['p'][2] + b[5]:
+                    continue
+                c2, s2 = math.cos(r['p'][5]), math.sin(r['p'][5])
+                pts = [(r['p'][0] + (lx * c2 + ly * s2) * rs, r['p'][1] + (-lx * s2 + ly * c2) * rs)
+                       for lx in (rb[0], (rb[0] + rb[3]) / 2.0, rb[3]) for ly in (rb[1], (rb[1] + rb[4]) / 2.0, rb[4])]
+                for px, py in pts:
+                    dx, dy = px - d['p'][0], py - d['p'][1]
+                    lx, ly = dx * cs - dy * sn, dx * sn + dy * cs
+                    a, w = (lx, ly) if thin == 0 else (ly, lx)
+                    if abs(a) < DOOR_SIDE and w0 - 4 < w < w1 + 4:
+                        out.add(r['k'])
+                        break
     out |= _door_walk(db, m, K, doors)
     for k_ in out:
         c['refs'].pop(k_, None)
@@ -4986,6 +6393,7 @@ def _build(db, name, size='medium', levels='some', twist='branching', loot='usua
             door_ix.append(('trap', len(refs), [t_[1], t_[2], t_[3]], arr3))
             refs.append((t_[0], (t_[1], t_[2], t_[3], 0, 0, t_[4]), [], 1.0))
     # what's in it
+    lay['role'] = (keep or {}).get('role')
     refs += _dress_refs(db, S, lay, rng, loot, creatures, K)
     # the last hall's prize: the kind's best chest by its far wall, with a guardian
     prize = []
@@ -5081,6 +6489,8 @@ def _build(db, name, size='medium', levels='some', twist='branching', loot='usua
         cleared += _firepits(db, key)
         if K.get('household') or K.get('unbacked'):
             cleared += _unbacked(db, key, K)        # (a tower's or a keep's shelves with nothing behind them)
+        if K.get('tidy'):
+            cleared += _keep_tidy(db, key, K)       # (a hanging with no wall behind it, a rug not on its floor)
         # (last, after everything taken out of the way: what stood on a plank that went comes down to the floor)
         _settle(db, key)
         _orphans(db, key, K)
@@ -5118,6 +6528,12 @@ def _build(db, name, size='medium', levels='some', twist='branching', loot='usua
                  'entrance': entrance, 'outside_door': outside_door, 'occupants': occupants, 'way': lay.get('way', 'down')}
     if keep:
         c['ruin']['keep'] = dict(keep)
+    if lay.get('rooms_plan'):
+        c['ruin']['rooms'] = lay['rooms_plan']
+    # (the way in and the way it leads, in the place's own coordinates: where the place lies in a keep is told from it)
+    e_ = lay.get('entrance') if isinstance(lay.get('entrance'), dict) else {}
+    if e_.get('side') in SIDES:
+        c['ruin']['frame'] = [round(float(e_['x']), 1), round(float(e_['y']), 1), round(float(e_.get('z', 0.0)), 1), SIDES[OPP[e_['side']]][0], SIDES[OPP[e_['side']]][1]]
     db.sync_project()
     note = 'Made a %s "%s" (%d tunnel pieces, %d %s)%s' % (
         K['label'][0].lower() + K['label'][1:] if not K['label'].startswith(('Dwemer', 'Velothi', 'Daedric', 'Chimer')) else K['label'], name,

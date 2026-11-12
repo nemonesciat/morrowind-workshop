@@ -4232,7 +4232,8 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                     tl_, _p_ = fixit._tiles(db, m_)
                     ops_, seen_ = [], set()
                     for i_ in fixit._open_posts(db, m_, tl_):
-                        if i_['ref'] in seen_ or not i_['fixes']:
+                        # (never by a second piece on the same spot: the posts stay, the lesser fault)
+                        if i_['ref'] in seen_ or not i_['fixes'] or i_['fixes'][0].get('stack'):
                             continue
                         seen_.add(i_['ref'])
                         ops_ += i_['fixes'][0]['ops']

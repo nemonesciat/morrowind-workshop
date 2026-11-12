@@ -230,6 +230,7 @@ def _drop_apart(db, m, memo):
 PORCH = re.compile(r'entrance|porch|stoop', re.I)
 WINDOWISH = re.compile(r'_win|window|chimney', re.I)
 PORCH_DOOR = 72                # (a porch holds a door: the door's spot within this of the porch's box)
+OWN_STEPS = os.environ.get('TOWN_OWN_STEPS', '1') != '0'      # (off: the catalogue as it was, for measuring the rule)
 OFF_SHELL = 96                 # (a window or a chimney this far outside every shell of the building is nobody's)
 
 
@@ -264,6 +265,66 @@ def _explained(db, m, memo):
                 continue
         keep.append(p)
     return m if len(keep) == len(fp) else dict(m, fpieces=keep)
+
+
+LOOSE_STEPS = re.compile(r'd?steps?(?![a-z])|stairs?(?![a-z])|ladder', re.I)
+STEPS_DOOR = 96.0              # (a flight leads to a door: the door's spot within this of the flight's box, its foot
+                               # between the flight's foot and this far over its top)
+
+
+def _own_steps(db, m, memo, others=()):
+    """The module without the loose flights of steps that lead to none of its doors: a piece of steps or stairs that is
+    not the main shell is the building's when one of its doors stands at its box, at its height, or when another game
+    example of the shell has the same flight at the same place. The reader takes every piece that touches, so a tower
+    house with a stair of its own (ex_hlaalu_b_13) came with the door steps of the house beside it in the game,
+    ex_hlaalu_dsteps_01, 430 from its door: two flights side by side, one leading nowhere and short of the ground,
+    the user's Tharen Rise, 2026-11-11."""
+    fp = m['fpieces']
+    main = str(m.get('main') or '').lower()
+    doors = [p for p in fp if p.get('door') or _rec_type(db, p['id']) == 'DOOR']
+
+    def box3(p):
+        b = _pbox(db, p, memo)
+        bb = memo.get(p['id'].lower())
+        if b is None or not bb:
+            return None
+        s = p.get('s') or 1.0
+        return b[0], b[1], p['z'] + bb[2] * s, b[2], b[3], p['z'] + bb[5] * s
+
+    def holds_door(b):
+        for d in doors:
+            db_ = memo.get(d['id'].lower()) or mapdata.object_bounds(db, db.resolve_id(d['id']))
+            foot = d['z'] + (db_[2] * (d.get('s') or 1.0) if db_ else 0.0)
+            if b[0] - STEPS_DOOR <= d['x'] <= b[3] + STEPS_DOOR and b[1] - STEPS_DOOR <= d['y'] <= b[4] + STEPS_DOOR and b[2] - 16 <= foot <= b[5] + STEPS_DOOR:
+                return True
+        return False
+    touch = lambda a, b: (max(0.0, a[0] - b[3], b[0] - a[3]) <= 48 and max(0.0, a[1] - b[4], b[1] - a[4]) <= 48
+                          and max(0.0, a[2] - b[5], b[2] - a[5]) <= 64)
+    loose, boxes = [], {}
+    for p in fp:
+        low = p['id'].lower()
+        if p.get('door') or low == main or _rec_type(db, p['id']) != 'STAT':
+            continue
+        b = box3(p)
+        if b is None:
+            continue
+        boxes[id(p)] = b
+        if LOOSE_STEPS.search(low) and not PORCH.search(low):
+            loose.append(p)
+    if not loose:
+        return m
+    # (what a flight may lead on to: a piece of the building, not its main shell, that holds one of its doors, and
+    # every flight that reaches a door or such a piece, however many flights on)
+    led = {id(p) for p in fp if id(p) in boxes and holds_door(boxes[id(p)])}
+    grew = True
+    while grew:
+        grew = False
+        for p in loose:
+            if id(p) not in led and any(id(q) in led and touch(boxes[id(p)], boxes[id(q)]) for q in fp if q is not p and id(q) in boxes):
+                led.add(id(p))
+                grew = True
+    drop = {id(p) for p in loose if id(p) not in led and not (others and _found_again(m, p, others))}
+    return m if not drop else dict(m, fpieces=[p for p in fp if id(p) not in drop])
 
 
 CHIMNEY = re.compile(r'chimney', re.I)
@@ -429,7 +490,10 @@ def _game_over_ground(db, low):
             rid, pos, _s, dead = ref_info(ref['subs'])
             if dead or rid.lower() != low:
                 continue
-            g = mapdata.terrain_z(db, pos[0], pos[1])
+            # (over the ground of the plugin that set it there, mapdata.own_heights: Karthgad's palisade, read over
+            # Tamriel.esm's land that won its cell, was learnt some 800 up, and every section of a made palisade stood
+            # its whole 1,100 over the ground, a gap under it in each dip; Skyrim practice, p34)
+            g = mapdata.own_ground(db, ref.get('origin'), pos[0], pos[1])
             if g is not None:
                 v.append(pos[2] - g)
     v.sort()
@@ -771,6 +835,8 @@ def _game_catalog(db):
         m = _no_repeats(m)
         m = _drop_apart(db, m, memo)
         m = _explained(db, m, memo)          # (a porch holds a door of its own building; a window sits on its shell)
+        if OWN_STEPS:
+            m = _own_steps(db, m, memo, [o for o in by_main.get(str(raw.get('main') or '').lower(), ()) if o is not raw])   # (a loose flight leads to a door of it)
         m = _held_chimneys(db, m, tri, [o for o in by_main.get(str(raw.get('main') or '').lower(), ()) if o is not raw])     # (and a chimney touches a wall or a roof of it)
         m = _square_parts(m, [o for o in by_main.get(str(raw.get('main') or '').lower(), ()) if o is not raw])     # (and turned as its house is)
         m = _without_lone_doors(db, m, memo, tri)
@@ -1371,6 +1437,7 @@ def fit(db, plan, seed=1):
     # (and the streets' own middle lines, every 64: a building whose corners missed the road squares still stood
     # across a street, the in-game walk 2026-11-03)
     street_pts = _street_points(plan)
+    keep_out = plan.get('wall_keep')     # (the laid wall's pieces and gate ways, _wall_keepout: planned())
     keep = []
     keeps = []
     ways = []                            # (the ground straight out of each fitted building's door, kept clear)
@@ -1432,6 +1499,9 @@ def fit(db, plan, seed=1):
                     continue
                 if GROUND_FIT and _ground_misfit(db, rect, *_world(dx, dy, c, sn, 0.0, -120.0)) > GROUND_SLACK:
                     continue                             # (over a bank or the water: _ground_misfit)
+                # (into the wall's own pieces, a rounded corner's above all, or a gate's way in: planned(), keep_out)
+                if keep_out and _in_wall({'rect': [list(p_) for p_ in rect], 'way': way}, keep_out[0], keep_out[1]):
+                    continue
                 # (a game building bigger than its plot stood out of it against the wall, 3 to 5 a town; and a door's
                 # way out past its building's own outline, into the wall or another building)
                 if len(room) >= 4 and not all(townwalls._inside(room, p_) for p_ in rect):
@@ -1604,8 +1674,34 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
         pl['wall_way'] = [list(p_) for p_ in townplan.inset(poly, WALL_WAY)]
     except Exception as e:
         print('wall room:', e)
+    import copy
+    pl0 = copy.deepcopy(pl)
     again = fit(db, pl, seed)
     built = lambda p_: sum(1 for q in p_['plots'] if q.get('b'))
+    # (what Make it takes away once the wall is laid, known here: the plan showed nine buildings and six were built, one
+    # in a rounded corner's piece, two with their doors on the street behind a gate. The wall laid on this plan, and the
+    # plots fitted again keeping off its pieces and its gates' ways; practice 2, 2026-11-11)
+    try:
+        trial = dict(again, wall_outline=[list(p_) for p_ in poly], open_sea=bool(opts.get('open_sea')))
+        if gates:
+            trial['user_gates'] = gates
+        if forts:
+            trial['forts'] = forts
+        Wt = townwalls.lay(db, trial, None if walls == 'auto' else walls)
+        ko = _wall_keepout(db, Wt)
+        lost = [q for q in again['plots'] if q.get('b') and q.get('rect') and _in_wall(q, ko[0], ko[1])]
+        if lost:
+            pl0['wall_keep'] = ko
+            second = fit(db, pl0, seed)
+            second.pop('wall_keep', None)
+            if built(second) > built(again) - len(lost):
+                again = second
+            else:
+                for q in lost:
+                    q['b'] = None
+                again['plots'] = [q for q in again['plots'] if q.get('b')]
+    except Exception as e:
+        print('wall keep-out:', e)
     if built(again) < 0.75 * built(plan) and len(drawn) < 3 and len(fixed) < 4 and not led:
         return plan
     again['wall_outline'] = [list(p_) for p_ in poly]
@@ -1616,6 +1712,41 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     if forts:
         again['forts'] = forts
     return again
+
+
+def _wall_keepout(db, W):
+    """What a laid wall keeps a building off: (the footprint of each of its pieces, the way in behind each of its gates,
+    GATE_CLEAR deep). The pieces bar a building's outline and its door's way; a gate's way bars the outline alone: a
+    door that opens onto the street behind a gate is a house on that street, and barred with the rest it cost a town
+    whose main street runs gate to gate the first houses either side (practice 2, 2026-11-11: 9 planned, 6 built)."""
+    import townplan
+    import townwalls
+    boxes, ways, memo = [], [], {}
+    for p_ in W.get('pieces') or ():
+        cs_, _b = townwalls._box(db, p_['id'], p_['pose'], memo)
+        if cs_:
+            boxes.append(_shrink_rect(cs_, 16))
+    poly_ = W.get('outline') or []
+    if poly_:
+        mx_, my_ = sum(p_[0] for p_ in poly_) / len(poly_), sum(p_[1] for p_ in poly_) / len(poly_)
+        for p_ in W.get('pieces') or ():
+            if p_.get('kind') not in ('gate', 'end'):
+                continue
+            g_ = p_['pose']
+            dx_, dy_ = mx_ - g_.x, my_ - g_.y
+            h_ = math.hypot(dx_, dy_) or 1.0
+            ways.append(townplan._rect(g_.x + dx_ / h_ * GATE_CLEAR / 2, g_.y + dy_ / h_ * GATE_CLEAR / 2,
+                                       math.atan2(dx_ / h_, dy_ / h_), 640, GATE_CLEAR))
+    return boxes, ways
+
+
+def _in_wall(q, wall_boxes, gate_ways):
+    """A fitted plot's building in the wall or in a gate's way in, or its door's way against the wall."""
+    import townplan
+    r = _shrink_rect(q['rect'], 16)
+    if any(townplan._overlap(r, w_) for w_ in list(wall_boxes) + list(gate_ways)):
+        return True
+    return bool(q.get('way')) and any(townplan._overlap(q['way'], w_) for w_ in wall_boxes)
 
 
 GATE_CLEAR = 1200              # the ground inside a gate kept free of buildings, this deep
@@ -1860,6 +1991,13 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     from project import set_ref_pos, zs
     editing._require_project(db)
     plan = planned(db, outline, culture, seed, walls, opts)
+    if not any(q.get('b') for q in plan.get('plots') or ()):
+        # (a plan with no building is no town: on 2,900 of relief across the outline an Indoril plan held no plot, and
+        # the town was "made" with no piece, no wall and no word, the night round 2026-11-12)
+        zs_ = [z_ for z_ in (mapdata.terrain_z(db, float(p_[0]), float(p_[1])) for p_ in outline or ()) if z_ is not None]
+        rise = (max(zs_) - min(zs_)) if zs_ else 0
+        raise editing.EditError('No building fits here%s. Try flatter ground, a bigger outline or another culture.'
+                                % (': the ground rises %d across the outline' % rise if rise > 600 else ''))
     import towntrade
     plan['trade'] = towntrade.clean((opts or {}).get('trade'))     # (what it lives by: its people, households and goods)
     LAST['plan'] = plan
@@ -1898,7 +2036,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             # (a wall already standing on or by the line, another make's, keeps its ground: townwalls.wall_guard, here
             # and in the terrace and hull passes; the town's levelling buried 14 of a castle's pieces 480-720 deep)
             plan['_wall_guard'] = townwalls.wall_guard(db, W.get('outline') or [])
-            townwalls.level_ground(db, W, new_refs, keep=plan['_wall_guard'])
+            # (and a castle standing beside the town keeps its whole ground, _fort_keep)
+            townwalls.level_ground(db, W, new_refs, keep=plan['_wall_guard'] + _fort_keep(plan))
         except Exception as e:
             print('wall ground:', e)
     _say('Levelling the streets', 0.69)
@@ -1923,26 +2062,15 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         print('clearing:', e)
         cleared = 0
     wall_boxes = []
+    gate_ways = []                       # (the way in behind each gate kept open, GATE_CLEAR deep into the town)
     wall_guard = []                      # (the wall's feet and a band round them: never cut lower by a building's ground fit)
     if W is not None:
+        wall_boxes, gate_ways = _wall_keepout(db, W)
         memo_w = {}
         for p_ in W.get('pieces') or ():
             cs_, _b = townwalls._box(db, p_['id'], p_['pose'], memo_w)
             if cs_:
-                wall_boxes.append(_shrink_rect(cs_, 16))
                 wall_guard.append(_shrink_rect(cs_, -WALL_GUARD))
-        # (and the way in behind each gate kept open, GATE_CLEAR deep into the town)
-        poly_ = W.get('outline') or []
-        if poly_:
-            mx_, my_ = sum(p_[0] for p_ in poly_) / len(poly_), sum(p_[1] for p_ in poly_) / len(poly_)
-            for p_ in W.get('pieces') or ():
-                if p_.get('kind') not in ('gate', 'end'):
-                    continue
-                g_ = p_['pose']
-                dx_, dy_ = mx_ - g_.x, my_ - g_.y
-                h_ = math.hypot(dx_, dy_) or 1.0
-                wall_boxes.append(townplan._rect(g_.x + dx_ / h_ * GATE_CLEAR / 2, g_.y + dy_ / h_ * GATE_CLEAR / 2,
-                                                 math.atan2(dx_ / h_, dy_ / h_), 640, GATE_CLEAR))
     for k_, q in enumerate(plan['plots']):
         _say('Setting the buildings', 0.76 + 0.1 * k_ / float(len(plan['plots']) or 1))
         b = q.get('b') and built(C, q['b'])
@@ -1951,8 +2079,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         if W and W.get('outline') and q.get('rect') and not all(townwalls._inside(W['outline'], p_) for p_ in q['rect'] + (q.get('way') or [])):
             q['b'] = None                # (outside the wall, where the land made it turn in: not built, the town is walled;
             continue                     # no yard, interior or household for it either)
-        if wall_boxes and q.get('rect') and any(townplan._overlap(_shrink_rect(q['rect'], 16), w_) or (q.get('way') and townplan._overlap(q['way'], w_))
-                                                for w_ in wall_boxes):
+        if (wall_boxes or gate_ways) and q.get('rect') and _in_wall(q, wall_boxes, gate_ways):
             q['b'] = None                # (into the wall, a tower or the keep, or its door against them: houses back onto
             continue                     # the wall now, 2 clashes in 5 towns, lab jwclash)
         past_ = _past_of(q) if wall_boxes else None
@@ -2058,7 +2185,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         try:
             # (the fill keeps off the town's own buildings and their door fronts: a house 520 under the wall had its door
             # buried 493 by the wall's fill, the lab's Sketh 2026-11-06)
-            keep_ = townwalls.building_guard(db, W.get('outline') or []) + townwalls.wall_guard(db, W.get('outline') or [], mine=new_refs) + _tread_guard(plan)
+            keep_ = townwalls.building_guard(db, W.get('outline') or []) + townwalls.wall_guard(db, W.get('outline') or [], mine=new_refs) + _tread_guard(plan) + _fort_keep(plan)
             townwalls.fill_ground(db, W, new_refs, keep=keep_)
             # (and the town's ground inside brought level with the wall's foot, not a bank under the wall with the houses
             # dug in below it: the user's Firuhn, 2026-11-07, "a rampart of earth that could just be more level ground")
@@ -2682,6 +2809,8 @@ def _clear_ground(db, plan, W):
             return 8.0
         return max(8.0, 0.5 * max(b[3] - b[0], b[4] - b[1]) * (r.get('s') or 1.0))
     mine = db.project.plugin.lower()
+    import townwalls
+    wall_poly = [tuple(p_) for p_ in wall]
     n = 0
     xs = [p_[0] for p_ in pts]
     ys = [p_[1] for p_ in pts]
@@ -2692,10 +2821,15 @@ def _clear_ground(db, plan, W):
             # (by name alone: Tamriel.esm's trees and boulders are big enough to count as architecture)
             hits = [r for r in m.get('refs') or () if r.get('type') in ('STAT', 'CONT') and CLEARABLE.search(r['id'])
                     and not NOT_CLEARABLE.search(r['id']) and on_town(r['p'][0], r['p'][1], rad_of(r), ROCKISH.search(r['id']) is not None)]
-            if not hits:
+            # (and another plugin's wild creatures inside the wall, or on an unwalled town's plots and streets: no
+            # beast of the wilds is left standing in a town built over its ground; practice 2, 2026-11-11. The mod's own
+            # stay: the town's animals are its dressing's)
+            beasts = [r for r in m.get('refs') or () if r.get('type') in ('CREA', 'LEVC') and not str(r['k']).startswith(mine + '|')
+                      and (townwalls._inside(wall_poly, (r['p'][0], r['p'][1])) if len(wall_poly) >= 3 else on_town(r['p'][0], r['p'][1], 64.0))]
+            if not hits and not beasts:
                 continue
             c, all_refs = editing._cell(db, key)
-            for r in hits:
+            for r in hits + beasts:
                 ref = all_refs.get(r['k'])
                 if not ref:
                     continue
@@ -3061,6 +3195,70 @@ def _street_profile(db, st, pinned):
     return _graded(out, pinned)
 
 
+def _fort_keep(plan):
+    """The ground of each castle standing beside the town, as shapes for the wall's ground passes to keep off: the
+    castle's ring and FORT_APRON round it, by its hull (the passes test convex shapes). The town wall's levelling
+    lowered a Redoran stronghold's yard by 200-380 where the town's outline reached into the castle's ring, and the
+    yard's smithy stood in the air (the night round's first site, 2026-11-12); the streets' pin, taken after it,
+    pinned the lowered ground. [[(x, y), ...]]"""
+    out = []
+    for ft in plan.get('forts') or ():
+        pts = sorted({(float(q[0]), float(q[1])) for q in ft.get('ring') or ()})
+        if not ft.get('pid') or len(pts) < 3:
+            continue
+        cr = lambda o, a, b: (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        lo, hi = [], []
+        for p in pts:
+            while len(lo) >= 2 and cr(lo[-2], lo[-1], p) <= 0:
+                lo.pop()
+            lo.append(p)
+        for p in reversed(pts):
+            while len(hi) >= 2 and cr(hi[-2], hi[-1], p) <= 0:
+                hi.pop()
+            hi.append(p)
+        hull = lo[:-1] + hi[:-1]
+        if len(hull) < 3:
+            continue
+        mx, my = sum(p[0] for p in hull) / len(hull), sum(p[1] for p in hull) / len(hull)
+        grown = []
+        for x, y in hull:
+            d = math.hypot(x - mx, y - my) or 1.0
+            grown.append((x + (x - mx) / d * FORT_APRON * 1.5, y + (y - my) / d * FORT_APRON * 1.5))
+        out.append(grown)
+    return out
+
+
+GATE_WAY_UP = 2400.0           # (a street's line carried on this far to a standing castle's gate is the way up to it)
+GATE_WAY_OFF = 320.0           # (and passing this near the gate's middle)
+
+
+def _fort_gates(db, ring):
+    """The middles of a standing castle's gates [(x, y)]: its gate pieces at its ring, a gate door's own piece first."""
+    import townwalls as _tw
+    xs, ys = [q[0] for q in ring], [q[1] for q in ring]
+    stat, door = [], []
+    for gx in range(int(math.floor((min(xs) - 512) / 8192.0)), int(math.floor((max(xs) + 512) / 8192.0)) + 1):
+        for gy in range(int(math.floor((min(ys) - 512) / 8192.0)), int(math.floor((max(ys) + 512) / 8192.0)) + 1):
+            try:
+                refs = mapdata.cellmap(db, '#%d,%d' % (gx, gy)).get('refs') or ()
+            except Exception:
+                continue
+            for r in refs:
+                if 'gate' not in r['id'].lower() or r['type'] not in ('STAT', 'DOOR', 'ACTI'):
+                    continue
+                x, y = r['p'][0], r['p'][1]
+                if _tw._inside(ring, (x, y)) and _tw._ring_dist(ring, x, y) > 400:
+                    continue                       # (well inside: a keep's own gate, not the wall's)
+                if not _tw._inside(ring, (x, y)) and _tw._ring_dist(ring, x, y) > 400:
+                    continue
+                (door if r['type'] == 'DOOR' else stat).append((x, y))
+    out = []
+    for x, y in stat + door:
+        if not any(math.hypot(x - o[0], y - o[1]) < 700 for o in out):
+            out.append((x, y))
+    return out
+
+
 def _is_ramp(st):
     return bool(st.get('ramp')) and not st.get('stair')
 
@@ -3095,6 +3293,8 @@ def _ramp_profile(db, st, pinned):
 
 
 STREET_MAX_GRADE = 0.3         # a street climbs this much a unit at most along its length (17 degrees)
+FORT_APRON = 320.0             # (a standing castle's ground and this far out of its ring, its gatehouse's passage and door
+                               # with it, stays as the castle left it)
 
 
 def _graded(prof, pinned):
@@ -3160,8 +3360,45 @@ def _level_streets(db, plan, skip=()):
         return (int(math.floor(x / G)), int(math.floor(y / G)), int(round((x % G) / step)), int(round((y % G) / step)))
 
     def pinned(x, y):
-        t = target.get(vkey(x, y))
+        k = vkey(x, y)
+        if k in fort_pin:
+            return fort_pin[k]
+        t = target.get(k)
         return t[0] if t and t[1] >= 0.99 else None
+    # (a castle already standing beside the town keeps its ground, its gate's threshold with it: a street drawn up
+    # to the gate climbed the brow the castle stands on by the middle of cut and fill, half the climb inside the gate,
+    # and the ground under the gate's door fell 190 away from it, the user's Tharen Rise, 2026-11-11, "way too much
+    # space under this gate door". Its ground is a pinned level like a junction's: the street eases up to it outside)
+    fort_pin = {}
+    fort_rings = []                           # [(ring, the middle height of its pinned ground)]
+    try:
+        import townwalls as _tw
+        for ft in plan.get('forts') or ():
+            ring = [(float(q[0]), float(q[1])) for q in ft.get('ring') or ()]
+            if not ft.get('pid') or len(ring) < 3:
+                continue
+            n0_ = len(fort_pin)
+            fx_, fy_ = [q[0] for q in ring], [q[1] for q in ring]
+            for vx in range(int(math.floor((min(fx_) - FORT_APRON) / step)), int(math.floor((max(fx_) + FORT_APRON) / step)) + 2):
+                for vy in range(int(math.floor((min(fy_) - FORT_APRON) / step)), int(math.floor((max(fy_) + FORT_APRON) / step)) + 2):
+                    x, y = vx * step, vy * step
+                    if _tw._inside(ring, (x, y)) or _tw._ring_dist(ring, x, y) <= FORT_APRON:
+                        z_ = mapdata.terrain_z(db, x, y)
+                        if z_ is not None and z_ >= 0:
+                            fort_pin[vkey(x, y)] = z_
+            zs_f = sorted(list(fort_pin.values())[n0_:])
+            if zs_f:
+                fort_rings.append((ring, zs_f[len(zs_f) // 2]))
+    except Exception as e:
+        print('fort ground:', e)
+
+    def climb_room(x, y, z):
+        """Is (x, y) at level z nearer a standing castle than the climb to its ground needs? (A square laid flat up to
+        the castle's apron left the whole climb, 216, to the one land point between: a bank across the gate's way.)"""
+        for ring, zf in fort_rings:
+            if _tw._ring_dist(ring, x, y) - FORT_APRON < abs(zf - z) / STREET_MAX_GRADE + 128.0:
+                return True
+        return False
     # (the square first, one flat disc at the median of its ground, pinned like a street: a terrace step of 170 ran
     # across a paved square between two plots' levels, the user's Skethwall 2026-11-07. The streets through it take
     # its level and ease out to their own grade)
@@ -3186,7 +3423,54 @@ def _level_streets(db, plan, skip=()):
                     if d >= r + STREET_BLEND:
                         continue
                     w = 1.0 if d <= r else 0.5 + 0.5 * math.cos(math.pi * (d - r) / STREET_BLEND)
+                    if vkey(x, y) in fort_pin or climb_room(x, y, zq):
+                        continue
                     target[vkey(x, y)] = (zq, w, max(0.0, d - r), -1)
+    # (the way up to a standing castle's gate: a street's line carried on to the gate gets a ramp of its own, an
+    # even climb from the street's level to the castle's ground no steeper than a street may be, its top just
+    # inside the castle's apron. The street ended 690 short of the gate and level, and with the castle's ground
+    # kept the whole 216 between stood as a bank across the gate's way, lab gatefit2, 2026-11-11)
+    try:
+        ways_up = []
+        for ring, zf in fort_rings:
+            for gxy in _fort_gates(db, ring):
+                best = None
+                for st in streets:
+                    pts = [tuple(p) for p in st.get('pts') or ()]
+                    if len(pts) < 2 or _is_ramp(st) or st.get('lane') or st.get('court') or st.get('stair'):
+                        continue
+                    for a, b in ((pts[-2], pts[-1]), (pts[1], pts[0])):
+                        L_ = math.hypot(b[0] - a[0], b[1] - a[1])
+                        if L_ < 1:
+                            continue
+                        ux, uy = (b[0] - a[0]) / L_, (b[1] - a[1]) / L_
+                        t = (gxy[0] - b[0]) * ux + (gxy[1] - b[1]) * uy
+                        off = abs(-(gxy[0] - b[0]) * uy + (gxy[1] - b[1]) * ux)
+                        if -FORT_APRON <= t <= GATE_WAY_UP and off <= GATE_WAY_OFF and (best is None or t < best[0]):
+                            best = (t, b, ux, uy, st)
+                if best is None:
+                    continue
+                t, b, ux, uy, st = best
+                gx_, gy_ = b[0] + ux * t, b[1] + uy * t                  # (the gate's middle, on the street's line)
+                d_ring = _tw._ring_dist(ring, gx_, gy_) if not _tw._inside(ring, (gx_, gy_)) else 0.0
+                back = max(0.0, FORT_APRON - 64.0 - d_ring)
+                top = (gx_ - ux * back, gy_ - uy * back)
+                ztop = pinned(top[0], top[1])
+                if ztop is None:
+                    continue
+                for L_ in (640.0, 896.0, 1152.0, 1408.0, 1792.0, 2304.0):
+                    foot = (top[0] - ux * L_, top[1] - uy * L_)
+                    zfoot = pinned(foot[0], foot[1])
+                    if zfoot is None:
+                        zfoot = mapdata.terrain_z(db, foot[0], foot[1])
+                    if zfoot is not None and abs(ztop - zfoot) <= STREET_MAX_GRADE * (L_ - 64.0):
+                        break
+                ways_up.append({'pts': [list(foot), list(top)], 'w': min(st.get('w') or 512, 640), 'ramp': True, 'way_up': True})
+        streets = streets + ways_up
+    except Exception as e:
+        print('gate way up:', e)
+    way_plots = [_shrink_rect([tuple(p_) for p_ in q['rect']], -96.0) for q in plan.get('plots') or () if q.get('b') and q.get('rect')]         if any(s_.get('way_up') for s_ in streets) else []
+    way_ranks = {k_ for k_, s_ in enumerate(streets) if s_.get('way_up')}
     for rank, st in enumerate(streets):
         ramp = _is_ramp(st)
         prof = _ramp_profile(db, st, pinned) if ramp else _street_profile(db, st, pinned)
@@ -3219,6 +3503,11 @@ def _level_streets(db, plan, skip=()):
                 # settled against the land's own height when the ground is written)
                 w = 1.0 if dd <= 0 else 0.5 + 0.5 * math.cos(math.pi * min(1.0, dd / STREET_BLEND))
                 k = vkey(x, y)
+                if k in fort_pin:
+                    continue
+                # (the way up to a castle's gate is not in the plan: never under a building's plot, _way_plots)
+                if st.get('way_up') and any(_tw._inside(r_, (x, y)) for r_ in way_plots):
+                    continue
                 old = target.get(k)
                 if old is None or w > old[1] + 1e-6 or (ramp and d <= hw):
                     mine[k] = (z, w, dd, rank)
@@ -3228,7 +3517,12 @@ def _level_streets(db, plan, skip=()):
     # (the street's own ground kept by what follows: the terraces faded over the streets between plots and put their
     # humps back, lab ja2)
     plan['_street_ground'] = {(gx * G + i * step, gy * G + j * step) for (gx, gy, i, j), zw in target.items() if zw[1] >= 0.99}
-    plan['_street_pins'] = {(gx * G + i * step, gy * G + j * step): zw[0] for (gx, gy, i, j), zw in target.items() if zw[1] >= 0.99}
+    plan['_street_pins'] = {(gx * G + i * step, gy * G + j * step): zw[0] for (gx, gy, i, j), zw in target.items()
+                            if zw[1] >= 0.99 and not (len(zw) > 3 and zw[3] in way_ranks)}     # (a way up is not put back: the buildings' fit after it stands)
+    # (the standing castle's ground with them: kept by the terraces and the hull, put back after the wall's levelling)
+    for (gx, gy, i, j), z_ in fort_pin.items():
+        plan['_street_ground'].add((gx * G + i * step, gy * G + j * step))
+        plan['_street_pins'][(gx * G + i * step, gy * G + j * step)] = z_
     if not target:
         return 0
     cells_ = set()

@@ -236,6 +236,63 @@ def terrain_z(db, x, y):
     return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty
 
 
+_OWN_LAND = {}
+
+
+def own_heights(db, gx, gy, plugin):
+    """A cell's 65 x 65 heights as the plugin that set a thing there had them, or None where that is the land the game
+    ends up with. Two plugins that are strangers can both have land for a cell (Tamriel.esm, the whole continent
+    coarsely, loaded after Sky_Main and Cyr_Main, wins 283 and 412 of their cells): the earlier one's things stand
+    on ITS land, up to 4,000 over or under the land that won. A later plugin that names the earlier one as a master
+    changed its land knowingly (TR_Mainland over Morrowind.esm's shores), and the land that won is right for both.
+    For learning from the game's cells only: the map and the game show the land that won."""
+    pl = (plugin or '').lower()
+    key = (gx, gy, pl)
+    e = _OWN_LAND.get(key)
+    if e is not None and e[0] is db.recs:
+        return e[1]
+    out = None
+    lst = [v for v in db.by_key.get(('LAND', '%d,%d' % (gx, gy)), []) if v not in db.dead and db.recs[v][3] != db.proj_pidx]
+    if len(lst) > 1 and pl:
+        wp = db.recs[lst[-1]][3]
+        mine = [v for v in lst if (db.plugins[db.recs[v][3]].get('name') or '').lower() == pl]
+        masters = [str(m).lower() for m in (db.plugins[wp].get('header') or {}).get('masters', [])]
+        if mine and db.recs[mine[-1]][3] != wp and pl not in masters:
+            r = db.recs[mine[-1]]
+            _t, _f, data = db.files[r[3]].record_at(r[4])
+            for st, sd in iter_subrecords(data):
+                if st == 'VHGT' and len(sd) >= 4 + 65 * 65:
+                    base = struct.unpack_from('<f', sd)[0]
+                    deltas = struct.unpack_from('<4225b', sd, 4)
+                    out, row = [], base
+                    for y in range(65):
+                        row += deltas[y * 65]
+                        col = row
+                        out.append(int(col * 8))
+                        for x in range(1, 65):
+                            col += deltas[y * 65 + x]
+                            out.append(int(col * 8))
+                    break
+    if len(_OWN_LAND) > 4000:
+        _OWN_LAND.clear()
+    _OWN_LAND[key] = (db.recs, out)
+    return out
+
+
+def own_ground(db, plugin, x, y):
+    """The ground under (x, y) as the plugin that set a thing there had it (own_heights), else as the game has it."""
+    gx, gy = math.floor(x / CELL_SIZE), math.floor(y / CELL_SIZE)
+    H = own_heights(db, gx, gy, plugin)
+    if H is None:
+        return terrain_z(db, x, y)
+    fx, fy = (x - gx * CELL_SIZE) / 128.0, (y - gy * CELL_SIZE) / 128.0
+    x0, y0 = min(63, int(fx)), min(63, int(fy))
+    tx, ty = fx - x0, fy - y0
+    a, b = H[y0 * 65 + x0], H[y0 * 65 + x0 + 1]
+    c, d = H[(y0 + 1) * 65 + x0], H[(y0 + 1) * 65 + x0 + 1]
+    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty
+
+
 def surface_z(db, refs, interior, x, y, new_b=None, scale=1.0, new_type='', cut=None):
     """Height to set a new object down at (x, y): on the floor or ground, or on a
     table/shelf top for small items. Returns the z for the object's origin."""

@@ -777,11 +777,21 @@ def _lay_planter(db, space, memo, rng, h, fig, culture, own=()):
     return []
 
 
+# (a trellis is a frame on legs, not ivy: hung up a wall at ivy's height its feet stood 64 and 107 clear of the
+# ground, the user's Tharen Rise, 2026-11-11. The game's: 52 of 52 drumpear and T_De_Set_X trellises outdoors
+# stand with their foot at or under the lowest ground under them (a median 8 to 97 in it); the other 5,
+# ex_common_trellis and the Anvil set's, stand some 200 up on roofs and terraces and are left out here)
+TRELLIS = re.compile(r'trellis', re.I)
+TRELLIS_UP = re.compile(r'ex_common_trellis|setanv_x_trellis', re.I)
+TRELLIS_IN = 8.0            # (its legs this far into the lowest ground under it)
+TRELLIS_STEEP = 100.0       # (ground falling more than this under it: no place for a frame)
+
+
 def _lay_vine(db, space, memo, rng, h, fig, height):
     """Ivy or a vine on a wall of the house, as the game hangs them: the culture's model, its bottom at the game's
     height up the wall, turned the way the game turns that model against a wall, on the side or front wall.
     [(id, pose, s)]."""
-    models = {m: n for m, n in (fig.get('models') or {}).items() if db.resolve_id(m) is not None}
+    models = {m: n for m, n in (fig.get('models') or {}).items() if db.resolve_id(m) is not None and not TRELLIS_UP.search(m)}
     if not models:
         return []
     rid = _draw(rng, models)
@@ -818,8 +828,15 @@ def _lay_vine(db, space, memo, rng, h, fig, height):
         # (a vine hangs over whatever stands at the wall's foot: only another vine is in its way)
         if any(_overlap(rect, p) for p in getattr(space, 'vines', [])):
             continue
+        z = g + bottom - bb[2] * s
+        if TRELLIS.search(rid):
+            gs = [mapdata.terrain_z(db, px + (lx_ * c + ly_ * sn) * s, py + (-lx_ * sn + ly_ * c) * s)
+                  for lx_ in (bb[0], bb[3]) for ly_ in (bb[1], bb[4])]
+            if any(q is None for q in gs) or max(gs) - min(gs) > TRELLIS_STEEP:
+                continue
+            z = min(gs) - TRELLIS_IN - bb[2] * s
         space.vines = getattr(space, 'vines', []) + [rect]
-        return [(rid, (px, py, g + bottom - bb[2] * s, 0.0, 0.0, yaw % (2 * math.pi)), s)]
+        return [(rid, (px, py, z, 0.0, 0.0, yaw % (2 * math.pi)), s)]
     WHY['vine: no wall'] = WHY.get('vine: no wall', 0) + 1
     return []
 
@@ -1046,6 +1063,7 @@ POCKET_TREE_AREA = 300000.0    # a tree for about every this much open ground le
 POCKET_TREE_GAP = 420.0        # ... no nearer another than this
 POCKET_STREET = 900.0          # trees on ground within this of a street first (by the road)
 POCKET_GARDENS = 0.25          # gardens at most this share of the town's buildings (at least one)
+WAY_ON = 2000.0                # (a street's end this near the outline along its own line: the ground between is its way on)
 # the small growth of the land a building, on the open ground between the houses (grass, bushes, flowers, mushrooms,
 # stumps and logs: the game's towns by culture, 149 towns read 2026-11-10; made towns had a third of it)
 UNDER = {'Dunmer': 2.5, 'Dunmer common': 2.5, 'Hlaalu': 2.0, 'Telvanni': 1.9, 'Velothi': 3.0, 'Common': 1.1, 'Gold Coast': 7.6, 'Redoran': 1.6,
@@ -1124,9 +1142,44 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0):
         return gmemo[k]
 
     why = {}
+    # (each street's line carried on from its end to the town's outline, as wide as the street is paved: the way in
+    # behind a gate, the stretch before a castle's gate. Open ground to the lattice, and the trees "by the streets
+    # first" stood one in the fort's gateway and one inside the town's gate; practice 2, 2026-11-11)
+    ways = []
+    for s_ in plan.get('streets') or ():
+        sp_ = [tuple(p_) for p_ in s_.get('pts') or ()]
+        if len(sp_) < 2:
+            continue
+        half = max(256.0, (s_.get('w') or 0) / 2.0 * 0.7) + POCKET_STEP / 2.0
+        for a_, b_ in ((sp_[1], sp_[0]), (sp_[-2], sp_[-1])):
+            dx, dy = b_[0] - a_[0], b_[1] - a_[1]
+            h_ = math.hypot(dx, dy)
+            if h_ < 1:
+                continue
+            ux, uy = dx / h_, dy / h_
+            # (how far on the outline lies along the street's line)
+            far = None
+            for k in range(len(outline)):
+                (px, py), (qx, qy) = outline[k], outline[(k + 1) % len(outline)]
+                ex, ey = qx - px, qy - py
+                den = ux * ey - uy * ex
+                if abs(den) < 1e-9:
+                    continue
+                t_ = ((px - b_[0]) * ey - (py - b_[1]) * ex) / den
+                u_ = ((px - b_[0]) * uy - (py - b_[1]) * ux) / den
+                if t_ > 0 and 0.0 <= u_ <= 1.0 and (far is None or t_ < far):
+                    far = t_
+            if far is None or far > WAY_ON:
+                continue
+            nx, ny = -uy * half, ux * half
+            e_ = (b_[0] + ux * (far + 64.0), b_[1] + uy * (far + 64.0))
+            ways.append([(b_[0] + nx, b_[1] + ny), (e_[0] + nx, e_[1] + ny), (e_[0] - nx, e_[1] - ny), (b_[0] - nx, b_[1] - ny)])
 
     def ok(x, y, slope=POCKET_SLOPE):
         if not _inside(outline, x, y) or edge_d(x, y) < POCKET_IN:
+            return False
+        if ways and any(_inside(w_, x, y) for w_ in ways):
+            why['way on'] = why.get('way on', 0) + 1
             return False
         z = gz(x, y)
         if z is None or z < 8:
@@ -1275,6 +1328,8 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0):
         def on_land(x, y):
             if not _inside(outline, x, y) or edge_d(x, y) < POCKET_IN / 2.0:
                 return False
+            if ways and any(_inside(w_, x, y) for w_ in ways):
+                return False                  # (nor the small growth on a street's way on to the wall)
             z = gz(x, y)
             return z is not None and all((lambda z2: z2 is not None and abs(z2 - z) / 64.0 <= TREE_SLOPE)(gz(x + dx, y + dy)) for dx, dy in ((64.0, 0.0), (0.0, 64.0)))
         out['undergrowth'] = _undergrowth(db, plan, space, memo, rng, cult, add, amount, built, on_land)
@@ -1608,7 +1663,7 @@ FORT_SETS = {
                                        (('t_imp_furnp_grindstone_01',), 230, 150, 0, 2.6), (('crate_01',), -300, 70, 0, 0.0),
                                        (('misc_com_bucket_01',), 60, 200, 0, 0.0)]},
     'stables': {'back': 430, 'things': [(('t_com_setfarm_haypile_01',), -260, 70, 0, 0.0), (('t_com_setfarm_haybale_01',), -110, 50, 0, 0.4),
-                                        (('t_com_setfarm_haybale_01',), -40, 60, 64, 1.9), (('t_imp_setfarm_foodtrough_01',), 110, 90, 0, 1.5708),
+                                        (('t_com_setfarm_haybale_01',), -104, 54, 64, 1.9), (('t_imp_setfarm_foodtrough_01',), 110, 90, 0, 1.5708),
                                         (('barrel_01',), 260, 50, 0, 0.0), (('com_sack_01',), 300, 90, 0, 0.7), (('misc_com_bucket_01',), 180, 170, 0, 0.0)]},
     'stores': {'back': 420, 'things': [(('crate_01',), -140, 50, 0, 0.0), (('crate_02',), -140, 50, 64, 0.4), (('crate_01',), -70, 55, 0, 0.1),
                                        (('crate_02',), 10, 50, 0, 0.0), (('barrel_01',), 90, 45, 0, 0.0), (('barrel_02',), 150, 50, 0, 0.9),

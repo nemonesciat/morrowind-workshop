@@ -96,7 +96,7 @@ async function benchOpen(){
       <div class="bnnote" id="bn-note"></div><div class="bnex" id="bn-ex" style="display:none"></div><div class="bnbox" id="bn-boxsel"></div>
       <div class="bncheck" id="bn-checkbox" style="display:none"></div>
       <div class="bnhelp" id="bn-help" title="Drag a piece in from the shelf, or click one. Click a piece to move it: it snaps where the game joins it, or flush. Drag on the bench to box-select (Shift adds), Shift+click to add or take one. Right-drag to look round, middle-drag to pan, wheel to zoom. W A S D fly, Q / E down and up, Shift faster. [ ] turn 15° (Shift 1°), R turn handles, T move handles, Del remove. Ctrl+C copy, Ctrl+V paste (click where it goes; the wheel turns it). Ctrl+D a copy beside it along its own red axis (Shift: the other way). Ctrl+M a mirrored copy across X (Shift: across Y).">
-        <b>Drag</b> select · <b>Right-drag</b> look · <b>Middle</b> pan · <b>WASD</b> fly · <b>[ ]</b> turn · <b>Ctrl+D</b> copy beside · <b>Ctrl+M</b> mirror</div>
+        <b>Drag</b> select · <b>Right-drag</b> look · <b>Middle</b> ${typeof cfMouse === 'function' && cfMouse() === 'blender' ? 'circle (Shift pan, Ctrl in and out)' : 'pan'} · <b>WASD</b> fly · <b>[ ]</b> turn · <b>Ctrl+D</b> copy beside · <b>Ctrl+M</b> mirror</div>
     </div>`;
   $('#bn-close').onclick = benchClose;
   $('#bn-start').onclick = benchStartMenu;
@@ -526,7 +526,8 @@ function benchBind(el){
     el.focus();
     if (e.button === 0 && (BN.tc.dragging || BN.tc.axis)) return;
     if (e.button === 1) e.preventDefault();      // (no autoscroll on the middle button)
-    drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: BN.yaw, pitch: BN.pitch, t: BN.target.clone(), moved: false, alt: e.altKey, shift: e.shiftKey};
+    drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: BN.yaw, pitch: BN.pitch, t: BN.target.clone(), moved: false, alt: e.altKey, shift: e.shiftKey,
+            ctrl: e.ctrlKey, dist: BN.dist, blender: typeof cfMouse === 'function' && cfMouse() === 'blender'};
   });
   window.addEventListener('mousemove', e => {
     if (e.target === el){ BN.lastMouse = {clientX: e.clientX, clientY: e.clientY}; if (BN.paste && BN.open) benchPasteMove(e); }
@@ -542,6 +543,10 @@ function benchBind(el){
                                width: Math.abs(dx) + 'px', height: Math.abs(dy) + 'px'});
     }
     else if (drag.b === 2 || drag.alt){ BN.yaw = drag.yaw - dx * 0.006; BN.pitch = Math.max(-1.5, Math.min(-0.05, drag.pitch - dy * 0.005)); }
+    // (the mouse as Blender has it, chosen under Keyboard shortcuts: the middle button circles, with Ctrl it moves
+    // in and out, and with Shift it slides as it does otherwise)
+    else if (drag.b === 1 && drag.blender && drag.ctrl) BN.dist = Math.max(200, Math.min(30000, drag.dist * Math.exp(dy * 0.005)));
+    else if (drag.b === 1 && drag.blender && !drag.shift){ BN.yaw = drag.yaw - dx * 0.006; BN.pitch = Math.max(-1.5, Math.min(-0.05, drag.pitch - dy * 0.005)); }
     else {
       // (pan along the floor, the floor following the mouse: right is (cos, sin) of the camera's turn, ahead is
       // (-sin, cos); faster the further the camera stands off)

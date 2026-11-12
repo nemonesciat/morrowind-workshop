@@ -29,7 +29,10 @@ the place. **+ −** at the bottom right zoom.
 | Alt+drag | Circle round the selection |
 | F | Look at what's selected |
 
-**?** in the 3D toolbar (or the **⌨ 3D controls** panel) lists every control.
+**?** in the 3D toolbar (or the **⌨ 3D controls** panel) lists every control. Used to Blender? **Ctrl+/** has
+**3D controls: Blender**: middle-drag circles, Shift+middle-drag slides, Ctrl+middle-drag moves in and out, and **G**
+and **R** move and turn what's selected with the mouse (**X**, **Y**, **Z** keep it to one axis; click sets it down,
+Esc puts it back). Without that choice, give those two a key of your own there.
 
 ## Selecting
 
@@ -48,7 +51,8 @@ the place. **+ −** at the bottom right zoom.
 **In 3D**, drag the arrows to move what's selected and the rings to turn it: **G** move, **R** turn, **⤡ Tilt** to
 lean it, **⤢ Scale** (**3**) to size it: drag any handle and it grows or shrinks evenly, ×0.5 to ×2 (several
 selected: the Scale dialog). **✛ World axes / ⟀ Own axes** switches the handles between the world's directions and the thing's
-own. **End** (or **⤓ Drop down**) sets it on what's below, **Del** removes it.
+own. **End** (or **⤓ Drop down**) sets it on what's below, **Del** removes it. **Esc** or a right-click while you
+are still dragging puts it back, and Undo gets no step for it.
 
 **On the flat map**, drag it. Outdoors its height follows the ground.
 

@@ -839,7 +839,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
       <div class="v3tools" id="v3tools" style="display:none"></div>
       <div class="v3help" id="v3help" style="display:none"><b>3D view controls</b><br>
         <kbd>Right-drag</kbd> look around · <kbd>W A S D</kbd> fly · <kbd>Q</kbd>/<kbd>E</kbd> down/up · <kbd>Shift</kbd> faster · tap <kbd>W A S D</kbd> twice and hold: sprint · <kbd>Esc</kbd> stop<br>
-        <kbd>Wheel</kbd> forward/back · <kbd>Middle-drag</kbd> slide · <kbd>Alt+drag</kbd> circle the selection<br>
+        <kbd>Wheel</kbd> forward/back · <kbd>Middle-drag</kbd> <span class="v3help-mid">slide</span> · <kbd>Alt+drag</kbd> circle the selection<br>
         <kbd>Click</kbd> select · drag the arrows to move, the rings to turn · <kbd>G</kbd> move · <kbd>R</kbd> turn<br>
         <kbd>F</kbd> look at it · double-click: its window (record and placement) · <kbd>End</kbd> drop it onto what's below · <kbd>Del</kbd> remove · <kbd>Esc</kbd> deselect<br>
         <kbd>Drag</kbd> on empty space: select with a box (<kbd>Shift</kbd> adds) · <kbd>Right-click</kbd> a menu · <kbd>H</kbd> hide · <kbd>F1</kbd> where it's used · <kbd>Ctrl+K</kbd> every command<br>
@@ -1759,8 +1759,8 @@ function renderProjectPill(){
   if (gb){
     gb.disabled = !p; gb.classList.toggle('primary', !!G);
     gb.innerHTML = G ? `⧉<span class="tl"> Group · ${G.changes}</span>` : '⧉<span class="tl"> Group</span>';
-    gb.title = G ? `Grouping since ${G.since}: ${G.changes} change${G.changes === 1 ? '' : 's'}. Click to close it into one Undo step`
-                 : 'Group what you do next into one Undo step (strokes and moves in a row group by themselves)';
+    gb.title = G ? `Grouping since ${G.since}: ${G.changes} change${G.changes === 1 ? '' : 's'}. Click to close it into one Undo step. Until then Undo takes back one change at a time`
+                 : 'Group what you do next: it becomes one Undo step when you click this again';
     if (typeof iconsIn === 'function') iconsIn(gb);
   }
   if (!p){ el.className = 'proj none'; el.innerHTML = '＋ Start a mod'; el.title = 'Create a plugin to save your edits into'; }
@@ -2223,7 +2223,7 @@ async function renderMyMod(){
     const shownRoots = roots.slice(0, S.logAll ? 400 : 40);
     const G = p.group;
     h += `<h3 style="margin:26px 0 6px;color:var(--muted);font-weight:500">Recent activity</h3>
-      <div class="msg" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px" title="While it is on, every change goes into one Undo step, so the big changes before it stay within Undo's reach. Strokes of the ground brush and moves of one thing in a row group by themselves">
+      <div class="msg" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px" title="What you do while it is on becomes one Undo step when you turn it off, so the big changes before it stay within Undo's reach. Until then Undo takes back one change at a time">
         <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mm-group" ${G ? 'checked' : ''}> Group changes into one step</label>
         ${G ? `<span>since ${esc(G.since)}, ${G.changes} so far</span><input class="inp" id="mm-groupname" placeholder="Name it (optional)" value="${esc(G.name || '')}" style="max-width:200px">` : ''}</div>
       <p class="msg" style="margin:0 0 8px">A town's or castle's steps, and changes built on another (furniture in a house you built, lines in your topic), sit inside it: click ▸ to see them.
@@ -2892,6 +2892,7 @@ cv.addEventListener('wheel', e => {
 cv.addEventListener('mousedown', e => {
   // (right- or middle-drag moves the map in any mode, so marking or drawing never has to stop to look round: the user,
   // 2026-11-09, "you can't drag the map to readjust your view"; a right-click that doesn't move still opens the menu)
+  if (e.button === 2 && mapDragCancel()){ W.noCtx = Date.now(); e.preventDefault(); return; }
   if (W.key && (e.button === 2 || e.button === 1)){ W.drag = {kind: 'pan', rpan: true, sx: e.offsetX, sy: e.offsetY, cx: W.cam.x, cy: W.cam.y, moved: false}; if (e.button === 1) e.preventDefault(); return; }
   if (!W.key || e.button !== 0) return;
   if (W.mode === 'region'){ regDown(e); return; }
@@ -3071,11 +3072,36 @@ async function refAction(path, body, cellKey, keepSel, msg){
   } catch (err){ toast(err.message, true); if (W.cells[cellKey]) worldReloadCell(cellKey); }
 }
 async function worldReloadCell(k){ const m = await api('/api/cellmap?key=' + encodeURIComponent(k)); if (m.exists){ W.cells[k] = prepCell(m); drawMap(); renderWside(); } }
+// Where a duplicate goes: beside its original, one of its own widths along its own red axis, so that the copy of a
+// bottle stands by the bottle and the copy of a wall piece joins its end. Several together: one width of the whole
+// lot to the east. (It was 64 units east and south whatever the size: far from a small thing, inside a big one;
+// tosky0890 on Discord, 2026-11-12)
+function dupOffset(r){
+  const b = r.b, w = b ? Math.max(4, (b[3] - b[0]) * (r.s || 1)) : 64, a = r.p[5] || 0;
+  return [Math.cos(a) * w, -Math.sin(a) * w];
+}
+function dupWidth(sel){
+  let lo = Infinity, hi = -Infinity;
+  for (const [, r] of sel){
+    const b = r.b || [0, 0, 0, 0, 0, 0], s = r.s || 1, a = r.p[5] || 0, c = Math.cos(a), n = Math.sin(a);
+    for (const x of [b[0], b[3]]) for (const y of [b[1], b[4]]){ const wx = r.p[0] + (x * c + y * n) * s; lo = Math.min(lo, wx); hi = Math.max(hi, wx); }
+  }
+  return hi - lo > 4 ? hi - lo : 64;
+}
 function findRef(ck, k){ const c = W.cells[ck]; return c && c.refs.find(r => r.k === k); }
 function selectRef(ck, k, quiet){ W.sel = {cell: ck, k}; if (!quiet){ W.multi.clear(); if (W.mode !== 'place') W.tab = 'sel'; } renderWside(); if (!quiet) drawMap(); }
 function centerOn(r){ if (V3.on){ v3Focus(r); return; } W.cam.x = r.p[0]; W.cam.y = r.p[1]; if (W.cam.z < 0.15) W.cam.z = 0.3; drawMap(); }
+// A thing (or a group) dragged on the map and given up before it is let go, by Esc or the right button: it stays
+// where it stood and nothing is saved.
+function mapDragCancel(){
+  const D = W.drag;
+  if (!D || !(D.kind === 'obj' || D.kind === 'group') || !D.moved) return false;
+  W.drag = null; cv.classList.remove('dragging'); drawMap(); toast('Cancelled');
+  return true;
+}
 function worldKey(e){
   const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (e.key === 'Escape' && mapDragCancel()) return;
   if (e.key === 'Escape'){ if (W.mode) setMode(null); else { W.sel = null; W.multi.clear(); renderWside(); drawMap(); } }
   // (Delete, copy, paste, duplicate and the rest are shortcuts you can change: see comfort.js)
   if (W.mode === 'group' && k === 'r' && !ctrl && W.groupPlace){
@@ -3118,7 +3144,7 @@ async function groupDo(a){
     const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const cz = Math.min(...sel.map(([, r]) => r.p[2] + ((r.b || [0, 0, 0])[2]) * (r.s || 1)));
-    const r = await groupAction('/api/group/place', {cell: sel[0][0], items: c.items, x: cx + 64, y: cy - 64, z: cz, yaw: 0, label: 'a copy'}, `Duplicated ${sel.length} object${sel.length > 1 ? 's' : ''}`);
+    const r = await groupAction('/api/group/place', {cell: sel[0][0], items: c.items, x: cx + dupWidth(sel), y: cy, z: cz, yaw: 0, label: 'a copy'}, `Duplicated ${sel.length} object${sel.length > 1 ? 's' : ''}`);
     if (r){ W.multi.clear(); r.placed.forEach(p => W.multi.set(mkey(p.cell, p.ref), {cell: p.cell, k: p.ref})); const l = r.placed[r.placed.length - 1]; W.sel = {cell: l.cell, k: l.ref}; if (W.multi.size < 2) W.multi.clear(); renderWside(); drawMap(); }
   } else if (a === 'turn' || a === 'turnback'){
     // turn the group 90° around its middle
@@ -4122,7 +4148,7 @@ async function selAction(a){
     if ([p[0], p[1], p[2], p[3], p[4], p[5], s].some(isNaN)) return toast('Please enter numbers only', true);
     await refAction('/api/ref/move', {cell: ck, ref: sel.k, p, s}, ck, sel.k, 'Updated ' + (sel.name || sel.id));
   } else if (a === 'dup'){
-    const p = sel.p.slice(); p[0] += 64; p[1] -= 64;
+    const p = sel.p.slice(), off = dupOffset(sel); p[0] += off[0]; p[1] += off[1];
     const m = await refAction('/api/ref/place', {cell: ck, id: sel.id, p, s: sel.s}, ck, null, 'Duplicated ' + (sel.name || sel.id));
     if (m && m.placed) selectRef(ck, m.placed);
   } else if (a === 'delete'){
@@ -4970,6 +4996,7 @@ async function doUndo(to){
     const r = await post('/api/undo', to != null ? {to} : {});
     toast('Undone: ' + (r.undone.length > 1 ? r.undone.length + ' changes' : r.undone[0]));
     await refreshAfterEdits();
+    selectTouched(r.touched);
   } catch (err){ toast(err.message, true); }
 }
 $('#undobtn').onclick = () => doUndo();
@@ -4981,9 +5008,22 @@ async function doRedo(){
     const r = await post('/api/redo', {});
     toast('Redone: ' + r.redone);
     await refreshAfterEdits();
+    selectTouched(r.touched);
   } catch (err){ toast(err.message, true); }
 }
 $('#redobtn').onclick = () => doRedo();
+// Undo and Redo leave what they changed selected: the things that are there afterwards, in the place that is open
+// (editing.touched). A thing they took away, or one somewhere else, changes nothing here.
+function selectTouched(list){
+  if (!W.key || !pageOn('world') || !list || !list.length) return;
+  const hit = list.filter(t => (W.ext || t.cell === W.key) && findRef(t.cell, t.ref));
+  if (!hit.length) return;
+  W.multi.clear();
+  if (hit.length > 1) for (const t of hit) W.multi.set(mkey(t.cell, t.ref), {cell: t.cell, k: t.ref});
+  const last = hit[hit.length - 1];
+  W.sel = {cell: last.cell, k: last.ref};
+  renderWside(); drawMap();
+}
 // (remote: another view's change, twowin.js; what you're typing here is left alone)
 async function refreshAfterEdits(remote){
   const typing = remote && (S.editing || (document.activeElement && document.activeElement.matches('input,textarea,select,[contenteditable]')));

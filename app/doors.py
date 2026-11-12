@@ -56,6 +56,19 @@ def _floor_at(db, m, x, y, bottom):
     return z
 
 
+ROOF_REACH = 1500.0            # (something over a floor within this: indoors; nothing: the top of the place's shell)
+
+
+def _roofed(db, m, x, y, z):
+    """Whether a floor spot in a place has anything over it: the top of a room's ceiling, outside the walls, has not."""
+    import seethrough
+    key = (id(db.recs), m.get('key'), len(m['refs']))
+    if key not in _scenes:
+        _scenes.clear()
+        _scenes[key] = seethrough.place_scene(db, m)
+    return _scenes[key].nearest_any((x, y, z + 20.0), (0.0, 0.0, 1.0), ROOF_REACH) is not None
+
+
 def stand_spot(db, m, x, y, top, rz=None):
     """Where the player stands at a spot picked for a door's arrival: [x, y, z, rz] and whether it was moved off a
     wall, or None (nothing to stand on). The floor is the first one down from `top` with room to stand (a click on
@@ -305,17 +318,23 @@ def _in_front(m, door, db=None):
         # (the first side with floor, the middle of the things near it first: tried against 150 of the game's door
         # pairs, its spots fell on the wrong side of the door 6% of the time, the guess alone 10%; choosing the side
         # with more room when both had floor made it 12%)
-        for tx, ty in tries:
-            for dist in (110, 160, 220):
-                try:
-                    fz = _floor_at(db, m, px + tx * dist, py + ty * dist, bottom)
-                except Exception:
-                    fz = None
-                if fz is not None:
-                    ux, uy, z = tx, ty, fz + 12
-                    x, y = px + ux * dist, py + uy * dist
-                    yaw = math.atan2(ux, uy) % (2 * math.pi)
-                    return [round(x, 1), round(y, 1), round(z, 1), 0.0, 0.0, round(yaw, 4)]
+        # (and a floor with a roof over it before one under the open void: a door on an upper storey, the room
+        # below reaching out past it, had "floor" on both sides, the far one the top of that room's ceiling: the
+        # user's Tharen Rise tavern, 2026-11-11, "door sets you on top of the ceiling")
+        for roofed in (True, False):
+            for tx, ty in tries:
+                for dist in (110, 160, 220):
+                    try:
+                        fz = _floor_at(db, m, px + tx * dist, py + ty * dist, bottom)
+                        if fz is not None and roofed and not _roofed(db, m, px + tx * dist, py + ty * dist, fz):
+                            fz = None
+                    except Exception:
+                        fz = None
+                    if fz is not None:
+                        ux, uy, z = tx, ty, fz + 12
+                        x, y = px + ux * dist, py + uy * dist
+                        yaw = math.atan2(ux, uy) % (2 * math.pi)
+                        return [round(x, 1), round(y, 1), round(z, 1), 0.0, 0.0, round(yaw, 4)]
     x, y = px + ux * 110, py + uy * 110
     yaw = math.atan2(ux, uy) % (2 * math.pi)           # the game measures turns clockwise from north
     return [round(x, 1), round(y, 1), round(z, 1), 0.0, 0.0, round(yaw, 4)]

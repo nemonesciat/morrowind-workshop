@@ -506,8 +506,10 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
             continue
         sc0 = t.get('s') or 1.0
         # (a sign's bracket, learnt as a post on the ground: on the wall where the game set it, held or left out)
-        bracket = bool(not t['hang'] and SIGN_HOLDER.search(t['id']) and t.get('dz') is not None and t['dz'] > BRACKET_UP
-                       and (b[5] - b[2]) * sc0 < BRACKET_UP)
+        # (and a lantern's: furn_de_lightpost_01 is 77 tall, fixed to walls 205 over the ground at the game's median and
+        # never on the ground, 928 read; stood at the wall's foot its lantern hung at the knee, practice 2, 2026-11-11)
+        bracket = bool(not t['hang'] and (SIGN_HOLDER.search(t['id']) or LIGHT_HOLDER.search(t['id'])) and t.get('dz') is not None
+                       and t['dz'] > BRACKET_UP and (b[5] - b[2]) * sc0 < BRACKET_UP)
         hang = bool(t['hang']) or bracket
         if hang and on is not None and t.get('dz_on') is not None:
             z = laid[on]['p'][2] + t['dz_on']          # (on its post, hook or bracket, by the post's height)
@@ -544,6 +546,9 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
             if gz is None or gz < 0:
                 _count('refused: water')
                 continue
+            if LIGHT_HOLDER.search(t['id']) and (b[5] - b[2]) * sc0 < BRACKET_UP and not STANDS_UP.search(t['id']):
+                _count('refused: a light bracket at the ground')
+                continue                    # (a wall's bracket is no post: left out, and its lantern with it)
             # (nor on ground too steep to stand it on: benches stood on the cliff above the user's Nargorewatch, 2026-11-01)
             gs = [mapdata.terrain_z(db, x_, y_) for x_, y_ in pts]
             span = max(math.hypot(pts[0][0] - pts[2][0], pts[0][1] - pts[2][1]), 1.0)
@@ -1140,6 +1145,20 @@ def _is_light(db, id_, memo):
     return v
 
 
+POST_TALL = 128.0              # (a lamp post is this tall at least, and taller than it reaches: a wall bracket is neither)
+
+
+def _is_post(db, id_, memo):
+    """Whether a light holder's model is a post that stands on the ground (not a bracket or a hook for a wall)."""
+    k = ('post', (id_ or '').lower())
+    v = memo.get(k)
+    if v is None:
+        ri = db.resolve_id(id_)
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        v = memo[k] = bool(b) and (b[5] - b[2]) >= POST_TALL and (b[5] - b[2]) > max(b[3] - b[0], b[4] - b[1])
+    return v
+
+
 def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
     """Lamp posts for a town that shows fewer lights a building than its culture's towns do: the posts the game stands
     by that culture's buildings, each with the lantern the game hangs on it, at the streets' edges and beside doors,
@@ -1162,7 +1181,7 @@ def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
         for sc in scs:
             for t in sc['things']:
                 i_ = t['id'].lower()
-                if not t['hang'] and i_ in POSTS and LIGHT_HOLDER.search(i_):
+                if not t['hang'] and i_ in POSTS and LIGHT_HOLDER.search(i_) and _is_post(db, i_, memo):
                     zs.setdefault(i_, []).append(t['z'])
     if not zs:
         return []

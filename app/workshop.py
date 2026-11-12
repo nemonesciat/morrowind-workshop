@@ -2238,7 +2238,6 @@ class Handler(BaseHTTPRequestHandler):
                     import landshade
                     return self._json(landshade.shade(db, body.get('cells') or [], body.get('mode') or 'seams', body.get('strength', 1.0)))
                 if u.path == '/api/land/edit':
-                    editing.run_key('ground')          # (strokes in a row are one Undo step: editing._grouped)
                     return self._json(landscape.edit(db, body.get('cells') or [], body.get('keep_objects', True)))
                 if u.path == '/api/group/move':
                     return self._json(groups.move(db, body.get('moves') or []))
@@ -2830,11 +2829,13 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/undo':
                     undone = editing.undo(db, body.get('to'))
                     return self._json({'ok': True, 'undone': [editing.note_label(db.project, n) for n in undone],
-                                       'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db)})
+                                       'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db),
+                                       'touched': editing.touched(db)})
                 if u.path == '/api/redo':
                     redone = editing.redo(db)
                     return self._json({'ok': True, 'redone': editing.note_label(db.project, redone),
-                                       'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db)})
+                                       'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db),
+                                       'touched': editing.touched(db)})
                 if u.path in ('/api/project/new', '/api/project/open', '/api/project/adopt'):
                     _end_together()
                     editing.flush(db)       # (the mod being left is written out first)
@@ -2902,7 +2903,6 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/revert':
                     return self._json({'i': editing.revert_record(db, int(body['i']))})
                 if u.path == '/api/ref/move':
-                    editing.run_key('move|%s|%s' % (body['cell'], body['ref']))
                     editing.move_ref(db, body['cell'], body['ref'], [float(v) for v in body['p']], body.get('s'))
                     return self._json(mapdata.cellmap(db, body['cell']))
                 if u.path == '/api/ref/delete':

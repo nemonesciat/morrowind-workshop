@@ -217,6 +217,9 @@ async function qolWaitFor3D(key){
 async function qolRestoreView(v){
   if (V3.on && v.v3){
     await qolWaitFor3D(v.key);
+    // (only in the place the view was saved in: the place not opened, or another opened meanwhile, took a camera
+    // from outdoors into an interior, the void)
+    if (W.key !== v.key && !(W.ext && String(v.key).startsWith('#'))) return;
     V3.pos.set(v.v3[0] - V3.origin[0], v.v3[1] - V3.origin[1], v.v3[2] - V3.origin[2]); V3.yaw = v.yaw; V3.pitch = v.pitch;
   } else if (v.cam){ W.cam = {...v.cam}; drawMap(); if (W.ext) recentre(); }
   if (v.sel && findRef(v.sel.cell, v.sel.k)) selectRef(v.sel.cell, v.sel.k);
@@ -227,10 +230,13 @@ async function qolThrough(ck, door){
   QOL.back.push(from); if (QOL.back.length > 30) QOL.back.shift();
   const to = door.to;
   await worldOpen(to.key);
+  // (the far side didn't open, or another place was opened meanwhile: stay, don't take its spot's coordinates here)
+  if (W.key !== to.key && !(W.ext && String(to.key).startsWith('#'))){ QOL.back.pop(); return false; }
   // the door at the other end that leads back here (the one nearest to where you arrive)
   const near = Object.entries(W.cells).flatMap(([k, c]) => (c.refs || []).filter(r => r.type === 'DOOR' && r.to && r.to.key === from.key).map(r => [k, r]))
     .sort((a, b) => Math.hypot(a[1].p[0] - to.x, a[1].p[1] - to.y) - Math.hypot(b[1].p[0] - to.x, b[1].p[1] - to.y))[0];
   if (V3.on) await qolWaitFor3D(to.key);
+  if (W.key !== to.key && !(W.ext && String(to.key).startsWith('#'))) return false;
   if (near){ selectRef(near[0], near[1].k); centerOn(near[1]); }
   else qolLookAt([to.x, to.y, to.z || 0]);
   toast(`Through the door to ${W.info ? (W.info.name || W.info.region || 'outside') : 'the other side'}. Alt+← takes you back.`);

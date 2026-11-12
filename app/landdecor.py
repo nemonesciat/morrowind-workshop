@@ -19,7 +19,8 @@ import landsurvey
 import mapdata
 from project import ref_info
 
-VERSION = 4                     # (3: each square's texture, 'tex', beside it; 4: the growth with no plant's word in its id)
+VERSION = 5                     # (3: each square's texture, 'tex', beside it; 4: the growth with no plant's word in its id;
+                                #  5: each thing's height over the ground of the plugin that set it, mapdata.own_heights)
 SQUARE = 1024                   # units a square side: 8 a cell
 SAMPLE = 90                     # wild cells a region read, spread over it
 LOOK = 260                      # cells looked at for them
@@ -114,6 +115,22 @@ def _cell_hat(H, gx, gy):
     return hat
 
 
+_FEET = {}
+
+
+def _foot_over(db, rid, dz, s):
+    """How far a learnt thing's lowest point stood over the ground: its origin's height, less what of the model hangs
+    under the origin. Skyrim's trees have their origins 300 to 800 up their trunks (32 of Midkarth's 70 tree models),
+    and LIFTED, read off the origin, took every one for a tree on a rock and left it out (p34)."""
+    low = rid.lower()
+    e = _FEET.get(low)
+    if e is None or e[0] is not db.recs:
+        ri = db.resolve_id(rid)
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        e = _FEET[low] = (db.recs, b[2] if b else 0.0)
+    return dz + e[1] * (s or 1.0)
+
+
 def _tag(db, rid, memo):
     low = rid.lower()
     if low not in memo:
@@ -185,6 +202,9 @@ def learn(db, region):
                 g = hat(pos[0], pos[1])
                 if g is None:
                     continue
+                own = mapdata.own_heights(db, gx, gy, ref.get('origin'))
+                if own is not None:
+                    g = _cell_hat(own, gx, gy)(pos[0], pos[1])
                 sq[(i, j)].append([real, round(pos[0] - gx * 8192.0 - i * SQUARE, 1), round(pos[1] - gy * 8192.0 - j * SQUARE, 1),
                                    round(pos[2] - g, 1), round(pos[3], 3), round(pos[4], 3), round(pos[5], 3), round(sc or 1.0, 2)])
                 continue
@@ -330,7 +350,7 @@ def plan_growth(db, F, inside, hold, region_of, amount=1.0, seed=1, used=None, t
                                 if amount < 1 and rng.random() > amount:
                                     continue
                                 rid, dx, dy, dz, rx, ry, rz, s = it
-                                if dz > LIFTED:
+                                if dz > LIFTED and _foot_over(db, rid, dz, s) > LIFTED:
                                     continue
                                 cx, cy = dx - SQUARE / 2, dy - SQUARE / 2
                                 wx, wy = x + SQUARE / 2 + cx * c - cy * sn, y + SQUARE / 2 + cx * sn + cy * c

@@ -75,12 +75,37 @@ class _Casts:
         self.db, self.S, self.lr = db, S, landregion
         self.by = {k.split('|', 1)[1].lower(): v for k, v in S['casts'].items() if k.startswith('outdoors|')}
         self.memo = {}
+        # (the regions whose land was made by hand, and every region by its name in small letters)
+        try:
+            self.hand = {k.lower() for k in landregion.handmade(db)}
+            self.names = {k.lower(): k for k in landregion._survey(db)}
+        except Exception as e:
+            print('out folk, regions:', e)
+            self.hand, self.names = set(), {}
+        self.src = {}
+
+    def source(self, r):
+        """The region whose cast a region takes (small letters): its own where its land is hand-made; a heightmap
+        region's, the hand-made region its plants come from (landregion.plant_region). Tamriel.esm stands the same
+        stand-in animals over the whole continent, Solstheim's wolves and bears, Skyrim's goats, Cyrodiil's goblins,
+        and Shipal-Shin's canyons were given all of them; practice 2, 2026-11-11."""
+        if r not in self.src:
+            out = r
+            if r and self.hand and r not in self.hand:
+                try:
+                    pr = self.lr.plant_region(self.db, self.names.get(r, r))
+                    if pr and pr.lower() in self.hand:
+                        out = pr.lower()
+                except Exception as e:
+                    print('out folk, source region:', e)
+            self.src[r] = out
+        return self.src[r]
 
     def get(self, region, need, tag=''):
         key = (region, tag or id(need))
         if key in self.memo:
             return self.memo[key]
-        r = (region or '').lower()
+        r = self.source((region or '').lower())
         own = self.by.get(r) or self.by.get(r + ' region')
         if own and need(own):
             self.memo[key] = own
@@ -336,6 +361,19 @@ def build(db, cells, roads=(), towns=(), camps=(), seed=1, amount=1.0, culture='
     import populate
     from project import set_ref_pos, zs
     editing._require_project(db)
+    # (the mod's own towns and castles standing, by their records: the page sends the shapes still drawn, and Keep
+    # takes a made place's shape off the map)
+    towns = [t for t in towns or ()]
+    try:
+        import ledger
+        for rec in ledger._places(db.project).values():
+            if rec.get('kind') in ('town', 'castle') and rec.get('state') != 'making':
+                ring = (rec.get('fort') or {}).get('ring') if rec.get('kind') == 'castle' else None
+                ol = ring or rec.get('outline')
+                if ol and len(ol) >= 3:
+                    towns.append([[float(q[0]), float(q[1])] for q in ol])
+    except Exception as e:
+        print('out folk, standing places:', e)
     P = plan(db, cells, roads, towns, camps, seed, amount, culture)
     S = castsurvey.ready(db) if hasattr(castsurvey, 'ready') else castsurvey.survey(db)
     if not S or not (P['people'] or P['creatures']):

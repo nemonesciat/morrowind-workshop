@@ -968,10 +968,16 @@ def _meet_forts(db, fam, kit, poly, pieces, forts):
         # (a plain length, or a piece of the wall's line that is none: the tower piece of the town's own corner a step
         # along, a wall tower in the run. Only plain lengths were looked for, and a wall whose corner stood two lengths
         # from the castle's was left open beside it: the user's 2618 at Blackrose, 2026-11-11)
+        # (as far back as the town's own corner unit left out at the castle's corner reached, and a length and a half:
+        # a kit of short lengths with a long rounded corner, the Hlaalu wall's three of 256, left its nearest length
+        # 3.5 lengths off, past the 2.6 that suit the Legion's wall, and the ring stood open 770 wide either side of
+        # the castle; practice 2, 2026-11-11)
+        gone_ = [math.hypot(p['pose'].x - v[0], p['pose'].y - v[1]) for p in pieces if 'corner' in tag and p.get('corner') == tag['corner']]
+        reach = max(2.6 * L, (max(gone_) + 1.6 * L) if gone_ else 0.0)
         side = [p for p in keep if _in_line(kit, p, d) and abs(-(p['pose'].x - v[0]) * d[1] + (p['pose'].y - v[1]) * d[0]) <= 24
-                and -4 * L <= (p['pose'].x - v[0]) * d[0] + (p['pose'].y - v[1]) * d[1] < 0]
+                and -max(4 * L, reach + L) <= (p['pose'].x - v[0]) * d[0] + (p['pose'].y - v[1]) * d[1] < 0]
         side.sort(key=lambda p: math.hypot(p['pose'].x - v[0], p['pose'].y - v[1]))
-        if not side or math.hypot(side[0]['pose'].x - v[0], side[0]['pose'].y - v[1]) > 2.6 * L:
+        if not side or math.hypot(side[0]['pose'].x - v[0], side[0]['pose'].y - v[1]) > reach:
             continue                         # (no wall comes up to the castle here: a side open to the water)
         mine = {id(p) for p in side}
         far = side[-1]['pose']
@@ -985,7 +991,7 @@ def _meet_forts(db, fam, kit, poly, pieces, forts):
         near = math.hypot(side[0]['pose'].x - v[0], side[0]['pose'].y - v[1])
         n_j += 1
         m = 0
-        while near - (m + 1) * L >= L / 2.0 - 8 and m < 4:
+        while near - (m + 1) * L >= L / 2.0 - 8 and m < max(4, int(reach / L) + 1):
             # (whole lengths first, where the corner's own pieces left more than one out)
             m += 1
             keep.append(dict({'id': kit['straight'], 'pose': Pose(v[0] - d[0] * (near - m * L), v[1] - d[1] * (near - m * L), 0.0, rz, kit['straight']),

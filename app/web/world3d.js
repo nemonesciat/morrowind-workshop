@@ -1805,6 +1805,8 @@ function v3Bind(el){
     el.focus();
     if (e.button === 1) e.preventDefault();
     if (typeof arDown3 === 'function' && arDown3(e)) return;          // a door's arrival: press, drag the way they face (arrive.js)
+    if (e.button === 2 && v3DragCancel()){ e.preventDefault(); return; }     // (right button during a drag: give it up)
+    if (e.button === 0 && V3.grab){ e.preventDefault(); v3GrabDone(); return; }   // (moving by key: the click sets it down)
     if (e.button === 0 && (V3.tc.dragging || V3.tc.axis)) return;      // using the handles
     if (e.button === 0 && !e.altKey && v3LandOn() && V3.landOpen){
       // the ground brush
@@ -1818,6 +1820,16 @@ function v3Bind(el){
       return;
     }
     drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: V3.yaw, pitch: V3.pitch, pos: V3.pos.clone(), moved: false, alt: e.altKey};
+    // (the mouse as Blender has it, chosen under Keyboard shortcuts: the middle button circles, with Shift it slides
+    // the view, with Ctrl it moves in and out. Where what it circles stands in the view is kept, so nothing jumps)
+    if (e.button === 1 && typeof cfMouse === 'function' && cfMouse() === 'blender'){
+      drag.mm = e.ctrlKey ? 'zoom' : e.shiftKey ? 'pan' : 'orbit';
+      if (drag.mm !== 'pan'){
+        const pv = v3OrbitPivot(e), d = v3Dir(), right = new THREE.Vector3(d.y, -d.x, 0).normalize(), up = new THREE.Vector3().crossVectors(right, d);
+        const off = pv.clone().sub(V3.pos);
+        drag.around = pv; drag.local = [off.dot(right), off.dot(up), off.dot(d)]; drag.far = off.length();
+      }
+    }
     // drawing a box to select: drag from an empty spot (or anywhere with Shift)
     if (e.button === 0 && !e.altKey && !W.mode){
       const h = e.shiftKey ? null : v3Pick(e, false);
@@ -1854,6 +1866,14 @@ function v3Bind(el){
       // Alt + drag: circle around the selected object
       V3.yaw = drag.yaw + dx * 0.006; V3.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch - dy * 0.006));
       V3.pos.copy(drag.pivot).addScaledVector(v3Dir(), -drag.dist);
+    } else if (drag.b === 1 && drag.mm === 'orbit'){
+      V3.yaw = drag.yaw + dx * 0.006; V3.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch - dy * 0.006));
+      const d = v3Dir(), right = new THREE.Vector3(d.y, -d.x, 0).normalize(), up = new THREE.Vector3().crossVectors(right, d), L = drag.local;
+      V3.pos.copy(drag.around).addScaledVector(right, -L[0]).addScaledVector(up, -L[1]).addScaledVector(d, -L[2]);
+    } else if (drag.b === 1 && drag.mm === 'zoom'){
+      // (up: nearer. Slower the nearer the thing is, so that small things can be come right up to; never through it)
+      const k = Math.max(0.25, Math.min(12, drag.far * 0.004));
+      V3.pos.copy(drag.pos).addScaledVector(v3Dir(), Math.min(-dy * k, Math.max(0, drag.local[2] - 16)));
     } else if (drag.b === 1){
       const d = v3Dir(), right = new THREE.Vector3(d.y, -d.x, 0).normalize(), up = new THREE.Vector3().crossVectors(right, d);
       const k = 2.2;
@@ -1896,7 +1916,10 @@ function v3Bind(el){
     if (h && h.obj && typeof owOpen === 'function'){ owOpen(h.obj.ck, h.obj.k); return; }
     if (W.sel){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); }
   });
-  el.addEventListener('mousemove', e => { V3.over = true; v3Hover(e); });
+  el.addEventListener('mousemove', e => { V3.over = true; V3.lastMouse = {clientX: e.clientX, clientY: e.clientY}; v3Hover(e); });
+  // (moving or turning by key: the thing follows the mouse wherever it goes; a left click anywhere sets it down)
+  window.addEventListener('mousemove', e => { if (V3.grab) v3GrabMove(e); });
+  window.addEventListener('mousedown', e => { if (V3.grab && e.button === 0 && e.target !== el) v3GrabDone(); }, true);
   // (a ground stroke ends where the mouse leaves the view or the window loses focus, and what it did is saved:
   // a release out there was never seen, and the brush went on working by itself)
   const strokeOff = () => { if (drag && drag.stroke){ drag = null; V3.strokeEv = null; v3StrokeEnd(); } };
@@ -1967,6 +1990,21 @@ function v3Mouse(e){
   return new THREE.Vector2(((e.clientX - b.left) / b.width) * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1);
 }
 // What's under the mouse: {key (object) or null, point, world [x, y, z]}
+// What the middle button circles with the Blender mouse: what is selected, when it is in view; else what is under
+// the mouse; else a spot ahead.
+function v3OrbitPivot(e){
+  const T = THREE;
+  let p = null;
+  if (W.multi.size > 1 && V3.pivot && V3.tc.object === V3.pivot) p = V3.pivot.position.clone();
+  else {
+    const o = W.sel && V3.objs.get(W.sel.cell + '|' + W.sel.k);
+    if (o){ const b = new T.Box3().setFromObject(o.g); if (!b.isEmpty()) p = b.getCenter(new T.Vector3()); }
+  }
+  if (p){ const n = p.clone().project(V3.camera); if (!(Math.abs(n.x) < 1 && Math.abs(n.y) < 1 && n.z < 1)) p = null; }
+  if (!p){ const h = v3Pick(e, true); if (h && h.point) p = h.point.clone(); }
+  return p || V3.pos.clone().addScaledVector(v3Dir(), 600);
+}
+
 function v3Pick(e, any, skipKey){
   V3.ray.setFromCamera(v3Mouse(e), V3.camera);
   const hits = V3.ray.intersectObjects([V3.root, V3.ground], true);
@@ -2138,7 +2176,7 @@ function v3DragStart(){
     // a whole group: remember where every member started, relative to the handles
     const members = [...W.multi.values()].map(m => V3.objs.get(m.cell + '|' + m.k)).filter(Boolean);
     const D = V3.drag = {group: true, members: members.map(o => ({o, pos: o.g.position.clone(), q: o.g.quaternion.clone()})),
-                         start: V3.pivot.position.clone(), startRot: V3.pivot.rotation.z};
+                         start: V3.pivot.position.clone(), startRot: V3.pivot.rotation.z, startQ: V3.pivot.quaternion.clone()};
     if (V3.pieces && V3.mode === 'translate') v3GroupSnapStart(D);
     return;
   }
@@ -2158,7 +2196,8 @@ function v3DragStart(){
     if (x.g.position.distanceTo(o.g.position) < 3000) nearObjs.push(x);
   }
   V3.drag = {key: sk, o, rel: own.clone().translate(o.g.position.clone().negate()), near, nearObjs,
-             start: o.g.position.clone(), startRot: o.g.rotation.clone(), startQ: o.g.quaternion.clone(), startS: o.g.scale.x};
+             start: o.g.position.clone(), startRot: o.g.rotation.clone(), startQ: o.g.quaternion.clone(), startS: o.g.scale.x,
+             startScale: o.g.scale.clone()};
   if (W.ext && V3.pieces && V3.mode === 'translate') v3SnapsFetch(V3.drag);
 }
 
@@ -2442,13 +2481,14 @@ function v3Snap(){
     return;
   }
   if (D.group){
-    // move/turn every member with the handles (turning around the group's middle)
-    const d = V3.pivot.position.clone().sub(D.start), a = V3.pivot.rotation.z - D.startRot, c = Math.cos(a), s = Math.sin(a);
+    // move/turn/tilt every member with the handles, about the group's middle. (The handles' whole turn: until
+    // 2.7.2-test6 only their turn about the up axis was followed, so with Tilt on the red and green rings turned
+    // the handles and left the things standing; tosky0890 on Discord, 2026-11-12)
+    const d = V3.pivot.position.clone().sub(D.start), dq = V3.pivot.quaternion.clone().multiply(D.startQ.clone().invert());
     for (const m of D.members){
-      const ox = m.pos.x - D.start.x, oy = m.pos.y - D.start.y;
-      m.o.g.position.set(D.start.x + d.x + ox * c - oy * s, D.start.y + d.y + ox * s + oy * c, m.pos.z + d.z);
-      // (turned about the world's up axis on top of its own turn; a tilted thing keeps its tilt)
-      m.o.g.quaternion.copy(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a).multiply(m.q));
+      m.o.g.position.copy(m.pos).sub(D.start).applyQuaternion(dq).add(D.start).add(d);
+      // (the handles' turn on top of its own; a tilted thing keeps its tilt)
+      m.o.g.quaternion.copy(dq).multiply(m.q);
       m.o.g.updateMatrixWorld(true);
     }
     if (D.nearObjs && V3.pieces && V3.mode === 'translate'){
@@ -2493,16 +2533,144 @@ function v3Snap(){
   V3.selBox.setFromObject(g);
 }
 
+// A drag given up before it is let go: Esc, or the right button while the left one holds the handle. The thing (or
+// every thing of the group) goes back to where it stood and nothing is saved, so Undo gets no step for it. True when
+// a drag was under way.
+function v3DragCancel(){
+  const D = V3.drag;
+  if (!D || !V3.tc || !V3.tc.dragging) return false;
+  D.cancelled = true;
+  if (D.group){
+    for (const m of D.members){ m.o.g.position.copy(m.pos); m.o.g.quaternion.copy(m.q); }
+    V3.pivot.position.copy(D.start); V3.pivot.quaternion.copy(D.startQ);
+  } else {
+    const g = D.o.g;
+    g.position.copy(D.start); g.quaternion.copy(D.startQ); g.scale.copy(D.startScale);
+    // (physics on: the body the handles carried goes back with it before it is let go)
+    try {
+      if (typeof PH !== 'undefined' && PH.drag){
+        PH.drag.body.setTranslation({x: g.position.x, y: g.position.y, z: g.position.z}, true);
+        PH.drag.body.setRotation({x: g.quaternion.x, y: g.quaternion.y, z: g.quaternion.z, w: g.quaternion.w}, true);
+      }
+    } catch (e) {}
+    if (V3.selBox.visible) V3.selBox.setFromObject(g);
+  }
+  V3.tc.dragging = false;            // (ends the handles' drag: v3DragEnd runs, and saves nothing)
+  toast('Cancelled');
+  return true;
+}
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && v3DragCancel()){ e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+
+// ----- moving and turning by key, with the mouse and without the handles (as Blender's G and R) -----
+// With something selected and the mouse over the view: it follows the mouse until a click (or Enter) sets it down;
+// Esc or the right button puts it back. X, Y, Z keep it to that axis, Shift+X / Y / Z to the other two; the same
+// key again frees it. Moving is along the floor unless an axis says otherwise; Ctrl sets one thing on what is under
+// the mouse. Turning is about the up axis, or the one picked. It is a drag like the handles' own (v3DragStart,
+// v3Snap, v3DragEnd), so the snapping, the steps, the saving and Undo are theirs.
+function v3GrabStart(kind){
+  if (!V3.on || !V3.tc || !V3.tc.object || V3.tc.dragging || V3.grab || W.mode || !V3.over || !V3.lastMouse) return false;
+  if (typeof PH !== 'undefined' && PH.on) return false;
+  if (W.multi.size > 1 && V3.tc.object !== V3.pivot) return false;
+  V3.mode = kind === 'spin' ? 'rotate' : 'translate'; v3ApplyMode(); v3Tools();
+  V3.tc.axis = null;
+  V3.grab = {kind, on: kind === 'spin' ? 'z' : 'xy', m0: V3.lastMouse, m: V3.lastMouse, foot: 0};
+  V3.tc.dragging = true;                    // (v3DragStart runs: where everything stood)
+  const D = V3.drag;
+  if (!D){ V3.grab = null; V3.tc.dragging = false; return false; }
+  if (!D.group){ const b = new THREE.Box3().setFromObject(D.o.g); if (!b.isEmpty()) V3.grab.foot = D.start.z - b.min.z; }
+  toast(kind === 'spin' ? 'Turning: click to set, Esc to cancel. X Y Z: the axis.' : 'Moving: click to set down, Esc to cancel. X Y Z: one axis.');
+  return true;
+}
+// where the mouse's ray meets the plane through p0 with normal n; null when it runs along the plane or far off
+function v3GrabOnPlane(m, n, p0){
+  V3.ray.setFromCamera(v3Mouse(m), V3.camera);
+  const ray = V3.ray.ray, den = ray.direction.dot(n);
+  if (Math.abs(den) < 0.03) return null;
+  const t = p0.clone().sub(ray.origin).dot(n) / den;
+  if (t <= 0 || t > 30000) return null;
+  return ray.origin.clone().addScaledVector(ray.direction, t);
+}
+function v3GrabMove(e){
+  const G = V3.grab, D = V3.drag;
+  if (!G || !D) return;
+  G.m = {clientX: e.clientX, clientY: e.clientY, ctrlKey: !!e.ctrlKey};
+  const T = THREE, obj = D.group ? V3.pivot : D.o.g;
+  if (G.kind === 'spin'){
+    const axis = new T.Vector3(G.on === 'x' ? 1 : 0, G.on === 'y' ? 1 : 0, G.on === 'z' ? 1 : 0);
+    // (the angle the mouse has gone round the thing on the screen, the way it is seen from here)
+    const c = D.start.clone().project(V3.camera), R = V3.renderer.domElement.getBoundingClientRect();
+    const sx = R.left + (c.x + 1) / 2 * R.width, sy = R.top + (1 - c.y) / 2 * R.height;
+    const ang = m => Math.atan2(-(m.clientY - sy), m.clientX - sx);
+    let a = ang(G.m) - ang(G.m0);
+    if (v3Dir().dot(axis) > 0) a = -a;
+    const step = V3.angle ? V3.angle * Math.PI / 180 : 0;
+    if (step) a = Math.round(a / step) * step;
+    obj.quaternion.copy(new T.Quaternion().setFromAxisAngle(axis, a).multiply(D.startQ));
+  } else {
+    let pos = null;
+    if (G.m.ctrlKey && !D.group){
+      // (Ctrl: set down on what is under the mouse, its foot on that spot)
+      const h = v3Pick(G.m, true, D.key);
+      if (h && h.point){ pos = h.point.clone(); pos.z += G.foot; }
+    }
+    if (!pos){
+      const d = v3Dir(), flat = new T.Vector3(d.x, d.y, 0);
+      const n = G.on === 'z' ? (flat.length() > 0.05 ? flat.normalize() : new T.Vector3(0, 1, 0))
+              : G.on === 'yz' ? new T.Vector3(1, 0, 0) : G.on === 'xz' ? new T.Vector3(0, 1, 0) : new T.Vector3(0, 0, 1);
+      const a = v3GrabOnPlane(G.m0, n, D.start), b = v3GrabOnPlane(G.m, n, D.start);
+      if (!a || !b) return;
+      const dl = b.sub(a);
+      for (const k of ['x', 'y', 'z']){
+        if (!G.on.includes(k)) dl[k] = 0;
+        else if (V3.grid) dl[k] = Math.round(dl[k] / V3.grid) * V3.grid;
+      }
+      pos = D.start.clone().add(dl);
+    }
+    obj.position.copy(pos);
+  }
+  obj.updateMatrixWorld(true);
+  v3Snap();
+}
+function v3GrabDone(){
+  if (!V3.grab) return false;
+  V3.grab = null;
+  V3.tc.dragging = false;                   // (v3DragEnd runs, and saves it as one step)
+  return true;
+}
+// the keys while it follows the mouse (asked first by comfort.js: no shortcut fires meanwhile)
+function v3GrabKey(e){
+  const G = V3.grab;
+  if (!G) return false;
+  const k = (e.key || '').toLowerCase();
+  if (k === 'enter'){ e.preventDefault(); v3GrabDone(); return true; }
+  if (k === 'x' || k === 'y' || k === 'z'){
+    e.preventDefault();
+    const free = G.kind === 'spin' ? 'z' : 'xy';
+    const on = G.kind === 'spin' ? k : e.shiftKey ? 'xyz'.replace(k, '') : k;
+    G.on = G.on === on && on !== free ? free : on;
+    // (from where it stood: an axis that cannot be followed from this side must not keep what the last one did)
+    const D = V3.drag, obj = D && (D.group ? V3.pivot : D.o.g);
+    if (obj){ obj.position.copy(D.start); obj.quaternion.copy(D.startQ); obj.updateMatrixWorld(true); v3Snap(); }
+    toast(G.kind === 'spin' ? 'About ' + G.on.toUpperCase() : G.on === 'xy' ? 'Along the floor' : 'Along ' + G.on.toUpperCase().split('').join(' and '));
+    v3GrabMove(G.m);
+  }
+  return true;
+}
+
 async function v3DragEnd(){
+  V3.grab = null;
   const D = V3.drag; V3.drag = null;
   if (typeof v3SnapNote === 'function') v3SnapNote('');
   v3Guides(null);
   if (!D) return;
+  if (D.cancelled){ if (typeof phDragEnd === 'function') phDragEnd(D); v3Refresh(); return; }
   // (physics on: let go, it falls and rests; nothing is saved until Keep; physics.js)
   if (typeof phDragEnd === 'function' && phDragEnd(D)) return;
   v3Refresh();                      // (anything a redraw left as it was while dragged catches up now)
   if (D.group){
-    if (V3.pivot.position.distanceTo(D.start) < 0.05 && Math.abs(V3.pivot.rotation.z - D.startRot) < 1e-4) return;
+    if (V3.pivot.position.distanceTo(D.start) < 0.05 && V3.pivot.quaternion.angleTo(D.startQ) < 1e-4) return;
     if (!await needProject()){ v3Refresh(); return; }
     const moves = D.members.map(m => {
       const r = m.o.r, p = r.p.slice(), e = new THREE.Euler().setFromQuaternion(m.o.g.quaternion, 'XYZ');
@@ -2789,6 +2957,39 @@ function v3HandleSize(){
   if (tc.size !== size) tc.size = size;
 }
 
+// Lost in the void: in an interior the view left the place in one step, far from all of it, with the place still
+// open (the user, 2026-11-11, twice: "I hit a button and vanish into the void"; the camera read outdoor
+// coordinates). No tool moves it there on purpose: a look at a thing lands by the thing, and flying is under 800
+// a frame. So it is put back, and what was pressed and clicked last is said and kept for Report a problem.
+window.addEventListener('keydown', e => { V3.lastDown = {k: (typeof cfKeyName === 'function' && cfKeyName(e)) || e.key, t: performance.now()}; }, true);
+window.addEventListener('pointerdown', e => {
+  const t = e.target || {};
+  V3.lastClick = {el: (t.id ? '#' + t.id : (t.tagName || '?').toLowerCase()) + ' ' + String(t.title || t.textContent || '').trim().slice(0, 40), t: performance.now()};
+}, true);
+function v3LostCheck(){
+  const was = V3.seen, cw = v3CamWorld(), c = W.cells[W.key];
+  V3.seen = {key: W.key, home: V3.homeFor, p: cw};
+  if (!was || W.ext || !c || !c.refs || !c.refs.length || was.key !== W.key || was.home !== V3.homeFor) return;
+  if (Math.hypot(cw[0] - was.p[0], cw[1] - was.p[1], cw[2] - was.p[2]) < 3000) return;
+  if (!V3.box || V3.box.key !== W.key || V3.box.n !== c.refs.length){
+    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (const r of c.refs) for (let i = 0; i < 3; i++){ b[i] = Math.min(b[i], r.p[i]); b[i + 3] = Math.max(b[i + 3], r.p[i]); }
+    V3.box = {key: W.key, n: c.refs.length, b};
+  }
+  const b = V3.box.b, out = p => [0, 1, 2].some(i => p[i] < b[i] - 6000 || p[i] > b[i + 3] + 6000);
+  if (!out(cw) || out(was.p)) return;
+  V3.pos.set(was.p[0] - V3.origin[0], was.p[1] - V3.origin[1], was.p[2] - V3.origin[2]);
+  V3.seen.p = was.p;
+  const now = performance.now(), ago = x => x ? ' ' + ((now - x.t) / 1000).toFixed(1) + ' s before' : '';
+  const key = V3.lastDown ? V3.lastDown.k : 'none', click = V3.lastClick ? V3.lastClick.el : 'none';
+  if (typeof PAGE_ERRORS !== 'undefined'){
+    PAGE_ERRORS.push({t: new Date().toLocaleTimeString(), where: 'world3d.js v3LostCheck',
+      msg: `The 3D view jumped out of ${W.key}: from ${was.p.map(Math.round)} to ${cw.map(Math.round)}. Last key ${key}${ago(V3.lastDown)}; last click ${click}${ago(V3.lastClick)}; selected ${W.sel ? W.sel.k : 'nothing'}; mode ${W.mode || 'none'}.`});
+    if (PAGE_ERRORS.length > 20) PAGE_ERRORS.shift();
+  }
+  if (now - (V3.lostSaid || 0) > 3000){ V3.lostSaid = now; toast(`The view jumped out of this place (last key: ${key}). Put back.`, true); }
+}
+
 function v3Loop(){
   if (V3.looping) return;
   V3.looping = true;
@@ -2801,6 +3002,7 @@ function v3Loop(){
       if (W.key && W.info && V3.homeFor !== W.key) v3Reset();
       if (!V3.pos){ requestAnimationFrame(step); return; }
     }
+    v3LostCheck();
     // fly with WASD (Q/E down/up, Shift faster)
     // (a key held down repeats its keydown many times a second; one that hasn't for 0.7 s was let go where
     // the page didn't hear it, a menu or a dialog of the window's own: the camera "that wouldn't stop",
