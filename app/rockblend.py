@@ -287,6 +287,41 @@ def learn(db):
     return out
 
 
+ROCK_FAMILY = re.compile(r'[_ ]*\d+[a-z]?$')
+FORT_FRONT = 700.0             # (no rock this near a castle's gate or keep: the way up to it)
+ROAD_HALF = 160.0              # (nor this near a road drawn on the land plan)
+
+
+def rock_family(rid):
+    """The set a rock model is of: its name less its number (terrain_rock_ac_12: terrain_rock_ac)."""
+    return ROCK_FAMILY.sub('', (rid or '').lower())
+
+
+def _one_family(db, ids, region):
+    """The culture's rocks kept to one set: a culture's towns stand in many regions, each with its own rock, and a
+    town drawn from them all stood 10 rocks of 6 sets, red sandstone beside ash rock beside mossy boulders (the
+    Headland run, 2026-11-11). The set the land's own fitting region stands (landregion.rock_region: weather, the
+    map, the ground's colour) first; else the culture's commonest."""
+    fams = {}
+    for i, n in ids.items():
+        fams.setdefault(rock_family(i), {})[i] = n
+    if len(fams) <= 1:
+        return ids
+    fit = set()
+    try:
+        import cliffrocks
+        import landregion
+        if region:
+            R = cliffrocks.learn(db, landregion.rock_region(db, region.lower())) or {}
+            for b in R.get('bands') or ():
+                for it in b.get('items') or ():
+                    fit.add(rock_family(it.get('id')))
+    except Exception as e:
+        print('rocks: the region\'s set:', e)
+    best = max(fams.items(), key=lambda t: (t[0] in fit, sum(t[1].values()), t[0]))
+    return best[1]
+
+
 def figures(db, P, culture, region=''):
     """The culture's figures (its own, or a kin's when its hill towns stood too few rocks), with only the rocks this
     load order has: {'rate', 'ids': {id: n}, 'scale', 'near', 'factor', 'from'}."""
@@ -313,6 +348,7 @@ def figures(db, P, culture, region=''):
     import landregion
     # (a home region's rocks only at home: Narsis's red sandstone in a Hlaalu town elsewhere, HOME_ROCKS)
     ids = {i: n for i, n in C['ids'].items() if db.resolve_id(i) is not None and landregion.home_rock_ok(i, region)}
+    ids = _one_family(db, ids, region)
     return {'rate': C['rate'], 'ids': ids, 'scale': C.get('scale') or {}, 'near': C.get('near') or {},
             'factor': max(0.25, min(3.0, C['rate'] / float(P['rate_all'] or 5.0))), 'from': name}
 
@@ -513,6 +549,19 @@ class _Space:
                 size = max(b[3] - b[0], b[4] - b[1]) * s
                 if 48 <= size <= 1600:
                     self.things.append((r['p'][0], r['p'][1], size / 2.0))
+        # (another make's castle by the town: nothing in its yard, nothing before its gate or keep; and the roads drawn
+        # on the land plan: a boulder stood on the ramp to a fort's gate, the Headland run 2026-11-11)
+        self.forts = []
+        self.lines = []
+        try:
+            for ft in townbuild._forts_for(db, self.outline or [], {}):
+                self.forts.append(([tuple(q_[:2]) for q_ in ft['ring']], [tuple(b_) for b_ in ft.get('blocks') or ()]))
+            land = getattr(getattr(db, 'project', None), 'land', None) or {}
+            for L_ in (land.get('plan') or {}).get('layers') or ():
+                if L_.get('kind') == 'road' and L_.get('on') is not False and len(L_.get('pts') or ()) >= 2:
+                    self.lines.append([tuple(q_[:2]) for q_ in L_['pts']])
+        except Exception as e:
+            print('rocks: castles and roads:', e)
         self.rocks = []                            # (x, y, half size, loose)
         self.refused = Counter()                   # (why spots were refused, for the lab)
         self.PATCH = townplan.PATCH
@@ -535,6 +584,16 @@ class _Space:
         cr = min(half, cross) if (bank and cross) else half
         if len(self.outline) >= 3 and not _inside_poly(self.outline, x, y) and _edge_dist(self.outline, x, y) > self.pad:
             return 'far'
+        for ring, blocks in self.forts:
+            if _inside_poly(ring, x, y) or _edge_dist(ring, x, y) < half * 0.5:
+                return 'fort'
+            for b_ in blocks:
+                if math.hypot(x - b_[0], y - b_[1]) < (b_[2] if len(b_) > 2 else 0.0) + FORT_FRONT + half * BODY:
+                    return 'fort'
+        for ln in self.lines:
+            for k_ in range(len(ln) - 1):
+                if _seg_dist(ln[k_], ln[k_ + 1], x, y) < ROAD_HALF + half * BODY:
+                    return 'road'
         for q in self.rects:
             if self._in_rect(q, x, y) or _rect_dist(q, x, y) < cr * 0.7 * 0.5:
                 return 'plot'

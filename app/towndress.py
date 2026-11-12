@@ -504,12 +504,17 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
         pts, b = _rect_of(t['id'], wx, wy, rz, t.get('s') or 1.0, memo, db)
         if not pts:
             continue
-        if t['hang'] and on is not None and t.get('dz_on') is not None:
+        sc0 = t.get('s') or 1.0
+        # (a sign's bracket, learnt as a post on the ground: on the wall where the game set it, held or left out)
+        bracket = bool(not t['hang'] and SIGN_HOLDER.search(t['id']) and t.get('dz') is not None and t['dz'] > BRACKET_UP
+                       and (b[5] - b[2]) * sc0 < BRACKET_UP)
+        hang = bool(t['hang']) or bracket
+        if hang and on is not None and t.get('dz_on') is not None:
             z = laid[on]['p'][2] + t['dz_on']          # (on its post, hook or bracket, by the post's height)
-        elif t['hang']:
+        elif hang:
             if door_z is None:
                 continue
-            z = door_z + t['z']
+            z = door_z + (t['dz'] if bracket else t['z'])
             # (by the door's height its foot under the ground here: a Telvanni root hook and its lanterns stood 100 deep
             # in the slope by a pod, the city round of 2026-11-02. Stood on the ground instead)
             gz_ = mapdata.terrain_z(db, wx, wy)
@@ -554,9 +559,16 @@ def _lay(db, scene, ox, oy, ang, space, memo, door_z=None, keep=None, hold=None)
                 _count('refused: space ' + space.why(_shrink(pts, 0.85)))
                 continue
         out.append({'id': t['id'], 'p': [round(wx, 2), round(wy, 2), round(z, 2), t.get('rx') or 0.0, t.get('ry') or 0.0, round(rz, 5)],
-                    's': t.get('s') or 1.0, 'pts': pts, 'up': 0.0 if t['hang'] else t['z'],
-                    'lo': b[2] * (t.get('s') or 1.0), 'hi': b[5] * (t.get('s') or 1.0), 'dz': t.get('dz'), 'n': n_, 'on': on, 'hung': bool(t['hang'])})
+                    's': t.get('s') or 1.0, 'pts': pts, 'up': 0.0 if hang else t['z'],
+                    'lo': b[2] * (t.get('s') or 1.0), 'hi': b[5] * (t.get('s') or 1.0), 'dz': t.get('dz'), 'n': n_, 'on': on, 'hung': hang})
         laid[n_] = out[-1]
+    # (one piece: a holder with no sign laid on it goes, and a sign laid on no holder)
+    used_ = {o['on'] for o in out if o.get('on') is not None}
+    gone_ = {o['n'] for o in out if SIGN_HOLDER.search(o['id']) and o['n'] not in used_} | \
+            {o['n'] for o in out if is_sign(o['id']) and o.get('on') is None}
+    if gone_:
+        _count('left out: a sign or its holder alone')
+        out = [o for o in out if o['n'] not in gone_]
     # (a thing standing on another of the scene, a cup on its table, only where that stands too: the table left out
     # for want of room, its redware stood in the air, the town audit of 2026-11-01)
     out.sort(key=lambda o: o['up'])
@@ -598,6 +610,30 @@ POSTS = {}                     # (the learnt holder -> light table, set by dress
 NAMED = set()                  # (signs named for a game place, set by dress)
 PALISADE = re.compile(r'palisade|stockade', re.I)
 SIGN = re.compile(r'sign(?!post|_?post|base|_?base|way|al)', re.I)
+# A sign and what it hangs from are one piece. The Imperial "signbase" is a wall bracket 47 high the game sets 250 up a
+# wall; filed with the posts (GROUND_KIND) it was stood in the dirt at the wall's foot, its sign with it or without
+# (the user's Headland, 2026-11-11: four bare brackets in the dirt, two signs in the air, a Mages' Guild sign lying
+# before a house).
+SIGN_HOLDER = re.compile(r'signbase|sign_?base|sign_?post|signway', re.I)
+BRACKET_UP = 120               # (a holder the game sets this far over the door's foot, itself shorter than this: a bracket)
+NO_SIGN = re.compile(r'guild|fact|legion|temple|cult|census|barrist', re.I)      # (signs of what the Workshop makes no hall of)
+SIGN_FOR = {'tavern': r'tavern|inn|pub|cornerclub',
+            'shop': r'goods|trader|merchant|shop|general|cloth|alch|apoth|book|pawn|smith|weapon|armou?r|arms|ench|fletch|potion|bow|tailor'}
+
+
+def is_sign(rid):
+    return bool(SIGN.search(rid or '')) and not HOLDER.search((rid or '').lower())
+
+
+def sign_ok(rid, kind):
+    """May this thing hang by a building of this kind? Anything that is no sign; a sign only of the building's own
+    trade: learnt with a game house of the same model, a guild's sign came to every house of that model."""
+    if not is_sign(rid):
+        return True
+    if NO_SIGN.search(rid):
+        return False
+    pat = SIGN_FOR.get(kind)
+    return bool(pat and re.search(pat, rid, re.I))
 OWN_TRIES = 3                  # copies of a building's own surroundings tried
 SET_WHOLE = 0.75               # a yard's set is laid when this share of its ground things fit, else none of it
 SAME_SPOT = 12                 # (one model this near itself and turned within SAME_TURN is the same thing twice: it flickers)
@@ -964,7 +1000,8 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
                 if cut:
                     space.take(cut)
             got = _lay(db, sc2, q['door'][0], q['door'][1], q['face'] + math.pi, space, memo, q.get('sill_z', q.get('door_z')),
-                       keep=lambda t: abs(t['x']) <= lim, hold=lambda g, f=q['face']: _held(db, g, f, memo))
+                       keep=lambda t, k_=q.get('kind'): abs(t['x']) <= lim and sign_ok(t['id'], k_),
+                       hold=lambda g, f=q['face']: _held(db, g, f, memo))
             if own is not None and own not in space.polys:
                 if cut:
                     space.polys.remove(cut)

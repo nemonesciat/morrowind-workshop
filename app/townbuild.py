@@ -266,6 +266,85 @@ def _explained(db, m, memo):
     return m if len(keep) == len(fp) else dict(m, fpieces=keep)
 
 
+CHIMNEY = re.compile(r'chimney', re.I)
+CHIMNEY_GAP = 40.0             # (a chimney's side this far from every wall and roof of its building touches none of it)
+CHIMNEY_HELD = True            # (off: the catalogue as it was, for measuring the rule)
+
+
+def _found_again(m, p, others):
+    """Is this piece at the same place, turned the same, on another game example of the module's main shell?"""
+    r = _rel_main(m, p)
+    if r is None:
+        return True
+    for o in others:
+        for q in o.get('fpieces') or ():
+            if q['id'].lower() != p['id'].lower():
+                continue
+            r3 = _rel_main(o, q)
+            if r3 and math.hypot(r[0] - r3[0], r[1] - r3[1]) <= 48 and abs(r[2] - r3[2]) <= 48 and abs((r[3] - r3[3] + 180.0) % 360.0 - 180.0) <= 6:
+                return True
+    return False
+
+
+def _held_chimneys(db, m, tri, others=()):
+    """The module without the chimneys that touch none of its shells: by the shells' real meshes, a ray every way from
+    the chimney's middle at each height of it, a wall or a roof met within its own half width and CHIMNEY_GAP. By the
+    shells' boxes (_explained) a chimney beside a round tower, inside the tower's square box, counted as on it: it was
+    the house's next door in the game, and stood alone by every copy of the tower (the user's Headland, 2026-11-11)."""
+    if not CHIMNEY_HELD or not others:
+        return m                                 # (the only example of its shell: nothing to tell a neighbour's by)
+    fp = m['fpieces']
+    chs = [p for p in fp if CHIMNEY.search(p['id']) and 'smoke' not in p['id'].lower() and _rec_type(db, p['id']) == 'STAT']
+    if not chs:
+        return m
+    import seethrough
+    sc = seethrough.Scene()
+    n = 0
+    for p in fp:
+        if p.get('door') or p.get('trim') or PORCH.search(p['id']) or WINDOWISH.search(p['id']) or _rec_type(db, p['id']) != 'STAT':
+            continue
+        ri = db.resolve_id(p['id'])
+        model = db.recs[ri][5] if ri is not None else None
+        if not model:
+            continue
+        if model not in tri:
+            tri[model] = seethrough.model_tris(db, model)
+        sc.add_model(tri[model], (p['x'], p['y'], p['z'], p.get('rx', 0.0), p.get('ry', 0.0), p['rz']), p.get('s') or 1.0)
+        n += 1
+    if not n:
+        return m
+    drop = []
+    for p in chs:
+        ri = db.resolve_id(p['id'])
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if not b:
+            continue
+        sc_ = p.get('s') or 1.0
+        c_, s_ = math.cos(p['rz']), math.sin(p['rz'])
+        lx, ly = (b[0] + b[3]) / 2.0 * sc_, (b[1] + b[4]) / 2.0 * sc_
+        cx, cy = p['x'] + lx * c_ + ly * s_, p['y'] - lx * s_ + ly * c_
+        half = max(b[3] - b[0], b[4] - b[1]) * sc_ / 2.0
+        z, z1 = p['z'] + b[2] * sc_ + 12.0, p['z'] + b[5] * sc_
+        # (stood on a roof, its foot on the slope: a roof straight under its foot, at its middle or towards a corner)
+        hit = any(sc.nearest_any((cx + ox_ * half * 0.6, cy + oy_ * half * 0.6, z + 24.0), (0.0, 0.0, -1.0), 24.0 + 12.0 + CHIMNEY_GAP * 2) is not None
+                  for ox_, oy_ in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)))
+        while z < z1 and not hit:
+            hit = any(sc.nearest_any((cx, cy, z), (math.cos(k * math.pi / 4), math.sin(k * math.pi / 4), 0.0), half + CHIMNEY_GAP) is not None
+                      for k in range(8))
+            z += 32.0
+        if not hit and not _found_again(m, p, others):
+            # (a chimney the game sets at the same place on another example of the shell is the building's own, however
+            # it meets its wall: 20 of the Reach houses' 64 touched nothing by the rays, lab)
+            drop.append(p)
+    if not drop:
+        return m
+    gone = {id(p) for p in drop}
+    for p in fp:
+        if 'smoke' in p['id'].lower() and any(math.hypot(d['x'] - p['x'], d['y'] - p['y']) <= 96 for d in drop):
+            gone.add(id(p))
+    return dict(m, fpieces=[p for p in fp if id(p) not in gone])
+
+
 def _rec_type(db, rid):
     ri = db.resolve_id(rid)
     return db.recs[ri][0] if ri is not None else None
@@ -692,6 +771,7 @@ def _game_catalog(db):
         m = _no_repeats(m)
         m = _drop_apart(db, m, memo)
         m = _explained(db, m, memo)          # (a porch holds a door of its own building; a window sits on its shell)
+        m = _held_chimneys(db, m, tri, [o for o in by_main.get(str(raw.get('main') or '').lower(), ()) if o is not raw])     # (and a chimney touches a wall or a roof of it)
         m = _square_parts(m, [o for o in by_main.get(str(raw.get('main') or '').lower(), ()) if o is not raw])     # (and turned as its house is)
         m = _without_lone_doors(db, m, memo, tri)
         if m is None:
@@ -1179,6 +1259,31 @@ def looks(db, culture):
     return out if len(out) >= 2 else []
 
 
+GROUND_FIT = True              # (off: buildings fitted as before, for measuring the rule)
+GROUND_SLACK = 48.0            # (ground this far past the terrace's reach still passes: a foundation's own depth)
+WATER_CLEAR = 16.0             # (no corner of a building on ground lower than this over the sea)
+
+
+def _ground_misfit(db, rect, fx, fy):
+    """How far the ground under a building's outline lies beyond what its terrace evens (townplan.TERRACE_TOL each way
+    from the ground before its door, _terrace): 0 where it fits, the excess at the worst of its corners, side middles and
+    middle; a great number where a point is in the water or off the land. A game building bigger than the plot cut for
+    it stood out over the shore's bank, its seaward side in the air."""
+    import townplan
+    gz = mapdata.terrain_z(db, fx, fy)
+    if gz is None:
+        return 1e9
+    pts = list(rect) + [((rect[k][0] + rect[(k + 1) % 4][0]) / 2.0, (rect[k][1] + rect[(k + 1) % 4][1]) / 2.0) for k in range(4)]
+    pts.append((sum(p_[0] for p_ in rect) / 4.0, sum(p_[1] for p_ in rect) / 4.0))
+    worst = 0.0
+    for x_, y_ in pts:
+        z_ = mapdata.terrain_z(db, x_, y_)
+        if z_ is None or z_ < WATER_CLEAR:
+            return 1e9
+        worst = max(worst, abs(z_ - gz) - townplan.TERRACE_TOL)
+    return worst
+
+
 def fit(db, plan, seed=1):
     """A building for each plot of the plan: the town's culture's own (or the nearest culture's, when it has few),
     the plot's kind first, about the plot's size, not the same one over and over. Each plot gets 'b': {key, culture,
@@ -1325,6 +1430,8 @@ def fit(db, plan, seed=1):
                 way = _doorway(dx, dy, c, sn)
                 if any(townplan._overlap(rect, w_) for w_ in ways) or any(townplan._overlap(way, o) for o in placed):
                     continue
+                if GROUND_FIT and _ground_misfit(db, rect, *_world(dx, dy, c, sn, 0.0, -120.0)) > GROUND_SLACK:
+                    continue                             # (over a bank or the water: _ground_misfit)
                 # (a game building bigger than its plot stood out of it against the wall, 3 to 5 a town; and a door's
                 # way out past its building's own outline, into the wall or another building)
                 if len(room) >= 4 and not all(townwalls._inside(room, p_) for p_ in rect):
@@ -2171,6 +2278,13 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                     db.sync_project()
             except Exception as e:
                 print('town open walls:', e)
+            try:
+                n_sg = _pair_signs(db, cells, new_refs)
+                if n_sg:
+                    print('town: %d signs and holders left out, one without the other or a bracket at the ground' % n_sg)
+                    db.sync_project()
+            except Exception as e:
+                print('town signs:', e)
         _say('Saving', 0.98)
         editing.commit(db, 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s%s' % (
             culture, made, pieces, len(cells), ((', a wall of %d pieces' % wall) if wall else '') + ((', %d things set out' % dressed) if dressed else ''),
@@ -4107,6 +4221,53 @@ DOOR_STEP = re.compile(r'entrance|porch|stoop|step|doorframe|door_frame|awning|s
 LOOSE_WALL = re.compile(r'drystonewall|stonewall|ruin\w*wall|wall\w*ruin|rubblewall', re.I)
 OPEN_END_OUT = 12.0            # (an open end is met by what stands this far beyond it)
 OPEN_END_BURIED = 24.0         # (or lies in the ground to within this of its top)
+
+
+SIGN_PAIR = 90.0               # (a sign and its holder stand this near each other)
+SIGN_LOW = 120.0               # (a sign's wall bracket this near the ground at its foot is in the dirt)
+
+
+def _pair_signs(db, cells, new_refs):
+    """The count taken out: of the town's new things, a sign with no holder by it, a holder with no sign, and a pair
+    whose bracket stands at the ground. Whatever laid them (a doorstep scene, a trade's sign, a yard), a sign and what
+    it hangs from are one piece: the user, 2026-11-11, "I dont want to see signs without signbases or signbases without
+    signs, and i see lots of either and rarely both correctly"."""
+    import towndress
+    p = db.project
+    signs, holders = [], []
+    for ck in cells:
+        for r in mapdata.cellmap(db, ck).get('refs') or ():
+            if r['k'] not in new_refs or r.get('type') not in ('STAT', 'ACTI'):
+                continue
+            if towndress.SIGN_HOLDER.search(r['id']):
+                holders.append((ck, r))
+            elif towndress.is_sign(r['id']):
+                signs.append((ck, r))
+    near = lambda a, b: math.hypot(a['p'][0] - b['p'][0], a['p'][1] - b['p'][1]) <= SIGN_PAIR and abs(a['p'][2] - b['p'][2]) <= 400
+    gone = []
+    for ck, h in holders:
+        mine = [s for _c, s in signs if near(h, s)]
+        b = h.get('b') or (0, 0, 0, 0, 0, 0)
+        gz = mapdata.terrain_z(db, h['p'][0], h['p'][1])
+        low = (b[5] - b[2]) * (h.get('s') or 1.0) < SIGN_LOW and gz is not None and h['p'][2] - gz < SIGN_LOW
+        if not mine or low:
+            gone.append((ck, h))
+            gone.extend((c2, s) for c2, s in signs if s in mine and low)
+    for ck, s in signs:
+        if not any(near(h, s) for _c, h in holders):
+            gone.append((ck, s))
+    done = set()
+    n = 0
+    for ck, r in gone:
+        c = p.cells.get(ck)
+        if r['k'] in done or c is None or r['k'] not in (c.get('refs') or {}):
+            continue
+        done.add(r['k'])
+        c['refs'].pop(r['k'])
+        p.town_parts.pop(r['k'], None)
+        new_refs.discard(r['k'])
+        n += 1
+    return n
 
 
 def _drop_open_walls(db, cells, new_refs):

@@ -119,6 +119,10 @@ def _cast_of(S, setting, culture):
         else S['casts'].get(setting) or S['casts'].get('house')
 
 
+BEDDISH = re.compile(r'(^|[^a-z])bed(?!side)|bunk|hammock|bedroll', re.I)
+BY_THING = re.compile(r'table|counter|(^|_)bar(_|$)|desk|shel[fv]|bookcase|hearth|fireplace|oven|forge|anvil|loom|altar|cupboard|dresser|chest', re.I)
+
+
 def how_many(S, info, density='usual'):
     """How many people a place like this has: the game's own median for its setting, scaled by its size."""
     C = _cast_of(S, info['setting'], info['culture'])
@@ -128,7 +132,17 @@ def how_many(S, info, density='usual'):
     size = (C.get('pieces') or [0, 0, 0])[1] or 0
     scale = (info['pieces'] / size) ** 0.6 if size and info['pieces'] else 1.0
     n = p50 * max(0.5, min(3.0, scale)) * DENSITY.get(density, 1.0)
-    return max(1, min(MAX_PEOPLE, int(round(n))))
+    n = max(1, min(MAX_PEOPLE, int(round(n))))
+    # (a home holds who can sleep in it: scaled by its size alone, a house of one bed got eight people, the user's
+    # Headland 2026-11-11. The game's homes: one or two, a family of three or four in the big ones)
+    beds = sum(1 for f in info.get('furniture') or () if BEDDISH.search(str(f.get('fam') or '') + ' ' + f['id']))
+    if info['setting'] == 'house':
+        n = min(n, max(1, beds) + 1, 4)
+    elif info['setting'] == 'manor':
+        n = min(n, max(2, beds) + 2, 6)
+    elif info['setting'] == 'shop':
+        n = min(n, 3)
+    return n
 
 
 # ---------------------------------------------------------------- one person
@@ -333,6 +347,23 @@ def spot(db, info, p, rng, taken, used):
         rz = (f['p'][5] + (st.get('turn') or 0) * math.pi / 2) % (2 * math.pi)
         used.add(f['k'])
         return [round(x, 1), round(y, 1), round(z, 1), round(rz, 4), f['fam']]
+    # (by a thing all the same, facing it, where the game's own stands have none for this role: at a table, a
+    # counter, the hearth, a shelf. On the open floor, turned any way, a household stood about its room like a crowd
+    # waiting; the user: "They arent at tables, stations, doing anything")
+    near = [f for f in info['furniture'] if f['k'] not in used and f.get('b') and BY_THING.search(str(f.get('fam') or '') + ' ' + f['id'])]
+    rng.shuffle(near)
+    for f in near[:16]:
+        b, s_ = f['b'], f.get('s') or 1.0
+        fr = furnish.front_of(db, f['id']) or (0.0, -1.0)
+        depth = (abs(fr[0]) * (b[3] - b[0]) + abs(fr[1]) * (b[4] - b[1])) * s_ / 2.0
+        for side in (1, -1):
+            wx, wy = _world(fr[0] * (depth + 40) * side, fr[1] * (depth + 40) * side, f['p'][5])
+            x, y = f['p'][0] + wx, f['p'][1] + wy
+            rm = _room_of(info, x, y)
+            if rm is None or not _clear(info, taken, x, y):
+                continue
+            used.add(f['k'])
+            return [round(x, 1), round(y, 1), round(rm['floor'] + 4, 1), round(math.atan2(f['p'][0] - x, f['p'][1] - y) % (2 * math.pi), 4), f['fam']]
     # open floor: a clear spot in one of the rooms
     rooms = list(info['rooms'])
     rng.shuffle(rooms)

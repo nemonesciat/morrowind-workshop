@@ -35,7 +35,7 @@ NOT_ANCHOR = re.compile(r'chair|stool|bench(?!.*work)|shelf|rug|banner|tapestry'
 SMALL = {'MISC', 'INGR', 'ALCH', 'BOOK', 'APPA', 'WEAP', 'ARMO', 'CLOT', 'LOCK', 'PROB', 'REPA'}
 # (no keys, notes for a quest, markers; and no plants, eggs or corpses: the game files a harvestable mushroom or
 # lichen as a small container, and the first camps grew kanet on their tables, lab jcamp3)
-NOT_THING = re.compile(r'^key_|_key$|_key_|^bk_.*(note|letter)_|marker|^sound|propylon|^misc_soulgem_azura|^t_.*_unique'
+NOT_THING = re.compile(r'^key_|_key$|_key_|^bk_.*(note|letter)_|marker|(^|_)mark_|^sound|propylon|^misc_soulgem_azura|^t_.*_unique'
                        r'|flora|kollop|_egg|egg_|corpse|_dead|plant|kanet|lichen|mushroom|bittergreen|_bush|^bm_.*_(berry|herb)')
 _mem = {}
 
@@ -480,7 +480,7 @@ STORY_ANCH = [('remains', re.compile(r'corpse|skeleton|skull|bonepile|bone_pile|
               ('altar', re.compile(r'altar|shrine|_offering|dae_statue|daedric_statue|ritual'))]
 STORY_LINK = 250                # remains or altars this near each other tell one story
 STORY_NEAR = 200                # what lies this near them is the story's
-STORY_SKIP = re.compile(r'^sound|mist|collision|marker|flora|web')
+STORY_SKIP = re.compile(r'^sound|mist|collision|marker|(^|_)mark_|flora|web')
 STORY_MAX = {'fallen': 2, 'offering': 1, 'bones': 2}
 HUNG = 70                       # a story's thing whose bottom is this far over the floor hangs (left out)
 

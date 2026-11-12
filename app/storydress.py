@@ -314,6 +314,53 @@ def _wild_trees(db, region):
         return {}
 
 
+_HOME = {}
+
+
+def _plant_home(db, region):
+    """The region whose plants grow on this region's land: its own where it has any, else the one nearest in weather
+    and on the map (landregion.plant_region). One region for a place's beds, trees and undergrowth alike."""
+    r = (region or '').lower()
+    if r not in _HOME:
+        try:
+            import landregion
+            _HOME[r] = (landregion.plant_region(db, r) or r).lower()
+        except Exception as e:
+            print('plants: the land\'s region:', e)
+            _HOME[r] = r
+    return _HOME[r]
+
+
+def _own_species(db, what, region):
+    """What the game grows in scenes of this kind in this very region ({base id: n}), {} where it has under two."""
+    import gardensurvey
+    s = gardensurvey.outdoor_ready(db)
+    if not s or not s.get(what):
+        return {}
+    key = {'fields': 'crops_by_region', 'orchards': 'trees_by_region', 'beds': 'kinds_by_region', 'house_trees': 'trees_by_region'}.get(what)
+    own = ((s[what].get(key) or {}).get((region or '').lower())) if key else None
+    return dict(own) if own and sum(own.values()) >= 2 else {}
+
+
+def _wild_kinds(db, region, kind):
+    """{kind-name: n}: what grows wild of a kind ('trees', 'plants') on a region's own land (landdecor's squares)."""
+    try:
+        import landdecor
+        from collections import Counter
+        import gardensurvey
+        C = Counter()
+        for sqs in landdecor.learn(db, region)['squares'].values():
+            for sq in sqs:
+                for it in sq:
+                    low = it[0].lower()
+                    if low.startswith('dlt_') or landdecor.kind_of(low) != kind or re.search(r'log|stump|dead|fallen|branch', low):
+                        continue
+                    C[gardensurvey.plant_base(low)] += 1
+        return dict(C.most_common(6))
+    except Exception:
+        return {}
+
+
 def _species(db, what, region, culture, fallback=()):
     """{kind-name: weight} of what the game grows in scenes of this kind in this region (gardensurvey.region_species:
     the region's, else the culture's, else every place's), kept to the names this load order has; the fallback names
@@ -322,7 +369,15 @@ def _species(db, what, region, culture, fallback=()):
     pool = {}
     try:
         import gardensurvey
-        pool = gardensurvey.region_species(db, what, region, culture) or {}
+        # (the region's own; a region the game grows nothing by houses in, the continent's unmade land, takes its
+        # land's own region's (_plant_home), beds and trees alike, then what grows wild there: by the culture's whole
+        # range a bayou village got Ashlands grass, a Mournhold tree and Cyrodiil figs, the Headland run 2026-11-11)
+        home = _plant_home(db, region)
+        pool = _own_species(db, what, region) or (_own_species(db, what, home) if home != (region or '').lower() else {})
+        if not pool and what in ('beds', 'house_trees') and home:
+            pool = {b: n for b, n in _wild_kinds(db, home, 'trees' if what == 'house_trees' else 'plants').items() if V.get(b)}
+        if not pool:
+            pool = gardensurvey.region_species(db, what, region, culture) or {}
     except Exception:
         pool = {}
     out = {b: n for b, n in pool.items() if V.get(b)}
@@ -1237,6 +1292,9 @@ def _wild_small(db, x, y):
     import landdecor
     gx, gy = math.floor(x / 8192.0), math.floor(y / 8192.0)
     regs = [_region_at(db, x, y, {})]
+    home = _plant_home(db, regs[0])
+    if home and home not in regs:
+        regs.append(home)                      # (the same region the beds and trees are of, before the nearest land's)
     try:
         regs += [r for r in landdecor.nearest_lands(db, gx, gy, lambda r: landdecor._broad(db, r) and landdecor._grows(db, r) >= landdecor.ENOUGH, 6) if r not in regs]
     except Exception:

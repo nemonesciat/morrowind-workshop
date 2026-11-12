@@ -433,12 +433,47 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
     in its own style, its doors linked both ways. {'key', 'name'}, or None when the builder has no plan for it."""
     import frombuilding
     import zlib
-    out = frombuilding.build(db, dr[0], dr[1], name, door_key=dr[1], kit=kit, floors=floors,
-                             seed=zlib.crc32(('%s|%s|%d' % (seed, name, n)).encode()) % 100000)
-    if not out or not out.get('key'):
+    out = None
+    for go in range(OWN_TRIES):
+        out = frombuilding.build(db, dr[0], dr[1], name, door_key=dr[1], kit=kit, floors=floors,
+                                 seed=zlib.crc32(('%s|%s|%d' % (seed, name, n + 1000 * go)).encode()) % 100000)
+        if not out or not out.get('key'):
+            return None
+        # (walked by the Workshop's own finder before it is kept: a layout with a wall open to the void, a doorway to
+        # nowhere, was handed over as a house; another layout is tried, then the game's own interior stands in)
+        bad = _open_faults(db, out['key'])
+        if not bad:
+            break
+        print('town own layout: %s has %d open faults (%s), %s' % (name, len(bad), ', '.join(sorted({i.get('kind') or '?' for i in bad})),
+                                                                  'made again' if go + 1 < OWN_TRIES else 'left out'))
+        p = db.project
+        p.cells.pop(out['key'], None)
+        p.records.pop('PGRD|' + out['key'], None)
+        db.sync_project()
+        out = None
+    if out is None:
         return None
     return {'key': out['key'], 'name': name, 'own_layout': True,
             'ready': (out.get('plan') or {}).get('style_name') == 'Ready-made interiors'}
+
+
+OWN_TRIES = 3                  # (layouts tried for a building before the game's own interior stands in)
+OPEN_KINDS = ('hole', 'gap', 'doorway')
+
+
+def _open_faults(db, key):
+    """The made place's open faults by Find gaps (fixit.scan, what is worse than the game's own places): holes to the
+    void, open sides, doorways that lead nowhere. [] when the finder cannot read the place."""
+    try:
+        import fixit
+        res = fixit.scan(db, key)
+        return [i for i in (res.get('issues') if isinstance(res, dict) else res) or () if i.get('kind') in OPEN_KINDS]
+    except Exception as e:
+        print('town own layout check:', key, e)
+        return []
+
+
+HOME_MOST = {'house': (1, 1, 4), 'shack': (1, 0, 2), 'farm': (1, 1, 4), 'manor': (2, 2, 6), 'shop': (1, 1, 3)}   # (kind: beds at least, more than beds, at most)
 
 
 def copy_building(db, q, t, name, taken):
@@ -1234,6 +1269,19 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                 r_ = next(r_ for r_ in mapdata.cellmap(db, key_).get('refs') or () if r_['k'] == rk_)
                 plots.append({'b': q['b'], 'kind': 'house', 'door_ref': (key_, rk_), 'door': list(r_['p'][:3]), 'face': q.get('face'), '_of': q})
         ppl = (cast_ or {}).get('people') or [] if people and rooms == 'furnished' else []
+        if ppl and kind in HOME_MOST:
+            # (cast on the game's place of this building, a guild hall's eight came to live in a house of one bed: the
+            # user's Headland, "like 7 people in a random house". Who can sleep there, its head first)
+            try:
+                import populate as _pop
+                beds_ = sum(1 for f_ in _pop.place_info(db, out['key'])['furniture'] if _pop.BEDDISH.search(str(f_.get('fam') or '') + ' ' + f_['id']))
+            except Exception:
+                beds_ = 1
+            lo_, add_, hi_ = HOME_MOST[kind]
+            most_ = min(hi_, max(lo_, beds_) + add_)
+            if len(ppl) > most_:
+                heads_ = [p_ for p_ in ppl if p_.get('relation') in ('head', 'leader')][:1]
+                ppl = heads_ + [p_ for p_ in ppl if p_ not in heads_][:max(0, most_ - len(heads_))]
         if ppl:
             import populate
             # (a householder never fights on sight: a jailor and a trader cast with fight 90 attacked the player at

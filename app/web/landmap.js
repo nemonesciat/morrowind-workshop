@@ -1467,6 +1467,24 @@ function lsTownOpts(T){
     else if (L.kind === 'wall' && !o.wall) o.wall = L.pts;
     else if (L.kind === 'gate') (o.gates = o.gates || []).push(L.pts[0]);
   }
+  // (a Road drawn through the town is one of its streets there: the plan knew nothing of it and stood a house on
+  // the road, the Headland run 2026-11-11)
+  if ((T.pts || []).length >= 3){
+    const inT = (x, y) => { let c = false; for (let i = 0, j = T.pts.length - 1; i < T.pts.length; j = i++){ const a = T.pts[i], b = T.pts[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+    for (const L of LM.plan.layers){
+      if (L.on === false || L.kind !== 'road' || (L.pts || []).length < 2) continue;
+      let run = [];
+      const done = () => { if (run.length >= 2 && Math.hypot(run[run.length - 1][0] - run[0][0], run[run.length - 1][1] - run[0][1]) >= 512) (o.roads = o.roads || []).push(run); run = []; };
+      for (let k = 0; k < L.pts.length - 1; k++){
+        const a = L.pts[k], b = L.pts[k + 1], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 128));
+        for (let s = 0; s <= n; s++){
+          const x = a[0] + (b[0] - a[0]) * s / n, y = a[1] + (b[1] - a[1]) * s / n;
+          if (inT(x, y)) run.push([Math.round(x), Math.round(y)]); else done();
+        }
+      }
+      done();
+    }
+  }
   return o;
 }
 // (a wall drawn and none chosen: the culture's own)

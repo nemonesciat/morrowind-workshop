@@ -59,6 +59,7 @@ GUARD_KINDS = 3                # (a town's guards share this many records, as th
 SEEN = {}                      # (the last town's figures, for the checks)
 BIG_TOWN = 25                  # (a town of this many buildings or more lives as the game's big towns do: their own rates)
 AWNING = re.compile(r'awning|canopy|overhang', re.I)
+MARKISH = re.compile(r'marker|(^|_)mark_', re.I)       # (an editor's marker learnt with a scene: TR_m7_MARK_Ns_Merona on a quay)
 AWNING_NEAR = (400, -300, 150)  # (an awning this near a door, sideways, out and in, in its frame, is the door's)
 LONE_MOST = 3                  # (a lone stall scene stands this often in a town at most, whatever the rate asks)
 AWNING_HEAD = 180              # (an awning whose underside is under this over the door's floor stands on posts, or hangs in the
@@ -489,6 +490,8 @@ SIGN_SIDE = (90, 220)          # (beside the door, as the game's hang: 70-250 of
 SIGN_OUT = -45                 # (out from the wall)
 SIGN_UP = (165, 215)           # (over the door's foot)
 SIGN_WALL = 80                 # (its wall this near: the town audit's own reach for a hung thing)
+SIGN_BRACKET = 'furn_imp_signbase_01'      # (what the game hangs these signs from: an arm 107 long, its +y end on the wall, 45 off)
+SIGN_HANG = (0.0, -17.5, 39.0)             # (where a sign hangs on it, in the bracket's frame: the game's, two pairs measured)
 
 
 def _module_ids(db, q, memo):
@@ -648,7 +651,7 @@ def _door_awnings(db, L, built, memo, space=None):
         # were laid a second time 200 over its own, lab b24)
         own = _module_ids(db, q, cat_memo)
         for t in A[ex]:
-            if t['id'].lower() in own:
+            if t['id'].lower() in own or MARKISH.search(t['id']):
                 continue
             wx, wy = towndress._world(q['door'][0], q['door'][1], q['face'] + math.pi, t['x'], t['y'])
             # (on posts that reach the ground, never over a door's way in: a Hlaalu overhang's posts stood on two door
@@ -827,6 +830,8 @@ def dress(db, plan, rng, space, memo, laid=(), amount=1.0):
     SEEN['storage tries'] = tries
     # shop signs by the doors of the town's trades, as often as the culture's game towns hang them a building
     n_sign = int(_rate(L, cult, 'sign', B) * B * amount + rng.random())
+    # (a tavern shows its sign: at the game's rate a village of ten got none, and its inn stood unmarked)
+    n_sign = max(n_sign, sum(1 for q_ in plan['plots'] if q_.get('b') and q_.get('kind') == 'tavern'))
     signs = _signs(db, L, cult, plan, rng, n_sign, memo)
     out.extend(signs)
     SEEN['made'] = {'stalls': made_sell, 'lone stalls': made_lone, 'storage clusters': placed, 'signs': len(signs)}
@@ -861,22 +866,35 @@ def _signs(db, L, cult, plan, rng, n, memo):
         if not cands or q.get('door_z') is None:
             continue
         sid = rng.choice(cands)
+        # (a sign goes up with its bracket or not at all: hung alone by a door it stood in the air, the wall "near
+        # enough" 80 off, the user's Headland 2026-11-11, "sign doesn't get added without a signbase")
+        ri_b, ri_s = db.resolve_id(SIGN_BRACKET), db.resolve_id(sid)
+        sb = mapdata.object_bounds(db, ri_s) if ri_s is not None else None
+        if ri_b is None or not sb or sb[5] > 12:
+            continue                             # (no bracket in this load order, or a board that hangs by no ring at its top)
         ang = q['face'] + math.pi
-        for side in rng.sample((1, -1), 2):
-            lx = side * rng.uniform(*SIGN_SIDE)
+        rz = round(ang % (2 * math.pi), 5)
+        ix, iy = towndress._world(0.0, 0.0, ang, 0.0, 1.0)         # (into the wall)
+        # (each side of the door, at a few steps along the wall: one draw a side found no wall behind it on a narrow
+        # front, and the inn went unmarked)
+        tries = [side * v for side in rng.sample((1, -1), 2) for v in [rng.uniform(*SIGN_SIDE)] + [SIGN_SIDE[0] + k_ * (SIGN_SIDE[1] - SIGN_SIDE[0]) / 4.0 for k_ in range(5)]]
+        for lx in tries:
             wx, wy = towndress._world(q['door'][0], q['door'][1], ang, lx, SIGN_OUT)
             z = q.get('sill_z', q['door_z']) + rng.uniform(*SIGN_UP)       # (over the sill: the door's own height is its middle on some doors)
-            g = {'id': sid, 'p': [round(wx, 2), round(wy, 2), round(z, 2), 0.0, 0.0, round(ang % (2 * math.pi), 5)], 's': 1.0}
-            if not towndress._held(db, g, q['face'], memo):
-                continue
-            # (and its wall near enough to square it against: held by a wall 120 off to its side, a sign hung in the
-            # air beside a porch, lab AFTER)
+            g = {'id': SIGN_BRACKET, 'p': [round(wx, 2), round(wy, 2), round(z, 2), 0.0, 0.0, rz], 's': 1.0}
+            # (the wall straight behind the bracket's arm, where its end meets it)
             sc = doors._local_scene(db, {'p': [wx, wy, z, 0, 0, 0]})
-            if not any(sc.nearest_any((wx, wy, z), (math.cos(a_ * math.pi / 4), math.sin(a_ * math.pi / 4), 0.0), SIGN_WALL) is not None
-                       for a_ in range(8)):
+            h_ = sc.nearest_any((wx, wy, z + 25.0), (ix, iy, 0.0), SIGN_WALL)
+            if h_ is None:
                 continue
+            d_ = (h_[0] if isinstance(h_, (tuple, list)) else h_) - 46.0
+            wx, wy = wx + ix * d_, wy + iy * d_                    # (its end on the wall's face)
+            g['p'][0], g['p'][1] = round(wx, 2), round(wy, 2)
+            sx, sy = towndress._world(wx, wy, ang, SIGN_HANG[0], SIGN_HANG[1])
             g.update(hung=True, on=None, role='sign', up=0.0)
             out.append(g)
+            out.append({'id': sid, 'p': [round(sx, 2), round(sy, 2), round(z + SIGN_HANG[2], 2), 0.0, 0.0, rz], 's': 1.0,
+                        'hung': True, 'on': None, 'role': 'sign', 'up': 0.0})
             break
     return out
 
