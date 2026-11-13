@@ -2297,7 +2297,11 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     # banks and the wall's, a crown outcrop on a knoll; each sunk until its mesh's bottom rim is under the ground.
     # rockblend.py, the user's lesson of 2026-11-08: "the cliff and rock palette ... a rugged and lofty appearance")
     rocks_n = 0
-    if pieces and made and (opts or {}).get('rocks', True) and os.environ.get('TOWN_ROCKS', '1') != '0':
+    # (rocks_k, trees_k: the town's own amounts, 1 as its culture's towns have them, 0 none, 2 twice. A town on an
+    # island came up ringed with boulders and nothing to turn them down by; a user on Discord, 2026-11-13)
+    rocks_k = _amount_of(opts, 'rocks_k')
+    trees_k = _amount_of(opts, 'trees_k')
+    if pieces and made and (opts or {}).get('rocks', True) and rocks_k > 0 and os.environ.get('TOWN_ROCKS', '1') != '0':
         _say('Setting rocks into the hill', 0.885)
         try:
             import rockblend
@@ -2320,7 +2324,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                     import traceback
                     traceback.print_exc()
                     print('town retaining walls:', e)
-            rb = rockblend.blend(db, plan, plan.get('culture') or culture, seed, W, new_refs, cells, outline=plan.get('outline') or outline)
+            rb = rockblend.blend(db, plan, plan.get('culture') or culture, seed, W, new_refs, cells, amount=rocks_k, outline=plan.get('outline') or outline)
             rb['walls'] = rw or {}
             if rb['rocks']:
                 rocks_n = rockblend.place(db, rb['rocks'], new_refs, cells)
@@ -2363,7 +2367,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         # storydress.yards. Kept clear of what the dressing laid)
         try:
             import storydress
-            laid_ += storydress.yards(db, plan, seed, blocked, also=also + [(t_['id'], t_['p']) for t_ in laid_])
+            laid_ += storydress.yards(db, plan, seed, blocked, also=also + [(t_['id'], t_['p']) for t_ in laid_], trees_k=trees_k)
         except Exception as e_:
             print('town yards:', e_)
         # (and round each shack and hut, what the game sets round that model outside: ropes and hooks on its walls,
@@ -2795,6 +2799,15 @@ CLEARABLE = re.compile(r'tree|flora|plant|bush|shrub|grass|fern|log|stump|root|k
 NOT_CLEARABLE = re.compile(r'wall|house|door|tower|bridge|stair|cave|ruin|_x_|_in_|platform|planter', re.I)
 ROCKISH = re.compile(r'rock|boulder|stone_', re.I)
 CLEAR_PAD = 160                # (round each plot, and this far either side of the wall's line, the ground is cleared)
+
+
+def _amount_of(opts, key):
+    """A town's own amount of a thing (opts[key]): 1 with none given, kept to 0..4."""
+    try:
+        v = (opts or {}).get(key)
+        return 1.0 if v is None or v == '' else max(0.0, min(4.0, float(v)))
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def _clear_ground(db, plan, W):

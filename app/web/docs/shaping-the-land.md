@@ -554,6 +554,8 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **Density:** how many buildings, against the culture's own towns of that size (1). Raise it for a city on a big
   outline (the game's towns gather round their middle and leave open ground); lower it for a hamlet. A walled town
   fills its wall at 1 and over.
+- **Rocks** and **Trees:** how many of each the town sets, against its culture's own towns (1). 0 for none. Rocks
+  only stand where the ground is steep and trees where there is room, so past 1 a town gains few.
 - **Streets:** as its towns' (wide), **narrower**, or **lanes**, one ground square (512) across.
 - **Trade:** fishing, farming, mining or trading, as the game's towns that live by it, or **any** for the culture's
   own mix. A proposed town comes with the one its land gave it.

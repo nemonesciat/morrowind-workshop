@@ -1236,7 +1236,9 @@ def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):
     for x_, y_, _z, rz_, s_, b_ in boxes:
         covered.update(v for v in footprint(x_, y_, rz_, s_, b_) if v in steep)
     before = len(covered) / float(len(steep))
-    target = min(0.95, BANK_COVER * max(0.3, min(1.15, amount)))
+    # (down to nothing with the amount: it was held at 0.3 of the cover at least, and a town asked for a tenth of its
+    # rocks still shored a quarter of its banks)
+    target = min(0.95, BANK_COVER * max(0.0, min(1.15, amount)))
     # (a vertex on a street, a road patch, the square or a footpath's tread is the walk itself: never a bank's rock)
     order = []
     skip = Counter()

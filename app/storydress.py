@@ -920,10 +920,11 @@ def _standing(db, plan, memo, cells=None):
     return out
 
 
-def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0):
+def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0):
     """[{'id', 'p', 's', 'role'}]: fences, yard sets, garden rows, beds, trees, planters and vines for a made town
     (plan as townbuild.fit left it). blocked: polygons kept clear (the wall); also: [(id, p)] things laid already
-    (the dressing's), kept clear of."""
+    (the dressing's), kept clear of. trees_k: the town's own amount of trees, by its houses and on its open ground (1 as
+    the culture's towns have them, 0 none, 2 twice)."""
     import towndress
     cult = plan.get('culture') or 'Imperial'
     F = FENCES.get(cult) or FENCES.get(FENCE_KIN.get(cult, ''), None)
@@ -962,7 +963,7 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0):
     # the game's rates a building for the culture (gardensurvey.per_building); planters on balconies and walls
     # ('high', a third of the game's) have no home on the ground, so that share is left out
     r_beds = _rate(db, 'beds', cult) * amount
-    r_trees = _rate(db, 'house_trees', cult) * amount
+    r_trees = _rate(db, 'house_trees', cult) * amount * trees_k
     pf0 = _fig(db, 'planters', cult, None)
     r_planters = _rate(db, 'planters', cult) * (1.0 - float((pf0.get('stand') or {}).get('high') or 0)) * amount
     r_vines = _rate(db, 'vines', cult) * amount
@@ -1081,7 +1082,7 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0):
     # in the green patch by the road")
     if amount > 0:
         try:
-            pk = pockets(db, plan, space, memo, rng, cult, pool, add, amount)
+            pk = pockets(db, plan, space, memo, rng, cult, pool, add, amount, trees_k)
             n.update(pk)
         except Exception as e_:
             WHY['pockets: %s' % e_] = 1
@@ -1136,7 +1137,7 @@ def _max_rect(grid, W, H):
     return out
 
 
-def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0):
+def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0, trees_k=1.0):
     """The town's open ground (inside its wall or outline, gentle, clear of everything `space` holds: the plots,
     door ways, streets, the dressing, the rocks, the yards) read on a POCKET_STEP lattice and joined into pockets; a
     pocket that holds a GARDEN_MIN box gets a fenced kitchen garden of the region's crop (farm()), its gate toward the
@@ -1339,7 +1340,7 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0):
         tp = pool('house_trees', region)
         if not tp or not cset:
             continue
-        want_n = int(len(cset) * st * st / POCKET_TREE_AREA * min(1.5, amount) + rng.random())
+        want_n = int(len(cset) * st * st / POCKET_TREE_AREA * min(1.5, amount) * trees_k + rng.random()) if trees_k > 0 else 0
         cand = sorted(cset, key=lambda a: (0 if streets and min((p[0] - a[0] * st) ** 2 + (p[1] - a[1] * st) ** 2 for p in streets) < POCKET_STREET ** 2 else 1, rng.random()))
         got = 0
         for a in cand:

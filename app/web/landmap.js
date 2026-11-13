@@ -1334,6 +1334,8 @@ function lsTownHtml(sel){
     ${lsTownWalls(sel) ? `<label title="No wall where it faces the water"><input type="checkbox" id="ls-tsea" ${p.sea ? 'checked' : ''}> Open to the water</label>` : ''}
     <label title="The town's name: its interiors are called after it (Balmora, …). Blank: the one shown">Name <input class="inp" id="ls-tname" value="${esc(p.name || '')}" placeholder="${esc((T && T.plan && T.plan.name) || '')}" maxlength="40" spellcheck="false"></label>
     <label title="How many buildings, against the culture's own towns of this size (1). Up for a city, down for a hamlet. A walled town fills its wall at 1 and over">Density <input type="range" id="ls-tdens" min="0.3" max="4" step="0.1" value="${p.density || 1}"><span>${p.density || 1}</span></label>
+    <label title="How many rocks it sets into its steep ground and banks: 1 as its culture's towns have them, 0 none. Past 1 adds few: rocks only stand where the ground is steep">Rocks <input type="range" id="ls-trocks" min="0" max="2" step="0.1" value="${p.rocks_k ?? 1}"><span>${p.rocks_k ?? 1}</span></label>
+    <label title="How many trees stand by its houses and on its open ground: 1 as its culture's towns have them, 0 none, 2 twice where there is room">Trees <input type="range" id="ls-ttrees" min="0" max="2" step="0.1" value="${p.trees_k ?? 1}"><span>${p.trees_k ?? 1}</span></label>
     <label title="How wide its streets are. A street is painted in whole ground squares, 512 across">Streets <select class="inp" id="ls-tstreets"><option value="">as its towns'</option><option value="narrow" ${p.streets === 'narrow' ? 'selected' : ''}>narrower</option><option value="lanes" ${p.streets === 'lanes' ? 'selected' : ''}>lanes</option></select></label>
     <label title="What its people live by, as the game's towns of that trade: fishers and sailors, farmers and herders or miners in its homes and streets, the goods on its stalls, and its mix of shops, taverns and guard posts">Trade <select class="inp" id="ls-ttrade"><option value="">any</option>${[['harbour', 'fishing'], ['farm', 'farming'], ['mine', 'mining'], ['trade', 'trading']].map(([v, t]) => `<option value="${v}" ${p.trade === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <div class="v3lrow" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center" title="Draw the town's own streets, quarters, wall or gates: the town follows them">Draw ${['street', 'zone', 'wall', 'gate'].map(k => `<button class="btn sm" data-add="${k}" title="${esc(LS_KINDS[k].how)}">${LS_KINDS[k].icon} ${LS_KINDS[k].label}</button>`).join('')}</div>
@@ -1369,6 +1371,12 @@ function lsTownBind(){
   const stw = $('#ls-tstreets'); if (stw) stw.onchange = () => { sel.p.streets = stw.value; lsChanged(true); };
   const ttr = $('#ls-ttrade'); if (ttr) ttr.onchange = () => { sel.p.trade = ttr.value; lsChanged(true); };
   const tdn = $('#ls-tdens'); if (tdn){ tdn.oninput = () => { tdn.nextElementSibling.textContent = tdn.value; }; tdn.onchange = () => { sel.p.density = +tdn.value; lsChanged(true); }; }
+  // (its own rocks and trees: they change nothing of the plan, so nothing is planned again)
+  for (const [id_, k_] of [['ls-trocks', 'rocks_k'], ['ls-ttrees', 'trees_k']]){
+    const e_ = $('#' + id_); if (!e_) continue;
+    e_.oninput = () => { e_.nextElementSibling.textContent = e_.value; };
+    e_.onchange = () => { if (+e_.value === 1) delete sel.p[k_]; else sel.p[k_] = +e_.value; lsChanged(false); };
+  }
   const cd = $('#ls-tcounts'); if (cd) cd.ontoggle = () => { LM.countsOpen = cd.open; };
   document.querySelectorAll('[data-tcount]').forEach(i => i.onchange = () => {
     const k = i.dataset.tcount, c = Object.assign({}, sel.p.counts || {});
@@ -1472,6 +1480,8 @@ function lsTownOpts(T){
   if (p.streets) o.streets = p.streets;
   if (p.look) o.family = p.look;
   if (p.density && +p.density !== 1) o.density = +p.density;
+  if (p.rocks_k != null && +p.rocks_k !== 1) o.rocks_k = +p.rocks_k;
+  if (p.trees_k != null && +p.trees_k !== 1) o.trees_k = +p.trees_k;
   if (p.trade) o.trade = p.trade;
   if (p.counts && Object.keys(p.counts).length) o.counts = p.counts;
   if (p.skip && p.skip.length) o.skip = p.skip;
@@ -1570,7 +1580,8 @@ function lsTownsSoon(){
   }
   clearTimeout(LM.townT); LM.townT = setTimeout(lsTowns, 350);
 }
-function lsTownKey(L){ return JSON.stringify([L.pts, L.p.culture || '', L.p.seed || 1, lsTownWalls(L), lsTownOpts(L)]); }
+// (its Rocks and Trees amounts are no part of the plan: moving them plans nothing again)
+function lsTownKey(L){ const o = Object.assign({}, lsTownOpts(L)); delete o.rocks_k; delete o.trees_k; return JSON.stringify([L.pts, L.p.culture || '', L.p.seed || 1, lsTownWalls(L), o]); }
 // (one plan asked at a time: every change asked for its own, each ran to the end on the server one after another, and
 // a few edits and 🎲 Another left the town on "Planning…" for minutes, the user and PIN2 2026-11-01. A change while one
 // is on its way asks again once it is back, for the plan as it is then)

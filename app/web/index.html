@@ -2341,8 +2341,10 @@ const MARK_NEW = '#8fe08f', MARK_CHANGED = '#f0cd87', MARK_GONE = '#ff7d6bcc';
 const CELL = 8192;
 let W = {key:null, info:null, ext:false, cells:{}, lands:{}, cam:{x:0, y:0, z:0.05}, sel:null, mode:null, placeId:null,
          placeName:'', hidden:new Set(), god:false, drag:null, hover:null, loading:new Set(), dpr:1, filter:'',
-         lockArch:true, cut:null, palette:null, paletteKey:null, hide:new Set(), onlyMine:false, marks:true};
-try { W.marks = localStorage.getItem('ws-marks') !== 'off'; } catch (e) {}
+         lockArch:true, cut:null, palette:null, paletteKey:null, hide:new Set(), onlyMine:false, marks:false};
+// (the marks round what the mod changed are off until asked for, View > Your changes: on from the start, a first made
+//  town stood in green boxes and its maker looked for "the button to hide the colored boxes", 2026-11-13)
+try { W.marks = localStorage.getItem('ws-marks') === 'on'; } catch (e) {}
 // (the map's ground pictures emptied after a change stay drawn until each cell's new one comes: emptied at once,
 // the land vanished for as long as a busy Workshop took to send it again, 2026-11-02)
 {
@@ -3495,6 +3497,11 @@ function renderWside_(){
   const ae = document.activeElement;
   const keepTyped = ae && ae.id && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && !/^(checkbox|radio|range|file|button)$/.test(ae.type || '')
     ? [ae, ae.id, ae.value, ae.selectionStart, ae.selectionEnd] : null;
+  // (and the results under that box stay with it: the list was made new and empty on every drawing, so while a
+  //  castle was building, the panel drawn again at each of its steps, a search in Place showed nothing under what
+  //  was typed; the user, 2026-11-13: "nothing popping up when i type into tool here". The kept list is put back
+  //  before the boxes are bound, so a search still on its way fills it and the next key's search does too)
+  const keepList = keepTyped ? document.getElementById(keepTyped[1] + '-l') : null;
   body('place').innerHTML = h.slice(0, cut[0]);
   { const pn = $('#w-palette'); if (pn){ if (palSame) pn.replaceWith(palOld); else pn.dataset.sig = palSig(); } }
   body('sel').innerHTML = h.slice(cut[0], cut[1]);
@@ -3504,6 +3511,7 @@ function renderWside_(){
   // Sky: region, weather and time outdoors, the lighting indoors; Land: shaping and height maps
   if (body('sky')) body('sky').innerHTML = `<div class="wpane on" data-pane="sky">${i.interior ? `<h3 style="margin-top:4px">Lighting &amp; settings${typeof guideLink === 'function' ? guideLink('furnishing-and-checking.md', 'Lighting, fog and water') : ''}</h3><div id="w-placeset"></div>` : regViewHtml(i)}</div>`;
   if (body('land')) body('land').innerHTML = `<div class="wpane on" data-pane="land">${i.interior ? '<div class="msg" style="padding:10px 0">Outdoors only.</div>' : typeof lmViewHtml === 'function' ? lmViewHtml(i) : ''}</div>`;
+  if (keepList){ const nl = document.getElementById(keepTyped[1] + '-l'); if (nl && nl !== keepList) nl.replaceWith(keepList); }
   renderOList(refs);
   renderRecent(); renderPlacing(); renderPrefabs();
   bindWside();
@@ -3946,14 +3954,16 @@ document.addEventListener('dragend', e => {
 // Go to a place's coordinates. Enter takes the first)
 function ddSearch(id, types, onPick, pictures, lead){
   const inp = $('#' + id), list = $('#' + id + '-l'); if (!inp) return;
-  let t, seq = 0;
+  let t, seq = 0;      // (the count is kept on the list itself, list._seq: see below)
   if (lead) inp.onkeydown = e => {
     if (e.key !== 'Enter') return;
     const own = lead(inp.value.trim());
-    if (own.length){ e.preventDefault(); clearTimeout(t); ++seq; list.style.display = 'none'; own[0].go(); }
+    if (own.length){ e.preventDefault(); clearTimeout(t); list._seq = (list._seq || 0) + 1; list.style.display = 'none'; own[0].go(); }
   };
   inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
-    const q = inp.value.trim(); const my = ++seq;
+    // (the box as it stands now and the list's own count: a panel drawn again meanwhile makes the box new and keeps
+    //  the list, and the search asked from the old box must neither read the old box nor overwrite a newer answer)
+    const q = ((document.getElementById(id) || inp).value || '').trim(); const my = seq = list._seq = (list._seq || 0) + 1;
     if (!q){ list.style.display = 'none'; return; }
     const own = lead ? lead(q) : [];
     if (own.length){
@@ -3965,7 +3975,7 @@ function ddSearch(id, types, onPick, pictures, lead){
     // (placing: the models the game places most come first, so the common bookshelf is at the top and its
     // twenty variants under it)
     const r = await api('/api/search?' + new URLSearchParams(pictures ? {q, types, limit: 40, sort: 'uses'} : {q, types, limit: 40}));
-    if (my !== seq) return;
+    if (my !== list._seq) return;
     const row = (x, n, variant) => pictures
       ? `<div data-n="${n}" class="hasthumb${variant ? ' variant' : ''}" draggable="true" data-pid="${esc(x.id)}" data-pname="${esc(x.name || x.id)}" data-ptype="${esc(x.type)}" data-hid="${esc(x.id)}">${thumbImg(x.id, x.type, 48, 'sm')}<span>${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></span></div>`
       : `<div data-n="${n}">${esc(x.name || x.id)}<small>${esc(x.name ? x.id : '')} · ${esc(S.typeLabels[x.type] || x.type)}</small></div>`;
