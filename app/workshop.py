@@ -1974,7 +1974,7 @@ class Handler(BaseHTTPRequestHandler):
                 import landshapes
                 return self._json(landshapes.stop_previews())
             import contextlib
-            with contextlib.nullcontext() if u.path in ('/api/land/plan/preview', '/api/town/plan', '/api/castle/plan') else _EditLock():
+            with contextlib.nullcontext() if u.path in ('/api/land/plan/preview', '/api/town/plan', '/api/castle/plan', '/api/wayup/look') else _EditLock():
                 if u.path in WHOLE_MOD and editing.busy_with():
                     return self._json({'error': '%s: %s waits until it is done. Everything else works meanwhile.' % (
                         editing.busy_with(), 'Undo' if 'undo' in u.path or 'revert' in u.path else 'Redo' if 'redo' in u.path else 'switching mods')}, 409)
@@ -2158,6 +2158,17 @@ class Handler(BaseHTTPRequestHandler):
                     import settle
                     return self._json(settle.settle(db, body.get('cell') or '', body.get('at'), float(body.get('radius') or 200),
                                                     body.get('refs') or None, float(body.get('max_drop') or 48), bool(body.get('tip'))))
+                if u.path in ('/api/wayup', '/api/wayup/look'):
+                    # a way up to a gate or a door: a level landing, then one even ramp to a road or to open ground, or
+                    # from the spot given (gateway.py). look: only what it would be, changing nothing; else one Undo
+                    import gateway
+                    if u.path == '/api/wayup/look':
+                        return self._json(gateway.make(db, str(body.get('cell') or ''), body.get('key'), body.get('to'), look=True))
+                    with editing.operation('wayup'):
+                        r = gateway.make(db, str(body.get('cell') or ''), body.get('key'), body.get('to'))
+                        if not r.get('none'):
+                            editing.commit(db, 'Made a way up to a %s' % ('gate' if r.get('half', 0) > 200 else 'door'))
+                    return self._json(r)
                 if u.path == '/api/setdown':
                     # the mod's loose things in the cells set on the ground (settle.set_down); the moves come back to
                     # be made as one Undo (/api/group/move)

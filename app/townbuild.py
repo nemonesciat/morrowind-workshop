@@ -2259,6 +2259,29 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 print('town: %d kinked land points rounded' % n_sm)
         except Exception as e:
             print('town smooth:', e)
+        # (a way up to each gate whose approach falls away, once every ground pass has had its say: a level landing and
+        # one even ramp from a road or from the open ground, gateway.py. Remembered with the footpaths, so the rocks set
+        # into the hill next keep off it)
+        if ((W and W.get('pieces')) or plan.get('forts')) and os.environ.get('TOWN_GATEWAY', '1') != '0':
+            try:
+                import gateway
+                db.sync_project()
+                # (the town's streets count as roads: they are paved last)
+                on_street = lambda x_, y_: (lambda sd: sd is not None and sd <= STREET_EDGE)(_street_dist(plan, x_, y_))
+                ways = gateway.for_wall(db, W, new_refs, on_street) if W and W.get('pieces') else []
+                # (and the gate of a castle the town stands beside: its way to the town's street)
+                for ft in plan.get('forts') or ():
+                    if ft.get('ring'):
+                        ways += gateway.for_doors(db, ft['ring'], new_refs, on_street)
+                for w_ in ways:
+                    plan.setdefault('paths', []).append({'pts': [(p_[0], p_[1]) for p_ in w_['pts']], 'z': [p_[2] for p_ in w_['pts']],
+                                                         'w': 2 * w_['half'], 'door': tuple(w_['front']), 'gate': True})
+                if ways:
+                    db.sync_project()
+                    print('town: a way up to %d gate%s (%s)' % (len(ways), '' if len(ways) == 1 else 's',
+                                                               ', '.join('%d degrees, %d long, to %s' % (w_['deg'], w_['run'], 'a road' if w_['to'] == 'road' else 'open ground') for w_ in ways)))
+            except Exception as e:
+                print('town gate ways:', e)
     # (a building's other door left high over the ground once every pass has had its say, a street pinned level under
     # it: taken out with its step, so no door hangs over a drop and no household is made behind one)
     if pieces and made:

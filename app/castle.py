@@ -2522,6 +2522,21 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     if len(wr.refs) > ns0:
         editing.commit(db, 'Set the windows of %s: %d' % (name, len(wr.refs) - ns0))
     db.sync_project()
+    # ---- the way up to the gate: where the ground before the outer gate falls away, a level landing and one even ramp
+    # from a road or from the open ground (gateway.py). The user's castle stood 760 over the street 900 from its gate,
+    # and they shaped the way up by hand (2026-11-13: "I notice a lot of them have very steep approaches")
+    import os
+    # (with a town drawn beside it the way waits for the town: made then, to the town's street, townbuild.make)
+    if W is not None and toward is None and os.environ.get('CASTLE_GATEWAY', '1') != '0':
+        try:
+            import gateway
+            ways = gateway.for_wall(db, W)
+            if ways:
+                editing.commit(db, 'Made the way up to the gate of %s' % name)
+                print('castle: a way up to %d gate%s (%s)' % (len(ways), '' if len(ways) == 1 else 's',
+                                                               ', '.join('%d degrees, %d long, to %s' % (w_['deg'], w_['run'], 'a road' if w_['to'] == 'road' else 'open ground') for w_ in ways)))
+        except Exception as e:
+            print('castle gate way:', e)
     # ---- inside
     _say('Copying the rooms', 0.5)
     links = []                                   # (cell, rk, destination name, position)

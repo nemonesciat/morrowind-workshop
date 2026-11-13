@@ -1162,7 +1162,8 @@ function v3StrokeStart(e){
     V3.stroke = Object.assign({cells: new Map(), scatter: true, grass, circles: [], add: [], gone: new Map(), near, last: 0, lastAt: at, erase}, arm);
     return true;
   }
-  V3.stroke = Object.assign({cells: new Map(), level: v3GroundAt(at[0], at[1]), last: 0}, arm);
+  // (plane: Flatten with Slope ticked and its two ends set levels onto that plane, v3SlopeZ)
+  V3.stroke = Object.assign({cells: new Map(), level: v3GroundAt(at[0], at[1]), plane: v3SlopeOn() && V3.slope && V3.slope.set ? V3.slope : null, last: 0}, arm);
   return true;
 }
 function v3StrokeAt(at, e){
@@ -1226,7 +1227,7 @@ function v3StrokeAt(at, e){
       const w = fall(d), v = y * 65 + x;
       if (tool === 'raise') H[v] += 24 * k * w;
       else if (tool === 'lower') H[v] -= 24 * k * w;
-      else if (tool === 'flatten') H[v] += (S_.level - H[v]) * Math.min(1, 0.35 * k * w);
+      else if (tool === 'flatten') H[v] += ((S_.plane ? v3SlopeZ(S_.plane, ox + x * 128, oy + y * 128) : S_.level) - H[v]) * Math.min(1, 0.35 * k * w);
       else if (tool === 'smooth'){
         let s = 0, n = 0;
         for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++){
@@ -1452,9 +1453,63 @@ function v3RampMake(pts){
   v3StrokeEnd();
 }
 
+// ----- Flatten with Slope ticked: the brush levels onto a tilted plane instead of onto one height. Two clicks on the
+// ground set the plane: an even rise between them, level from side to side, level past either end (a landing). It
+// stays set over as many strokes as wanted, each its own Undo; Esc clears it and the next two clicks set another.
+// For what a strip cannot do: an approach that fans out, a sloped yard, a slope worked in gently at low Strength.
+function v3SlopeOn(){ return !!(V3.land && V3.landOpen && V3.land.tool === 'flatten' && V3.land.slope); }
+function v3SlopeClear(){
+  if (V3.slope){ V3.slope = null; if (typeof setBanner === 'function') setBanner(''); }
+  if (V3.slopeLine) V3.slopeLine.visible = false;
+}
+function v3SlopeZ(S, x, y){
+  const a = S.pts[0], b = S.pts[1], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2));
+  return a[2] + (b[2] - a[2]) * t;
+}
+// the plane drawn over the ground: its line, and a bar across each end as wide as the brush
+function v3SlopeShow(at){
+  const S = V3.slope;
+  if (S && !S.set) S.at = at || S.at;
+  const pts = !S || !v3SlopeOn() || !v3LandOn() ? [] : S.set ? S.pts : S.pts.concat(S.at ? [S.at] : []);
+  const G = pts.length >= 2 ? v3RampGrade(pts) : null;
+  if (!G || G.run < 32){
+    if (V3.slopeLine) V3.slopeLine.visible = false;
+    if (S && S.pts.length && v3SlopeOn()) setBanner('Slope: now click its other end. Esc gives it up.');
+    return;
+  }
+  const T = THREE, half = V3.land.size, a = pts[0], b = pts[1], d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const nx = -(b[1] - a[1]) / d * half, ny = (b[0] - a[0]) / d * half, O = V3.origin;
+  const flat = new Float32Array([
+    a[0] - O[0], a[1] - O[1], a[2] + 8 - O[2], b[0] - O[0], b[1] - O[1], b[2] + 8 - O[2],
+    a[0] - nx - O[0], a[1] - ny - O[1], a[2] + 8 - O[2], a[0] + nx - O[0], a[1] + ny - O[1], a[2] + 8 - O[2],
+    b[0] - nx - O[0], b[1] - ny - O[1], b[2] + 8 - O[2], b[0] + nx - O[0], b[1] + ny - O[1], b[2] + 8 - O[2]]);
+  if (!V3.slopeLine){
+    V3.slopeLine = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({color: 0xffe08a, depthTest: false, transparent: true}));
+    V3.slopeLine.renderOrder = 21; V3.slopeLine.frustumCulled = false; V3.scene.add(V3.slopeLine);
+  }
+  V3.slopeLine.geometry.dispose(); V3.slopeLine.geometry = new T.BufferGeometry();
+  V3.slopeLine.geometry.setAttribute('position', new T.BufferAttribute(flat, 3));
+  const steep = G.deg > V3_RAMP_STEEP;
+  V3.slopeLine.material.color.set(steep ? 0xff5a4a : 0xffe08a);
+  V3.slopeLine.visible = true;
+  setBanner(`Slope: <b>${Math.round(G.deg)}°</b>${steep ? ' (steep to walk)' : ''}, ${G.rise >= 0 ? 'up' : 'down'} ${Math.round(Math.abs(G.rise))} over ${Math.round(G.run)}. ${S.set ? '<b>Drag</b> to level the ground onto it. Esc sets another.' : '<b>Click</b> its other end. Esc gives it up.'}`);
+  v3Refresh();
+}
+function v3SlopeClick(e){
+  const at = v3Brush(e); if (!at) return;
+  const S = V3.slope = V3.slope || {pts: [], at: null, set: false};
+  S.pts.push(at); S.at = at;
+  if (S.pts.length === 2){
+    if (Math.hypot(S.pts[1][0] - S.pts[0][0], S.pts[1][1] - S.pts[0][1]) < 64){ S.pts.pop(); toast('The two ends of a slope need some distance between them.', true); }
+    else S.set = true;
+  }
+  v3SlopeShow(at);
+}
+
 // the ground tool panel (outdoors, "⛰ Ground" in the toolbar)
 const V3_LANDTOOLS = [['raise', '▲ Raise', 'Raise the ground (Ctrl: lower)'], ['lower', '▼ Lower', 'Lower the ground (Ctrl: raise)'],
-  ['smooth', '≈ Smooth', 'Even out bumps'], ['flatten', '▬ Flatten', 'Level the ground to the height where you start the stroke'],
+  ['smooth', '≈ Smooth', 'Even out bumps'], ['flatten', '▬ Flatten', 'Level the ground to the height where you start the stroke. Tick Slope to level it onto a slope instead'],
   ['ramp', '◢ Ramp', 'A sloped path: click its foot, then its top. The ground between becomes one even slope, level from side to side. Shift+click first for bends. Size is how far it reaches either side.'],
   ['paint', '🖌 Paint', 'Paint a ground texture (Shift+click: pick the texture under the mouse)'],
   ['tint', '🎨 Tint', 'Paint the ground\'s own colour, the shading the game multiplies into its textures (Ctrl: back to plain; Shift+click: pick the colour under the mouse). Or shade it automatically, the way the game does.'],
@@ -1466,12 +1521,14 @@ const V3_SCATTER_MAX = {things: 1500, grass: 15000};
 function v3LandToggle(on){
   if (on && !W.ext) return toast('The ground tools are for outdoor places.', true);
   if (on){
+    const first_ = !V3.land;
     V3.land = V3.land || JSON.parse((() => { try { return localStorage.getItem('ws-land'); } catch (e) { return null; } })() || 'null') ||
       {tool: 'raise', size: 512, strength: 4, tex: null, follow: true};
+    if (first_) V3.land.slope = false;      // (Flatten starts each session as plain Flatten: a tick left on would take the first two clicks)
     V3.landOpen = true;
     if (W.mode) setMode(null);
     W.sel = null; W.multi.clear(); renderWside();
-  } else { V3.landOpen = false; V3.land = V3.land ? Object.assign({}, V3.land) : null; v3RampClear(); }
+  } else { V3.landOpen = false; V3.land = V3.land ? Object.assign({}, V3.land) : null; v3RampClear(); v3SlopeClear(); }
   v3Tools(); v3LandPanel(); v3Refresh();
   if (V3.ring) V3.ring.visible = false;
 }
@@ -1498,6 +1555,7 @@ async function v3LandPanel(){
     <div class="v3lrow">${V3_LANDTOOLS.map(([k, l, t]) => `<button class="btn sm ${B.tool === k ? 'primary' : ''}" data-lt="${k}" title="${t}">${l}</button>`).join('')}</div>
     <label class="v3lrow" title="How far the brush reaches, in game units: the land has a point every 128, so 64 moves just the one under it. [ and ] change it">Size <input type="range" id="v3lsize" min="0" max="1000" value="${v3SizePos(B.size)}"><input class="inp v3lnum" id="v3lsizen" type="number" min="${V3_BRUSH[0]}" max="${V3_BRUSH[1]}" step="16" value="${B.size}"></label>
     <label class="v3lrow" style="display:${B.tool === 'scatter' || B.tool === 'ramp' ? 'none' : ''}">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
+    <label class="v3lrow" style="display:${B.tool === 'flatten' ? '' : 'none'}" title="Level the ground onto a slope instead of one height. Click one end of the slope on the ground, then the other, then drag to paint. The slope rises evenly between the two ends, is level from side to side and level past each end. Esc sets another"><input type="checkbox" id="v3lslope" ${B.slope ? 'checked' : ''}> Slope</label>
     <label class="v3lrow" title="Things standing on the ground move up and down with it"><input type="checkbox" id="v3lfollow" ${B.follow !== false ? 'checked' : ''}> Objects follow the ground</label>
     <div id="v3ltex" style="display:${B.tool === 'paint' ? 'block' : 'none'}">
       <div class="v3lrow"><button class="btn sm ${B.texAuto ? 'primary' : ''}" id="v3lauto" title="Paint each patch with the texture the region's land has at its slope, height and shore. Roads and paving stay">✨ Auto</button>
@@ -1518,13 +1576,15 @@ async function v3LandPanel(){
       <label class="v3lrow">Amount <input type="range" id="v3lshadek" min="10" max="100" step="5" value="${B.shadeK || 100}"><span>${B.shadeK || 100}%</span></label>
       <div class="faint" id="v3lshadeinfo"></div>
     </div>
-    <div class="v3lnote">${B.tool === 'ramp' ? 'Click the foot of the path, then its top. Shift+click first for bends; Backspace takes a point back. One Undo.' : 'Drag on the ground to use the brush. Right-drag still looks around. Each stroke can be undone.'} ${B.tool === 'scatter' ? 'Scattered things show in game after a restart, like other new objects.' : 'Ground changes show in game after a restart.'}</div>`;
+    <div class="v3lnote">${B.tool === 'ramp' ? 'Click the foot of the path, then its top. Shift+click first for bends; Backspace takes a point back. One Undo.' : B.tool === 'flatten' && B.slope ? 'Click the two ends of the slope on the ground, then drag to level the ground onto it. Esc sets another. Each stroke can be undone.' : 'Drag on the ground to use the brush. Right-drag still looks around. Each stroke can be undone.'} ${B.tool === 'scatter' ? 'Scattered things show in game after a restart, like other new objects.' : 'Ground changes show in game after a restart.'}</div>`;
   p.querySelectorAll('[data-lt]').forEach(b => b.onclick = () => {
     const a = b.dataset.lt;
     V3.landPick = null;
     if (a === 'close') return v3LandToggle(false);
     v3RampClear();
-    B.tool = a; v3LandSave(); v3LandPanel();
+    // (a slope half set is given up; one that is set is kept for when Flatten is picked again, its line put away)
+    if (V3.slope && !V3.slope.set) v3SlopeClear(); else if (V3.slope && B.tool === 'flatten' && B.slope) setBanner('');
+    B.tool = a; v3LandSave(); v3LandPanel(); v3SlopeShow();
   });
   // the eyedropper: the next click on the ground picks (click it again to put it down)
   p.querySelectorAll('[data-lpick]').forEach(b => b.onclick = e => {
@@ -1535,6 +1595,7 @@ async function v3LandPanel(){
   $('#v3lsizen').onchange = e => { B.size = v3BrushClamp(+e.target.value || B.size); e.target.value = B.size; $('#v3lsize').value = v3SizePos(B.size); v3LandSave(); };
   $('#v3lstr').oninput = e => { B.strength = +e.target.value; e.target.nextElementSibling.textContent = B.strength; v3LandSave(); };
   $('#v3lfollow').onchange = e => { B.follow = e.target.checked; v3LandSave(); };
+  $('#v3lslope').onchange = e => { B.slope = e.target.checked; v3LandSave(); if (!B.slope) v3SlopeClear(); v3LandPanel(); };
   if (B.tool === 'paint'){
     $('#v3lauto').onclick = () => { B.texAuto = !B.texAuto; v3LandSave(); v3LandPanel(); };
     if (B.texAuto){
@@ -1921,6 +1982,7 @@ function v3Bind(el){
     el.focus();
     if (e.button === 1) e.preventDefault();
     if (typeof arDown3 === 'function' && arDown3(e)) return;          // a door's arrival: press, drag the way they face (arrive.js)
+    if (typeof gwClick3 === 'function' && gwClick3(e)) return;        // a way up to a gate being shown: it starts from this spot (gateway.js)
     if (e.button === 2 && v3DragCancel()){ e.preventDefault(); return; }     // (right button during a drag: give it up)
     if (e.button === 0 && V3.grab){ e.preventDefault(); v3GrabDone(); return; }   // (moving by key: the click sets it down)
     if (e.button === 0 && (V3.tc.dragging || V3.tc.axis)) return;      // using the handles
@@ -1933,6 +1995,7 @@ function v3Bind(el){
       if (V3.land.tool === 'paint' && !V3.land.tex && !V3.land.texAuto){ toast('Pick a ground texture first, or ✨ Auto.'); return; }
       if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.'); return; }
       if (V3.land.tool === 'ramp'){ v3RampClick(e); return; }
+      if (v3SlopeOn() && !(V3.slope && V3.slope.set)){ v3SlopeClick(e); return; }      // (the slope's two ends first)
       if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; V3.strokeEv = e; V3.over = true; }
       return;
     }
@@ -2075,6 +2138,7 @@ function v3Bind(el){
     // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
     // (Esc with a ramp begun gives the ramp up and keeps the ground tools open; Backspace takes its last point back)
     if (e.key === 'Escape' && V3.landOpen && V3.ramp && V3.ramp.pts.length){ v3RampClear(); return; }
+    if (e.key === 'Escape' && v3SlopeOn() && V3.slope && V3.slope.pts.length){ v3SlopeClear(); return; }
     if (e.key === 'Backspace' && V3.landOpen && V3.ramp && V3.ramp.pts.length){ e.preventDefault(); V3.ramp.pts.pop(); v3RampShow(V3.ramp.at); return; }
     if (e.key === 'Escape' && V3.landOpen) v3LandToggle(false);
     if (V3.landOpen && W.ext && (e.key === '[' || e.key === ']')){
@@ -2225,7 +2289,7 @@ function v3Hover(e){
     if (V3.stroke) return;
     const now = performance.now(); if (now - (V3.hoverT || 0) < 30) return; V3.hoverT = now;
     const at_ = v3Brush(e);
-    v3BrushRing(at_); if (V3.land.tool === 'ramp') v3RampShow(at_);
+    v3BrushRing(at_); if (V3.land.tool === 'ramp') v3RampShow(at_); else if (V3.slope && !V3.slope.set) v3SlopeShow(at_);
     $('#maptip').style.display = 'none'; return;
   }
   const now = performance.now(); if (now - (V3.hoverT || 0) < 60) return; V3.hoverT = now;

@@ -377,6 +377,8 @@ function cfMenuAt(e, hit, at, locked){
     if (r.arch && W.info && W.info.interior && typeof extendMode === 'function') items.push({label: '⬚ Extend from here…', act: () => extendMode(true, ck, {ref: r.k})});
     // (outdoors, a building's piece or door: the interior built inside it; frombuilding.js)
     // (Fit the ground for the building piece itself, not for its door: a trapdoor was "not a building piece")
+    // (outdoors, a gate or a door: a landing and an even ramp to it from the road or the open ground; gateway.js)
+    if (typeof gwMenuItem === 'function'){ const gw = gwMenuItem(ck, r); if (gw) items.push(gw); }
     if (typeof fbMenuItem === 'function'){ const fb = fbMenuItem(ck, r); if (fb){ items.push(fbCheckItem(ck, r)); items.push(fb); if (typeof riMenuItem === 'function'){ const ri = riMenuItem(ck, r); if (ri) items.push(ri); } if (r.arch) items.push(gfMenuItem(ck, r)); } }
     if (r.arch && !(typeof FB_NOT_BUILDING !== 'undefined' && FB_NOT_BUILDING.test(r.id))) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
     // (how a person or a creature moves, straight from here: it was three clicks down, the user: "should be easier to find")

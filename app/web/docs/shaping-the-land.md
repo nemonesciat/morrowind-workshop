@@ -26,7 +26,7 @@ on the ground. A plain click does nothing, so you can still select things.
 |---|---|
 | ▲ Raise / ▼ Lower | Raises or lowers the ground under the brush. Hold **Ctrl** for the opposite. |
 | ≈ Smooth | Evens out bumps. |
-| ▬ Flatten | Levels the ground to the height where the stroke started. |
+| ▬ Flatten | Levels the ground to the height where the stroke started. Tick **Slope** to level it onto a slope instead: click one end of the slope on the ground, then the other, then paint. The slope rises evenly between the two ends, is level from side to side and level past each end; it stays set over as many strokes as you like, and Esc sets another. For what the Ramp's strip cannot do: an approach that fans out, a sloped yard. |
 | ◢ Ramp | A sloped path. Click its foot, then its top: the ground between becomes one even slope, level from side to side, with a level landing at each end. **Shift+click** first for bends; Backspace takes a point back; Esc gives it up. The ring shows how far it reaches either side (Size). The top bar says how steep it is, in red past 40°. One Undo. |
 | 🖌 Paint | Paints a ground texture. Pick one from the list, or take the one on the ground: **💧 Pick**, then click it (or **Shift+click** it any time). **✨ Auto** paints each patch the way the region's own land is painted where the ground is like it (as steep, as high, on a crest or in a hollow, by the water or not), copying the game's layout so textures meet as they do in the game (roads and paving stay). **Like** takes another region's textures. |
 | 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **💧 Pick** (or **Shift+click**) takes the colour there. |
@@ -41,6 +41,22 @@ on the ground. A plain click does nothing, so you can still select things.
 - The brush can't make a step steeper than the game's land can hold (about 83°).
 - Drag the Ground window by its title to move it, or by its bottom-right corner to make it bigger. It keeps its
   place and size.
+
+### A way up to a gate or a door
+
+Right-click a gate, a wall's arch or a door outdoors and choose **◢ Make a way up to it…** (under Build). The
+Workshop draws the way it would make over the ground and says how steep it is: a level landing before the gate, then
+one straight, even ramp from the nearest road or from open ground, level from side to side, as you would make it with
+the Ramp. **Make it** (or Enter) lays it; **click the ground** to start it from there instead; **Esc** gives it up.
+
+- It picks the ramp that is gentle (22° or less where it can, never over 27°), moves least earth and is shortest.
+  From a spot you click it may be steeper, up to 40°, and the top bar turns red past 27°.
+- Where the gate stands over a drop the ramp is built up as a causeway, its sides banked down to the ground.
+- Rocks, trees and plants standing on the way are cleared off it, as a made town's streets are; buildings and walls
+  are never touched, and the way keeps clear of them.
+- It says so when the ground to the gate is gentle as it is, or when no ramp can be made (a building in every line,
+  or too far down): click the ground to say where it should start.
+- One Undo takes it back, the cleared things with it.
 
 ### Tint: shade automatically
 
@@ -559,6 +575,8 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
   steeper than a quarter rise a unit gets a **footpath** instead: a tread cut into the hill along the slope (never
   built up), level across and no steeper than a third, with a level landing at the door and a bank on the uphill side,
   the way you would shape one with Flatten. The few doors that get neither stand too far above or below any street.
+- **The gates:** a gate whose ground falls away steeply outside it gets **a way up**: a level landing and one even
+  ramp from the open ground or a road (see *A way up to a gate or a door*). A gate on gentle ground is left as it is.
 - **Rocks on the hill:** a town on steep ground gets the rocks its culture's own towns stand, at their rate a building
   (a Mournhold town many, a Common one few, and fewer still where the land round the town is bare): behind the houses
   on their terraces' cut banks, under the downhill edge of a floor standing over the land so it rests on a rock top,
@@ -702,6 +720,11 @@ the castle's own places, against a wall or in the yard, clear of the way from th
 as one ring, the castle first, and its gate turns towards the town. They need not be lined up: the town's wall is
 brought to the castle's corners and closed on it, and the map shows the wall as it will be built. If you drop or move
 the castle later, make the town again to close its wall.
+
+**The way up to the gate.** A castle on a height gets a landing before its outer gate and one even ramp up to it from
+the open ground or a road. With a town drawn beside it, the town makes that ramp when it is built, from its own
+street. Where houses stand in every line below the gate none is made: use **◢ Make a way up to it…** on the gate
+and click where it should start.
 
 **🏰 Make it** evens the ground under the wall and the keep, clears trees and rocks inside, and builds it all.
 One Undo takes it back. **✕ Remove** takes away what it built, rooms included; the ground stays.
