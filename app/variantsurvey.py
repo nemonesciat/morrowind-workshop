@@ -96,7 +96,11 @@ def variants(db, style):
 
 def hangings(db, style):
     """What hangs from each floor piece (lights and chandeliers well above the floor, inside the tile):
-    {piece id: {'n': instances, 'with': [(id, share, (lx, ly, dz) median)]}}."""
+    {piece id: {'n': instances, 'with': [(id, share, (lx, ly, dz) median, quarter turns past the piece)]}}.
+    The turn is the one the game most often gives the thing against the piece, and the place is where it hangs
+    with that turn: a window cover hangs on either wall of a thatch room's corner piece, three quarter turns past
+    the piece on one and none on the other; laid at the middle place of both with the piece's own turn it stood
+    end-on to its wall, out into the room (the user's Tolode Manor, 2026-11-13)."""
     key = ('hangings', style)
     if key in _cache and _cache[key][0] is db.recs:
         return _cache[key][1]
@@ -123,7 +127,7 @@ def hangings(db, style):
                 got.add(oid)
                 dx, dy = op[0] - pos[0], op[1] - pos[1]
                 lx, ly = dx * c - dy * s, dx * s + dy * c
-                found[low][oid].append((round(lx), round(ly), round(op[2] - floor)))
+                found[low][oid].append((round(lx), round(ly), round(op[2] - floor), int(round((op[5] - pos[5]) / (math.pi / 2))) % 4))
     out = {}
     for low, d in found.items():
         n = n_inst[low]
@@ -131,8 +135,10 @@ def hangings(db, style):
         for oid, offs in sorted(d.items(), key=lambda kv: -len(kv[1])):
             if len(offs) < 3 or len(offs) < 0.08 * n:
                 continue
-            med = tuple(sorted(o[i] for o in offs)[len(offs) // 2] for i in range(3))
-            lst.append((db.recs[db.resolve_id(oid)][1], round(len(offs) / n, 2), med))
+            dq = Counter(o[3] for o in offs).most_common(1)[0][0]
+            same = [o for o in offs if o[3] == dq]
+            med = tuple(sorted(o[i] for o in same)[len(same) // 2] for i in range(3))
+            lst.append((db.recs[db.resolve_id(oid)][1], round(len(offs) / n, 2), med, dq))
         if lst:
             out[ids[low]['id']] = {'n': n, 'with': lst[:5]}
     _cache[key] = (db.recs, out)

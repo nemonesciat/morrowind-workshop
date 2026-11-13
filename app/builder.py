@@ -754,7 +754,7 @@ def _columns_and_windows(db, style, kp, grid, rooms, need, keep_clear, doorway_s
         rate, by_kind = layoutsurvey.window_rate(db, style)
         props = layoutsurvey.window_props(db, style)
         # (not a prop the extras already hang from this style's pieces, as Mournhold's window is)
-        hung = {oid.lower() for d in variantsurvey.hangings(db, style).values() for oid, _s, _o in d['with']}
+        hung = {w_[0].lower() for d in variantsurvey.hangings(db, style).values() for w_ in d['with']}
         all_n = float(sum(p['n'] for p in props)) + float(sum(w['n'] for w in (layoutsurvey.window_walls(db, style) if has_walls else [])))
         props = [p for p in props if p['id'].lower() not in hung]
         if rate and props:
@@ -791,6 +791,64 @@ def _columns_and_windows(db, style, kp, grid, rooms, need, keep_clear, doorway_s
                         rot = seethrough.facing(db, db.resolve_id(prop['id']), (-STEP[s][0], -STEP[s][1]), rot)
                     refs.append((prop['id'], (wx, wy, zf(t) + prop['z'], 0, 0, rot), []))
                     break
+
+
+WIN_PUSH = 128.0                # (a window with no wall this near any of its four faces hangs in open air: left out)
+
+
+def _seat_windows(db, refs):
+    """No window in open air. Each window of a built interior is tried against the built pieces: rays from its
+    middle along both its level ways, both directions, at three heights. A wall within WIN_PUSH of any of its four
+    faces: it stands on, in or against something, and is left as it is (which of its faces is its back cannot be
+    told from its box: a Nord window is a deep, narrow slit, a window cover a wide, shallow box). None: it hangs
+    in open air and is left out. Nothing is moved. The windows that did hang in a room came from another fault
+    (what hangs with a room piece, laid with the wrong turn: variantsurvey.hangings); this is the last check after
+    it. The indexes to leave out, and 0 (none moved)."""
+    import layoutsurvey
+    wins = []
+    for i, item in enumerate(refs):
+        low = item[0].lower()
+        if layoutsurvey.is_window(low) and 'sound' not in low and not re.search(r'wind(?!ow)', low) and abs(item[1][3]) < 0.1 and abs(item[1][4]) < 0.1:
+            ri = db.resolve_id(item[0])
+            b = mapdata.object_bounds(db, ri) if ri is not None else None
+            if b and db.recs[ri][0] in ('STAT', 'ACTI'):
+                wins.append((i, b))
+    if not wins:
+        return set(), 0
+    import seethrough
+    sc, memo = seethrough.Scene(), {}
+    for item in refs:
+        if layoutsurvey.is_window(item[0].lower()):
+            continue
+        ri = db.resolve_id(item[0])
+        if ri is None:
+            continue
+        rec = db.recs[ri]
+        b = mapdata.object_bounds(db, ri)
+        if not b or not rec[5] or not mapdata.is_architecture(rec[0], item[0], b):
+            continue
+        if rec[5] not in memo:
+            memo[rec[5]] = seethrough.model_tris(db, rec[5])
+        sc.add_model(memo[rec[5]], item[1], item[3] if len(item) > 3 else 1.0)
+    gone = set()
+    for i, b in wins:
+        item = refs[i]
+        pos = item[1]
+        sc_ = item[3] if len(item) > 3 else 1.0
+        rz = pos[5]
+        lx, ly = (math.cos(rz), -math.sin(rz)), (math.sin(rz), math.cos(rz))
+        mx_, my_ = (b[0] + b[3]) / 2.0 * sc_, (b[1] + b[4]) / 2.0 * sc_
+        cx, cy = pos[0] + lx[0] * mx_ + ly[0] * my_, pos[1] + lx[1] * mx_ + ly[1] * my_
+        zb, zt = pos[2] + b[2] * sc_, pos[2] + b[5] * sc_
+        held = False
+        for u, half in ((lx, (b[3] - b[0]) * sc_ / 2.0), (ly, (b[4] - b[1]) * sc_ / 2.0)):
+            for sg in (1, -1):
+                hits = [h for h in (sc.nearest_any((cx, cy, zb + (zt - zb) * f), (u[0] * sg, u[1] * sg, 0.0), half + WIN_PUSH + 4) for f in (0.3, 0.5, 0.7)) if h is not None]
+                if len(hits) >= 2:
+                    held = True
+        if not held:
+            gone.add(i)
+    return gone, 0
 
 
 def _kit_record(db, kp, want):
@@ -4166,6 +4224,14 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
             dropped = fixit.coplanar_drop(db, refs, kp)
         except Exception as e:
             print('coplanar check:', e)
+    # (no window without a wall: see _seat_windows)
+    try:
+        win_gone, win_moved = _seat_windows(db, refs)
+        dropped = set(dropped) | win_gone
+        if win_gone or win_moved:
+            print('builder: %d windows hanging in open air left out' % len(win_gone))
+    except Exception as e:
+        print('window check:', e)
     for idx_, item in enumerate(refs):
         if idx_ in dropped:
             continue

@@ -22,14 +22,15 @@ def for_piece(db, style, piece_id, q, x, y, floor_z, rng, chance=1.0):
     out = []
     rz = q * math.pi / 2
     c, s = math.cos(rz), math.sin(rz)
-    for oid, share, (lx, ly, dz) in h['with']:
+    for oid, share, (lx, ly, dz), dq in h['with']:
         low = oid.lower()
         if any(w in low for w in SKIP):
             continue
         if rng.random() > min(MAX_SHARE, share) * chance:
             continue
         wx, wy = x + lx * c + ly * s, y - lx * s + ly * c
-        out.append((oid, (wx, wy, floor_z + dz, 0, 0, rz)))
+        # (turned against the piece as the game turns it: variantsurvey.hangings)
+        out.append((oid, (wx, wy, floor_z + dz, 0, 0, (rz + dq * math.pi / 2) % (2 * math.pi))))
     return out
 
 

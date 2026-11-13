@@ -1777,6 +1777,36 @@ def _tile_of(x, y, room, T):
     return None
 
 
+WINDOW_FRONT = 40.0             # (a window keeps this much clear before and behind its own box)
+WINDOW_OVER = 32.0              # (a thing may reach this far over a window's sill and stand before it: a chair's back, a chest)
+WINDOW_SILL = 120.0             # (a window wall a storey tall has no sill of its own to read: nothing over this stands before it)
+
+
+def window_fronts(refs, T):
+    """Every window that hangs on a wall or stands in one, as room it takes up: [((x0, y0, x1, y1), sill z, top z)].
+    Its own box, WINDOW_FRONT further across its thin way; its sill the foot of its box, or WINDOW_SILL over it for
+    a window wall a storey tall. Not a whole room piece with its window built in (wider than 0.6 of a tile both
+    ways: its tile is a window tile, window_tiles), not a sound or a book named for the wind. By where the window
+    is: the tile rule goes by the wall piece's name and missed the window covers and every window whose own point
+    lies in the wall (7 of 21 windows in the user's town had a tapestry, a shelf or a wine rack before them,
+    2026-11-13)."""
+    import layoutsurvey
+    out = []
+    for a in refs:
+        low = a['id'].lower()
+        if not (a.get('arch') and a.get('b') and a.get('type') in ('STAT', 'ACTI') and layoutsurvey.is_window(low)) or 'sound' in low or re.search(r'wind(?!ow)', low):
+            continue
+        s_ = a.get('s') or 1.0
+        fp = _footprint([v * s_ for v in a['b']], a['p'][5], a['p'][0], a['p'][1])
+        wx, wy = fp[2] - fp[0], fp[3] - fp[1]
+        if min(wx, wy) > 0.6 * (T or 256):
+            continue
+        zb, zt = a['p'][2] + a['b'][2] * s_, a['p'][2] + a['b'][5] * s_
+        gx, gy = (WINDOW_FRONT, 8.0) if wx <= wy else (8.0, WINDOW_FRONT)
+        out.append(((fp[0] - gx, fp[1] - gy, fp[2] + gx, fp[3] + gy), zb + (WINDOW_SILL if zt - zb > 200 else 0.0), zt))
+    return out
+
+
 def window_tiles(room, refs, T):
     """The room's tiles whose wall piece has a window in it (the kit's window pieces, by id: placesurvey.WINDOW),
     on this floor: {(x, y)}. Nothing hangs on their walls, and a planter or a basket stands under them."""
@@ -3132,6 +3162,13 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if room_ is not None and T and _tile_of(x, y, room_, T) in _win_cache.setdefault(room_['name'], window_tiles(room_, refs, T)):
                 last_trace.append((room, 'hang', rid, 'over a window: left out'))
                 return None              # (nothing hangs over a window, by any path: the user's "tapestries over windows")
+            # (and by where the windows are, whatever their tile's wall is called: window_fronts)
+            if '#fronts' not in _win_cache:
+                _win_cache['#fronts'] = window_fronts(refs, T)
+            hb_ = _footprint([v * scale for v in b], rot, x, y)
+            if any(_overlaps(hb_, w_[0], 0) and w_[1] < z + b[5] * scale and w_[2] > z + b[2] * scale for w_ in _win_cache['#fronts']):
+                last_trace.append((room, 'hang', rid, 'over a window: left out'))
+                return None
         else:
             # on this room's own floor (not up on the floor of a room above it), or on a table in it; a
             # rug always on the floor
@@ -4148,6 +4185,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         # a planter under a window 29% of the time, a basket 16% (wallsurvey2 v3)
         windows_here = []
         win_tiles = window_tiles(room, refs, T)
+        win_fr = window_fronts(refs, T)
+
+        def before_window(box, b_):
+            """The thing would stand before a window and reach over its sill (window_fronts)."""
+            top_ = fl + (b_[5] - b_[2])
+            return any(_overlaps(box, w_[0], 0) and top_ > w_[1] + WINDOW_OVER and fl < w_[2] for w_ in win_fr if w_[1] > fl - 60)
         for a in refs:
             if not (a.get('arch') and a.get('b') and placesurvey.WINDOW.search(a['id'].lower())):
                 continue
@@ -4274,6 +4317,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             under the window). within: with near, only slots that close to it (a planter that must stand
             BY the door or the seat it was given, or nowhere); with columns_first, only a column's foot."""
             order = slot_order(where, pp)
+            # (a window takes up its wall: nothing that reaches over its sill stands before it. Not asked of what is
+            # set under a window on purpose, a planter or a basket on the window's own line)
+            fits_w = (lambda bx_: fits(bx_) and not before_window(bx_, b)) if (align is None and kind not in ('planter', 'basket')) else fits
             if near is not None:
                 # (the same wall first when one is named: a row of dummies keeps to its wall, R11)
                 order = sorted(order, key=lambda sl: ((sl['side'] != side) if side else 0, math.hypot(sl['x'] - near[0], sl['y'] - near[1])))
@@ -4307,7 +4353,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     else:
                         y = min(max(align[1], sl['y'] - T / 2 + half_ + 4), sl['y'] + T / 2 - half_ - 4)
                 box = _footprint(b, rot, x, y)
-                if not fits(box) and (room.get('traced') or max(box[2] - box[0], box[3] - box[1]) > T * 0.9 or kind == 'bed'):
+                if not fits_w(box) and (room.get('traced') or max(box[2] - box[0], box[3] - box[1]) > T * 0.9 or kind == 'bed'):
                     # (a traced room's tiles are 128: a piece centred on a corner tile's slot, a bench of 160, a bed
                     # of 200, pokes through the end wall, and a hut's 4x3 floor lost 8 of its 14 wall slots that way.
                     # Slid along the wall into its run, and eased in off a wall face that varies tile by tile (a
@@ -4318,10 +4364,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     for d_ in (32, 64, 96, 128, 160):
                         for sg_ in (1, -1):
                             bx2_ = _footprint(b, rot, x + al_[0] * sg_ * d_, y + al_[1] * sg_ * d_)
-                            if fits(bx2_):
+                            if fits_w(bx2_):
                                 x, y, box = x + al_[0] * sg_ * d_, y + al_[1] * sg_ * d_, bx2_
                                 break
-                        if fits(box):
+                        if fits_w(box):
                             break
                     for d_ in (8, 16, 24, 32, 40, 48):
                         if inside(box):
@@ -4333,7 +4379,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     # (the keeper's side behind a counter stays clear too)
                     back = (x - sl['in'][0] * gap, y - sl['in'][1] * gap)
                     bb = _footprint(b, rot, back[0], back[1])
-                    if not fits((min(box[0], bb[0]), min(box[1], bb[1]), max(box[2], bb[2]), max(box[3], bb[3]))):
+                    if not fits_w((min(box[0], bb[0]), min(box[1], bb[1]), max(box[2], bb[2]), max(box[3], bb[3]))):
                         continue
                 if not sl.get('column'):
                     st = settle(b, rot, x, y, sl['in'], box)
@@ -4347,10 +4393,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     # (a table too: the made homes' tables stood across the way in 14% of the time to the game's 10%,
                     # their beds 22% to its 10%, 2026-11-09; taken there only when no other wall fits)
                     spot_why['across the way in'] += 1
-                    if fits(box) and (room.get('traced') or kind == 'table'):
+                    if fits_w(box) and (room.get('traced') or kind == 'table'):
                         across_.append(((x, y, rot, box), sl))
                     continue
-                if fits(box):
+                if fits_w(box):
                     (col_slots if sl.get('column') else slots).remove(sl)
                     return (x, y, rot, box), sl['in']
                 spot_why[why_not(box)] += 1
