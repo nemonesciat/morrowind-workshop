@@ -1254,7 +1254,11 @@ function v3StrokeAt(at, e){
     }
     if (any){ v3StrokeMark(ck, 'h'); touched.add(ck); }
   }
-  // keep the shared edges of neighbouring cells exactly level, then redraw
+  v3StrokeSeams(touched);
+}
+// keep the shared edges of neighbouring cells exactly level, then redraw
+function v3StrokeSeams(touched){
+  const S_ = V3.stroke;
   for (const ck of touched){
     const c = V3.lands[ck], L = c.L;
     for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]){
@@ -1338,9 +1342,120 @@ async function v3StrokeEnd(){
   } catch (err){ toast(err.message, true); v3LandsReload(); }
 }
 
+// ----- the Ramp: a sloped path between two clicks, one even rise along it and level from side to side. (Flatten
+// levels to the height a stroke starts at, so a slope was made of many small level patches and Smooth: "it takes many
+// attempts to make a slightly sloped path that is level on one plane", the user, 2026-11-13.) Shift+click adds a
+// bend before the last click; the rise is even over the whole length. Size reaches either side of its middle line,
+// as the ring shows, and the ground eases back to what it was over V3_RAMP_EASE beyond that.
+const V3_RAMP_STEEP = 40;                         // (degrees: shown red past this, too steep to walk up comfortably)
+function v3RampEase(){ return Math.max(192, 0.75 * V3.land.size); }
+function v3RampClear(){
+  if (V3.ramp){ V3.ramp = null; if (typeof setBanner === 'function') setBanner(''); }
+  if (V3.rampLine) V3.rampLine.visible = false;
+}
+// where a spot lies along the path's middle line: [distance along it, distance from it], and the path's length
+function v3RampAlong(pts, x, y){
+  let best = null, run = 0;
+  for (let i = 0; i + 1 < pts.length; i++){
+    const a = pts[i], b = pts[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (L * L)));
+    const d = Math.hypot(a[0] + dx * t - x, a[1] + dy * t - y);
+    if (!best || d < best[1]) best = [run + t * L, d];
+    run += L;
+  }
+  return [best[0], best[1], run];
+}
+function v3RampGrade(pts){
+  let run = 0;
+  for (let i = 0; i + 1 < pts.length; i++) run += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+  const rise = pts[pts.length - 1][2] - pts[0][2];
+  return {run, rise, deg: run ? Math.atan2(Math.abs(rise), run) * 180 / Math.PI : 90};
+}
+// the path as it would be made, drawn over the ground: its two edges from the first point to the mouse
+function v3RampShow(at){
+  const R = V3.ramp; if (R) R.at = at || R.at;
+  const pts = R ? R.pts.concat(R.at ? [R.at] : []) : [];
+  const G = pts.length >= 2 ? v3RampGrade(pts) : null;
+  if (!R || !G || G.run < 32 || !v3LandOn()){ if (V3.rampLine) V3.rampLine.visible = false; if (R && R.pts.length) setBanner('Ramp: now click its top. Shift+click for a bend first. Esc gives it up.'); return; }
+  const T = THREE, half = V3.land.size, n = pts.length;
+  const left = [], right = [];
+  let run = 0;
+  for (let i = 0; i < n; i++){
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)], d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const nx = -(b[1] - a[1]) / d, ny = (b[0] - a[0]) / d;
+    if (i) run += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    const z = pts[0][2] + G.rise * (G.run ? run / G.run : 0) + 8 - V3.origin[2];
+    left.push(pts[i][0] + nx * half - V3.origin[0], pts[i][1] + ny * half - V3.origin[1], z);
+    right.unshift(pts[i][0] - nx * half - V3.origin[0], pts[i][1] - ny * half - V3.origin[1], z);
+  }
+  if (!V3.rampLine){
+    V3.rampLine = new T.LineLoop(new T.BufferGeometry(), new T.LineBasicMaterial({color: 0xffe08a, depthTest: false, transparent: true}));
+    V3.rampLine.renderOrder = 21; V3.rampLine.frustumCulled = false; V3.scene.add(V3.rampLine);
+  }
+  const flat = new Float32Array(left.concat(right));     // (the left edge out, the right edge back)
+  V3.rampLine.geometry.dispose(); V3.rampLine.geometry = new T.BufferGeometry();
+  V3.rampLine.geometry.setAttribute('position', new T.BufferAttribute(flat, 3));
+  const steep = G.deg > V3_RAMP_STEEP;
+  V3.rampLine.material.color.set(steep ? 0xff5a4a : 0xffe08a);
+  V3.rampLine.visible = true;
+  setBanner(`Ramp: <b>${Math.round(G.deg)}°</b>${steep ? ' (steep to walk)' : ''}, ${G.rise >= 0 ? 'up' : 'down'} ${Math.round(Math.abs(G.rise))} over ${Math.round(G.run)}. <b>Click</b> its end, <b>Shift+click</b> for a bend. Esc gives it up.`);
+  v3Refresh();
+}
+function v3RampClick(e){
+  const at = v3Brush(e); if (!at) return;
+  const R = V3.ramp = V3.ramp || {pts: [], at: null};
+  R.pts.push(at); R.at = at;
+  if (R.pts.length < 2 || e.shiftKey){ v3RampShow(at); return; }
+  const pts = R.pts; v3RampClear();
+  v3RampMake(pts);
+}
+// The ground under the path brought to its plane: every land point within Size of the middle line at the height the
+// even rise gives its place along the line, eased back to the ground as it was over v3RampEase beyond; round the two
+// ends the same way at the ends' own heights (a level landing at the foot and at the top). One stroke: one Undo, and
+// what stands on the ground follows it as with the other brushes.
+function v3RampMake(pts){
+  const G = v3RampGrade(pts); if (G.run < 64) return toast('The two ends of a ramp need some distance between them.', true);
+  const half = V3.land.size, ease = v3RampEase(), reach = half + ease;
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+  const lo = [Math.min(...xs) - reach, Math.min(...ys) - reach], hi = [Math.max(...xs) + reach, Math.max(...ys) + reach];
+  V3.stroke = {cells: new Map(), armed: true, last: 0};
+  const touched = new Set();
+  for (const [ck, c] of Object.entries(V3.lands)){
+    if (!c.L) continue;
+    const ox = c.gx * CELL, oy = c.gy * CELL;
+    if (hi[0] < ox || lo[0] > ox + CELL || hi[1] < oy || lo[1] > oy + CELL) continue;
+    const H = c.L.h, moved = [];
+    for (let y = 0; y <= 64; y++) for (let x = 0; x <= 64; x++){
+      const wx = ox + x * 128, wy = oy + y * 128;
+      if (wx < lo[0] || wx > hi[0] || wy < lo[1] || wy > hi[1]) continue;
+      const [along, off] = v3RampAlong(pts, wx, wy);
+      if (off >= reach) continue;
+      const t = off <= half ? 1 : 1 - (off - half) / ease, w = t * t * (3 - 2 * t);
+      const want = pts[0][2] + G.rise * (along / G.run), v = y * 65 + x;
+      if (Math.abs(want - H[v]) * w < 0.5) continue;
+      H[v] += (want - H[v]) * w; moved.push(v);
+    }
+    // (no step between neighbouring points over what the land record holds, as with Raise and Lower)
+    const MAXSTEP = 1000;
+    for (let pass = 0; pass < 3; pass++) for (const v of moved){
+      const x = v % 65, y = (v - x) / 65;
+      for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){
+        if (x + i < 0 || x + i > 64 || y + j < 0 || y + j > 64) continue;
+        const nv = H[(y + j) * 65 + x + i];
+        if (H[v] > nv + MAXSTEP) H[v] = nv + MAXSTEP; else if (H[v] < nv - MAXSTEP) H[v] = nv - MAXSTEP;
+      }
+    }
+    if (moved.length){ v3StrokeMark(ck, 'h'); touched.add(ck); }
+  }
+  if (!touched.size){ V3.stroke = null; return toast('The ground there already lies on that slope.'); }
+  v3StrokeSeams(touched);
+  v3StrokeEnd();
+}
+
 // the ground tool panel (outdoors, "⛰ Ground" in the toolbar)
 const V3_LANDTOOLS = [['raise', '▲ Raise', 'Raise the ground (Ctrl: lower)'], ['lower', '▼ Lower', 'Lower the ground (Ctrl: raise)'],
   ['smooth', '≈ Smooth', 'Even out bumps'], ['flatten', '▬ Flatten', 'Level the ground to the height where you start the stroke'],
+  ['ramp', '◢ Ramp', 'A sloped path: click its foot, then its top. The ground between becomes one even slope, level from side to side. Shift+click first for bends. Size is how far it reaches either side.'],
   ['paint', '🖌 Paint', 'Paint a ground texture (Shift+click: pick the texture under the mouse)'],
   ['tint', '🎨 Tint', 'Paint the ground\'s own colour, the shading the game multiplies into its textures (Ctrl: back to plain; Shift+click: pick the colour under the mouse). Or shade it automatically, the way the game does.'],
   ['scatter', '🌿 Scatter', 'Scatter grass, plants, rocks or trees of this region (Remove, or Ctrl: clear away what it scattered)']];
@@ -1356,7 +1471,7 @@ function v3LandToggle(on){
     V3.landOpen = true;
     if (W.mode) setMode(null);
     W.sel = null; W.multi.clear(); renderWside();
-  } else { V3.landOpen = false; V3.land = V3.land ? Object.assign({}, V3.land) : null; }
+  } else { V3.landOpen = false; V3.land = V3.land ? Object.assign({}, V3.land) : null; v3RampClear(); }
   v3Tools(); v3LandPanel(); v3Refresh();
   if (V3.ring) V3.ring.visible = false;
 }
@@ -1382,7 +1497,7 @@ async function v3LandPanel(){
   p.innerHTML = `<div class="v3lhead"><b>Ground${typeof guideLink === 'function' ? guideLink('shaping-the-land.md', 'The Ground brush', 'How the Ground brush works') : ''}</b><button class="btn sm" data-lt="close" title="Close the ground tools">✕</button></div>
     <div class="v3lrow">${V3_LANDTOOLS.map(([k, l, t]) => `<button class="btn sm ${B.tool === k ? 'primary' : ''}" data-lt="${k}" title="${t}">${l}</button>`).join('')}</div>
     <label class="v3lrow" title="How far the brush reaches, in game units: the land has a point every 128, so 64 moves just the one under it. [ and ] change it">Size <input type="range" id="v3lsize" min="0" max="1000" value="${v3SizePos(B.size)}"><input class="inp v3lnum" id="v3lsizen" type="number" min="${V3_BRUSH[0]}" max="${V3_BRUSH[1]}" step="16" value="${B.size}"></label>
-    <label class="v3lrow" style="display:${B.tool === 'scatter' ? 'none' : ''}">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
+    <label class="v3lrow" style="display:${B.tool === 'scatter' || B.tool === 'ramp' ? 'none' : ''}">Strength <input type="range" id="v3lstr" min="1" max="10" value="${B.strength}"><span>${B.strength}</span></label>
     <label class="v3lrow" title="Things standing on the ground move up and down with it"><input type="checkbox" id="v3lfollow" ${B.follow !== false ? 'checked' : ''}> Objects follow the ground</label>
     <div id="v3ltex" style="display:${B.tool === 'paint' ? 'block' : 'none'}">
       <div class="v3lrow"><button class="btn sm ${B.texAuto ? 'primary' : ''}" id="v3lauto" title="Paint each patch with the texture the region's land has at its slope, height and shore. Roads and paving stay">✨ Auto</button>
@@ -1403,11 +1518,12 @@ async function v3LandPanel(){
       <label class="v3lrow">Amount <input type="range" id="v3lshadek" min="10" max="100" step="5" value="${B.shadeK || 100}"><span>${B.shadeK || 100}%</span></label>
       <div class="faint" id="v3lshadeinfo"></div>
     </div>
-    <div class="v3lnote">Drag on the ground to use the brush. Right-drag still looks around. Each stroke can be undone. ${B.tool === 'scatter' ? 'Scattered things show in game after a restart, like other new objects.' : 'Ground changes show in game after a restart.'}</div>`;
+    <div class="v3lnote">${B.tool === 'ramp' ? 'Click the foot of the path, then its top. Shift+click first for bends; Backspace takes a point back. One Undo.' : 'Drag on the ground to use the brush. Right-drag still looks around. Each stroke can be undone.'} ${B.tool === 'scatter' ? 'Scattered things show in game after a restart, like other new objects.' : 'Ground changes show in game after a restart.'}</div>`;
   p.querySelectorAll('[data-lt]').forEach(b => b.onclick = () => {
     const a = b.dataset.lt;
     V3.landPick = null;
     if (a === 'close') return v3LandToggle(false);
+    v3RampClear();
     B.tool = a; v3LandSave(); v3LandPanel();
   });
   // the eyedropper: the next click on the ground picks (click it again to put it down)
@@ -1816,6 +1932,7 @@ function v3Bind(el){
       if (pick && V3.land.tool === 'tint'){ V3.landPick = null; const at = v3Brush(e); if (at) v3TintEyedrop(at); else v3LandPanel(); return; }
       if (V3.land.tool === 'paint' && !V3.land.tex && !V3.land.texAuto){ toast('Pick a ground texture first, or ✨ Auto.'); return; }
       if (V3.land.tool === 'scatter' && !v3ScatterItems().length){ toast('Pick something to scatter first.'); return; }
+      if (V3.land.tool === 'ramp'){ v3RampClick(e); return; }
       if (v3StrokeStart(e)){ drag = {b: 0, x: e.clientX, y: e.clientY, moved: true, stroke: true}; V3.strokeEv = e; V3.over = true; }
       return;
     }
@@ -1956,6 +2073,9 @@ function v3Bind(el){
     if (e.key === 'Shift') V3.keys.shift = true;
     if (e.key === 'Escape') V3.keys = {};
     // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
+    // (Esc with a ramp begun gives the ramp up and keeps the ground tools open; Backspace takes its last point back)
+    if (e.key === 'Escape' && V3.landOpen && V3.ramp && V3.ramp.pts.length){ v3RampClear(); return; }
+    if (e.key === 'Backspace' && V3.landOpen && V3.ramp && V3.ramp.pts.length){ e.preventDefault(); V3.ramp.pts.pop(); v3RampShow(V3.ramp.at); return; }
     if (e.key === 'Escape' && V3.landOpen) v3LandToggle(false);
     if (V3.landOpen && W.ext && (e.key === '[' || e.key === ']')){
       V3.land.size = v3BrushClamp(V3.land.size * (e.key === ']' ? 1.25 : 0.8)); v3LandSave(); v3LandPanel();
@@ -2104,7 +2224,9 @@ function v3Hover(e){
   if (v3LandOn() && V3.landOpen){
     if (V3.stroke) return;
     const now = performance.now(); if (now - (V3.hoverT || 0) < 30) return; V3.hoverT = now;
-    v3BrushRing(v3Brush(e)); $('#maptip').style.display = 'none'; return;
+    const at_ = v3Brush(e);
+    v3BrushRing(at_); if (V3.land.tool === 'ramp') v3RampShow(at_);
+    $('#maptip').style.display = 'none'; return;
   }
   const now = performance.now(); if (now - (V3.hoverT || 0) < 60) return; V3.hoverT = now;
   if (typeof extendPick3D === 'function' && extendPick3D(e, false)) return;

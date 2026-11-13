@@ -27,6 +27,7 @@ on the ground. A plain click does nothing, so you can still select things.
 | ▲ Raise / ▼ Lower | Raises or lowers the ground under the brush. Hold **Ctrl** for the opposite. |
 | ≈ Smooth | Evens out bumps. |
 | ▬ Flatten | Levels the ground to the height where the stroke started. |
+| ◢ Ramp | A sloped path. Click its foot, then its top: the ground between becomes one even slope, level from side to side, with a level landing at each end. **Shift+click** first for bends; Backspace takes a point back; Esc gives it up. The ring shows how far it reaches either side (Size). The top bar says how steep it is, in red past 40°. One Undo. |
 | 🖌 Paint | Paints a ground texture. Pick one from the list, or take the one on the ground: **💧 Pick**, then click it (or **Shift+click** it any time). **✨ Auto** paints each patch the way the region's own land is painted where the ground is like it (as steep, as high, on a crest or in a hollow, by the water or not), copying the game's layout so textures meet as they do in the game (roads and paving stay). **Like** takes another region's textures. |
 | 🎨 Tint | Paints the ground's own colour (the shading the game multiplies into its textures). **Ctrl** paints back to plain; **💧 Pick** (or **Shift+click**) takes the colour there. |
 | 🌿 Scatter | Scatters the region's own grass, plants, rocks or trees. **✕ Remove** (or **Ctrl**) clears away what the brush scattered, of the kinds ticked: never the game's own nor what you placed by hand. |

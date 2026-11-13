@@ -3348,11 +3348,11 @@ function groupByMesh(items, meshOf){
 }
 const variantsText = n => `${n} variant${n === 1 ? '' : 's'}`;
 // a palette group's tiles, the variants of a model folded under its common record (+20 opens them)
-function palTilesHtml(g, n){
+function palTilesHtml(g, n, from){
   W.palVar = W.palVar || new Set();
   const all = groupByMesh(g.items, it => it.mesh);
   W.palLeft = n ? Math.max(0, all.length - n) : 0;
-  return (n ? all.slice(0, n) : all).map(gr => {
+  return (n ? all.slice(from || 0, n) : all).map(gr => {
     if (gr.length < 2) return tileHtml(gr[0]);
     const key = g.name + '|' + (gr[0].mesh || '').toLowerCase(), open = W.palVar.has(key), n = gr.length - 1;
     const tog = `<button class="vartog" data-vartog="${esc(key)}" title="${variantsText(n)} of this model (other records with the same mesh): click to ${open ? 'fold them away' : 'show them'}">${open ? '−' : '+'}${n}</button>`;
@@ -3420,6 +3420,8 @@ function renderWside_(){
   }
   const refs = (W.cells[W.key] || {refs: []}).refs;
   const sel = W.sel && findRef(W.sel.cell, W.sel.k);
+  // (the palette as it stands, kept through this drawing when it would show the same tiles: see palSig)
+  const palOld = $('#w-palette'), palSame = !!(palOld && W.palette && palOld.dataset.sig && palOld.dataset.sig === palSig());
   h += `<div class="whead"><h2>${esc(i.name || i.region || 'Wilderness')}</h2><div class="msg">${i.interior ? 'Interior' : `Outdoors · ${i.gx}, ${i.gy}${i.region ? ' · ' + esc(i.region) : ''}`}${i.i == null ? '' : ` · <span class="lnk" data-cellrec="${i.i}">details</span>`}${i.interior ? '' : ` · <span class="lnk" data-cellname title="The cell's name on the game's world map, its map window and saves">name</span>`}</div>
     <div class="playrow"><button class="btn sm primary" id="w-play" title="${LINK.connected ? 'Go here in game: the game is running, this teleports you there' :'Starts OpenMW here with a quick test character, your whole load order and your mod. Your normal saves are untouched.'}">▶ ${LINK.connected ? 'Go here' : 'Play here'}</button><button class="btn sm" id="w-playspot" title="Click a spot on the map to start or teleport there">Pick a spot</button></div>
     <div id="w-link"></div>
@@ -3435,7 +3437,7 @@ function renderWside_(){
     ${i.interior ? '<div id="w-taste"></div>' : ''}<div id="w-surveys" class="msg" style="display:none;margin:-2px 0 8px"></div>
     <div class="dd"><input class="inp" id="w-place" placeholder="Search anything to place: furniture, items, people…" autocomplete="off"><div class="ddlist" id="w-place-l"></div></div>
     ${W.clip ? `<div class="placingbar" style="border-color:var(--line2);background:var(--panel2);color:var(--text)"><div>⧉ <b>${esc(W.clip.label)}</b> copied<div class="msg">Paste it anywhere with Ctrl+V.</div></div><button class="btn sm" data-ga="paste">Paste</button></div>` : ''}
-    <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${paletteHtml()}</div></div>`;
+    <div id="w-recent"></div><div id="w-prefabs"></div><div id="w-palette">${palSame ? '' : paletteHtml()}</div></div>`;
   const cut = [h.length];
   // --- Selected
   h += `<div class="wpane on" data-pane="sel">`;
@@ -3494,6 +3496,7 @@ function renderWside_(){
   const keepTyped = ae && ae.id && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && !/^(checkbox|radio|range|file|button)$/.test(ae.type || '')
     ? [ae, ae.id, ae.value, ae.selectionStart, ae.selectionEnd] : null;
   body('place').innerHTML = h.slice(0, cut[0]);
+  { const pn = $('#w-palette'); if (pn){ if (palSame) pn.replaceWith(palOld); else pn.dataset.sig = palSig(); } }
   body('sel').innerHTML = h.slice(cut[0], cut[1]);
   body('objs').innerHTML = h.slice(cut[1], cut[2]);
   body('view').innerHTML = h.slice(cut[2]);
@@ -3860,12 +3863,25 @@ async function loadPalette(){
       }
     } else { W.palette = p; W.palN = 0; }
     W.palAt = key;
-    const b = $('#w-palette'); if (draw && b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+    if (draw) palDraw();
   } catch (e) { W.paletteKey = null; }
 }
 // the things places like this one hold: the kinds as one row of chips, the chosen kind's things as small pictures
 // (the name and a bigger picture on hover). (Eight folding lists of big named tiles before: "takes up a lot of
 // space ... looks tacky", the user, 2026-11-09.)
+// What the palette shows, as one word: while the word is the same the tiles on the page are the right ones, and
+// renderWside leaves them standing. (They were made anew with the rest of the panel every time something was
+// selected or placed, several times a second after a placing: the tiles flickered, and a tile made anew between the
+// press and the release of a click never got the click, the user, 2026-11-13: "the buttons flicker and sometimes
+// don't select object when clicked. then you place object and can't select a new one without first hitting escape".)
+function palSig(){
+  const P = W.palette;
+  return !P ? '' : [P.groups.map(g => g.name + ':' + g.items.length).join('|'), W.palTab || '', W.palN || 0, [...(W.palVar || [])].join(',')].join('~');
+}
+function palDraw(){
+  const b = $('#w-palette'); if (!b) return;
+  b.innerHTML = paletteHtml(); b.dataset.sig = palSig(); renderPlacing(); v3ThumbScan(b);
+}
 const PAL_SHORT = {'Wall hangings': 'Hangings', 'Rugs & mats': 'Rugs', 'Plants & gardening': 'Plants', 'Clutter & items': 'Clutter', 'People & creatures': 'People', 'Building trim': 'Trim', 'Market & yard': 'Market', 'Docks & boats': 'Docks'};
 function paletteHtml(){
   const P = W.palette;
@@ -3882,14 +3898,21 @@ const PAL_STEP = 60;
 function palMore(){
   const m = $('#pal-more'); if (!m || !m.offsetParent) return;
   if (m.getBoundingClientRect().top > innerHeight + 400) return;
-  W.palN = (W.palN || PAL_STEP) + PAL_STEP;
-  const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+  // (the next tiles added after the ones that stand: the whole list was made anew at every step of a scroll)
+  const b = $('#w-palette'), box = b && b.querySelector('.tiles.dense'), P = W.palette;
+  if (!box || !P) return;
+  const g = P.groups.find(x => x.name === W.palTab) || P.groups[0];
+  const from = W.palN || PAL_STEP;
+  W.palN = from + PAL_STEP;
+  box.insertAdjacentHTML('beforeend', palTilesHtml(g, W.palN, from));
+  b.dataset.sig = palSig(); renderPlacing(); v3ThumbScan(box);
+  if (W.palLeft) setTimeout(palMore, 0); else m.remove();
 }
 document.addEventListener('scroll', palMore, true);
 $('#world').addEventListener('click', e => {
   const c = e.target.closest && e.target.closest('[data-palchip]'); if (!c) return;
   W.palTab = c.dataset.palchip; W.palN = 0;
-  const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+  palDraw();
 });
 document.addEventListener('dragstart', e => {
   const c = e.target.closest && e.target.closest('[data-pid]'); if (!c) return;
@@ -3898,7 +3921,27 @@ document.addEventListener('dragstart', e => {
   window.wsDrag = {id: c.dataset.pid, type: c.dataset.ptype};
   hidePreview();
 });
-document.addEventListener('dragend', () => { window.wsDrag = null; if (V3.on && W.mode !== 'place') v3GhostSet(null); });
+// A tile is the brush the moment it is pressed, whatever was being placed or is selected. (It waited for the click:
+// a tile can be dragged into the view, so a press that moved a hair before its release began a drag and picked
+// nothing. Pressing the tile being placed changes nothing yet: its click stops the placing, as before.)
+function palPress(e){
+  if (e.button !== 0 || !e.target.closest || e.target.closest('[data-vartog], .ddlist')) return;
+  const pc = e.target.closest('[data-pid]'); if (!pc || !pc.closest('#world')) return;
+  const on = W.mode === 'place' && W.placeId && W.placeId.toLowerCase() === pc.dataset.pid.toLowerCase();
+  W.palDown = {id: pc.dataset.pid, set: !on, was: W.mode === 'place' ? {id: W.placeId, name: W.placeName, type: W.placeType} : null, mode: W.mode};
+  if (!on) setMode('place', {id: pc.dataset.pid, name: pc.dataset.pname, type: pc.dataset.ptype});
+}
+document.addEventListener('pointerdown', palPress, true);
+document.addEventListener('dragend', e => {
+  window.wsDrag = null;
+  // (a tile dragged into the view and let go there was placed by the drop: the brush goes back to what it was before
+  // the press. A drag let go anywhere else was a click that slipped: the tile stays the brush)
+  const D = W.palDown; W.palDown = null;
+  if (D && D.set && e.dataTransfer && e.dataTransfer.dropEffect !== 'none' && W.mode === 'place' && W.placeId === D.id){
+    if (D.was) setMode('place', D.was); else if (!D.mode) setMode(null);
+  }
+  if (V3.on && W.mode !== 'place') v3GhostSet(null);
+});
 // (lead: a function giving rows of its own for what was typed, [{label, small, go}], shown instead of the search:
 // Go to a place's coordinates. Enter takes the first)
 function ddSearch(id, types, onPick, pictures, lead){
@@ -3957,12 +4000,14 @@ $('#world').addEventListener('click', e => {
   if (vt){
     e.stopPropagation(); W.palVar = W.palVar || new Set();
     W.palVar.has(vt.dataset.vartog) ? W.palVar.delete(vt.dataset.vartog) : W.palVar.add(vt.dataset.vartog);
-    const b = $('#w-palette'); if (b){ b.innerHTML = paletteHtml(); renderPlacing(); v3ThumbScan(b); }
+    palDraw();
     return;
   }
   const pc = e.target.closest('[data-pid]');
   if (pc){
     // click a tile to start placing it; click it again to stop
+    const D = W.palDown; W.palDown = null;
+    if (D && D.set && D.id === pc.dataset.pid) return;       // (it became the brush as it was pressed: palPress)
     if (W.mode === 'place' && W.placeId && W.placeId.toLowerCase() === pc.dataset.pid.toLowerCase()) setMode(null);
     else setMode('place', {id: pc.dataset.pid, name: pc.dataset.pname, type: pc.dataset.ptype});
     return;
