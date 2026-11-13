@@ -176,6 +176,15 @@ def plan(db, cells, seed=1):
             continue
         people, creatures = _inside(db, D['name'])
         band, leader, lvl = _band(db, people, creatures)
+        # (a dungeon with a story of its own, dgstory.py: the town says that, not the band's stock lines)
+        say = SAY[band]
+        try:
+            import dgstory
+            st = dgstory.of(db, D['name'])
+            if st and st.get('say') and people:
+                say = list(st['say'])
+        except Exception:
+            pass
         mark = min(((math.hypot(L['x'] - D['x'], L['y'] - D['y']), L['name']) for L in G['labels'] if L['name'] != D['name']
                     and math.hypot(L['x'] - D['x'], L['y'] - D['y']) < 9000), default=None)
         lines = []
@@ -184,10 +193,10 @@ def plan(db, cells, seed=1):
             where = '%s lies %s of %s%s.' % (D['name'], _way(T['x'], T['y'], D['x'], D['y']), t,
                                               (', under %s' % mark[1]) if mark and re.match(r'(mount|.* peak$)', mark[1], re.I) else
                                               (', by %s' % mark[1]) if mark else '')
-            lines.append((t, '%s %s' % (where, rng.choice(SAY[band]))))
-        rumour = 'Have you heard about %s? %s' % (D['name'], rng.choice(SAY[band]))
+            lines.append((t, '%s %s' % (where, rng.choice(say))))
+        rumour = 'Have you heard about %s? %s' % (D['name'], rng.choice(say))
         said = {line.split('. ', 1)[-1] for _t, line in lines}
-        ask = next((x for x in SAY[band] if x not in said), SAY[band][0])
+        ask = next((x for x in say if x not in said), say[0])
         quest = None
         if leader:
             t = near[0][1]

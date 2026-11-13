@@ -78,6 +78,13 @@ CROPS = {'Dunmer': ['flora_saltrice', 'flora_marshmerrow', 'flora_corkbulb', 'fl
          'Nord': ['t_sky_flora_withwheat', 't_glb_flora_cabbage', 'flora_wickwheat'],
          'Breton': ['flora_wickwheat', 't_glb_flora_cabbage'],
          'Redguard': ['flora_wickwheat', 'flora_ash_yam']}
+# what the survey reads as a crop in a field and nobody farms: both of the game's drumpear "farms" stand by no
+# building, unfenced, one on a 40-degree slope (wild clumps that happen to stand in a row), and the region grows
+# seven more such clumps that are no farm by any count. A farm drawn on Shipal-Shin ground was 151 of them, which the
+# user could not tell from the wild land (2026-11-13)
+NOT_FARMED = re.compile(r'drumpear')
+# a field beside one of the mod's own towns is that town's: within this of its outline
+FIELD_TOWN = 8192.0
 # the yard kinds: [(id, x, y, dz, rz)] in the yard frame, y from the house's back wall; alternatives by id prefix are
 # tried in order and the first the load order has is used
 KINDS = {
@@ -182,10 +189,34 @@ def _first(db, *ids):
     return None
 
 
-def _ground_z(db, b, x, y, s=1.0):
+FOOT_TALL = 220.0               # (a static this tall at most, its origin a FOOT_SHARE of its height or more over its
+FOOT_SHARE = 0.3                # lowest point, is a loose thing with its origin in its middle: a hay bale, a grindstone)
+NOT_LOOSE = re.compile(r'flora|plant|tree|bush|grass|rock|fence|post|pole|sign|planter', re.I)
+
+
+def _on_its_foot(db, rid, b):
+    """A thing that stands on its own lowest point, whatever lies under its origin: a container or an item (a crate, a
+    barrel, a basket, a bucket: their origins are in their middles), or a small static made the same way. Not what
+    the game sets into the ground on purpose: plants, rocks, fences and posts."""
+    if not rid or not b or b[2] >= 0 or NOT_LOOSE.search(rid):
+        return False
+    ri = db.resolve_id(rid)
+    t = db.recs[ri][0] if ri is not None else None
+    if t == 'CONT' or t in mapdata.ITEM_TYPES:
+        return True
+    h = b[5] - b[2]
+    return t in ('STAT', 'ACTI') and h <= FOOT_TALL and -b[2] >= FOOT_SHARE * h
+
+
+def _ground_z(db, b, x, y, s=1.0, rid=None):
     g = mapdata.terrain_z(db, x, y)
     if g is None:
         return None
+    # (a loose thing, named by rid: its lowest point on the ground. A yard's crates, barrels, baskets and buckets
+    # stood with their middles on it, half in the dirt: 53 of the 175 loose things outdoors in the user's town,
+    # 2026-11-13, "raise all this assorted decor out of the dirt")
+    if rid is not None and _on_its_foot(db, rid, b):
+        return g - b[2] * s
     # (the piece's foot on the ground: most statics stand at their origin; one with its mesh starting over it is sunk)
     return g - (b[2] * s if b and b[2] > 0 else 0.0)
 
@@ -376,7 +407,17 @@ def _species(db, what, region, culture, fallback=()):
         pool = _own_species(db, what, region) or (_own_species(db, what, home) if home != (region or '').lower() else {})
         if not pool and what in ('beds', 'house_trees') and home:
             pool = {b: n for b, n in _wild_kinds(db, home, 'trees' if what == 'house_trees' else 'plants').items() if V.get(b)}
-        if not pool:
+        if what == 'fields':
+            # (crops only: see NOT_FARMED; a region whose only "crop" is one of those takes its culture's)
+            farmed = lambda d: {b: n for b, n in (d or {}).items() if not NOT_FARMED.search(b)}
+            pool = farmed(_own_species(db, what, region)) or (farmed(_own_species(db, what, home)) if home != (region or '').lower() else {})
+            if not pool:
+                cc = (((gardensurvey.outdoor_ready(db) or {}).get('fields') or {}).get('crops_by_culture') or {}).get(culture) or {}
+                pool = farmed(cc) if sum(cc.values()) >= 2 else {}
+            if not pool and not any(V.get(b) for b in fallback):
+                # (every place's crops only where the table of the culture's kind has none in this load order)
+                pool = farmed(gardensurvey.region_species(db, what, region, culture))
+        elif not pool:
             pool = gardensurvey.region_species(db, what, region, culture) or {}
     except Exception:
         pool = {}
@@ -480,7 +521,7 @@ def _lay_set(db, space, memo, things, ox, oy, X, Y, kind):
         rzw = (rz + rz0) % (2 * math.pi)
         pad = max(0.0, THING - max(bb[3] - bb[0], bb[4] - bb[1]) / 2.0)
         rect = _footprint(bb, wx, wy, rzw, 1.0, pad)
-        z = _ground_z(db, bb, wx, wy)
+        z = _ground_z(db, bb, wx, wy, rid=rid)
         if z is None or not space.free(rect):
             continue
         placed.append((rid, (wx, wy, z + dz, 0.0, 0.0, rzw), 1.0))
@@ -1503,10 +1544,46 @@ def farm(db, cx, cy, face, w, d, culture, region=None, seed=1, space=None, memo=
     return out
 
 
+def fruit_trees(db, region, culture, cx=None, cy=None):
+    """{kind-name: n} of the fruit trees an orchard grows here, of those this load order has: the region's own
+    orchards' trees, else those of the region whose plants grow on its land (_plant_home), else the culture's
+    orchards', else those of the region with orchards nearest on the map. Fruit trees only, {} when the game has
+    none: an orchard of the trees by the region's houses was 37 Zifa trees, which bear nothing (2026-11-13)."""
+    V = _variants(db)
+    try:
+        import gardensurvey
+        O = (gardensurvey.outdoor_ready(db) or {}).get('orchards') or {}
+    except Exception:
+        O = {}
+    by = O.get('trees_by_region') or {}
+    have = lambda d: {b: n for b, n in (d or {}).items() if V.get(b)}
+    r = (region or '').lower()
+    got = have(by.get(r))
+    if not got:
+        home = _plant_home(db, r)
+        got = have(by.get(home)) if home != r else {}
+    if not got:
+        # (the culture's orchards, where its towns have any: every Dunmer region took the one orchard tree of one
+        # far-off region before)
+        got = have(((O.get('by_culture') or {}).get(culture) or {}).get('kinds'))
+    if not got and cx is not None:
+        try:
+            import landregion
+            C = {k.lower(): v for k, v in landregion._centres(db).items()}
+            gx, gy = cx / 8192.0, cy / 8192.0
+            for _d, k in sorted((math.hypot(C[k][0] - gx, C[k][1] - gy), k) for k in by if k in C):
+                got = have(by[k])
+                if got:
+                    break
+        except Exception as e:
+            print('orchard: the nearest region with fruit trees:', e)
+    return got or have((O.get('all') or {}).get('kinds'))
+
+
 def orchard(db, cx, cy, face, w, d, culture, region=None, seed=1, space=None, memo=None):
-    """An orchard w across and d deep: a loose grid of one kind of tree (the region's fruit trees, else the trees the
-    game stands by the region's houses, else its wild trees) at the game's orchard spacing, each tree a little off
-    its mark and turned at random, as unevenly spaced as the game's. [{'id', 'p', 's', 'role'}]."""
+    """An orchard w across and d deep: a loose grid of one kind of fruit tree (fruit_trees) at the game's orchard
+    spacing, each tree a little off its mark and turned at random, as unevenly spaced as the game's. [] where the
+    load order has no fruit tree. [{'id', 'p', 's', 'role'}]."""
     rng = random.Random('%s|orchard|%s' % (seed, culture))
     memo = memo if memo is not None else {}
     space = space or _Space([])
@@ -1515,20 +1592,7 @@ def orchard(db, cx, cy, face, w, d, culture, region=None, seed=1, space=None, me
     Y = (-fx, -fy)
     X = (Y[1], -Y[0])
     V = _variants(db)
-    pool = {}
-    try:
-        import gardensurvey
-        S = gardensurvey.outdoor_ready(db) or {}
-        O = S.get('orchards') or {}
-        own = (O.get('trees_by_region') or {}).get((region or '').lower()) or {}
-        if not own:
-            # (the culture's orchards, where its towns have any: the game's fruit trees are few, and every Dunmer
-            # region took the one orchard tree of one far-off region before)
-            own = {o['tree']: 1 for o in (O.get('examples') or []) if o.get('culture') == culture}
-        pool = {b: n for b, n in own.items() if V.get(b)}
-    except Exception:
-        pool = {}
-    pool = pool or _species(db, 'house_trees', region, culture)
+    pool = fruit_trees(db, region, culture, cx, cy)
     base = _draw(rng, pool)
     if not base or not V.get(base):
         return []
@@ -1595,6 +1659,32 @@ def _clear_field(db, pts, cells, pad=150.0):
     return n
 
 
+def field_culture(db, pts):
+    """The culture of the mod's own made town a field lies beside (the nearest whose outline is within FIELD_TOWN of
+    the field's middle), '' where there is none: a farm under a Dunmer town of the mod's was laid as the nearest game
+    town's, a Redoran one a long way off (2026-11-13)."""
+    pts = [(float(p[0]), float(p[1])) for p in (pts or [])]
+    if len(pts) < 3:
+        return ''
+    cx, cy = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+
+    def seg(a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = dx * dx + dy * dy
+        t = 0.0 if L <= 0 else max(0.0, min(1.0, ((cx - a[0]) * dx + (cy - a[1]) * dy) / L))
+        return math.hypot(a[0] + dx * t - cx, a[1] + dy * t - cy)
+    best = None
+    for rec in (getattr(db.project, 'places', None) or {}).values():
+        o = rec.get('outline') or []
+        c = (rec.get('opts') or {}).get('culture')
+        if rec.get('kind') != 'town' or len(o) < 3 or not c:
+            continue
+        dist = 0.0 if _inside(o, cx, cy) else min(seg(o[k], o[(k + 1) % len(o)]) for k in range(len(o)))
+        if dist <= FIELD_TOWN and (best is None or dist < best[0]):
+            best = (dist, c)
+    return best[1] if best else ''
+
+
 def lay_field(db, pts, culture, what='farm', seed=None, commit=True, clear=False):
     """A farm or an orchard on an outline drawn on the map (world points, three or more): the outline's longest edge
     is the near side (the gate's), and the field fills the outline's box in that frame. Placed into the mod as one
@@ -1618,6 +1708,8 @@ def lay_field(db, pts, culture, what='farm', seed=None, commit=True, clear=False
     if clear:
         st = _standing_built(db, cells)
     space = _Space(st)
+    if what != 'farm' and not fruit_trees(db, _region_at(db, cx, cy, {}), culture, cx, cy):
+        raise editing.EditError('This load order has no fruit trees to make an orchard of.')
     items = (farm if what == 'farm' else orchard)(db, cx, cy, face, w, d, culture, seed=seed, space=space)
     # (only within the outline itself, not its box's corners)
     items = [it for it in items if _inside(pts, it['p'][0], it['p'][1]) or it['role'] == 'fence']
@@ -1748,7 +1840,7 @@ def fort(db, poly, gate, keep, free, taken, rng, style='Imperial'):
             # (against each other by their own sizes, a little closer than touching: the set is laid out packed on
             # purpose, and a stacked thing (dz) sits on the one under it)
             own = 0.45 * min((bb[3] - bb[0]), (bb[4] - bb[1])) if bb else THING * 0.6
-            g = _ground_z(db, bb, wx, wy)
+            g = _ground_z(db, bb, wx, wy, rid=rid)
             if g is None or not free(wx, wy, r) or (dz <= 0 and any(math.hypot(wx - q[0], wy - q[1]) < own + q[3] for q in discs)):
                 continue
             placed.append((rid, (wx, wy, g + dz, 0.0, 0.0, (rz + rz0) % (2 * math.pi)), 1.0))

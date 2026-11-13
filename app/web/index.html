@@ -59,7 +59,7 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 #jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
 #jumpme svg{flex:none;display:block}
 @container (max-width:720px){#togetherbtn .tl{display:none}}
-@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
+@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#savebtn .tl,#openbtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
 @container (max-width:500px){#aibtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
@@ -810,7 +810,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="savebtn" title="Save a version of your mod to come back to (Ctrl+S). The mod itself is saved after every change" disabled>💾<span class="tl"> Save</span></button><div class="omwwrap"><button class="btn" id="openbtn" title="Open: earlier versions of this mod, your other mods, an .esp">📂<span class="tl"> Open</span> ▾</button><div class="omwmenu" id="openmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -1750,6 +1750,7 @@ setInterval(async () => {
 function renderProjectPill(){
   const p = S.summary && S.summary.project, el = $('#projpill');
   const ub = $('#undobtn');
+  $('#savebtn').disabled = !p;
   ub.disabled = !(p && p.undo_depth);
   ub.title = p && p.undo_depth ? 'Undo: ' + p.undo_note + ' (Ctrl+Z)' : 'Nothing to undo';
   const rb = $('#redobtn');
@@ -2109,7 +2110,7 @@ async function renderMyMod(){
   const byType = {};
   P.changes.forEach(c => (byType[c.type] = byType[c.type] || []).push(c));
   let h = `<h1>${esc(p.name)}${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'My mod') : ''}</h1>
-    <p class="lead">Saved automatically after every change. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span> (📁 Show folder opens it)</p>
+    <p class="lead">Saved automatically after every change. <b>💾 Save</b> at the top keeps a version to come back to; <b>📂 Open</b> has the earlier ones. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span> (📁 Show folder opens it)</p>
     ${p.source ? `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): this mod <b>is</b> that file, opened as your mod. Its objects keep the numbers the file gave them, its masters stay as the file listed them, and a dated copy of the file as it was is kept beside it (later copies under Backups).${p.plain_esp ? ' A plain .esp holds no Lua scripts: any you write stay in the project and are not written out.' : ''}</p>`
                : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
     <div class="cards">
@@ -4978,6 +4979,73 @@ async function createGo(){
   } catch (err){
     msg.className = 'msg err'; msg.textContent = err.message; go.disabled = false;
   }
+}
+
+// ---------- save and open (the top bar) ----------
+// The mod is saved after every change. Save keeps a version of it as it is now, to come back to: a backup that stays
+// until you remove it (backups.save_now). Open has the earlier versions, saved and the Workshop's own, and the ways
+// to another mod. (tosky0890 on Discord, 2026-11-12: "Autosave from any change?"; the user: "a disk and folder
+// button at the top bar like a typical program")
+async function saveVersion(name){
+  const p = S.summary && S.summary.project;
+  if (!p){ toast('Start a mod first.'); return; }
+  try {
+    await post('/api/backups/now', {name: name || ''});
+    toast('Saved a version' + (name ? ' "' + name + '"' : '') + '. 📂 Open has the earlier ones.');
+    if ($('#vr-bg')) versionsModal();
+  } catch (err){ toast(err.message, true); }
+}
+$('#savebtn').onclick = () => saveVersion();
+$('#openbtn').onclick = e => {
+  e.stopPropagation(); if (typeof topMenusClose === 'function') topMenusClose('openmenu');
+  const m = $('#openmenu'), p = S.summary && S.summary.project, show = m.style.display !== 'block';
+  m.innerHTML = `${p ? '<button data-op="versions"><b>🕘 Earlier versions…</b><small>Put the mod back to a saved version or a backup.</small></button>' : ''}
+    <button data-op="mods"><b>🗂 Your mods…</b><small>Switch to another of your mods.</small></button>
+    <button data-op="adopt"><b>📂 Open an .esp as your mod…</b></button>
+    ${p ? '<button data-op="saveas"><b>💾 Save as…</b><small>Everything into a new file, which becomes the active one.</small></button>' : ''}
+    <button data-op="new"><b>＋ New mod…</b></button>`;
+  m.style.display = show ? 'block' : 'none';
+};
+document.addEventListener('click', e => { if (!e.target.closest('#openmenu')) $('#openmenu').style.display = 'none'; });
+$('#openmenu').addEventListener('click', e => {
+  const b = e.target.closest('button[data-op]'); if (!b) return;
+  $('#openmenu').style.display = 'none';
+  ({versions: versionsModal, mods: modsModal, adopt: () => adoptModal(), saveas: saveAsModal, new: () => projectModal(true)})[b.dataset.op]();
+});
+// The versions of the open mod: the ones you saved (kept until you remove them) and the backups the Workshop makes
+// by itself (rotated: Settings says how many). Restore backs up how the mod is now first.
+async function versionsModal(){
+  let bk;
+  try { bk = await api('/api/backups'); } catch (err){ toast(err.message, true); return; }
+  document.querySelectorAll('#vr-bg').forEach(x => x.remove());
+  const p = S.summary && S.summary.project, when = t => new Date(t * 1000).toLocaleString();
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.id = 'vr-bg';
+  bg.innerHTML = `<div class="modal" style="width:min(620px,94vw);max-height:88vh;overflow:auto"><h2>Earlier versions${p ? ' of ' + esc(p.name) : ''}</h2>
+    <div class="actions" style="margin:4px 0 12px"><input class="inp" id="vr-name" placeholder="A name for it (optional)" maxlength="40" style="max-width:260px" autocomplete="off"><button class="btn primary" id="vr-save">💾 Save a version now</button></div>
+    <div class="bklist" style="max-height:46vh">${bk.backups.map(b => `<div class="setrow"><span>${esc(when(b.time))}${b.why ? ` <span class="chip"${b.kept ? ' style="color:var(--gold2);border-color:var(--gold)"' : ''}>${esc(b.why)}</span>` : ''}</span>
+      <span><span class="msg">${fmtN(Math.round(b.size / 1024))} KB</span> <button class="btn sm" data-vrestore="${esc(b.file)}">Restore</button>${b.kept ? `<button class="xbtn" data-vremove="${esc(b.file)}" title="Remove this saved version">✕</button>` : ''}</span></div>`).join('')
+      || '<div class="msg">None yet.</div>'}</div>
+    <p class="msg" style="margin-top:10px" title="Settings → Backups of your mod: how often the Workshop makes one by itself and how many it keeps">Saved versions stay until you remove them. The others are the Workshop's own backups, which rotate.</p>
+    <div class="foot"><button class="btn" id="vr-folder">📁 Open the folder</button><button class="btn primary" id="vr-close">Close</button></div></div>`;
+  const close = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) close(); };
+  bg.querySelector('#vr-close').onclick = close;
+  bg.querySelector('#vr-folder').onclick = () => post('/api/open_place', {what: 'backups'}).catch(e => toast(e.message, true));
+  const save = () => saveVersion(bg.querySelector('#vr-name').value.trim());
+  bg.querySelector('#vr-save').onclick = save;
+  bg.querySelector('#vr-name').onkeydown = e => { if (e.key === 'Enter') save(); };
+  bg.querySelectorAll('[data-vrestore]').forEach(b => b.onclick = async () => {
+    const f = b.dataset.vrestore;
+    if (!confirm(`Put your mod back to how it was in this version?\n\n${f}\n\nHow it is now is backed up first, so you can come back to it.`)) return;
+    try { await post('/api/backups/restore', {file: f}); close(); toast('Restored. Reading your mod again…'); setTimeout(poll, 300); }
+    catch (err){ toast(err.message, true); }
+  });
+  bg.querySelectorAll('[data-vremove]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove this saved version?\n\n${b.dataset.vremove}`)) return;
+    try { await post('/api/backups/remove', {file: b.dataset.vremove}); versionsModal(); }
+    catch (err){ toast(err.message, true); }
+  });
+  document.body.appendChild(bg);
 }
 
 // ---------- undo ----------

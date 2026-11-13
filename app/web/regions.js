@@ -32,6 +32,13 @@ async function regionsOnMap(id){
   } else W.cam.z = Math.min(W.cam.z, 0.02);
   if (id) regPaint(id);
   W.tab = 'sky'; renderWside(); drawMap();
+  // (a way back in sight: the tick that hides them sits in the Sky tab, which a user sent here from Rules did not find,
+  // "now I dont know how to toggle the color overlay on the map", 2026-11-13)
+  if (!id) regShownBanner();
+}
+function regShownBanner(){
+  setBanner('🗺 Regions shown <button class="btn sm" id="reg-hide">Hide</button>');
+  $('#reg-hide').onclick = () => { REG.show = false; setBanner(''); drawMap(); renderWside(); };
 }
 
 function regColor(id, a){

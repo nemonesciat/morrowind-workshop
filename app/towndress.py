@@ -1146,6 +1146,103 @@ def _is_light(db, id_, memo):
 
 
 POST_TALL = 128.0              # (a lamp post is this tall at least, and taller than it reaches: a wall bracket is neither)
+# A culture that lights its streets from brackets and hooks on its walls gets them there, beside its doors. The Dunmer
+# holder furn_de_lightpost_01 is no post: of 938 outdoors the game fixes 93% more than 120 up a wall (the median 203)
+# and 1% within 24 of the ground (lab ow8, 2026-11-13); the learnt scenes hold a stand-in height of 34 for it, which
+# once read as "the game stands it on the ground" and twice put lanterns at the knee. Laid where the game's own stand
+# by a door of that culture's buildings: within WALL_LAMP_X along the wall and WALL_LAMP_Y of its plane, WALL_LAMP_UP
+# over the door's foot, each with the lantern it held, and only where the new building has a wall behind it (_held).
+WALL_LAMP_X, WALL_LAMP_Y, WALL_LAMP_UP = 320.0, 130.0, (125.0, 260.0)
+WALL_LAMP_SHIFT = (0.0, 60.0, -60.0, 120.0, -120.0)
+WALL_LAMP_LOW = 110.0          # (no holder's foot nearer the ground at its own spot: beside a door the land may rise)
+
+
+LAMP_KIN = {'Redoran': ('Dunmer', 'Hlaalu'), 'Velothi': ('Dunmer',)}
+
+
+def _wall_lamp_sets(L, cult, strict=True):
+    """[[holder, its lanterns...]] as scene things in a door's frame: the culture's learnt light holders beside doors."""
+    out = []
+    # (a culture with too few of its own by doors takes its kin's: the Redoran towns hang the same Dunmer holder, 11
+    # read, none of them by a door the way a made town's stand)
+    cults = (cult,) + tuple(LAMP_KIN.get(cult, ()))
+    # (and of its kin's only the holder it hangs itself: a Redoran town took the Imperial hook from the Dunmer towns)
+    mine = {t['id'].lower() for key, scs in (L.get('around') or {}).items() if townsurvey.town_style(key) == cult
+            for sc in scs for t in sc['things'] if LIGHT_HOLDER.search(t['id'])}
+    for key, scs in (L.get('around') or {}).items():
+        st_ = townsurvey.town_style(key)
+        if st_ not in cults:
+            continue
+        for sc in scs:
+            T = sc['things']
+            for i, t in enumerate(T):
+                if strict and st_ != cult and mine and t['id'].lower() not in mine:
+                    continue
+                up = t.get('dz') if not t['hang'] else t['z']
+                if not LIGHT_HOLDER.search(t['id']) or up is None or not WALL_LAMP_UP[0] <= up <= WALL_LAMP_UP[1] \
+                        or abs(t['x']) > WALL_LAMP_X or abs(t['y']) > WALL_LAMP_Y:
+                    continue
+                kids = [dict(u, on=0) for u in T if u.get('on') == i]
+                if kids:
+                    out.append([dict(t, on=None)] + kids)
+    return out
+
+
+def _wall_lamps(db, plan, L, cult, lit, want, space, memo, rng):
+    """Up to want brackets or hooks with their lanterns on the walls beside the town's doors."""
+    if want <= 0:
+        return []
+    res = []
+    plots = [q for q in plan['plots'] if q.get('b') and q.get('door')]
+    rng.shuffle(plots)
+    # (its own holder at every door first; then, for a culture with kin, whatever its kin hang: on a Redoran town's
+    # round shells the Dunmer bracket found a wall at 2 doors of 9)
+    for _round, sets in ((0, _wall_lamp_sets(L, cult)), (1, _wall_lamp_sets(L, cult)), (0, _wall_lamp_sets(L, cult, strict=False) if LAMP_KIN.get(cult) else [])):
+        if not sets:
+            continue
+        for q in plots:
+            if want <= 0:
+                return res
+            dx_, dy_ = q['door'][0], q['door'][1]
+            if any(math.hypot(dx_ - a, dy_ - b_) < (LAMP_APART if _round == 0 else LAMP_APART * 0.6) for a, b_ in lit):
+                continue
+            door_z = q.get('sill_z', q.get('door_z'))
+            if door_z is None:
+                continue
+            done = False
+            for st in rng.sample(sets, min(len(sets), 4)):
+                for mirror in rng.sample((1, -1), 2):
+                    for sh in WALL_LAMP_SHIFT:
+                        h0 = st[0]
+                        hx = (h0['x'] + math.copysign(sh, h0['x'] or 1.0)) * mirror
+                        # (the lanterns keep their place by their holder)
+                        sc = {'things': [dict(t, x=hx + (t['x'] - h0['x']) * mirror) for t in st]}
+                        got = _lay(db, sc, dx_, dy_, q['face'] + math.pi, space, memo, door_z,
+                                   hold=lambda g, f=q['face']: _held(db, g, f, memo))
+                        low_ = False
+                        for g in got:
+                            if LIGHT_HOLDER.search(g['id']):
+                                gb = memo.get(('b', g['id']))
+                                if gb is None:
+                                    ri_ = db.resolve_id(g['id'])
+                                    gb = memo[('b', g['id'])] = (mapdata.object_bounds(db, ri_) if ri_ is not None else None) or (0, 0, 0, 0, 0, 0)
+                                gz_ = mapdata.terrain_z(db, g['p'][0], g['p'][1])
+                                low_ = low_ or (gz_ is not None and g['p'][2] + gb[2] * (g.get('s') or 1.0) - gz_ < WALL_LAMP_LOW)
+                        if low_:
+                            continue
+                        if len(got) >= 2 and any(_is_light(db, g['id'], memo) for g in got):
+                            for g in got:
+                                g['role'] = 'street'
+                            res.extend(got)
+                            lit.append((got[0]['p'][0], got[0]['p'][1]))
+                            want -= 1
+                            done = True
+                            break
+                    if done:
+                        break
+                if done:
+                    break
+    return res
 
 
 def _is_post(db, id_, memo):
@@ -1174,6 +1271,17 @@ def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
     _count('lamps short', max(0, want))
     if want <= 0:
         return []
+    # (on the walls beside the doors first, where the culture hangs them; posts for what is still short)
+    on_walls = []
+    try:
+        on_walls = _wall_lamps(db, plan, L, cult, lit, want, space, memo, rng)
+    except Exception as e:
+        print('town wall lamps:', repr(e))
+    hung = sum(1 for g in on_walls if _is_light(db, g['id'], memo))
+    _count('lamps hung on walls', hung)
+    want -= hung
+    if want <= 0:
+        return on_walls
     zs = {}
     for key, scs in (L.get('around') or {}).items():
         if townsurvey.town_style(key) != cult:
@@ -1184,11 +1292,11 @@ def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
                 if not t['hang'] and i_ in POSTS and LIGHT_HOLDER.search(i_) and _is_post(db, i_, memo):
                     zs.setdefault(i_, []).append(t['z'])
     if not zs:
-        return []
+        return on_walls
     ids = sorted(zs)
     # (by the buildings, as the game stands them: beside a door first, then at the street's edge near a building, then
     # the doors' other sides. On a street far from every building a lamp lit nothing, lab 2026-11-10)
-    first, by_street, second, third = [], [], [], []
+    first, by_street, second, third, further = [], [], [], [], []
     cen = [(sum(p[0] for p in q['rect']) / 4.0, sum(p[1] for p in q['rect']) / 4.0) for q in plan['plots'] if q.get('b') and q.get('rect')]
     roads = {tuple(r) for r in plan.get('roads') or ()}
     for p in sorted(roads):
@@ -1206,9 +1314,20 @@ def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
             for lst, sd, more in ((first, side, 0), (second, -side, 0), (third, side, LAMP_MORE), (third, -side, LAMP_MORE)):
                 x, y = _world(q['door'][0], q['door'][1], ang, sd * (DOOR_CLEAR[0] + LAMP_ASIDE + more + rng.uniform(-30, 30)), -LAMP_OUT)
                 lst.append((x, y, ang))
-    for lst in (first, by_street, second, third):
+            # (and further along its front, while that is still before the building: beside the doors the town's own
+            # dressing stood already, and a Hlaalu town found room for 6 of the 11 lamps it was short, the check of
+            # 2026-11-13)
+            if q.get('rect'):
+                mx_, my_ = sum(p_[0] for p_ in q['rect']) / 4.0, sum(p_[1] for p_ in q['rect']) / 4.0
+                reach_ = max(math.hypot(p_[0] - mx_, p_[1] - my_) for p_ in q['rect']) + 60.0
+                for k_ in (2, 3, 4):
+                    for sd in (side, -side):
+                        x, y = _world(q['door'][0], q['door'][1], ang, sd * (DOOR_CLEAR[0] + LAMP_ASIDE + k_ * LAMP_MORE + rng.uniform(-30, 30)), -LAMP_OUT)
+                        if math.hypot(x - mx_, y - my_) <= reach_:
+                            further.append((x, y, ang))
+    for lst in (first, by_street, second, third, further):
         rng.shuffle(lst)
-    spots = first + by_street + second + third
+    spots = first + by_street + second + third + further
     res = []
     for x, y, ang in spots:
         if want <= 0:
@@ -1229,7 +1348,7 @@ def _street_lamps(db, plan, L, cult, out, also, space, memo, rng, amount=1.0):
         lit.append((x, y))
         want -= 1
     _count('lamps laid', len(res) // 2)
-    return res
+    return on_walls + res
 
 
 STREET_MARGIN = 90             # a street group's middle stands this far out from the pavement's edge

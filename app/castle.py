@@ -2148,6 +2148,13 @@ def progress():
 def make(db, outline, style='Imperial', size='medium', seed=1, name='', people=True, rooms='furnished', gate=None, toward=None):
     """The castle built (plan() laid out), its rooms as ROOMS says. One Undo."""
     import ledger
+    if rooms == 'made':
+        # (asked before anything is built: on a fresh install, with the forts still being learnt, the walls went up
+        # first and the refusal came at the keep, leaving the castle's outside standing as an unfinished place; the
+        # 2.7.2 cold start, 2026-11-12. Asking also sets the learning going)
+        import dwemer
+        if dwemer.ready(db, 'fort') is None:
+            raise EditError('The Workshop is still learning the game\'s forts; try again in a minute.')
     PROGRESS.update(on=True, what='Planning', frac=0.0)
     try:
         # (written into the places ledger: what it is made from, and every piece it makes, ledger.py)

@@ -760,6 +760,8 @@ class Handler(BaseHTTPRequestHandler):
                     learning.prewarm(db)                 # (the learning starts now, not at the first furnish)
                 s['surveys'] = background.status()      # (what is being learnt from the game's places right now)
                 s['os'] = OS_WORDS                       # (the page's words for the game's program, the bin, the file manager)
+                # (the Ayleid dungeon kind is offered where its pieces are in the load order, ruins.js)
+                s['ayleid'] = bool(db.state == 'ready' and db.recs and db.resolve_id('t_ayl_dngruin_i_hall_01') is not None)
                 self._json(s)
             elif u.path == '/api/surveys':
                 import background
@@ -1739,6 +1741,25 @@ class Handler(BaseHTTPRequestHandler):
                 if not db.project:
                     return self._json({'error': 'No mod is open.'}, 400)
                 return self._json({'gone': backups.clear_old(db.project, int(body.get('keep') or 3))})
+            if u.path == '/api/backups/now':
+                # (the top bar's Save: the mod as it is now kept as a version, until the user removes it; what is
+                # still waiting to be written goes out first)
+                if not db.project:
+                    return self._json({'error': 'No mod is open.'}, 400)
+                with _EditLock():
+                    editing.flush(db)
+                    f = backups.save_now(db.project, body.get('name') or '')
+                if not f:
+                    return self._json({'error': 'This mod has nothing on disk yet: change something first.'}, 400)
+                return self._json({'ok': True, 'file': os.path.basename(f)})
+            if u.path == '/api/backups/remove':
+                if not db.project:
+                    return self._json({'error': 'No mod is open.'}, 400)
+                try:
+                    backups.remove(db.project, body.get('file', ''))
+                except ValueError as e:
+                    return self._json({'error': str(e)}, 400)
+                return self._json({'ok': True})
             if u.path == '/api/backups/restore':
                 if not db.project:
                     return self._json({'error': 'No mod is open.'}, 400)
@@ -2137,6 +2158,11 @@ class Handler(BaseHTTPRequestHandler):
                     import settle
                     return self._json(settle.settle(db, body.get('cell') or '', body.get('at'), float(body.get('radius') or 200),
                                                     body.get('refs') or None, float(body.get('max_drop') or 48), bool(body.get('tip'))))
+                if u.path == '/api/setdown':
+                    # the mod's loose things in the cells set on the ground (settle.set_down); the moves come back to
+                    # be made as one Undo (/api/group/move)
+                    import settle
+                    return self._json(settle.set_down(db, [str(c) for c in (body.get('cells') or [])][:400], body.get('furniture') is not False))
                 if u.path == '/api/land/marks':
                     import landsurvey
                     return self._json(landsurvey.set_marks(db, body.get('add') or [], body.get('remove') or [], bool(body.get('clear'))))
@@ -2174,6 +2200,9 @@ class Handler(BaseHTTPRequestHandler):
                     import learning
                     pts = body.get('pts') or []
                     culture = str(body.get('culture') or '')[:64]
+                    if not culture and len(pts) >= 3:
+                        # (the mod's own town beside it first, then the nearest of the game's)
+                        culture = storydress.field_culture(db, pts)
                     if not culture and len(pts) >= 3 and not learning.town_pending(db):
                         import townplan
                         culture = townplan.nearest_culture(db, pts)

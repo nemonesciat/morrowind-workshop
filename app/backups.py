@@ -45,10 +45,36 @@ def _is_backup(f):
     return f.endswith('.json') or f.endswith('.json.gz')
 
 
+# A version the user saved (the top bar's Save, Ctrl+S): a backup like the others, kept until they remove it. The
+# ones the Workshop makes by itself rotate; these never do.
+KEPT = 'saved'
+
+
+def _kept(f):
+    stem = f[:-8] if f.endswith('.json.gz') else f[:-5]
+    return (stem[20:].strip().split(' ') or [''])[0] == KEPT
+
+
+def save_now(project, name=''):
+    """The mod as it is now, kept as a version to come back to. Returns the file, or None when the mod has no file
+    on disk yet."""
+    name = re.sub(r'[^A-Za-z0-9 _-]', '', name or '').strip()[:40]
+    return maybe_backup(project, force=True, why=(KEPT + ' ' + name).strip())
+
+
+def remove(project, file):
+    """One backup removed (a saved version the user no longer wants)."""
+    f = os.path.basename(file or '')
+    p = os.path.join(_dir_for(project), f)
+    if not (_is_backup(f) and os.path.isfile(p)):
+        raise ValueError('That version no longer exists.')
+    os.remove(p)
+
+
 def _trim(d, keep):
     """The newest `keep` project backups kept, and within the space allowed (the oldest go first)."""
     mb, _zip = more_settings()
-    files = sorted(f for f in os.listdir(d) if _is_backup(f))
+    files = sorted(f for f in os.listdir(d) if _is_backup(f) and not _kept(f))
     gone = set(files[:-keep]) if keep else set()
     if mb:
         left = [f for f in files if f not in gone]
@@ -78,7 +104,7 @@ def clear_old(project, keep=3):
     d = _dir_for(project)
     if not os.path.isdir(d):
         return 0
-    files = sorted(f for f in os.listdir(d) if _is_backup(f))
+    files = sorted(f for f in os.listdir(d) if _is_backup(f) and not _kept(f))
     n = 0
     for f in files[:-max(1, keep)]:
         try:
@@ -144,6 +170,15 @@ def backup_plugin(project, path, force=False, why=''):
     return dst
 
 
+def _made(f, p):
+    """When a backup was made: the time in its name (the copy keeps the mod file's own date, so a version saved of
+    a mod not touched since October read as October's)."""
+    try:
+        return time.mktime(time.strptime(f[:19], '%Y-%m-%d %H-%M-%S'))
+    except ValueError:
+        return os.path.getmtime(p)
+
+
 def listing(project):
     d = _dir_for(project)
     out, plugins = [], []
@@ -152,11 +187,11 @@ def listing(project):
             p = os.path.join(d, f)
             if _is_backup(f):
                 stem = f[:-8] if f.endswith('.json.gz') else f[:-5]
-                out.append({'file': f, 'size': os.path.getsize(p), 'time': os.path.getmtime(p),
-                            'why': stem[20:].strip(), 'zipped': f.endswith('.gz')})
+                out.append({'file': f, 'size': os.path.getsize(p), 'time': _made(f, p),
+                            'why': stem[20:].strip(), 'zipped': f.endswith('.gz'), 'kept': _kept(f)})
             elif f.endswith('.bak'):
                 # copies of the plugin file itself (a mod that is a .esp opened as the mod): put one back by hand
-                plugins.append({'file': f, 'size': os.path.getsize(p), 'time': os.path.getmtime(p), 'why': f[20:-4].strip()})
+                plugins.append({'file': f, 'size': os.path.getsize(p), 'time': _made(f, p), 'why': f[20:-4].strip()})
     total, n_files = total_size(project)
     return {'folder': d, 'backups': out, 'plugin_backups': plugins, 'total': total, 'files': n_files,
             'plugin_backup': getattr(project, 'plugin_backup', None)}

@@ -63,6 +63,7 @@ const CF_ACT = [
   {id: 'search', label: 'Search box at the top', keys: ['/'], run: () => { $('#q').focus(); $('#q').select(); }},
   {id: 'undo', label: 'Undo', keys: ['Ctrl+Z'], run: () => doUndo()},
   {id: 'redo', label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doRedo()},
+  {id: 'save', label: 'Save a version of your mod', keys: ['Ctrl+S'], typing: true, any: true, run: () => saveVersion()},
   // (not while a land shape is being drawn: there Backspace takes its last point back, landmap.js, and with a thing
   // selected under it that thing was deleted instead)
   {id: 'delete', label: 'Delete what\'s selected', keys: ['Delete', 'Backspace'], world: true,
@@ -161,11 +162,11 @@ function cfKeysModal(){
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.id = 'cf-keys';
   const draw = () => {
     bg.innerHTML = `<div class="modal" style="width:min(640px,94vw);max-height:88vh;overflow:auto"><h2>Keyboard shortcuts</h2>
+      <table class="cf-keys" style="width:100%;border-collapse:collapse;margin:6px 0 12px"><tr><td>3D controls</td>
+        <td><select id="cf-mouse" style="width:auto" title="Blender: middle-drag circles, Shift + middle-drag slides, Ctrl + middle-drag moves in and out; G and R move and turn what's selected with the mouse"><option value="">Workshop</option><option value="blender" ${cfMouse() === 'blender' ? 'selected' : ''}>Blender</option></select></td></tr></table>
       <div class="msg">Click <b>+</b> and press the keys you want. A key can only do one thing, so giving it to something else takes it from where it was.</div>
       <table class="cf-keys" style="width:100%;border-collapse:collapse;margin-top:10px">${CF_ACT.map(a => `<tr><td>${esc(a.label)}${a.world ? ' <span class="msg">(World map)</span>' : ''}</td>
         <td>${cfKeysOf(a).map(k => `<kbd class="cf">${esc(k)}<button data-kdel="${a.id}|${esc(k)}" title="Remove">✕</button></kbd>`).join('')}<button class="btn sm" data-kadd="${a.id}" style="margin-left:6px" title="Add a key">+</button></td></tr>`).join('')}</table>
-      <table class="cf-keys" style="width:100%;border-collapse:collapse;margin-top:18px"><tr><td>3D controls</td>
-        <td><select id="cf-mouse" style="width:auto" title="Blender: middle-drag circles, Shift + middle-drag slides, Ctrl + middle-drag moves in and out; G and R move and turn what's selected with the mouse"><option value="">Workshop</option><option value="blender" ${cfMouse() === 'blender' ? 'selected' : ''}>Blender</option></select></td></tr></table>
       <h3 style="margin-top:18px">Always the same</h3>
       <table class="cf-keys" style="width:100%;border-collapse:collapse">${(cfMouse() === 'blender' ? CF_FIXED.flatMap(r => r[0] === 'Middle-drag' ? CF_BLENDER : [r]) : CF_FIXED).map(([k, t]) => `<tr><td>${esc(t)}</td><td><kbd class="cf">${esc(k)}</kbd></td></tr>`).join('')}</table>
       <div class="foot"><button class="btn" id="cf-kreset">Back to the usual keys</button><button class="btn primary" id="cf-kclose">Done</button></div></div>`;

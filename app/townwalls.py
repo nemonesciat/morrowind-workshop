@@ -2388,6 +2388,9 @@ def _best(kit, kind):
     return max(c, key=lambda tv: tv[1]['n']) if c else None
 
 
+WALL_KIN = {'Indoril': 't_de_setveloth'}
+
+
 def pick_family(db, plan):
     """The wall family for the town's culture: the one the culture's game towns stand most often, else the one whose
     family leads the town's buildings, else none."""
@@ -2401,6 +2404,12 @@ def pick_family(db, plan):
     fam = plan.get('family')
     if fam in K:
         return fam
+    # (a culture whose own wall is not learnt takes the wall its game towns stand beside their own: the Indoril towns'
+    # is built of wall lengths and posts in turn, which the wall learning does not read, and an Indoril town asked for
+    # a wall got none; Nanaav stands 14 lengths of the Velothi wall in its own. The check of 2026-11-13)
+    kin = WALL_KIN.get(cult)
+    if kin in K:
+        return kin
     return None
 
 
@@ -2482,6 +2491,50 @@ def fill_ground(db, W, skip=(), keep=()):
     (the user's Estmorevale, 2026-11-03: "a couple spots where the walls depress down"). The cells changed."""
     segs = W.pop('fill', None) or []
     return _shape_ground(db, segs, skip, 0.0, FILL_MAX, keep) if segs else 0
+
+
+SHOWN_GIVE = 16                # (a length counts as sunk or hanging past this)
+
+
+def show_ground(db, W, skip=(), keep=()):
+    """Once the wall stands and the town's ground is fitted: no straight length sunk to its top, none hanging. The ground
+    along a length that stands higher than the length may show (its top less SHOW, SHOW_SHARE of its height) is cut back
+    to that, within CUT_TOL; the ground under a length whose foot is in the air is filled up to it, within FILL_MAX;
+    both fading into the land round them and kept off the town's buildings (keep), as the wall's other ground work.
+    On a steep site the wall's levels and the fills that follow them left lengths buried and lengths hanging: 12 runs of
+    a Dunmer town's wall on a mountainside, up to 900 long, the check of 2026-11-13. (cells changed, lengths cut back,
+    lengths filled under)."""
+    cut, fill = [], []
+    memo = {}
+    for p in W.get('pieces') or ():
+        q = p.get('pose')
+        if q is None or p.get('kind') in ('gate', 'tower', 'stair', 'bigtower') or GATEISH.search(p['id']) or TOWERISH.search(p['id']):
+            continue
+        if p.get('nofill'):
+            continue                                   # (by a castle's wall: the ground there is the castle's, FORT_NOFILL)
+        cs, b = _box(db, p['id'], q, memo)             # (as it stands now: its box is not kept with the piece)
+        if not cs or len(cs) < 4 or not b:
+            continue
+        e0 = math.hypot(cs[1][0] - cs[0][0], cs[1][1] - cs[0][1])
+        e1 = math.hypot(cs[2][0] - cs[1][0], cs[2][1] - cs[1][1])
+        mid = lambda u, v: ((u[0] + v[0]) / 2.0, (u[1] + v[1]) / 2.0)
+        a, bb = (mid(cs[0], cs[3]), mid(cs[1], cs[2])) if e0 >= e1 else (mid(cs[0], cs[1]), mid(cs[3], cs[2]))
+        zs = [mapdata.terrain_z(db, a[0] + (bb[0] - a[0]) * t, a[1] + (bb[1] - a[1]) * t) for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        if any(z is None for z in zs):
+            continue
+        h = b[5] - b[2]
+        show = q.z + b[5] - max(SHOW, SHOW_SHARE * h)
+        foot = q.z + b[2] + SINK
+        if max(zs) > show + SHOWN_GIVE:
+            cut.append((a, bb, show))
+        if min(zs) < foot - SHOWN_GIVE and foot < show:
+            fill.append((a, bb, foot))
+    n = 0
+    if cut:
+        n += _shape_ground(db, cut, skip, CUT_TOL, 0.0, keep)
+    if fill:
+        n += _shape_ground(db, fill, skip, 0.0, FILL_MAX, keep)
+    return n, len(cut), len(fill)
 
 
 INNER_OFFS = (320.0, 800.0)    # (the ground inside the wall brought to each stretch's foot level: level in full this far in from
@@ -2878,6 +2931,8 @@ def grounded(db, W):
         hp = max((a, b), key=lambda p: p['pose'].z + p['_b'][5])
         if any('tower' in p['id'].lower() and p['pose'].z + p['_b'][5] >= hp['pose'].z + hp['_b'][5] - 16 for p in (a, b)):
             return
+        if W.get('evened') is not None:
+            return                                       # (the stairs climbed it, _even_out: no length raised over its neighbour)
         if tower_id and hp['id'] == straight:
             top = hp['pose'].z + hp['_b'][5]
             hp['id'] = hp['pose'].id = tower_id
@@ -2914,6 +2969,10 @@ def grounded(db, W):
     if St and straight:
         for k in range(1, len(segs)):
             _stepped(db, segs[k - 1], segs[k], St, straight, span, memo, fill=_FILL[0] if AN else 0.0)
+    if St and straight and St.get('turn'):
+        W['evened'] = _even_out(db, segs, St, straight, (W.get('kit') or {}).get('L') or 512.0,
+                                [(p['pose'].x, p['pose'].y) for p in big if p.get('host') is None], memo, bool(AN))
+        _stair_to_fort(db, segs, St, straight, memo)
     for i in starts:
         towered(i)
     # (the ground brought up to every stretch's foot across the wall's width, not only under the raised ones: a level
@@ -2928,13 +2987,38 @@ def grounded(db, W):
     if order and starts and abs(order[-1]['pose'].z - order[0]['pose'].z) > 48 and \
             abs((order[-1].get('run') if order[-1].get('run') is not None else order[-1].get('corner', 0)) - (order[0].get('run') if order[0].get('run') is not None else order[0].get('corner', 0))) < 100:
         towered(0)                                   # (not where a castle's inner wall follows its outer in the order)
+    if W.get('evened') is not None:
+        # (and whatever change of level is left with nothing spanning it: past STEP_HIDE the round tower stacked at
+        # the joint, wherever in the wall it stands. The stacks above come only where one planned stretch follows
+        # another in the order; a 986 step two lengths from a guard tower stood bare, the lab's mountain town.
+        # A smaller one no stair could take is told as a fault)
+        L_ = (W.get('kit') or {}).get('L') or 512.0
+        have = [(p['pose'].x, p['pose'].y) for p in big if p.get('host') is None] + [(a_[0], a_[1]) for a_ in W.get('anchors') or ()]
+        lens = [p for p in order if p.get('kind') != 'step']
+        bare = 0
+        for i_, a_ in enumerate(lens):
+            for b_ in lens[i_ + 1:]:
+                d_ = abs(a_['pose'].z - b_['pose'].z)
+                if d_ < 16 or not _beside(a_, b_, L_, straight):
+                    continue
+                mx_, my_ = (a_['pose'].x + b_['pose'].x) / 2.0, (a_['pose'].y + b_['pose'].y) / 2.0
+                if any(math.hypot(t_[0] - mx_, t_[1] - my_) <= EVEN_TOWER * L_ for t_ in have):
+                    continue
+                if AN and d_ > STEP_HIDE:
+                    stacks.extend(_stack_anchor(db, a_, b_, AN, W))
+                    have.append((mx_, my_))
+                else:
+                    bare += 1
+        if bare:
+            W['faults'].append('%d changes of level in the wall that no stair or tower could take' % bare)
     # (the towers and the keep at the level of the wall running into them, the highest where two levels meet so the
     # step hides in the tower; sunk further where the ground under them lies lower)
-    hosts = {id(p['pose']) for p in keep}
+    hosts = {id(p['pose']) for p in keep if p.get('kind') != 'step'}
     for p in big:
         q = p['pose']
         if p.get('host') is not None:
-            # (a stair against its length: at that length's level, gone with it when it was left out)
+            # (a stair against its length: at that length's level, gone with it when it was left out, or when the
+            # length became a wall stair itself)
             if id(p['host']) not in hosts:
                 p['_gone'] = True
                 continue
@@ -3068,6 +3152,12 @@ def _plan_levels(order, W, keep):
             return z if z <= cap else min(lo, cap)          # (a piece no level serves: buried, not floating)
         if want <= cap:
             return want
+        # (ground too low to fill up to the ring's level: a whole number of rises under it where one serves, so
+        # the change is one the stairs climb; a level of its own stood at any height and no stair fitted it, the
+        # length beside it raised as a wall tower instead, the user's "uneven wall sections", 2026-11-13)
+        z = want - math.ceil((want - cap) / rise - 1e-6) * rise
+        if z >= lo - STEP_GIVE:
+            return z
         return max(lo, min(hi, sum(p['_g'][0] + p['_g'][1] for p in ps) / (2.0 * len(ps)) + 208))
     NONE = (1 << 30, 0, 0.0)
     best = [NONE] * (n + 1)
@@ -3345,6 +3435,194 @@ def _stepped(db, A, B, St, straight, span, memo, fill=0.0):
         if nb_:
             p['_b'] = nb_
     return True
+
+
+EVEN_UP = 64                    # (a length no fill may come under is raised this much at most to a whole rise: else down)
+EVEN_TOWER = 0.6                # (a tower within this many lengths of a joint spans its change of level)
+
+
+def _beside(a, b, L, straight):
+    """Two wall pieces stand next to each other in line: one length apart, along the line of whichever is a length of
+    a run (a corner piece is turned to one of its two sides), turned alike."""
+    dx, dy = b['pose'].x - a['pose'].x, b['pose'].y - a['pose'].y
+    if not 0.75 * L <= math.hypot(dx, dy) <= 1.25 * L:
+        return False
+    for u, v in ((a, b), (b, a)):
+        if 'corner' in u and u['id'] != straight:
+            continue
+        ax_ = (math.cos(u['pose'].rz), -math.sin(u['pose'].rz))
+        if abs(dx * ax_[1] - dy * ax_[0]) > 0.1 * L:
+            return False
+        if not ('corner' in v and v['id'] != straight) and abs(math.sin(u['pose'].rz - v['pose'].rz)) > 0.1:
+            return False
+        return True
+    return False
+
+
+def _even_out(db, segs, St, straight, L, towers, memo, anchors):
+    """No uneven lengths. Once the levels are planned: every length's level is brought to a whole number of rises of
+    the wall's stair from the level most lengths stand at (half a rise at most, up or down; a length by a castle or
+    on a cliff's crest, which takes no fill, is not raised more than EVEN_UP), and wherever two lengths that stand
+    next to each other in line still differ, the change is climbed on stairs: stair, wall, stair through the first
+    lengths of the higher run where it has them, stairs one after another through both runs' ends where it has not.
+    A change a tower spans is left to it: a guard tower or keep at the joint (towers), or, past STEP_HIDE, the round
+    tower the kit stacks there (anchors). By where the lengths stand, not the order they were planned in: a length
+    carried into a castle's wall belongs to the town's corner there, and its neighbour stands in the middle of a
+    stretch. Before this a level could stand at any height, a stair fitted only where two happened to lie a whole
+    rise apart, and the higher length was otherwise made a wall tower standing over its neighbour: "why are you
+    unable to use stairs as a last resort to avoid the uneven wall sections", "uneven wall sections are forbidden",
+    the user, 2026-11-13, who had taken such lengths out by hand for stairs on 2026-11-08 and again that day.
+    (stairs laid, joints left uneven)."""
+    rise = St['rise']
+    most = max(St.get('most', STEP_MOST), St.get('chain', 0))
+    ps = [p for seg in segs for p in seg if 'dz' not in p]
+    plain = [p for p in ps if p['id'] == straight and p.get('kind') not in ('gate', 'step')]
+    if not plain:
+        return 0, 0
+    from collections import Counter
+    base = Counter(round(p['pose'].z, 1) for p in plain).most_common(1)[0][0]
+    for p in ps:
+        z = p['pose'].z
+        t = base + round((z - base) / rise) * rise
+        # (a gate too, half a rise at most: its road is graded to the arch afterwards. Left at its own height, a gate
+        # 71 over the lattice stood with a stair either side of it and a lip at each, the lab's mountain town)
+        if t > z + EVEN_UP and (p.get('nofill') or p.get('_cliff')):
+            t -= rise
+        p['pose'].z = t
+
+    def can(p):
+        # (a length a stair may take the place of: a plain one, or the run's own wall tower)
+        return p.get('kind') not in ('gate', 'step') and (p['id'] == straight or (p.get('kind') == 'tower' and 'corner' not in p and TOWERISH.search(p['id'])))
+
+    def beside(a, b):
+        return _beside(a, b, L, straight)
+
+    def stair(p, z, fwd):
+        q = p['pose']
+        if p['id'] != straight:
+            # (a wall tower's place: turned as the straight it stands for, which is how it is laid)
+            p['id'] = q.id = straight
+        lx = (math.cos(q.rz), -math.sin(q.rz))
+        climb = St['up'] * (1 if lx[0] * fwd[0] + lx[1] * fwd[1] > 0 else -1)
+        pid = St['id'] if climb > 0 else St.get('alt')
+        if not pid or db.resolve_id(pid) is None:
+            return False
+        q.rz = (q.rz + St['turn']) % (2 * math.pi)
+        p['id'] = q.id = pid
+        p['kind'] = 'step'
+        q.z = z
+        nb_ = _box(db, pid, q, memo)[1]
+        if nb_:
+            p['_b'] = nb_
+        return True
+
+    def flat(p, z):
+        q = p['pose']
+        q.z = z
+        if p['id'] != straight:
+            p['id'] = q.id = straight
+            p['kind'] = 'piece'
+            nb_ = _box(db, straight, q, memo)[1]
+            if nb_:
+                p['_b'] = nb_
+
+    def chain(first, back, fwd, level, n_most):
+        # (the lengths a stair may take from `first` on, each one length further the way fwd, at first's level)
+        run, cur = [], first
+        while cur is not None and len(run) < n_most and can(cur) and abs(cur['pose'].z - level) < 16:
+            run.append(cur)
+            cur = next((c for c in ps if c is not cur and c is not back and c not in run and beside(cur, c)
+                        and (c['pose'].x - cur['pose'].x) * fwd[0] + (c['pose'].y - cur['pose'].y) * fwd[1] > 0), None)
+        return run
+    pairs = sorted(((abs(b['pose'].z - a['pose'].z), i, j) for i, a in enumerate(ps) for j, b in enumerate(ps) if i < j and beside(a, b)), reverse=True)
+    laid = left = 0
+    for _d, i, j in pairs:
+        a, b = ps[i], ps[j]
+        if a.get('kind') == 'step' or b.get('kind') == 'step':
+            continue
+        if a['pose'].z > b['pose'].z:
+            a, b = b, a
+        lo, hi = a['pose'].z, b['pose'].z
+        d = hi - lo
+        if d < 16:
+            continue
+        mx, my = (a['pose'].x + b['pose'].x) / 2.0, (a['pose'].y + b['pose'].y) / 2.0
+        if (anchors and d > STEP_HIDE) or any(math.hypot(t[0] - mx, t[1] - my) <= EVEN_TOWER * L for t in towers):
+            continue                             # (a tower spans it)
+        k = max(1, int(round(d / rise)))
+        if k > most:
+            left += 1
+            continue
+        fwd = (b['pose'].x - a['pose'].x, b['pose'].y - a['pose'].y)
+        H = chain(b, a, fwd, hi, 2 * k - 1)
+        if len(H) >= 2 * k - 1:
+            for m, p in enumerate(H):
+                if m % 2 == 0:
+                    laid += bool(stair(p, lo + (m // 2) * rise, fwd))
+                else:
+                    flat(p, lo + ((m + 1) // 2) * rise)
+            continue
+        Lw = chain(a, b, (-fwd[0], -fwd[1]), lo, k)
+        h = min(len(H), k)
+        if len(Lw) < k - h:
+            left += 1
+            continue
+        # (stairs one after another: the lower run's last lengths, then the higher run's first)
+        flight = list(reversed(Lw[:k - h])) + H[:h]
+        for m, p in enumerate(flight):
+            laid += bool(stair(p, lo + m * rise, fwd))
+    return laid, left
+
+
+FORT_STAIR = 0.4               # (the last length before a castle standing this share of a rise over its run, or more: a stair)
+
+
+def _stair_to_fort(db, segs, St, straight, memo):
+    """The town's last length before a castle's wall, where the castle's ground lifts it over the run it ends: a wall
+    stair at the run's own level, climbing towards the castle. Such a length takes no fill (FORT_NOFILL), so the
+    planner stood it alone on the castle's bank at a height of its own, between the town's wall and the castle's, and
+    made a wall tower of it: a length a quarter sunk in the bank with a step either side. The user took both out of
+    their town's joins with its fort and laid ex_imp_wall_stairs_01 and _02 in their places, turned to the wall, at
+    the town wall's height (2026-11-13). How many were laid."""
+    rise = St['rise']
+    n = 0
+    for k, B in enumerate(segs):
+        if len(B) != 1 or not B[0].get('nofill') or B[0]['id'] != straight:
+            continue
+        b = B[0]
+        L = b['_b'][3] - b['_b'][0]
+        # (the run it ends: a plain length one length off on its own line, lower. Not by the order the wall was
+        # planned in: a length carried into the castle's wall at the town's corner is that corner's, not the run's)
+        a = None
+        ax_ = (math.cos(b['pose'].rz), -math.sin(b['pose'].rz))
+        for A in segs:
+            for c in A:
+                if c is b or c['id'] != straight:
+                    continue
+                dx, dy = c['pose'].x - b['pose'].x, c['pose'].y - b['pose'].y
+                d = math.hypot(dx, dy)
+                if not 0.75 * L <= d <= 1.25 * L or abs(dx * ax_[1] - dy * ax_[0]) > 0.1 * L:
+                    continue
+                if b['pose'].z - c['pose'].z >= FORT_STAIR * rise and (a is None or c['pose'].z > a['pose'].z):
+                    a = c
+        if a is None:
+            continue
+        q = b['pose']
+        fwd = (q.x - a['pose'].x, q.y - a['pose'].y)
+        lx = (math.cos(q.rz), -math.sin(q.rz))
+        climb = St['up'] * (1 if lx[0] * fwd[0] + lx[1] * fwd[1] > 0 else -1)
+        pid = St['id'] if climb > 0 else St.get('alt')
+        if not pid or db.resolve_id(pid) is None:
+            continue
+        q.rz = (q.rz + St['turn']) % (2 * math.pi)
+        b['id'] = q.id = pid
+        b['kind'] = 'step'
+        q.z = a['pose'].z                        # (its low end at the level it climbs from)
+        nb_ = _box(db, pid, q, memo)[1]
+        if nb_:
+            b['_b'] = nb_
+        n += 1
+    return n
 
 
 def square_up(pts, step):

@@ -27,7 +27,28 @@ import project
 from project import quiet
 
 KINDS = ('town', 'castle', 'dungeon', 'interior', 'land')
-OWN_RECS = ('NPC_', 'CREA', 'CONT')       # (records a place may take with it: never land, textures, regions or talk)
+OWN_RECS = ('NPC_', 'CREA', 'CONT')       # (records a place may take with it: never land, textures or regions; of talk
+                                          # only the lines one of its own people alone could say, _own_lines)
+
+
+def _own_lines(p, recs):
+    """The mod's dialogue lines whose speaker, by ID, is one of the people about to go: {topic key: [record keys]}.
+    Nobody else can say them: a town of 20 people removed left 85 such lines in the mod (2026-11-13)."""
+    ids = {k.split('|', 1)[1].lower() for k in recs if k.startswith('NPC_|')}
+    out = {}
+    if not ids:
+        return out
+    from esm import iter_subrecords
+    for k, r in list(p.records.items()):
+        if not k.startswith('INFO|') or k.count('|') < 2:
+            continue
+        try:
+            who = next((project.zstr(bytes(d)) for t, d in iter_subrecords(project.unb64(r['data'])) if t == 'ONAM'), '')
+        except Exception:
+            continue
+        if who.lower() in ids:
+            out.setdefault(k.split('|')[1], []).append(k)
+    return out
 NOUN = {'town': 'the town', 'castle': 'the castle', 'dungeon': 'the dungeon', 'interior': 'the interior', 'land': 'the land stage'}
 
 
@@ -104,6 +125,15 @@ def open(db, kind, name='', outline=None, seed=None, opts=None, resume=None):
             pl = _places(p)                 # (an Undo meanwhile put another table in: the record goes into that one)
             if fresh and _empty(rec):
                 pl.pop(rec['id'], None)
+                # (what was made inside it is the next record's out: an interior of the Workshop's own layout is made
+                # by one maker inside another's record, the outer one holding nothing itself; dropped, it left the
+                # interior with no town, and removing the town left that interior standing, 2026-11-13)
+                for r_ in pl.values():
+                    if r_.get('parent') == rec['id']:
+                        if rec.get('parent'):
+                            r_['parent'] = rec['parent']
+                        else:
+                            r_.pop('parent', None)
             else:
                 pl[rec['id']] = rec
             if not st:
@@ -359,7 +389,9 @@ def drop(db, pid, look=False):
     inside = [k for k in inside if k not in kept]
     recs = [k for k in dict.fromkeys(recs) if k not in used]
     name = rec.get('name') or ''
-    res = {'things': len(out), 'interiors': len(inside), 'name': name, 'kind': rec.get('kind'), 'id': pid}
+    lines = _own_lines(p, recs)
+    res = {'things': len(out), 'interiors': len(inside), 'name': name, 'kind': rec.get('kind'), 'id': pid,
+           'lines': sum(len(v) for v in lines.values())}
     if look:
         return res
     if not out and not inside:
@@ -375,6 +407,19 @@ def drop(db, pid, look=False):
         p.records.pop('PGRD|' + k, None)
     for k in recs:
         p.records.pop(k, None)
+    if lines:
+        # (their lines out of each topic, the mod's other lines there linked up again)
+        for ks in lines.values():
+            for k in ks:
+                p.records.pop(k, None)
+        db.sync_project()
+        try:
+            import dialogue
+            for dkey in lines:
+                dialogue._relink(db, dkey)
+                dialogue._maybe_drop_dial(db, dkey)
+        except Exception as e:
+            print('ledger: relinking lines:', repr(e))
     for f in fam:
         pl.pop(f, None)
     if rec.get('kind') == 'town' and name:

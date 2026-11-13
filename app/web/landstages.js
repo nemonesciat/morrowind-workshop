@@ -296,6 +296,7 @@ function lstHtml(i){
       <button id="lm-clear" ${n ? '' : 'disabled'}>Clear marks</button>
       <button id="lm-dress">🪨 Dress…</button>
       <button id="lm-revert" ${n ? '' : 'disabled'} title="The land in the marked cells back as it was before your mod">↶ Undo my land</button>
+      <button id="lm-setdown" ${n ? '' : 'disabled'} title="Your mod's crates, barrels, sacks, clutter and furniture in the marked cells lifted out of the dirt or let down onto it. Rocks, plants, fences and buildings stay as they are.">⤓ Set loose things down</button>
       <label><input type="checkbox" id="lm-show" ${LM.show ? 'checked' : ''}> Land map</label>
       <label><input type="checkbox" id="lm-flow" ${LM.flowOn ? 'checked' : ''}> Where water runs</label>
       <button id="lm-export" ${n ? '' : 'disabled'}>⬇ Save as height map</button>

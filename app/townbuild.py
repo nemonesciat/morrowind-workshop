@@ -2195,6 +2195,13 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         except Exception as e:
             print('wall fill:', e)
         try:
+            # (and no length of it sunk to its top or left hanging by all that: townwalls.show_ground)
+            n_sh, n_cut, n_fl = townwalls.show_ground(db, W, new_refs, keep=keep_)
+            if n_cut or n_fl:
+                print('town: the ground cut back from %d sunk lengths of wall and filled under %d hanging ones (%d cells)' % (n_cut, n_fl, n_sh))
+        except Exception as e:
+            print('wall show:', e)
+        try:
             # (a stair up to the walk for each level of the wall that has none: the walk is cut where the wall changes
             # level at a tower, the user's Firuhn 2026-11-07)
             more = townwalls.stair_each_level(W, free=lambda st: on_plots(st) == [], db=db)

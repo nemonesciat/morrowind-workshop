@@ -13,7 +13,8 @@ it's grown again as soon as you change anything.
 | Kind | **Dwemer ruin**, **Cave** (grey stone, brown earth, pale rock or lava rock), **Velothi tomb**, **Daedric ruin**, **Chimer stronghold** (corridors round its rooms, each room off a side passage behind a door), **Velothi tower**
 (halls climbing from the door to the tower itself, a two-storey room with steps up its sides under a dome, where
 the resident mage lives; Up is chosen with it), **Imperial fort** (the Legion forts' corridors, stairs and rooms, as the game's
-Moonmoth and Buckmoth are laid out). Each is built from the game's own pieces of that kind, joined where the game joins them. |
+Moonmoth and Buckmoth are laid out), **Ayleid ruin** (narrow and wide white stone halls and tall rooms lit by welkynd stones;
+listed when your load order has the pieces for it). Each is built from the game's own pieces of that kind, joined where the game joins them. |
 | Size | **Tiny** (about 10 pieces, one hall: a lair), **Small** (about 20, one hall), **Medium** (about 45, two halls), **Large** (about 80, three halls). |
 | Halls | **Few** (one hall fewer than the game's for the size: more tunnels), **Usual**, **Many** (half as many again: a string of chambers). |
 | Levels | **Flat**, **Some** ramps (as the game's), **Steep** (a lot, no further than the game's own go). |
@@ -21,7 +22,7 @@ Moonmoth and Buckmoth are laid out). Each is built from the game's own pieces of
 | Layout | **Winding** (one long way through), **Branching** (side passages, as the game's), **Maze** (crossroads and dead ends). |
 | Creatures, Loot | How much, against what the game's own places of the kind hold: 100% is the same, 0 none, up to three times. |
 | Lived in | The chance someone has moved in: smugglers, bandits, cultists. Starts at the kind's own share; past it, more halls get camps of their own. |
-| Water | How far it's flooded, from the lowest floor up. It says whether the way in stays dry. |
+| Water | How far it's flooded, from the lowest floor up. It says whether the way in stays dry. At 0 a cave now and then has a lake in its last chamber, as about a quarter of the game's caves hold some water: shallow enough to wade, with dry floor beside it. |
 | Name | Morrowind's style: Dwemer ruins *Ruin, Part* (Nchulmuz, Lower Halls); caves after a place or person (Sarnabi Cave); tombs after the family (Varethi Ancestral Tomb); strongholds an old Dunmer name and the level (Andasreth, Lower Level); towers an old Velothi name (Shishara). |
 | Door outside | Where its door goes outside, or none yet (link one later from the World map). |
 
@@ -38,7 +39,11 @@ Double-click a slider to put it back to the game's own amount.
 
 Lived in means what the game's own dungeons of the kind show: the band's camp with what they leave round their bedrolls
 and fire, and, with or without anyone living there, what happened there: a fallen adventurer with his gear, bones,
-an offering at an altar, as often as the game's own places of the kind have them. Lights that would hang on nothing
+an offering at an altar, as often as the game's own places of the kind have them. A band has one reason for being
+there (smugglers running moon sugar, bandits robbing the road, a necromancer at the dead): its leader carries a note
+that says so and the goods to match, and **Rumours and quests** has the town near say the same. Now and then
+the last room is one to remember: a hall of machines in a Dwemer ruin, the domed great room in a medium or large tomb,
+a lake in a cave. Lights that would hang on nothing
 are moved onto the wall or pipe the game hangs that lamp on, and a dead end keeps what the game puts in one (rocks in a
 cave's, a lamp and a barrel in a Dwemer ruin's).
 

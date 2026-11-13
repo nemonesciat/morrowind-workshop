@@ -433,6 +433,20 @@ function lmViewBindParts(){
     if (!await needProject()) return;
     await lmMarksPost({clear: true}); drawMap(); renderWside();
   };
+  // Set down (settle.set_down): the mod's loose things in the marked cells set on the ground, as one Undo
+  const sd = $('#lm-setdown'); if (sd) sd.onclick = async () => {
+    if (!await needProject()) return;
+    const cells = LM.data.marks.slice(); if (!cells.length) return;
+    sd.disabled = true;
+    toast('Setting loose things down…');
+    try {
+      const r = await post('/api/setdown', {cells: cells.map(k => k[0] === '#' ? k : '#' + k)});
+      const R_ = r.report || {};
+      if (!r.moves.length) toast(`Nothing to set down: ${R_.n || 0} loose things looked at, all on the ground.`);
+      else await groupAction('/api/group/move', {moves: r.moves}, `Set down ${r.moves.length} of ${R_.n} loose things (${R_.raised || 0} lifted, ${R_.dropped || 0} let down, the most by ${R_.most})`);
+    } catch (err){ toast(err.message, true); }
+    sd.disabled = false;
+  };
   const rv = $('#lm-revert'); if (rv) rv.onclick = async () => {
     if (!await needProject()) return;
     const cells = LM.data.marks.slice(); if (!cells.length) return;
@@ -705,12 +719,13 @@ function lsPlacesHtml(P){
     </div>`;
 }
 function lsDungeonHtml(sel){
-  const p = sel.p || {}, kinds = typeof RUIN_KINDS !== 'undefined' ? RUIN_KINDS : [];
+  const p = sel.p || {}, kinds = typeof ruinKinds === 'function' ? ruinKinds() : [];
   const sizes = typeof RUIN_OPTS !== 'undefined' ? RUIN_OPTS.size : [['small', 'Small']];
   return `${p.place === 'mine' ? '<div class="msg" style="font-size:11.5px">The mine its town lives by.</div>' : ''}<label title="What it is: the Dungeon tool's kinds">Kind <select class="inp" id="lsd-kit">${kinds.map(k => `<option value="${esc(k[0])}" ${p.kit === k[0] ? 'selected' : ''}>${esc(k[1])}</option>`).join('')}</select></label>
     <label title="The place's name, its cell's">Name <input class="inp" id="lsd-name" value="${esc(p.name || '')}" placeholder="${esc((kinds.find(k => k[0] === p.kit) || [])[2] || '')}"></label>
     <label>Size <select class="inp" id="lsd-size">${sizes.map(([v, t]) => `<option value="${v}" ${p.size === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
-    ${p.built ? `<div class="msg" style="font-size:11.5px">Built: ${esc(p.built)}.</div>` : `<div class="actions"><button class="btn sm primary" id="lsd-build" title="Make it with the Dungeon tool, its door outside here, facing down the slope">Build it</button></div>`}`;
+    ${p.built ? `<div class="msg" style="font-size:11.5px">Built: ${esc(p.built)}.</div>` : LM.building && LM.building.has(sel.id) ? `<div class="actions"><button class="btn sm primary" disabled><span class="spin"></span>Building…</button></div>`
+      : `<div class="actions"><button class="btn sm primary" id="lsd-build" title="Make it with the Dungeon tool, its door outside here, facing down the slope">Build it</button></div>`}`;
 }
 // (what Build the places makes: the dungeon and mine markers, the proposed farms and the harbours, not yet built)
 function lsPlacesToBuild(P){
@@ -718,7 +733,12 @@ function lsPlacesToBuild(P){
 }
 async function lsBuildDungeons(list, btn){
   if (!list.length || !await needProject()) return;
-  if (btn){ btn.disabled = true; btn.textContent = `Building ${list.length}…`; }
+  // (what is being built is remembered, not only shown on the button pressed: the panel is drawn again while it
+  // waits, and the new Build it stood there ready to be pressed a second time with "Working" at the top; the user,
+  // 2026-11-12, "is it working or not?")
+  if (LM.building){ toast('Still building: it is not finished yet.'); return; }
+  LM.building = new Set(list.map(L => L.id));
+  if (btn){ btn.disabled = true; btn.innerHTML = `<span class="spin"></span>Building${list.length > 1 ? ' ' + list.length : ''}…`; }
   try {
     const r = await post('/api/land/places/build', {
       dungeons: list.filter(L => L.kind === 'dungeon').map(L => ({id: L.id, kit: L.p.kit, name: L.p.name || L.name, size: L.p.size, x: L.pts[0][0], y: L.pts[0][1], rz: L.p.rz})),
@@ -738,6 +758,7 @@ async function lsBuildDungeons(list, btn){
     toast(`Built ${said}${bad.length ? `; ${bad.length} not: ${bad[0].why}` : ''}${r.learning ? `. The Dungeon tool is still learning its ${r.learning} pieces: build the rest again in a few minutes` : ''}. One Undo takes them back.`, !!bad.length && !(nd + nf + nh + ns + nn));
     await afterChange(); await lmReloadObjects();
   } catch (err){ toast(err.message, true); }
+  LM.building = null;
   lsChanged(true);
 }
 // ----- the yardstick (yardstick.py): the marked cells against the hand-made region they take after

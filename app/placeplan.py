@@ -1139,11 +1139,25 @@ def build_dungeons(db, dungeons, say=None, fold=True):
             say('Building %d of %d' % (n + 1, len(dungeons)), n / max(1, len(dungeons)))
         x, y = float(D['x']), float(D['y'])
         g = mapdata.terrain_z(db, x, y)
+        kit_ = D.get('kit') or 'cave_mud'
+        cell_ = '#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0))
+        # (what the game builds round such a door outdoors: a ruin's towers, a cave's mouth in the rocks; the user,
+        # 2026-11-12, "not just a door with an interior". A kind with none of its own, or none in this load order,
+        # gets the door alone, as before)
+        F = None
+        try:
+            import dungeonfront
+            if dwemer.ready(db, kit_) is not None:
+                F = dungeonfront.plan(db, kit_, x, y, float(D.get('rz') or 0), (mapdata.cell_info(db, cell_) or {}).get('region') or '',
+                                      seed=D.get('seed') or 0)
+        except Exception as e:
+            print('dungeon front:', repr(e))
         try:
             r = dwemer.build(db, D.get('name') or 'A Place', D.get('size') or 'small', 'some', 'branching',
-                             entrance={'cell': '#%d,%d' % (math.floor(x / 8192.0), math.floor(y / 8192.0)), 'x': x, 'y': y,
-                                       'z': g if g is not None else D.get('z'), 'rz': float(D.get('rz') or 0)},
-                             kind=D.get('kit') or 'cave_mud')
+                             entrance={'cell': cell_, 'x': x, 'y': y,
+                                       'z': F['z'] if F else (g if g is not None else D.get('z')),
+                                       'rz': F['rz'] if F else float(D.get('rz') or 0)},
+                             kind=kit_, outside_door=(F or {}).get('door') or None)
         except EditError as e:
             failed.append({'id': D.get('id'), 'why': str(e)})
             continue
@@ -1151,7 +1165,12 @@ def build_dungeons(db, dungeons, say=None, fold=True):
             # (the generator learns a kit's pieces first, in the survey process: that kit's wait for it, the rest go on)
             learning.append(D.get('kit') or 'cave_mud')
             continue
-        built.append({'id': D.get('id'), 'cell': r.get('cell') or r.get('name') or D.get('name')})
+        if F:
+            try:
+                r['front'] = dungeonfront.build(db, F, D.get('name') or 'A Place')
+            except Exception as e:
+                print('dungeon front:', repr(e))
+        built.append({'id': D.get('id'), 'cell': r.get('cell') or r.get('name') or D.get('name'), 'front': r.get('front') or None})
     if fold and len(built) > 1:
         editing.fold(db, len(built), 'Built %d dungeons' % len(built))
     return {'built': built, 'failed': failed, 'learning': ', '.join(learning) or None}

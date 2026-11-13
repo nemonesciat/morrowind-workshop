@@ -76,16 +76,87 @@ def _up_facing(sc, n):
     return nz * seethrough.FRONT / ln > 0.7
 
 
-def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False):
+LAND_RISE = 0.55               # (a thing sunk in the land rises out of it when this share of its height or less is under)
+DOWN_RISE = 4.0                # (Set down: however deep, to four times its height: ground raised over it)
+DOWN_DROP = 24.0               # (and one hovering this far or less is let down: further up it stands or hangs on something
+                               # the meshes do not show, a sack on a hook 108 up fell to the ground at 160, the lab)
+DOWN_LEAST = 2.0               # (a move smaller than this is not made)
+DOWN_SINK = 12.0               # (on a slope a thing is let this far into the ground at its uphill edge, at most)
+DOWN_SIZE = 320.0              # (furniture up to this size: a table, a bench, a forge)
+# (what stands in the ground or hangs on purpose, whatever its size: never set down)
+DOWN_NEVER = ('fence', 'post', 'pole', 'spear', 'stake', 'sign', 'banner', 'flag', 'rope', 'chain', 'hook', 'awning', 'tent', 'bridge',
+              'dock', 'pier', 'rail', 'gate', 'door', 'stair', 'step', 'platform', 'scaffold', 'wall', 'pillar', 'column', 'rug',
+              'tapestr', 'ladder', 'boat', 'ship', 'cart', 'wagon', 'rock', 'boulder', 'terrain', 'tree', 'log_', 'stump',
+              'smoke', 'marker')
+
+
+def sets_down(r):
+    """Whether Set down takes a placed thing: what settles by itself (loose), and furniture to DOWN_SIZE; never a
+    rock, a plant, a fence or a post, a building's piece, nor anything named for standing in the ground or hanging."""
+    low = r['id'].lower()
+    if any(w in low for w in DOWN_NEVER):
+        return False
+    try:
+        import cliffrocks
+        import landdecor
+        if cliffrocks.is_rock(low) or landdecor.kind_of(low):
+            return False
+    except Exception:
+        pass
+    if loose(r):
+        return True
+    return 'furn' in low and not r.get('arch') and r['type'] in ('CONT', 'STAT', 'ACTI') and bool(r.get('b')) and _size(r) <= DOWN_SIZE \
+        and not any(w in low for w in SUNK_ON_PURPOSE)
+
+
+def set_down(db, cells, furniture=True):
+    """The mod's own loose things in the cells set on the ground: crates, barrels, sacks, baskets, buckets, small
+    clutter and (furniture) furniture, each lifted out of the land it is sunk in or let down onto it, by its real
+    shape, the lowest first so that what stands on a thing follows it. Rocks, plants, fences, building pieces and
+    what hangs are left (sets_down, hangsurvey). The user, 2026-11-13: "a tool that can raise all this assorted
+    decor out of the dirt, making it sit flush with the ground ... while leaving rocks, plants, building materials
+    that depend on being occluded by terrain". {'moves', 'report'}, the moves to be made as one Undo."""
+    moves = []
+    rep = {'n': 0, 'cells': 0, 'raised': 0, 'dropped': 0, 'left': 0, 'most': 0.0}
+    for cell in cells or ():
+        m = mapdata.cellmap(db, cell)
+        if not m.get('exists'):
+            continue
+        pick = [r for r in m['refs'] if r.get('mine') and r.get('b') and sets_down(r) and (furniture or 'furn' not in r['id'].lower())]
+        if not pick:
+            continue
+        was = {r['k']: r['p'][2] for r in pick}
+        res = settle(db, cell, pick=pick, max_drop=DOWN_DROP, land_rise=DOWN_RISE, still=True)
+        R = res['report']
+        rep['cells'] += 1
+        rep['n'] += R.get('n', 0)
+        rep['left'] += R.get('left', 0)
+        for mv in res['moves']:
+            d = mv['p'][2] - was.get(mv['ref'], mv['p'][2])
+            if abs(d) < DOWN_LEAST:
+                continue                         # (as good as on the ground already)
+            rep['raised' if d > 0 else 'dropped'] += 1
+            rep['most'] = max(rep['most'], abs(d))
+            moves.append(mv)
+    rep['moved'] = len(moves)
+    rep['most'] = round(rep['most'])
+    return {'moves': moves, 'report': rep}
+
+
+def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False, pick=None, land_rise=LAND_RISE, still=False):
     """{'moves': [{cell, ref, p, s}], 'report': {...}}: what in the spot (at, within radius; or the refs
     given, ref keys) settles, and where to. tip: also tip over what can't stand where it is (its weight's
-    middle outside what it stands on, nothing beside it to lean on), onto its side, at rest (_tip)."""
+    middle outside what it stands on, nothing beside it to lean on), onto its side, at rest (_tip). pick: the
+    things themselves, chosen by the caller (set_down). land_rise: how deep in the land a thing may be and still
+    rise out of it, in its own heights. still: up and down only, nothing nudged or pushed aside."""
     m = mapdata.cellmap(db, cell)
     if not m.get('exists'):
         return {'moves': [], 'report': {'note': 'There is no place called %s.' % cell}}
     allr = m['refs']
     keys = set(refs or ())
-    if keys:
+    if pick is not None:
+        pick = list(pick)
+    elif keys:
         pick = [r for r in allr if r['k'] in keys and loose(r, chosen=True)]
     else:
         if not at:
@@ -125,6 +196,11 @@ def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False)
     order = sorted(pick, key=lambda r: _box(r)[2])
     moves, rep = [], {'n': len(pick), 'dropped': 0, 'raised': 0, 'nudged': 0, 'apart': 0, 'left': 0}
     done = []                                # (box, ref) of the ones settled already
+    # (still, Set down: what stands on a thing follows it. A crate on two crates half in the dirt was left sunk in
+    # their tops when they rose, too little of it under any one board to count as sunk, and fell through them to
+    # the ground, the lab on the user's town, 2026-11-13)
+    carry = {}
+    ob = {r['k']: _box(r) for r in pick} if still else {}
     for r in order:
         p = list(r['p'])
         own_tris = seethrough.model_tris(db, _model(db, r))
@@ -132,13 +208,16 @@ def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False)
             rep['left'] += 1
             continue
         moved = False
+        if still and abs(carry.get(r['k'], 0.0)) > 0.05:
+            p[2] += carry[r['k']]
+            moved = True
         dz = None
         counted = set()
         last_xy = None
         for _round in range(4):
             # (it may rise out of what it's sunk in once, at the start; after that it only falls: a thing
             # lifted onto a board would otherwise find the board over it and climb again)
-            dz, contacts, centre, over_air = _drop(sc, own_tris, r, p, max_drop, land, may_rise=_round == 0)
+            dz, contacts, centre, over_air = _drop(sc, own_tris, r, p, max_drop, land, may_rise=_round == 0, land_rise=land_rise, sink=DOWN_SINK if still else 0.0)
             if dz is None:
                 break
             if _round and (dz < -6.0 or dz > 0.5):
@@ -156,6 +235,8 @@ def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False)
             # its weight over air: back over what holds it, a little (not a book nor anything tilted: those
             # lean on their neighbours, as the game leans them)
             tilted = abs(p[3]) > 0.05 or abs(p[4]) > 0.05
+            if still:
+                break
             if contacts and over_air and not tilted and r['type'] != 'BOOK':
                 cx = sum(c[0] for c in contacts) / len(contacts)
                 cy = sum(c[1] for c in contacts) / len(contacts)
@@ -212,6 +293,14 @@ def settle(db, cell, at=None, radius=200.0, refs=None, max_drop=48.0, tip=False)
         if moved and (abs(p[0] - r['p'][0]) > 0.05 or abs(p[1] - r['p'][1]) > 0.05 or abs(p[2] - r['p'][2]) > 0.05 or
                       any(abs(p[i] - r['p'][i]) > 0.001 for i in (3, 4, 5))):
             moves.append({'cell': cell, 'ref': r['k'], 'p': [round(v, 2) if i < 3 else v for i, v in enumerate(p)], 's': r.get('s') or 1.0})
+        if still and abs(p[2] - r['p'][2]) > 0.3:
+            # (what stood on it, by where both stood before: its foot at this one's top, their boxes over each
+            # other; it goes as far as the highest thing under it went)
+            b0, d_ = ob[r['k']], p[2] - r['p'][2]
+            for q in order:
+                bq = ob[q['k']]
+                if q is not r and -24 <= bq[2] - b0[5] <= 16 and min(bq[3], b0[3]) - max(bq[0], b0[0]) > 4 and min(bq[4], b0[4]) - max(bq[1], b0[1]) > 4:
+                    carry[q['k']] = max(carry.get(q['k'], -1e9), d_)
         # (what is settled now holds what comes after it)
         sc.add_model(own_tris, p, r.get('s') or 1.0)
         done.append((_box(r, p), r))
@@ -234,7 +323,7 @@ def _verts(own_tris, p, s):
     return out
 
 
-def _drop(sc, own_tris, r, p, max_drop, land, may_rise=True):
+def _drop(sc, own_tris, r, p, max_drop, land, may_rise=True, land_rise=LAND_RISE, sink=0.0):
     """How far it falls (negative) or rises (positive) to rest: from its own mesh's lowest corners (a chair's
     feet, a bowl's rim, a book's edge), each against the first surface under it (or, at the start, a floor
     or a board's top it is sunk under, within half its height). (dz or None, contact spots, its weight's
@@ -249,6 +338,8 @@ def _drop(sc, own_tris, r, p, max_drop, land, may_rise=True):
     # book sunk a little into a board it stands on reads as half sunk and falls through to the board below)
     low = sorted((v for v in verts if v[2] <= zb + max(1.5, 0.06 * h)), key=lambda v: v[2])[:240]
     gaps = []
+    lgs, landed = [], set()                      # (every low corner over the land; the contacts that are the land's)
+    first = may_rise
     # sunk only when most of its low corners are under a floor or a board's top: a crate's back corners
     # poking into the wall's base (the user's hut: lifted 29 onto the skirting) are the wall, not a floor
     if may_rise:
@@ -300,15 +391,30 @@ def _drop(sc, own_tris, r, p, max_drop, land, may_rise=True):
         if sz is None:
             dn = sc.nearest_any((x, y, z + 0.5), (0.0, 0.0, -1.0), max_drop + 1.0)
             sz = z + 0.5 - dn[0] if dn is not None else None
+        on_land = False
         if land is not None:
             lz = land(x, y)
-            if lz is not None and (sz is None or lz > sz) and z - lz <= max_drop and (lz - z <= 0.55 * h if may_rise else lz <= z + 0.5):
+            if lz is not None:
+                lgs.append(z - lz)
+            # (the land over a corner: the thing is sunk in it, whatever the meshes round it say. Before, a thing rose
+            # out of the land only when it was also sunk in a floor or a board: a crate half in the dirt of a yard
+            # never rose, and Settle left a town's sunk decor where it lay, 2026-11-13)
+            if lz is not None and (sz is None or lz > sz) and z - lz <= max_drop and (lz - z <= (land_rise if first else 0.0) * h + 0.5 or (may_rise and lz - z <= 0.55 * h)):
                 sz = lz
+                on_land = True
         if sz is not None:
             gaps.append((x, y, z - sz))
+            if on_land:
+                landed.add(len(gaps) - 1)
     if not gaps:
         return None, [], None, False
     rest = min(g for _x, _y, g in gaps)          # (it rests on its highest contact)
+    if sink and lgs and min(range(len(gaps)), key=lambda i_: gaps[i_][2]) in landed:
+        # (Set down, on a slope, a thing that rests on the land itself: half the fall of the ground under it taken
+        # into the ground, DOWN_SINK at most, so its downhill edge does not stand in the air by all of it. By the
+        # land under every low corner, however far below: with only the corners in reach a second run found
+        # another fall and moved it again)
+        rest += min(max(0.0, max(lgs) - rest) / 2.0, sink)
     if rest < -0.3:
         # (rising only with room over it for the whole lift: a book stood in a shelf's front lip would
         # otherwise come up into the board over it)

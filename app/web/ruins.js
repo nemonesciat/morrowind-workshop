@@ -23,7 +23,12 @@ const RUIN_KINDS = [
     'A mage\'s tower of the small Velothi pieces: halls and rooms climbing from the door to the tower itself, a two-storey room with steps up its sides under a dome, dressed and lived in as the game\'s 64 towers are: sorcerers, mages, necromancers.'],
   ['fort', 'Imperial fort', 'Fort Vanvuld', 'Forts are named Fort and a word: Fort Moonmoth, Fort Buckmoth.',
     'A Legion fort of the in_impsmall pieces the way the game\'s 150 forts are put together: corridors, stairs and rooms off them, door frames with their doors, lit and furnished as the game\'s own, with the bandits who hole up in the abandoned ones.'],
+  // (offered where its pieces are in the load order, ruinKinds)
+  ['ayleid', 'Ayleid ruin', 'Varondo', 'Ayleid ruins have old Ayleid names: Varondo, Beldaburo, Garlas Agea.',
+    'A ruin of the Ayleids, its white stone halls joined the way the game\'s own are: narrow halls, turns, crossings and stairs down, tall rooms off them, lit by welkynd stones, with what guards it.'],
 ];
+// (the kinds on offer: the Ayleid one only where its pieces are in the load order, /api/status)
+const ruinKinds = () => RUIN_KINDS.filter(k => k[0] !== 'ayleid' || (typeof S !== 'undefined' && S.summary && S.summary.ayleid));
 const RUIN_OPTS = {
   kind: RUIN_KINDS.map(k => [k[0], k[1]]),
   size: [['tiny', 'Tiny (about 10 pieces, one hall)'], ['small', 'Small (about 20 pieces, one hall)'], ['medium', 'Medium (about 45 pieces, two halls)'],
@@ -42,7 +47,7 @@ const DT = {kind: 'dwemer', seed: null, lay: null, view: null, seq: 0, hover: nu
   // (the plan flat, or a rough 3D sketch of blocks at their heights, turned by dragging; the user asked for both)
   mode: (() => { try { return localStorage.getItem('ws-dt-mode') === '3d' ? '3d' : '2d'; } catch (e){ return '2d'; } })(), yaw: 0.6, pitch: 0.75};
 const DT_ZX = 1.6;          // (heights drawn taller than they are in 3D, so the levels read)
-const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆', cave_lava: '◆', tomb: '⚱', daedric: '✴', stronghold: '♜', tower: '♖', fort: '⚔'};
+const DT_ICON = {dwemer: '⚙', cave_mold: '◆', cave_mud: '◆', cave_py: '◆', cave_lava: '◆', tomb: '⚱', daedric: '✴', stronghold: '♜', tower: '♖', fort: '⚔', ayleid: '✧'};
 const DT_ROCK = {cave_mold: '#8c8f93', cave_mud: '#8a6d4f', cave_py: '#c9c1ad', cave_lava: '#3b3533'};
 const DT_SEG = {
   size: [['tiny', 'Tiny', 'about 10 pieces, one hall: a lair'], ['small', 'Small', 'about 20 pieces, one hall'], ['medium', 'Medium', 'about 45 pieces, two halls'],
@@ -71,7 +76,8 @@ function dtSlideSay(k){
   const el = $('#' + DT_SLIDE[k].id); if (!el) return '';
   const v = +el.value, G = (DT.lay && DT.lay.game) || null;
   if (k === 'water'){
-    if (!v) return 'Dry';
+    // (a cave left dry has a lake in its last chamber now and then, as the game's do: dwemer._lake_level)
+    if (!v) return /^cave/.test(DT.kind || '') ? 'Dry, or a lake now and then' : 'Dry';
     // (the way in goes under past this layout's own mark: a front door near the bottom leaves little room)
     const dry = DT.lay && DT.lay.dry_to != null ? Math.round(DT.lay.dry_to * 100) : null;
     const tail = dry == null ? '' : v > dry ? ` · the way in is under water (it stays dry up to ${dry}%)` : dry >= 100 ? ' · the way in stays dry' : ` · the way in stays dry up to ${dry}%`;
@@ -111,7 +117,7 @@ function ruinFormHtml(what){
     <div class="dt-side">
       <div class="dt-h">Kind${typeof guideLink === 'function' ? guideLink('dungeons-and-ruins.md', 'Making one') : ''}</div>
       <input type="hidden" id="ru-kind" value="${DT.kind}">
-      <div class="dt-kinds">${RUIN_KINDS.map(k => `<button type="button" class="dt-k ${k[0] === DT.kind ? 'on' : ''}" data-dk="${k[0]}" title="${esc(k[4])}">
+      <div class="dt-kinds">${ruinKinds().map(k => `<button type="button" class="dt-k ${k[0] === DT.kind ? 'on' : ''}" data-dk="${k[0]}" title="${esc(k[4])}">
         <span class="dt-ki" ${DT_ROCK[k[0]] ? `style="color:${DT_ROCK[k[0]]}"` : ''}>${DT_ICON[k[0]]}</span>${esc(k[1].replace('Cave: ', 'Cave, '))}</button>`).join('')}</div>
       <div class="dt-h">Size</div>${seg('size', 'medium')}
       <div class="dt-h">Halls</div>${seg('halls', 'usual')}

@@ -23,7 +23,7 @@ RISE = 32               # a floor this much over the way in's is above it (cave 
 CAVE_RISE = 64
 # how deep a made place may go below its way in, by kind: the game's own deepest tenth (the drop from the
 # front door to the lowest floor, 51-123 places a kind, 2026-10-26)
-DEEP = {'dwemer': 1560, 'cave': 1792, 'tomb': 1024, 'daedric': 2560, 'tower': 1024}
+DEEP = {'dwemer': 1560, 'cave': 1792, 'tomb': 1024, 'daedric': 2560, 'tower': 1024, 'ayleid': 1152}     # (Ayleid: three stairs, its 15 places' deepest)
 HEADROOM = 100          # a join a player walks through: this much over its floor (the player is about 90 tall)
 WIDTH = 64              # and this wide at waist height
 SLACK = 40              # boxes may overlap this much at their trims (dwemer.SLACK)
@@ -48,12 +48,12 @@ CLIMBERS = {'dwemer': (1, 65), 'cave_mold': (4, 121), 'cave_mud': (7, 101), 'cav
 
 
 def deep_cap(K):
-    k = K.get('kind', 'dwemer')
+    k = K.get('as') or K.get('kind', 'dwemer')          # (a variant keeps its kind's rules: a tomb with the domed room)
     return DEEP['cave'] if k.startswith('cave') else DEEP.get(k, 1560)
 
 
 def climb_cap(K):
-    k = K.get('kind', 'dwemer')
+    k = K.get('as') or K.get('kind', 'dwemer')
     return CLIMB['cave'] if k.startswith('cave') else CLIMB.get(k, 1152)
 
 
@@ -280,7 +280,7 @@ _BASE = {}
 def base(kind):
     """The game's own places of the kind (dgbase.json): {'pairs': {'a|b': [spots, spots seeing the void, joins,
     joins too tight]}, 'ids': {piece: [spots a step in from its joins, spots seeing the void]}}."""
-    kind = {'tower': 'tomb'}.get(kind, kind)          # (a Velothi tower is the tombs' small pieces: their figures)
+    kind = {'tower': 'tomb', 'tomb_dome': 'tomb'}.get(kind, kind)          # (a Velothi tower is the tombs' small pieces: their figures)
     if not _BASE:
         import json, os
         try:
@@ -363,7 +363,10 @@ def seams_check(db, lay, sc=None, leaks=True, kind=None):
         squeezed = _as_game(B, ida, idb, 3, 2)
         got = _probe(sc, sx, sy, sz)
         if got is None:
-            if not squeezed:
+            # (not where a plate closes the opening, a piece too thin to stand in: nobody walks through, and the hall's
+            # floor ends at the plate's face, so the probe on the join itself finds none; an Ayleid hall's end plate)
+            plate = any(q.get('box') and (q['box'][3] - q['box'][0] if dx else q['box'][4] - q['box'][1]) < 100 for q in (P[a], P[b]))
+            if not squeezed and not plate:
                 tight.append((b, round(sx), round(sy), round(sz), 'floor', 0))
             continue
         eye, room, fz = got

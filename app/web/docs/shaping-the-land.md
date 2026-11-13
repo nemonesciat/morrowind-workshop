@@ -104,7 +104,12 @@ a box. Right-drag moves the map while you mark. A game town's cells are left out
 button again, **Done** or Esc to stop.
 
 The **⋮** menu has **Clear marks**, **🪨 Dress…**, **↶ Undo my land** (the land in the marked cells back as it was
-before your mod), the **Land map** colours, **Where water runs**, and height maps.
+before your mod), **⤓ Set loose things down**, the **Land map** colours, **Where water runs**, and height maps.
+
+**⤓ Set loose things down** lifts your mod's crates, barrels, sacks, baskets, clutter and furniture in the marked
+cells out of the dirt, and lets down what hovers just over it. What stands on a thing follows it. Rocks, plants,
+fences, posts, building pieces and anything hung stay as they are. On a slope a thing is let a little into the
+ground on its uphill side. One Undo takes it back.
 
 The land map's colours:
 
@@ -599,8 +604,10 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **🌾 Farm and 🍐 Orchard** are shapes of their own on the Land panel, for fields away from a town: draw the outline
   (its longest side is the gate side) and **Make it**. A farm is fields of the region's own crop at the spacing of the
   game's farms, tiled over the outline with paths between, the culture's farm fence round them and the gate's way
-  left open; an orchard is a loose grid of the region's fruit tree at the game's spacing. **Like** picks whose fence
-  and orchards (blank: the nearest game town's), the seed lays the same outline another way. One Undo takes it back.
+  left open; an orchard is a loose grid of the region's fruit tree at the game's spacing (the nearest region's that
+  grows one; fruit trees only, so none in a load order without them). **Like** picks whose crops and fence (blank:
+  your own town beside it, else the nearest game town's), the seed lays the same outline another way. One Undo takes
+  it back.
 - **People:** outdoors, guards of the culture's own at the gates, the great doors and on the streets, sellers at their
   stalls (they barter; their wares and stock are theirs), and townsfolk about the streets and doors, as many a
   building as its towns have. With Furnished, a household in each too, owning its beds and chests. This takes a minute
