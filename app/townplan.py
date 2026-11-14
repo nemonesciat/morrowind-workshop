@@ -1862,12 +1862,18 @@ def _trim(streets, plots):
 SKIP_CULTURES = ('?', 'Cave', 'Mine', 'Skyrim')
 
 
-def cultures(db):
-    """[{'id', 'towns', 'layout', 'examples'}]: the cultures with towns enough to plan by, the most towns first."""
+FEW_TOWNS = (2, 40)             # (two game towns with this many buildings between them: Anvil's, Charach and the Port Quarter, 137)
+
+
+def cultures(db, few=False):
+    """[{'id', 'towns', 'layout', 'examples'}]: the cultures with towns enough to plan by, the most towns first.
+    few: those of two big towns too, for a list to choose from by hand (Anvil never showed in the Like list, the user
+    2026-11-14); what picks a culture unasked leaves them out."""
     st = townsurvey.stats(db)
     F = figures(db)
     out = [{'id': c, 'towns': len(S['towns']), 'layout': F[c]['layout'], 'examples': [t for t in S['towns'] if t and t != '?'][:4]}
-           for c, S in st.items() if c not in SKIP_CULTURES and len(S['towns']) >= 3]
+           for c, S in st.items() if c not in SKIP_CULTURES and c in F and (len(S['towns']) >= 3 or (
+               few and len(S['towns']) >= FEW_TOWNS[0] and S['buildings'] >= FEW_TOWNS[1]))]
     return sorted(out, key=lambda o: -o['towns'])
 
 

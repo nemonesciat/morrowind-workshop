@@ -3537,7 +3537,10 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                     continue
                 for cq in range(4):
                     wpat = kits.rotate(cpat, cq)
-                    walls_ = [d for d in kits.SIDES if wpat[d] == 'wall']
+                    # (a 16-unit slab's edges measure as four walls: it is a slab all the same, and walls nothing off.
+                    # Read as walls, the Gold Coast's Ceiling_01 was refused beside every room, the well over
+                    # Stair_07 stayed open to the void, and every Anvil house was made again on one storey)
+                    walls_ = [] if thin_slab else [d for d in kits.SIDES if wpat[d] == 'wall']
                     if any(nb(spot, d) in grid or d == x['up'] or (lv, d) in closed for d in walls_):
                         continue
                     shut = sum(1 for d in kits.SIDES if wpat[d] != 'open')

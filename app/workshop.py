@@ -856,7 +856,7 @@ class Handler(BaseHTTPRequestHandler):
                     own = [{'id': '\u2605' + n, 'towns': 0, 'own': True, 'like': o.get('like') or '', 'prefabs': len(o.get('prefabs') or {})}
                            for n, o in sorted(stylesurvey.own_styles().items()) if o.get('prefabs')]
                     import townbuild
-                    cs = townplan.cultures(db)
+                    cs = townplan.cultures(db, few=True)
                     for c_ in cs:
                         try:
                             c_['looks'] = townbuild.looks(db, c_['id'])       # (Balmora / Narsis: the style review, 2026-11-07)
