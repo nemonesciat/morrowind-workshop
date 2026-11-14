@@ -247,6 +247,10 @@ ROUND = {'t_imp_setanv': {
     'tower': 't_imp_setanv_x_citywalltower_01', 'tall': 't_imp_setanv_x_citywalltower_02', 'tower_dz': 0.0, 'tower_r': 517.0,
     'gate': 't_imp_setanv_x_citywall_03', 'gate_scale': 1.14, 'gate_dz': 340.0,      # (the game's: 332 to 346 over the wall's)
     'arch': 't_imp_setanv_x_citywallent_01', 'arch_at': 465.0, 'arch_dz': 880.0,     # (on the walk, where it enters a tower)
+    # (the door the game stands in the arch, in the arch's own frame, +x toward its tower: 56 of Anvil's 58 arches; and
+    # where the game sets you down coming out of one, facing along the walk away from the tower)
+    'arch_door': 'ex_imp_loaddoor_02', 'arch_door_at': (11.0, 0.0, 75.0, math.pi / 2),
+    'arch_arrive': (-32.0, 0.0, 59.0, 1.5 * math.pi), 'arch_tower': 460.0,
     'low': 't_imp_setanv_x_citywall_02', 'low_L': 1755.0, 'low_dz': -40.0,           # (the harbour's wall, and its arch)
     'low_gate': 't_imp_setanv_x_citywall_03',
     'rise': 24.0,                          # (a length's origin over the ground under it: 24 at the game's median)
@@ -592,6 +596,32 @@ def _fort_gateways(forts, poly, fort_k):
 
 
 GATE_WAY_DEEP = 1300.0         # (a round wall's gateway: kept clear this far in and out of the arch)
+
+
+def arch_doors(fam, arches):
+    """The doors for a round wall's laid arches: [{'id', 'p': (x, y, z, rz), 'to': (x, y, z, rz) or None}], one an
+    arch. arches: their poses as laid (levelled). Two arches of one tower lead through it, each door to the walk
+    outside the other; a tower's only arch (a wall's end) gets a door that leads nowhere ('to' None: locked)."""
+    R = ROUND.get(fam) or {}
+    if not R.get('arch_door'):
+        return []
+    dx_, dy_, dz_, drz_ = R['arch_door_at']
+    ax_, ay_, az_, arz_ = R['arch_arrive']
+    out = []
+    for q in arches:
+        c, s = math.cos(q.rz), math.sin(q.rz)
+
+        def at(lx, ly):
+            return q.x + lx * c + ly * s, q.y - lx * s + ly * c
+        x, y = at(dx_, dy_)
+        ox, oy = at(ax_, ay_)
+        out.append({'id': R['arch_door'], 'p': (x, y, q.z + dz_, (q.rz + drz_) % (2 * math.pi)), 'to': None,
+                    'out': (ox, oy, q.z + az_, (q.rz + arz_) % (2 * math.pi)), 'tower': at(R['arch_tower'], 0.0)})
+    for i, a in enumerate(out):
+        mates = [b for j, b in enumerate(out) if j != i and math.hypot(a['tower'][0] - b['tower'][0], a['tower'][1] - b['tower'][1]) <= 200.0]
+        if len(mates) == 1:
+            a['to'] = mates[0]['out']
+    return out
 
 
 def gate_ways(W):

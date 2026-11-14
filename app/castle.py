@@ -38,7 +38,8 @@ STYLES = {
     # ones ('from'); its own keeps and its own wall. No round wall towers of its own are built yet)
     'Colovian': {'label': 'Cyrodiil fort', 'from': 'Imperial', 'wall': 't_imp_legioncyr', 'keep': r'^t_imp_legioncyr_x_keep_0[12]$',
                  'halls': r'^t_imp_legioncyr_x_keep_0[12]$', 'towers': False, 'name': 'Fort %s', 'gaps': (500, 700, 1200),
-                 'only': r'^t_imp_legioncyr_x_(keep|tower|arrowslit|kdoorframe|wallent_02|plat_|foundation)|^t_imp_legion(mw|cyr)_x_window|loaddoor|traptop|trapdoor|^t_imp_legion_door'},
+                 'only': r'^t_imp_legioncyr_x_(keep|tower|arrowslit|kdoorframe|wallent_02|plat_|foundation|gateframe|stairs_|railing_)|^t_imp_legion(mw|cyr)_x_window|loaddoor|traptop|trapdoor|^t_imp_legion_door',
+                 'frames': True},
     'Stronghold': {'label': 'Dunmer stronghold', 'wall': None, 'keep': r'^ex_stronghold_fort00$', 'name': '%s'},
     # (Indarys's wall hugs its buildings: 4,018 by 2,994 round a group 3,300 across)
     'Redoran': {'label': 'Redoran stronghold', 'wall': 'ex_r_pcfort', 'keep': r'^ex_r_pcfort_01$', 'gaps': (200, 250, 400),
@@ -159,7 +160,7 @@ def _modules(S, style, which='keep'):
     if d.get('only'):
         # (the style's own keep pieces alone: whatever else stood within reach of the game's keep stays where it was)
         ox = re.compile(d['only'], re.I)
-        out = [_reboxed(dict(m, pieces=[pc for pc in m['pieces'] if ox.search(pc[0])])) for m in out]
+        out = [_reboxed(_joined(dict(m, pieces=[pc for pc in m['pieces'] if ox.search(pc[0]) and not _blind_frame(m, pc)]))) for m in out]
     # (the game fort's own wall-walk pieces left out: Moonmoth's keep carries the two sentry towers that stand on
     # Moonmoth's wall beside it, and without that wall they hung off the keep's side, the user 2026-11-03)
     out = [dict(m, pieces=[pc for pc in m['pieces'] if not KEEP_NOT.search(pc[0])]) if any(KEEP_NOT.search(pc[0]) for pc in m['pieces']) else m
@@ -168,7 +169,61 @@ def _modules(S, style, which='keep'):
     # with, and it stood loose before it, the user 2026-11-03 "the same detached door flaw")
     if _DB[0] is not None:
         out = [m for m in out if _door_attached(_DB[0], m)] or out
+    if d.get('frames'):
+        # (with its doors' own frames, which the survey keeps apart: the gate bare in the keep's face was "completely
+        # wrong", the user 2026-11-14. After the check above, which asks for the keep's own wall at its door: a frame
+        # would answer for any door)
+        ox = re.compile(d.get('only') or '.', re.I)
+        out = [_reboxed(dict(m, pieces=list(m['pieces']) + [fr for fr in m.get('frames') or () if ox.search(fr[0]) and not any(
+            pc[0].lower() == fr[0].lower() and abs(pc[1] - fr[1]) < 4 and abs(pc[2] - fr[2]) < 4 and abs(pc[3] - fr[3]) < 4 for pc in m['pieces'])]))
+               for m in out]
     return out
+
+
+DOOR_FRAME = re.compile(r'wallent_02|kdoorframe|gateframe', re.I)
+
+
+def _blind_frame(m, pc):
+    """Whether pc is a door's arch or frame with none of the module's doors in it: the door it framed in the game led
+    into a room the module does not bring (Fort Telodrach's stair tower, two arches on the keep), and the arch would
+    stand on a blank wall."""
+    if not DOOR_FRAME.search(pc[0]):
+        return False
+    return not any(math.hypot(dd['p'][0] - pc[1], dd['p'][1] - pc[2]) <= 200 and abs(dd['p'][2] - pc[3]) <= 200 for dd in m['doors'])
+
+
+def _joined(m):
+    """m with only the pieces that stand joined to its main piece, box to box through the pieces it has now (a filter by
+    name leaves pieces whose link to the keep it took away: a dock's foundation far along the shore)."""
+    db = _DB[0]
+    if db is None or not m.get('pieces'):
+        return m
+    bx = []
+    for pc in m['pieces']:
+        ri = db.resolve_id(pc[0])
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if not b:
+            bx.append(None)
+            continue
+        sc_ = pc[7] if len(pc) > 7 and pc[7] else 1.0
+        c, sn = math.cos(pc[4]), math.sin(pc[4])
+        xs = [pc[1] + (x_ * c + y_ * sn) * sc_ for x_ in (b[0], b[3]) for y_ in (b[1], b[4])]
+        ys = [pc[2] + (-x_ * sn + y_ * c) * sc_ for x_ in (b[0], b[3]) for y_ in (b[1], b[4])]
+        bx.append((min(xs) - 16, min(ys) - 16, pc[3] + b[2] * sc_ - 16, max(xs) + 16, max(ys) + 16, pc[3] + b[5] * sc_ + 16))
+    got = {i for i, pc in enumerate(m['pieces']) if bx[i] and pc[0].lower() == (m.get('main') or '').lower() and abs(pc[1]) < 1 and abs(pc[2]) < 1}
+    if not got:
+        return m
+    grew = True
+    while grew:
+        grew = False
+        for i, b in enumerate(bx):
+            if i in got or b is None:
+                continue
+            if any(b[0] <= bx[j][3] and bx[j][0] <= b[3] and b[1] <= bx[j][4] and bx[j][1] <= b[4] and b[2] <= bx[j][5] and bx[j][2] <= b[5] for j in got):
+                got.add(i)
+                grew = True
+    m['pieces'] = [pc for i, pc in enumerate(m['pieces']) if i in got or bx[i] is None]
+    return m
 
 
 def _reboxed(m):
@@ -4157,6 +4212,153 @@ def wall_keeps(db, refs, outline, town, taken, rng, rooms='furnished'):
     return names
 
 
+SHARED_GAP = 1536              # (a group added to a shared place stands this far clear of what is in it)
+
+
+def shared_place(db, town):
+    """The key of the town wall's shared place if it stands in the project, else None."""
+    k0 = ('%s, %s' % (town, WALL_TOWERS)).lower()
+    return next((k for k in sorted(db.project.cells) if k == k0 or re.fullmatch(re.escape(k0) + r' \d+', k)), None)
+
+
+def shared_room(db, town, src_key, taken):
+    """A game place's shell (its pieces and doors, is_shell) set as a group of its own into the town wall's shared
+    place, "<town>, Wall Towers", made if it is not there yet (lit as the game place), beyond everything already in
+    it. {'name', 'key', 'new' (the place was made here), 'copied': {the game ref key: ours}, 'shift': (dx, dy, dz)
+    from the game place's spots to ours, 'box': (x0, y0, x1, y1) of the group}, or None. Nothing is committed."""
+    from project import ref_info
+    m = mapdata.cellmap(db, src_key)
+    refs = m.get('refs') or []
+    arch = [r for r in refs if r.get('arch') and r.get('b') and r['type'] != 'DOOR']
+    if not arch:
+        return None
+    B = [cs._wbox(r, 8) for r in arch]
+    bx = [min(b[k] for b in B) for k in range(3)] + [max(b[k] for b in B) for k in range(3, 6)]
+    R = {'refs': [r['k'] for r in refs if r['type'] not in ('DOOR', 'NPC_', 'CREA', 'LEVC')], 'doors': [{'k': r['k']} for r in refs if r['type'] == 'DOOR'], 'box': bx}
+    key = shared_place(db, town)
+    new = key is None
+    if new:
+        name = _free_name(db, '%s, %s' % (town, WALL_TOWERS), taken)
+        key, cell = _new_place(db, name, src_key)
+    else:
+        cell = db.project.cells[key]
+        name = (mapdata.cell_info(db, key) or {}).get('name') or '%s, %s' % (town, WALL_TOWERS)
+    xs = [ref_info(_subs(ref))[1][0] for ref in cell['refs'].values()]
+    ox = math.ceil((max(xs) + SHARED_GAP) / 256.0) * 256.0 if xs else 0.0
+    copied = _copy_room(db, cell, R, ox, 0.0, db.cell_refs(src_key)[0])
+    return {'name': name, 'key': key, 'new': new, 'copied': copied, 'shift': (ox - bx[0], -bx[1], -bx[2]),
+            'box': (ox, 0.0, ox + bx[3] - bx[0], bx[4] - bx[1])}
+
+
+ROUND_LIKE = 'anvil, city walls'   # (the game's shared place for a round-tower wall: every tower's rooms in one interior)
+ROUND_ROOM = (300, 1400)       # (a tower's room on one level: this tall and this wide at most; taller ones are its stairs)
+_WGROUPS = {}
+
+
+def _wall_groups(db, key):
+    """A shared wall interior's separate rooms, each a group of pieces joined box to box: [{'key', 'refs', 'box',
+    'height', 'pieces': [ids], 'doors': [{'k', 'id', 'trap', 'dz', 'out'}]}] ('out': it leads outdoors)."""
+    ck = (id(db.recs), key)
+    if ck in _WGROUPS:
+        return _WGROUPS[ck]
+    out = []
+    m = mapdata.cellmap(db, key)
+    if m.get('exists'):
+        refs = m['refs']
+        arch = [r for r in refs if r.get('arch') and r.get('b') and r['type'] != 'DOOR']
+        B = [cs._wbox(r, 8) for r in arch]
+        par = list(range(len(arch)))
+
+        def f(i):
+            while par[i] != i:
+                par[i] = par[par[i]]
+                i = par[i]
+            return i
+        for i in range(len(arch)):
+            for j in range(i + 1, len(arch)):
+                if cs._touch(B[i], B[j]):
+                    par[f(i)] = f(j)
+        cl = defaultdict(list)
+        for i in range(len(arch)):
+            cl[f(i)].append(i)
+        for ix in cl.values():
+            bx = [min(B[i][k] for i in ix) for k in range(3)] + [max(B[i][k] for i in ix) for k in range(3, 6)]
+            own = {arch[i]['k'] for i in ix}
+            inside = [r for r in refs if r['type'] not in ('DOOR', 'NPC_', 'CREA', 'LEVC') and r['k'] not in own
+                      and bx[0] <= r['p'][0] <= bx[3] and bx[1] <= r['p'][1] <= bx[4] and bx[2] <= r['p'][2] <= bx[5]]
+            ds = [r for r in refs if r['type'] == 'DOOR' and bx[0] - 32 <= r['p'][0] <= bx[3] + 32 and bx[1] - 32 <= r['p'][1] <= bx[4] + 32
+                  and bx[2] - 32 <= r['p'][2] <= bx[5] + 32]
+            if not ds:
+                continue
+            out.append({'key': key, 'refs': [arch[i]['k'] for i in ix] + [r['k'] for r in inside], 'box': [round(v) for v in bx],
+                        'height': round(bx[5] - bx[2]), 'pieces': sorted(arch[i]['id'].lower() for i in ix),
+                        'doors': [{'k': r['k'], 'id': r['id'], 'trap': bool(re.search(r'trap|hatch', r['id'], re.I)), 'dz': round(r['p'][2] - bx[2]),
+                                   'out': bool(r.get('to')) and not r['to'].get('cell')} for r in ds]})
+    _WGROUPS[ck] = out
+    return out
+
+
+def round_rooms(db, town, towers, taken, rng, furnished=True):
+    """One place for a round-tower wall's towers, "<town>, Wall Towers", as the game keeps Anvil's in its City Walls:
+    a room for each tower, copied as a shell from the game's (a passage with the tower's two walk doors, a closet with
+    its one) and set apart in the one interior; each arch door outside leads into its tower's room and the room's door
+    back out onto the walk before that arch. towers: [[(cell key, ref key, [x, y, z, 0, 0, rz] where you come out)]],
+    a tower's one or two arch doors. (the place's name or None, the outside doors given a room: their ref keys.)
+    The user, 2026-11-14: "the interior for a wall is usually all shared ... a space that actually holds ALL the wall
+    interiors, making them a connected space in a sense"."""
+    import editing
+    from project import set_ref_pos
+    G = _wall_groups(db, ROUND_LIKE)
+
+    def walk(g):
+        return [d for d in g['doors'] if d['out'] and not d['trap']]
+    plain = [g for g in G if g['height'] <= ROUND_ROOM[0] and max(g['box'][3] - g['box'][0], g['box'][4] - g['box'][1]) <= ROUND_ROOM[1]
+             and not any(re.search(r'spiral|stair', pc) for pc in g['pieces'])]
+    lib = {1: [g for g in plain if len(walk(g)) == 1],
+           2: [g for g in plain if len(walk(g)) == 2 and abs(walk(g)[0]['dz'] - walk(g)[1]['dz']) <= 8]}
+    todo = [t for t in towers if lib.get(len(t))]
+    if not todo:
+        return None, set()
+    name = _free_name(db, '%s, %s' % (town, WALL_TOWERS), taken)
+    key, cell = _new_place(db, name, ROUND_LIKE)
+    src = db.cell_refs(ROUND_LIKE)[0]
+    links, done = [], set()
+    for i, t in enumerate(todo):
+        g = rng.choice(sorted(lib[len(t)], key=lambda g: g['box']))
+        R = dict(g, doors=walk(g))
+        copied = _copy_room(db, cell, R, (i % 8) * 2048.0, (i // 8) * 2048.0, src)
+        inner = [d for d in R['doors'] if d['k'] in copied]
+        for (ck_, rk_, out_), d in zip(t, inner):
+            links.append((ck_, rk_, name, ('in', key, copied[d['k']])))
+            links.append((key, copied[d['k']], '', [float(v) for v in out_]))
+            done.add(rk_)
+    # (a wall-end tower's door was laid locked, for want of a room: it has one now. Before the links are set: a door
+    # read back here after its link was stored came back as it was before, and lost the link)
+    for t in todo:
+        for ck_, rk_, _o in t:
+            if rk_ not in done:
+                continue
+            c_, refs_ = editing._cell(db, ck_)
+            ref = refs_.get(rk_)
+            if ref is not None and any(tg == 'FLTV' for tg, _d in ref['subs']):
+                editing._store(c_, rk_, ref['origin'], ref['idx'], [(tg, bytes(dd)) for tg, dd in ref['subs'] if tg != 'FLTV'])
+    editing.commit(db, 'The rooms in the wall of %s: %s' % (town, name))
+    for ck_, rk_, dest, pos in links:
+        if isinstance(pos, tuple):
+            pos = _in_front(db, pos[1], pos[2])
+        if pos:
+            _link(db, ck_, rk_, dest, pos)
+    editing.commit(db, 'Linked the doors into the wall of %s' % town)
+    if furnished:
+        try:
+            import towninside
+            if furnish_shell(db, key, None, seed=zlib.crc32(name.encode()), kinds=towninside.household_kinds(db, key, 'guard', None)):
+                editing.commit(db, 'Furnished the rooms in the wall of %s' % town)
+        except Exception as e:
+            print('wall rooms furnish:', e)
+    return name, done
+
+
 # ------------------------------------------------------------------------------------------------ shells, not copies
 # The rooms behind a castle's doors keep the game room's architecture and its door links, never its furnishing or decor
 # (the user, 2026-11-02: "We can learn as much as we want from other interiors about design and architecture, but we
@@ -4235,7 +4437,7 @@ def _kind_of(counts, n_tiles):
     return 'hall' if n_tiles >= 4 else None
 
 
-def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, level=None, like=None):
+def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, level=None, like=None, within=None):
     """A shell furnished by the Workshop's own furnisher, each room as the kind its source room was (counted from the
     source's things within the room's floor, shift carrying the source's spots to ours), never their spots. The
     number of things placed (0 when the place has no rooms the furnisher can read)."""
@@ -4250,6 +4452,10 @@ def furnish_shell(db, key, src_key, shift=(0.0, 0.0, 0.0), seed=1, kinds=None, l
     plan = []
     for rm in info.get('rooms') or ():
         tl = rm.get('_tiles') or []
+        # (within: only the rooms standing in these boxes [(x0, y0, x1, y1)], a group just added to a shared place whose
+        # other rooms are furnished already)
+        if within is not None and not any(b[0] <= t['x'] <= b[2] and b[1] <= t['y'] <= b[3] for t in tl for b in within):
+            continue
         cnt = Counter()
         for r in src:
             x, y, z = r['p'][0] + shift[0], r['p'][1] + shift[1], r['p'][2] + shift[2]

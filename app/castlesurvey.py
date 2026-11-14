@@ -29,7 +29,7 @@ from collections import Counter, defaultdict
 
 import mapdata
 
-VERSION = 2
+VERSION = 3
 CELL = 8192
 # the game's forts by the look they are built in: the names their interiors start with (and Tamriel Rebuilt's, when
 # loaded: a name not in the load order is passed over)
@@ -59,7 +59,12 @@ KINDS = [('bed', r'bed|bunk|hammock|bedroll'), ('weapons', r'weaponrack|weapon_r
 KR = [(k, re.compile(p, re.I)) for k, p in KINDS]
 NOT_PIECE = re.compile(r'terrain|flora|tree|rock|grass|bush|kelp|_mt_|mtpeak|marker|bucket|scaffold|rubble|debris|ruin|constr|lockedd', re.I)
 # (a fort's own wall pieces a keep may grow into: only the round towers' stacks and the stair towers that stand with it)
-STACK = re.compile(r'towers?b?_(base|dark|med|light|top|roof)|guardtower_01|keep|fort0|pcfort_0|enter', re.I)
+# (and the Cyrodiil Legion's set, whose sections are named without the underscore: towerbligt_01, towersbase_01,
+# towerbrfp_01. Left out, Fort Telodrach's keep stood with a stump and a loose top for towers; the user 2026-11-14)
+STACK = re.compile(r'towers?b?_(base|dark|med|light|top|roof)|_x_tower[bs](base|dark|med|ligt|top|rfp)_|guardtower_01|keep|fort0|pcfort_0|enter', re.I)
+# a door's own frame: a wall piece by its name, so never grown into a module; a module carries its doors' frames apart
+FRAME = re.compile(r'wallent_0|doorframe|gateframe', re.I)
+FRAME_NEAR = 200.0             # (Fort Telodrach's gate stands 129 before its frame's origin, its doors 10 and 14 from their arches')
 SPIRAL = re.compile(r'spiral', re.I)
 GROUPED = ('Redoran', 'Hlaalu')
 WHOLE = {'Stronghold': re.compile(r'^ex_strong', re.I)}
@@ -282,6 +287,30 @@ def _fort(db, style, group, wallish):
                     if len(G) > 60:
                         grew = False
                         break
+        if len(G) > 60:
+            # (a module that filled up: grown again nearest first, so the sixty are the pieces standing with the keep and
+            # not whatever touched them further out in the cell's own order. Fort Telodrach's grows on by a wall stair
+            # into the Legion's docks and a galleon, and what the sixty leave out must not be a tower's sections)
+            G = {h['k'] + '@' + h['cell']: h for h in hs}
+            boxes = {k: _wbox(h, 16) for k, h in G.items()}
+            hx = sum(h['p'][0] for h in G.values()) / len(G)
+            hy = sum(h['p'][1] for h in G.values()) / len(G)
+            cand = sorted((a for a in arch if (a['k'] + '@' + a['cell']) not in G
+                           and not ((a['k'] + '@' + a['cell']) in wset and not STACK.search(a['id']))),
+                          key=lambda a: math.hypot(a['p'][0] - hx, a['p'][1] - hy))
+            cb = {id(a): _wbox(a, 16) for a in cand}
+            grew = True
+            while grew and len(G) <= 60:
+                grew = False
+                for a in cand:
+                    ak = a['k'] + '@' + a['cell']
+                    if ak in G:
+                        continue
+                    if any(_touch(cb[id(a)], b) for b in boxes.values()):
+                        G[ak] = a
+                        boxes[ak] = cb[id(a)]
+                        grew = True
+                        break                    # (and from the nearest again)
         mods.append({'G': G, 'boxes': boxes, 'ds': ds, 'net': cset})
     # (one module for a keep whose doors lead into several groups of rooms: a stronghold's four entrances)
     merged = []
@@ -330,10 +359,21 @@ def _fort(db, style, group, wallish):
                            # (its sill over the ground at its own foot: a keep's pad is set by its door, not its main piece,
                            # whose ground lies 248 lower across Moonmoth's slope, lab c03)
                            'over': round(d['p'][2] - (mapdata.terrain_z(db, d['p'][0], d['p'][1]) if mapdata.terrain_z(db, d['p'][0], d['p'][1]) is not None else d['p'][2]))})
+        frames = []
+        for d in ds:
+            fr = [a for a in arch if FRAME.search(a['id']) and math.hypot(a['p'][0] - d['p'][0], a['p'][1] - d['p'][1]) <= FRAME_NEAR
+                  and abs(a['p'][2] - d['p'][2]) <= FRAME_NEAR]
+            if fr:
+                a = min(fr, key=lambda a: math.hypot(a['p'][0] - d['p'][0], a['p'][1] - d['p'][1]))
+                lx, ly = local(A, a['p'][0], a['p'][1])
+                f_ = [a['id'], round(lx, 1), round(ly, 1), round(a['p'][2] - A[2], 1), round((a['p'][5] - A[5]) % (2 * math.pi), 4),
+                      round(a['p'][3], 4), round(a['p'][4], 4), a.get('s') or 1.0]
+                if f_ not in frames:
+                    frames.append(f_)
         bs = list(boxes.values())
         lb = [local(A, x, y) for b in bs for x in (b[0], b[3]) for y in (b[1], b[4])]
         out.append({'fort': group, 'style': style, 'main': main['id'].lower(), 'over': round(A[2] - g0) if g0 is not None else 0,
-                     'pieces': pieces, 'doors': mdoors, 'network': sorted(cset),
+                     'pieces': pieces, 'frames': frames, 'doors': mdoors, 'network': sorted(cset),
                      'roles': sorted({rmap[k]['role'] for k in cset if k in rmap}),
                      'box': [round(min(p[0] for p in lb)), round(min(p[1] for p in lb)), round(max(p[0] for p in lb)), round(max(p[1] for p in lb))]})
     return {'fig': fig, 'slots': slots, 'modules': out, 'towers': sorted(towers)}

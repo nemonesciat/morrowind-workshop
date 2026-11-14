@@ -2186,6 +2186,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             print('town aprons:', e)
     wall = 0
     wall_refs = []
+    arch_laid = []                 # (the doors laid in a round wall's arches: (cell key, ref key, townwalls.arch_doors' entry))
     if W is not None:
         _say('Setting the wall on the ground', 0.87)
         db.sync_project()
@@ -2228,11 +2229,14 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             print('town repin:', e)
         # (no wall-walk arches: the game stands ex_imp_wallent_02 along its walks, but set there without a building they
         # read as doorways to nowhere, the user's Chillmorrow, test4: "don't add them unless they go on a building")
+        arches_ = []
         for p_ in W['pieces']:
             ri = db.resolve_id(p_['id'])
             if ri is None:
                 continue
             q_ = p_['pose']
+            if p_.get('kind') == 'arch':
+                arches_.append(q_)
             key = '#%d,%d' % (math.floor(q_.x / 8192.0), math.floor(q_.y / 8192.0))
             try:
                 cell, _refs = editing._cell(db, key)
@@ -2246,6 +2250,40 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             pieces += 1
             cells.add(key)
             new_refs.add(rk)
+        # (a door in each arch of a round wall's towers, as the game stands one: a tower's two lead through it to each
+        # other, a wall's end tower's is locked. Empty, "none of the towers have actual doors on them, only door
+        # frames", the user 2026-11-14)
+        try:
+            import struct
+            import doors as doors_
+            n_ad = 0
+            arch_laid.clear()
+            for d_ in townwalls.arch_doors(W.get('family'), arches_):
+                ri = db.resolve_id(d_['id'])
+                if ri is None:
+                    continue
+                key = '#%d,%d' % (math.floor(d_['p'][0] / 8192.0), math.floor(d_['p'][1] / 8192.0))
+                try:
+                    cell, _refs = editing._cell(db, key)
+                except editing.EditError:
+                    continue
+                rk = db.project.new_ref_key()
+                subs_ = [('NAME', zs(db.recs[ri][1]))]
+                if d_['to'] is None:
+                    subs_.append(('FLTV', struct.pack('<i', 100)))
+                subs_ = set_ref_pos(subs_, (d_['p'][0], d_['p'][1], d_['p'][2], 0.0, 0.0, d_['p'][3]))
+                if d_['to'] is not None:
+                    subs_ = doors_._set_link(subs_, '', [d_['to'][0], d_['to'][1], d_['to'][2], 0.0, 0.0, d_['to'][3]])
+                editing._store(cell, rk, mine, int(rk.rsplit('|', 1)[1]), subs_)
+                pieces += 1
+                n_ad += 1
+                cells.add(key)
+                new_refs.add(rk)
+                arch_laid.append((key, rk, d_))
+            if n_ad:
+                print('town: %d doors in the wall towers\' arches' % n_ad)
+        except Exception as e:
+            print('town arch doors:', e)
         # (the streets carried out through the gates, to be paved with the rest)
         have = {tuple(r) for r in plan.get('roads') or ()}
         gate = townwalls.road_patches(W.get('roads') or [])
@@ -2496,10 +2534,35 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             except Exception as e:
                 print('town signs:', e)
         _say('Saving', 0.98)
-        editing.commit(db, 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s%s' % (
+        built_ = 'Built a %s town: %d buildings (%d pieces) in %d cells%s%s%s%s' % (
             culture, made, pieces, len(cells), ((', a wall of %d pieces' % wall) if wall else '') + ((', %d things set out' % dressed) if dressed else ''),
             (', the ground fitted to %d' % fitted) if fitted else '', (', %d road patches' % painted) if painted else '',
-            ((', %d path points' % walks) if walks else '') + ((', %d people outdoors' % life['people']) if life.get('people') else '')))
+            ((', %d path points' % walks) if walks else '') + ((', %d people outdoors' % life['people']) if life.get('people') else ''))
+        editing.commit(db, built_)
+        if arch_laid:
+            # (the wall's towers share one interior, a room for each, as the game's walls do: every arch door into its own
+            # tower's room, castle.round_rooms. With the wall, whatever is asked of the houses' insides; one step with
+            # the town)
+            try:
+                import castle
+                stack = getattr(db.project, 'undo_stack', [])
+                n0 = len(stack)
+                by_t = []
+                for key_, rk_, d_ in arch_laid:
+                    for t_ in by_t:
+                        if math.hypot(t_[0][0] - d_['tower'][0], t_[0][1] - d_['tower'][1]) <= 200.0:
+                            t_[1].append((key_, rk_, [d_['out'][0], d_['out'][1], d_['out'][2], 0.0, 0.0, d_['out'][3]]))
+                            break
+                    else:
+                        by_t.append((d_['tower'], [(key_, rk_, [d_['out'][0], d_['out'][1], d_['out'][2], 0.0, 0.0, d_['out'][3]])]))
+                wname_, wdone_ = castle.round_rooms(db, name, [t_[1] for t_ in by_t], set(), random.Random('%s|%s|wall towers' % (seed, culture)))
+                stack = getattr(db.project, 'undo_stack', [])
+                if len(stack) > n0:
+                    editing.fold(db, len(stack) - n0 + 1, built_)
+                if wname_:
+                    print('town: %s, a room for each of %d towers, %d doors into them' % (wname_, len(by_t), len(wdone_)))
+            except Exception as e:
+                print('town wall rooms:', e)
         if interiors == 'later' and made:
             # (the outside only, the insides and people kept for later: the Land panel's stages, the user 2026-11-09,
             # "populate and interiorize towns ... you got to glance at from the outside")

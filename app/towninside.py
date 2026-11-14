@@ -1068,9 +1068,10 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
     # (the keep and the big towers first, then the wall towers, spread round the wall)
     cand.sort(key=lambda w: (0 if re.search('keep', w[2], re.I) else 1 if re.search('guardtower', w[2], re.I) else 2, rng.random()))
     names, used = [], set()
+    n_made = 0
     mine = db.project.plugin.lower()
     for ck, rk, wid, pose in cand:
-        if len(names) >= WALL_ROOMS:
+        if n_made >= WALL_ROOMS:
             break
         # (a tower's own room, never a whole curtain wall's place with a dozen ways out: copied for one tower, its other
         # doors all led out by that tower's, the way out behind the wall there counted once for each, lab w02)
@@ -1103,6 +1104,47 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
             ri = db.resolve_id(e['door'])
             if ri is None:
                 continue
+            if not re.search('keep', wid, re.I):
+                # (a tower of the wall: its rooms in the wall's one shared place, a group of their own there, as the
+                # game keeps a wall's. The user, 2026-11-14: "the interior for a wall is usually all shared ... I think
+                # all walls are like that". The keep below stays a building with a place of its own)
+                import castle
+                got = castle.shared_room(db, town, e['t'], taken)
+                if not got or ib['k'] not in got['copied']:
+                    continue
+                name, key, sh = got['name'], got['key'], got['shift']
+                editing.commit(db, 'A room in the wall of %s: %s' % (town, name))
+                dk = '#%d,%d' % (math.floor(dp[0] / 8192.0), math.floor(dp[1] / 8192.0))
+                cell, _refs = editing._cell(db, dk)
+                nk = db.project.new_ref_key()
+                to = e['to']
+                subs = doors._set_link(set_ref_pos([('NAME', zs(db.recs[ri][1]))], tuple(dp), e['s']), name,
+                                       on_floor(db, name, [to['x'] + sh[0], to['y'] + sh[1], to['z'] + sh[2], 0.0, 0.0, to['rz']]))
+                editing._store(cell, nk, mine, int(nk.rsplit('|', 1)[1]), subs)
+                c2, refs2 = editing._cell(db, key)
+                way_out = on_floor(db, '', out)
+                # (the door back, and the game place's other ways out, out by this door too)
+                for r in tm['refs']:
+                    if r['type'] != 'DOOR' or not r.get('to') or r['k'] not in got['copied']:
+                        continue
+                    r3 = refs2.get(got['copied'][r['k']])
+                    if r3 is not None:
+                        editing._store(c2, got['copied'][r['k']], r3['origin'], r3['idx'], doors._set_link(r3['subs'], '', way_out))
+                editing.commit(db, 'Linked the door into the wall of %s' % town)
+                try:
+                    if rooms == 'furnished':
+                        if castle.furnish_shell(db, key, e['t'], sh, rng.randrange(1, 1 << 30), kinds=household_kinds(db, key, 'guard', None),
+                                                level=household_level(db, None), within=[got['box']]):
+                            editing.commit(db, 'Furnished a room in the wall of %s' % town)
+                    elif _light_rooms(db, key):
+                        editing.commit(db, 'Lit a room in the wall of %s' % town)
+                except Exception as e_:
+                    print('wall room furnished:', name, e_)
+                used.add(e['t'])
+                n_made += 1
+                if got['new']:
+                    names.append(name)
+                break
             # (named by the piece: the game's own names were "Interior", "Towers", "Prison")
             name = _unique(db, '%s, %s' % (town, 'Keep' if re.search('keep', wid, re.I) else 'Guard Tower' if re.search('guardtower', wid, re.I) else 'Wall Tower'), taken)
             key = create.create_interior(db, e['t'], name, 'furnished', None)
@@ -1139,6 +1181,7 @@ def wall_rooms(db, pieces, outline, town, taken, rng, rooms='furnished'):
                 print('wall room made its own:', name, e_)
             used.add(e['t'])
             names.append(name)
+            n_made += 1
             break
     return names
 
