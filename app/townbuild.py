@@ -1744,6 +1744,8 @@ def _wall_keepout(db, W):
             h_ = math.hypot(dx_, dy_) or 1.0
             ways.append(townplan._rect(g_.x + dx_ / h_ * GATE_CLEAR / 2, g_.y + dy_ / h_ * GATE_CLEAR / 2,
                                        math.atan2(dx_ / h_, dy_ / h_), 640, GATE_CLEAR))
+    # (a castle's own gateway where its wall stands in a ring of round towers: no building in its way in either)
+    ways += [[tuple(q_) for q_ in w_] for w_ in W.get('fort_ways') or ()]
     return boxes, ways
 
 
@@ -2280,6 +2282,19 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 for ft in plan.get('forts') or ():
                     if ft.get('ring'):
                         ways += gateway.for_doors(db, ft['ring'], new_refs, on_street)
+                # (and a castle's open gateway where its wall stands in a ring of round towers, townwalls._fort_gateways:
+                # from the opening's middle on the castle's line, into the town)
+                for q_ in (W or {}).get('fort_ways') or ():
+                    import townwalls
+                    in_ = (q_[3][0] - q_[0][0], q_[3][1] - q_[0][1])
+                    ln_ = math.hypot(in_[0], in_[1]) or 1.0
+                    in_ = (in_[0] / ln_, in_[1] / ln_)
+                    gx_ = (q_[0][0] + q_[1][0]) / 2.0 + in_[0] * townwalls.FORT_WAY_IN
+                    gy_ = (q_[0][1] + q_[1][1]) / 2.0 + in_[1] * townwalls.FORT_WAY_IN
+                    wide_ = math.hypot(q_[1][0] - q_[0][0], q_[1][1] - q_[0][1]) - 2 * townwalls.FORT_WAY_WIDER
+                    w_ = gateway.for_gate(db, gx_, gy_, in_[0], in_[1], half=max(128.0, min(gateway.HALF_GATE, wide_ / 2.0)), skip=new_refs, is_road=on_street)
+                    if w_:
+                        ways.append(w_)
                 for w_ in ways:
                     plan.setdefault('paths', []).append({'pts': [(p_[0], p_[1]) for p_ in w_['pts']], 'z': [p_[2] for p_ in w_['pts']],
                                                          'w': 2 * w_['half'], 'door': tuple(w_['front']), 'gate': True})

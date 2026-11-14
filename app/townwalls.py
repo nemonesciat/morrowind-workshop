@@ -323,18 +323,32 @@ def round_outline(plan, kit, drawn=None):
             D.append((x + u[0] * (MARGIN + R['back']), y + u[1] * (MARGIN + R['back'])))
     old = wallangle.ANGLE_LEAST
     wallangle.ANGLE_LEAST = ROUND_SHARP
+    # (a castle by the drawing stands in the ring, as in every other wall: the town's wall ends on the castle's corners
+    # and the castle's own wall closes the ring between them, wallangle.with_fort. Left unlooked at, two lengths of
+    # the user's Anvil town ran along a fort's wall 100 off it and across its gateway, 2026-11-14)
+    keys, pins = set(), []
     try:
         D = wallangle.simplify(D, lo, least=1)
-        D = wallangle.simplify(wallangle.blunt(D, lo), lo, least=1)
+        for f in _forts_by(plan, D) if len(D) >= 3 else ():
+            got = wallangle.with_fort(D, f, lo)
+            if got is not None:
+                D, keys, pins = list(got[0]), set(got[1]), list(got[2])
+                break                                # (one castle a town's ring)
+        D = wallangle.simplify(D, lo, pins, least=1)
+        D = wallangle.simplify(wallangle.blunt(D, lo, pins), lo, pins, least=1)
     finally:
         wallangle.ANGLE_LEAST = old
     if len(D) < 3:
         return []
-    D, _miss = wallangle.fit_lengths(D, lo, hide=(hi - lo) / 2.0, least=1)
+    fs = {k for k in range(len(D)) if wallangle._key(D[k], D[(k + 1) % len(D)]) in keys}
+    D, _miss = wallangle.fit_lengths(D, lo, fs, pins, hide=(hi - lo) / 2.0, least=1)
     out = []
     n = len(D)
     for k in range(n):
         a, b = D[k], D[(k + 1) % n]
+        if k in fs:
+            out.append((round(a[0], 2), round(a[1], 2)))     # (the castle's own wall: no tower of the town's along it)
+            continue
         S = math.hypot(b[0] - a[0], b[1] - a[1])
         m = max(1, int(math.ceil(S / hi - 1e-6)))
         while m > 1 and S / m < lo - 8:
@@ -367,10 +381,17 @@ def lay_round(db, plan, fam, kit):
     side = lambda k: (poly[k], poly[(k + 1) % n])
     low_kit = R.get('low') is True               # (a low wall of piers: it stops at the water, and follows the ground)
     open_ = bool(plan.get('open_sea')) or low_kit
+    # (the sides that are a castle's own wall, round_outline: nothing of the town's along them, a tower where the
+    # town's wall meets the castle's corner, none on a corner between two of the castle's sides)
+    import wallangle
+    forts_ = _forts(plan)
+    fort_k = wallangle.fort_sides(poly, angled_info(poly, forts_)) if forts_ else set()
     # the sides that stand in the sea: left out when the town is open to the water, their towers with them
     wet = set()
     if db is not None:
         for k in range(n):
+            if k in fort_k:
+                continue
             a, b = side(k)
             zs = sorted((-9999.0 if z is None else z) for z in (mapdata.terrain_z(db, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t) for t in (0.1, 0.3, 0.5, 0.7, 0.9)))
             # (most of it over the water: the harbour's low wall there, or nothing when the town is open to the sea)
@@ -391,7 +412,23 @@ def lay_round(db, plan, fam, kit):
         if runs_:
             best_ = max(runs_, key=len)
             water_gate = best_[len(best_) // 2]
-    ok_sides = set(range(n)) - wet
+    # (open to the water: the sides on the shore go too, not only those in the sea. The user's Anvil town, 2026-11-14,
+    # kept 11 sides along its harbour, the water 0 to 400 from them: "it should have been more open to the water".
+    # Not when every side is at the water, an island's wall; a lone side left between two openings goes with them)
+    shore = set()
+    if plan.get('open_sea') and db is not None and not low_kit:
+        nrm_ = _out_normals(poly)
+        shore = {k for k in range(n) if k not in fort_k and k not in wet and _shore_side(db, side(k)[0], side(k)[1], nrm_[k])}
+        stands_ = lambda k: k not in shore and k not in wet and k not in fort_k
+        if not any(stands_(k) for k in range(n)):
+            shore = set()
+        else:
+            for k in range(n):
+                if stands_(k) and not stands_((k - 1) % n) and not stands_((k + 1) % n) \
+                        and (k - 1) % n not in fort_k and (k + 1) % n not in fort_k and sum(1 for j in range(n) if stands_(j)) > 1:
+                    shore.add(k)
+    gone = (wet if open_ else set()) | shore | fort_k        # (the sides with no piece of this wall)
+    ok_sides = set(range(n)) - wet - shore - fort_k
     _KEEP_SEA[0] = bool(wet) and not low_kit
     streets, roads = _street_crossings(plan, poly)
     if any(k not in ok_sides for k in streets):
@@ -401,7 +438,9 @@ def lay_round(db, plan, fam, kit):
         streets, roads = mine
     elif db is not None:
         streets, roads = _downhill_gates(db, poly, streets, roads)
-    if not any(streets.values()) and not mine:
+    # (no street leaves by a side that stands, the others being the castle's, the shore's or the sea's: a gate all
+    # the same)
+    if not any(v and k in ok_sides for k, v in streets.items()) and not mine:
         streets, roads = _fallback_gate(db, plan, poly, roads, 256.0, ok_sides or None)
     gate_sides = {k for k, v in streets.items() if v and k in ok_sides}
     # (never two gates side by side: the one nearer its side's middle stays)
@@ -412,8 +451,9 @@ def lay_round(db, plan, fam, kit):
             off = lambda kk, A, B: min(abs(h - math.hypot(B[0] - A[0], B[1] - A[1]) / 2.0) for h in streets[kk])
             gate_sides.discard(k if off(k, a, b) > off((k + 1) % n, c_, d_) else (k + 1) % n)
     pieces = []
+    host_of = {}
     for k in range(n):
-        if k in wet and open_:
+        if k in gone:
             continue
         a, b = side(k)
         d = _unit(b[0] - a[0], b[1] - a[1])
@@ -442,16 +482,23 @@ def lay_round(db, plan, fam, kit):
             host = {'id': R['gate'], 'pose': g, 'kind': 'gate', 'run': k, 'lift': R['gate_dz']}
         else:
             host = {'id': R['straight'], 'pose': Pose(mx, my, 0.0, rz, R['straight']), 'kind': 'wall', 'run': k}
+        if (k - 1) % n in fort_k or (k + 1) % n in fort_k:
+            # (it ends on a castle's corner: on the ground as it lies there, the castle's, and the ring's level its)
+            host.update(nofill=True, join_fort=True)
+        host_of[k] = host['pose']
         pieces.append(host)
         # (the walk's arch at each end, facing along the wall, where the walk meets the tower: 58 for Anvil's 28 towers)
         for sgn in (-1.0, 1.0) if R.get('arch') else ():
             t = S / 2.0 - R['arch_at']
             ap = Pose(mx + sgn * d[0] * t, my + sgn * d[1] * t, 0.0, rz + (0.0 if sgn > 0 else math.pi), R['arch'])
             pieces.append({'id': R['arch'], 'pose': ap, 'kind': 'arch', 'dz': R['arch_dz'], 'host': host['pose']})
+    joins_ = 0
     for k in range(n):
-        if open_ and (k - 1) % n in wet and k in wet:
-            continue
+        if (k - 1) % n in gone and k in gone:
+            continue                                 # (no piece either side of it: no tower)
         v = poly[k]
+        if (k - 1) % n in fort_k or k in fort_k:
+            joins_ += 1                              # (the town's wall meets the castle's corner inside this tower)
         tall = (k in gate_sides) or ((k - 1) % n in gate_sides)
         if not open_ and (k in wet) != ((k - 1) % n in wet):
             tall = True                              # (where the land's wall meets the sea's: the step hides in the taller tower)
@@ -463,14 +510,85 @@ def lay_round(db, plan, fam, kit):
         gv_ = mapdata.terrain_z(db, v[0], v[1]) if db is not None else None
         if (gv_ is not None and gv_ < 0) or (k in wet and (k - 1) % n in wet):
             tw_.update(sea=True, nofill=True)        # (a tower in the water: Anvil's harbour towers)
+        if (k - 1) % n in fort_k or k in fort_k:
+            # (on a castle's corner: at the level of the town's length that runs into it)
+            lw_ = host_of.get(k if (k - 1) % n in fort_k else (k - 1) % n)
+            if lw_ is not None:
+                tw_.update(nofill=True, level_with=lw_)
         pieces.append(tw_)
     n_g = len([p for p in pieces if p['kind'] == 'gate'])
-    W_ = {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': n_g, 'faults': faults, 'joins': 0,
-          'angled': {'poly': [list(p) for p in poly], 'fort': [], 'no_tower': [], 'round': True}, 'led': True, 'rise': R['rise'],
+    W_ = {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': n_g, 'faults': faults, 'joins': joins_,
+          'angled': {'poly': [list(p) for p in poly], 'fort': [list(wallangle._key(poly[k], poly[(k + 1) % n])) for k in sorted(fort_k)],
+                     'no_tower': [[int(round(poly[k][0])), int(round(poly[k][1]))] for k in range(n) if (k - 1) % n in fort_k and k in fort_k],
+                     'round': True},
+          'led': True, 'rise': R['rise'], 'open_sides': sorted(shore),
+          'fort_ways': _fort_gateways(forts_, poly, fort_k) if fort_k else [],
           'roads': _gate_roads(poly, roads, pieces, 2000.0) if n_g else []}
     if low_kit:
         W_['palisade'] = True                    # (set on the ground a piece at a time, no ground moved: _palisade_grounded)
     return W_
+
+
+ROUND_SHORE = 500.0            # (a side of round towers with the water this near its line stands on the shore: the wall is 350 deep
+                               # either side of it. At 800 a side with a bay 800 to 1,400 off was opened, a gap in the land wall)
+
+
+def _shore_side(db, a, b, nrm):
+    """Does a side stand on the shore: water within ROUND_SHORE of its outer face at two of three spots along it?"""
+    hits = 0
+    for t in (0.2, 0.5, 0.8):
+        x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+        for i in range(int(ROUND_SHORE // 100) + 1):
+            z = mapdata.terrain_z(db, x + nrm[0] * 100.0 * i, y + nrm[1] * 100.0 * i)
+            if z is None or z < GATE_WATER:
+                hits += 1
+                break
+    return hits >= 2
+
+
+FORT_WAY_LEAST = 256.0         # (a stretch of a castle's side this long with no piece of the castle on it: its gateway)
+FORT_WAY_IN = 300.0            # (kept clear this far into the castle too)
+FORT_WAY_WIDER = 224.0         # (and this much wider than the opening measures, each side: the 96 it measures short, and a rock's half)
+
+
+def _fort_gateways(forts, poly, fort_k):
+    """[[(x, y) x4]]: the ways in through a castle's wall where it stands in the town's ring: each stretch of such a
+    side that no piece of the castle stands on (a gateway left open in its wall, the Cyrodiil fort's), GATE_WAY_DEEP
+    into the town and FORT_WAY_IN into the castle, as wide as the opening."""
+    out = []
+    n = len(poly)
+    nrm = _out_normals(poly)
+    for k in sorted(fort_k):
+        a, b = poly[k], poly[(k + 1) % n]
+        S = math.hypot(b[0] - a[0], b[1] - a[1])
+        f = next((f_ for f_ in forts if all(any(math.hypot(p_[0] - q[0], p_[1] - q[1]) <= 4 for q in f_['ring']) for p_ in (a, b))), None)
+        if f is None or not f.get('solid') or S < 2 * FORT_WAY_LEAST:
+            continue
+        d = ((b[0] - a[0]) / S, (b[1] - a[1]) / S)
+        m = int(S // 32)
+        on = []
+        for i in range(m + 1):
+            x, y = a[0] + d[0] * S * i / m, a[1] + d[1] * S * i / m
+            on.append(any(_inside(cs_, (x, y)) or _ring_dist(cs_, x, y) <= 96 for cs_ in f['solid']))
+        i = 0
+        while i <= m:
+            if on[i]:
+                i += 1
+                continue
+            j = i
+            while j <= m and not on[j]:
+                j += 1
+            t0, t1 = S * i / m, S * (j - 1) / m
+            if i > 0 and j <= m and t1 - t0 >= FORT_WAY_LEAST:
+                t0, t1 = t0 - FORT_WAY_WIDER, t1 + FORT_WAY_WIDER
+                # (the town's side of the wall is the way against its outline's own outward normal)
+                p0 = (a[0] + d[0] * t0, a[1] + d[1] * t0)
+                p1 = (a[0] + d[0] * t1, a[1] + d[1] * t1)
+                ix, iy = -nrm[k][0], -nrm[k][1]
+                out.append([(p0[0] - ix * FORT_WAY_IN, p0[1] - iy * FORT_WAY_IN), (p1[0] - ix * FORT_WAY_IN, p1[1] - iy * FORT_WAY_IN),
+                            (p1[0] + ix * GATE_WAY_DEEP, p1[1] + iy * GATE_WAY_DEEP), (p0[0] + ix * GATE_WAY_DEEP, p0[1] + iy * GATE_WAY_DEEP)])
+            i = j
+    return out
 
 
 GATE_WAY_DEEP = 1300.0         # (a round wall's gateway: kept clear this far in and out of the arch)
@@ -490,6 +608,8 @@ def gate_ways(W):
         c_, s_ = math.cos(q_.rz), math.sin(q_.rz)
         hw_ = 0.33 * math.hypot(cs[1][0] - cs[0][0], cs[1][1] - cs[0][1]) + 60.0
         out.append([(q_.x + lx * c_ + ly * s_, q_.y - lx * s_ + ly * c_) for lx, ly in ((-hw_, -GATE_WAY_DEEP), (hw_, -GATE_WAY_DEEP), (hw_, GATE_WAY_DEEP), (-hw_, GATE_WAY_DEEP))])
+    # (and a castle's own gateway where its wall stands in the ring: lay_round, _fort_gateways)
+    out += [[tuple(q_) for q_ in w_] for w_ in W.get('fort_ways') or ()]
     return out
 
 
@@ -1000,7 +1120,8 @@ def _forts(plan):
             continue
         g = f if isinstance(f, dict) else {}
         out.append({'ring': ring, 'towers': [tuple(float(v) for v in t[:3]) for t in g.get('towers') or ()],
-                    'blocks': [tuple(float(v) for v in t[:3]) for t in g.get('blocks') or ()]})
+                    'blocks': [tuple(float(v) for v in t[:3]) for t in g.get('blocks') or ()],
+                    'solid': [[(float(q[0]), float(q[1])) for q in cs_] for cs_ in g.get('solid') or () if len(cs_) >= 3]})
     return out
 
 
@@ -3388,6 +3509,9 @@ def grounded(db, W):
                 continue
             q.z = p['host'].z + p['dz']
             continue
+        if p.get('level_with') is not None and id(p['level_with']) in hosts:
+            q.z = p['level_with'].z + p['dz']            # (a round tower on a castle's corner: lay_round)
+            continue
         near = sorted(order, key=lambda o: math.hypot(o['pose'].x - q.x, o['pose'].y - q.y))[:2]
         wz = max(o['pose'].z for o in near) if near else p['_g'][0] + 208
         gc = mapdata.terrain_z(db, q.x, q.y)
@@ -3445,6 +3569,11 @@ def _one_level(segs, W, span, keep):
         return
     gs = sorted(p['_g'][0] for p in keep)
     want = gs[int(len(gs) * LEVEL_AT)] + 208               # (level()'s own figure, for the whole ring)
+    # (a wall of round towers that meets a castle: the ring's level is that of the sides that run into the castle, on
+    # the castle's ground. Its own figure stood the user's Anvil wall 650 over the fort beside it, 2026-11-14)
+    jz_ = [seg[0]['pose'].z for seg in segs if any(p.get('join_fort') for p in seg)]
+    if jz_:
+        want = sum(jz_) / len(jz_)
     fill = W.setdefault('fill', [])
     ax = (W.get('kit') or {}).get('axis', 0)
     rise = (STEP_PIECES.get(W.get('family')) or {}).get('rise') or HILL_STEP
