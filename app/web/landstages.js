@@ -241,6 +241,34 @@ async function lstMadeAfter(){
   await lstReload();
   renderWside();
 }
+// Drop a made place: what goes, and whether the ground goes back to how it lay before the place was made (the tick
+// shows when the place's record kept its ground, and is on: what was reshaped since stays either way). Resolves
+// {ground} or null. (tosky0890 on Discord, 2026-11-13, asked for a way back to the landscape as it was.)
+function lstDropAsk(m, n){
+  return new Promise(resolve => {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal" style="width:min(480px,92vw)"><div class="msg" style="margin-bottom:10px"></div>
+      ${n.ground ? `<label class="msg" style="display:flex;gap:6px;align-items:center;margin-bottom:10px" title="The land under it as it lay before the place was made, and the ground it paved. Ground you have reshaped since stays as you left it"><input type="checkbox" id="lst-dground" checked> Put the ground back as it was</label>` : ''}
+      <div class="foot"><button class="btn" id="lst-dno">Cancel</button><button class="btn primary" id="lst-dok">Drop</button></div></div>`;
+    bg.querySelector('.msg').textContent = `Drop ${m.name || 'this ' + m.kind}: ${n.things} things it built and ${n.interiors} interiors? What was made after it and what you added stay. One Undo brings it back.`;
+    const done = v => { bg.remove(); document.removeEventListener('keydown', key, true); resolve(v); };
+    const key = e => { if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(null); } };
+    bg.querySelector('#lst-dno').onclick = () => done(null);
+    bg.querySelector('#lst-dok').onclick = () => { const c = bg.querySelector('#lst-dground'); done({ground: !!(c && c.checked)}); };
+    bg.onclick = e => { if (e.target === bg) done(null); };
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(bg); bg.querySelector('#lst-dok').focus();
+  });
+}
+// The name of the version kept before a stage is made: "before making Uda" (and 2 more), "before making land".
+function lstBeforeName(n){
+  if (n === 0) return 'before making land';
+  if (n === 2) return 'before making insides';
+  const nm = L => (L.p && L.p.name) || (((LM.towns || {})[L.id] || {}).plan || {}).name || (((LM.castles || {})[L.id] || {}).plan || {}).name || '';
+  let names = [];
+  try { names = lstPlacesTodo().map(nm).filter(Boolean); } catch (e){}
+  return 'before making ' + (names.length ? names[0] + (names.length > 1 ? ' and ' + (names.length - 1) + ' more' : '') : 'places');
+}
 function lstMadeBind(root){
   const hd = $('#lst-made-hd'); if (hd) hd.onclick = () => { LM.madeOpen = !LM.madeOpen; renderWside(); };
   const of = id => (LM.made || []).find(m => m.id === id);
@@ -251,9 +279,13 @@ function lstMadeBind(root){
   root.querySelectorAll('[data-mdrop]').forEach(b => b.onclick = async () => {
     const m = of(b.dataset.mdrop); if (!m) return;
     let n; try { n = await post('/api/places/drop', {id: m.id, look: true}); } catch (e){ return toast(e.message, true); }
-    if (!confirm(`Drop ${m.name || 'this ' + m.kind}: ${n.things} things it built and ${n.interiors} interiors? What was made after it, what you added and the ground stay. One Undo brings it back.`)) return;
+    const how = await lstDropAsk(m, n); if (!how) return;
     b.disabled = true; b.innerHTML = '<span class="spin"></span>';
-    try { const r = await post('/api/places/drop', {id: m.id}); toast(`Dropped ${esc(m.name || 'it')}: ${r.things} things and ${r.interiors} interiors.`); }
+    try {
+      const r = await post('/api/places/drop', {id: m.id, ground: how.ground});
+      toast(`Dropped ${esc(m.name || 'it')}: ${r.things} things and ${r.interiors} interiors${r.ground ? ', the ground put back' : ''}.`);
+      if (r.ground){ W.lands = {}; if (typeof v3LandsReload === 'function') v3LandsReload(); }
+    }
     catch (e){ toast(e.message, true); }
     await lstMadeAfter();
   });
@@ -382,6 +414,9 @@ async function lstMake(n, btn){
   if (!await needProject()) return;
   if (lstStage() || LM.running) return;
   if (n === 0){ const lb = await lstLandBack(btn); if (!lb){ renderWside(); return; } LM.landBack = lb === 'back'; }
+  // (a version of the mod kept first, by itself, named for what is about to be made: the way back to everything as
+  //  it stood, the landscape too, however much is kept and built on after. 📂 Open has it; the newest ten stay)
+  try { await post('/api/backups/now', {name: lstBeforeName(n), auto: true}); } catch (e){}
   const d0 = await lstDepth();
   let ok = false;
   try {

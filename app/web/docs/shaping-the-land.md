@@ -290,7 +290,9 @@ hand, with no shapes drawn. Tick **Like hand-made land** (Land panel, under Shap
 **Town and Castle: draw the limits.** Press the button and draw round the place, in one stroke or point by point.
 It is built inside the line you drew; drag its points to change it. Try again builds another in the same spot.
 
-**Made** (under Make places) lists every town, castle, dungeon and interior the mod's Makes have built. 👁 goes there. ↻ Try again takes that one away and makes it anew with another layout. ✕ Drop only this takes away what it built and its interiors, whatever was made after it; what you added and the ground stay. Each is one Undo step. Places made by older versions are not listed.
+**Made** (under Make places) lists every town, castle, dungeon and interior the mod's Makes have built. 👁 goes there. ↻ Try again takes that one away and makes it anew with another layout. ✕ Drop only this takes away what it built and its interiors, whatever was made after it; what you added stays. With **Put the ground back as it was** ticked, the land under it and the ground it paved go back to how they lay before it was made, wherever you have not reshaped them since. Each is one Undo step.
+
+Before a stage is made the Workshop keeps a version of your mod by itself, named for it ("before making Uda"): **📂 Open → Earlier versions** has the newest ten, each with **Restore**, for when you want everything back as it stood. Places made by older versions are not listed.
 
 Places is the second stage. **🎲 Suggest** puts towns, roads, dungeons, farms, small things and names on the map as
 markers to move or drop; nothing is built. **Make places** lays the roads, builds the towns and castles (outsides
@@ -554,8 +556,10 @@ Draw a **🏘 Town** shape round the ground it should take. The map shows its st
 - **Density:** how many buildings, against the culture's own towns of that size (1). Raise it for a city on a big
   outline (the game's towns gather round their middle and leave open ground); lower it for a hamlet. A walled town
   fills its wall at 1 and over.
-- **Rocks** and **Trees:** how many of each the town sets, against its culture's own towns (1). 0 for none. Rocks
-  only stand where the ground is steep and trees where there is room, so past 1 a town gains few.
+- **Rocks** and **Trees:** how many of each the town sets; 0 for none, 2 for twice. **Trees** are big shade trees
+  of the land's own kinds on the town's open ground, where no building or street is, those by a street first, with
+  a yard's small trees among them. **Rocks** are the ones set into its steep ground and banks, and clumps of two to
+  four on gentle open ground by the streets, clear of the houses. A tightly walled town has room for few of either.
 - **Streets:** as its towns' (wide), **narrower**, or **lanes**, one ground square (512) across.
 - **Trade:** fishing, farming, mining or trading, as the game's towns that live by it, or **any** for the culture's
   own mix. A proposed town comes with the one its land gave it.

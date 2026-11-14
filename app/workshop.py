@@ -1748,7 +1748,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'error': 'No mod is open.'}, 400)
                 with _EditLock():
                     editing.flush(db)
-                    f = backups.save_now(db.project, body.get('name') or '')
+                    f = backups.save_now(db.project, body.get('name') or '', bool(body.get('auto')))
                 if not f:
                     return self._json({'error': 'This mod has nothing on disk yet: change something first.'}, 400)
                 return self._json({'ok': True, 'file': os.path.basename(f)})
@@ -2738,7 +2738,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/places/drop':
                     # one made place taken away, whatever was built after it (look: only count)
                     import ledger
-                    return self._json(ledger.drop(db, str(body.get('id') or ''), bool(body.get('look'))))
+                    return self._json(ledger.drop(db, str(body.get('id') or ''), bool(body.get('look')), bool(body.get('ground'))))
                 if u.path == '/api/places/again':
                     # one made town or castle taken away and made anew where it stood, with another seed: one Undo step
                     import ledger

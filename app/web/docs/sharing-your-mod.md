@@ -88,7 +88,8 @@ from wherever they are. Everyone sees every change within a second or so, in the
 ## Backups
 
 **💾 Save** at the top (**Ctrl+S**) keeps a version of your mod as it is now, until you remove it. **📂 Open →
-Earlier versions** lists them with the Workshop's own backups, each with **Restore**.
+Earlier versions** lists them with the Workshop's own backups, each with **Restore**. The Workshop also keeps
+one by itself before each Make on the Land panel ("before making Uda"), the newest ten.
 
 The Workshop backs your mod up when you open it and regularly while you work (**Settings → Backups**: how often, how
 many, how much space they may take and whether they are stored compressed, about a tenth of the size). **Restore** puts it back to a backup, after backing up how it is now.

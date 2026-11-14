@@ -121,6 +121,12 @@ def open(db, kind, name='', outline=None, seed=None, opts=None, resume=None):
             if rec.get(k):
                 rec[k] = list(dict.fromkeys(rec[k]))
         p = getattr(db, 'project', None)
+        seen_ = _GROUND.pop((ident, rec.get('id')), None)
+        if p is not None and seen_:
+            try:
+                _ground_close(db, rec, seen_)          # (the ground as it lay before, kept with the place)
+            except Exception as e:
+                print('ledger: ground:', repr(e))
         if p is not None:
             pl = _places(p)                 # (an Undo meanwhile put another table in: the record goes into that one)
             if fresh and _empty(rec):
@@ -175,6 +181,149 @@ def _amend(db):
                 editing._write_soon(db)
             except Exception as e:
                 print('ledger:', e)
+
+
+# The ground as it lay before a place was made, kept with its record: landscape.write tells note_ground of each cell
+# before it changes it; when the record closes, the land points and ground textures that differ are packed into
+# rec['ground'] ({'gx,gy': {'h': packed (point, before, after), 't': {patch: [before, after]}}}). Drop can then put the
+# ground back where it still lies as the place left it (_ground_back). A land stage keeps none: its own Undo is its
+# way back, and it would hold every point of every cell.
+GROUND_CELLS = 40               # (a place keeps the ground of this many cells at most)
+GROUND_SAME = 4.0               # (a land point this near where the place left it has not been reshaped since)
+_GROUND = {}                    # (thread, record id) -> {(gx, gy): (heights before, textures before)}
+
+
+def note_ground(db, gx, gy, cur):
+    """A cell's land is about to change (landscape.write; cur: landscape.read's answer): kept as it is for every
+    record open in this thread, the first time each sees the cell."""
+    ident = threading.get_ident()
+    st = project.LEDGER.get(ident)
+    if not st:
+        return
+    for rec in st:
+        if rec.get('kind') == 'land' or not rec.get('id'):
+            continue
+        g = _GROUND.setdefault((ident, rec['id']), {})
+        if (gx, gy) not in g and len(g) < GROUND_CELLS:
+            g[(gx, gy)] = (list(cur.get('h') or ()), list(cur.get('t') or ()))
+
+
+def _pack(rows):
+    """[(point, before, after)] as text for the mod's file."""
+    import base64
+    import struct
+    import zlib
+    n = len(rows)
+    raw = struct.pack('<%dH' % n, *[r[0] for r in rows]) + struct.pack('<%df' % n, *[r[1] for r in rows]) + struct.pack('<%df' % n, *[r[2] for r in rows])
+    return {'n': n, 'd': base64.b64encode(zlib.compress(raw, 6)).decode('ascii')}
+
+
+def _unpack(v):
+    import base64
+    import struct
+    import zlib
+    if not v or not v.get('n'):
+        return []
+    n = int(v['n'])
+    raw = zlib.decompress(base64.b64decode(v['d']))
+    idx = struct.unpack_from('<%dH' % n, raw, 0)
+    bef = struct.unpack_from('<%df' % n, raw, 2 * n)
+    aft = struct.unpack_from('<%df' % n, raw, 6 * n)
+    return list(zip(idx, bef, aft))
+
+
+def _ground_close(db, rec, seen):
+    """A record closing: what its making changed of the ground it saw, into rec['ground'] (added to what an earlier
+    making of the same record kept: the first 'before' stands)."""
+    if not seen:
+        return
+    import landscape
+    G = dict(rec.get('ground') or {})
+    for (gx, gy), (hb, tb) in seen.items():
+        key = '%d,%d' % (gx, gy)
+        try:
+            now = landscape.read(db, gx, gy)
+        except Exception:
+            continue
+        if not now.get('exists'):
+            continue
+        old = G.get(key) or {}
+        ha, ta = now.get('h') or (), now.get('t') or ()
+        rows = {}
+        if hb and len(hb) == len(ha):
+            for i in range(len(ha)):
+                if abs(ha[i] - hb[i]) >= 1.0:
+                    rows[i] = (hb[i], ha[i])
+        for i, b, a in _unpack(old.get('h')):
+            # (seen before by this record: its first 'before', and where it lies now)
+            if i < len(ha) and abs(ha[i] - b) >= 1.0:
+                rows[i] = (b, ha[i])
+            else:
+                rows.pop(i, None)
+        tex = {}
+        if tb and len(tb) == len(ta):
+            for i in range(len(ta)):
+                if (ta[i] or '') != (tb[i] or ''):
+                    tex[str(i)] = [tb[i] or '', ta[i] or '']
+        for i, ba in (old.get('t') or {}).items():
+            if int(i) < len(ta) and (ta[int(i)] or '') != (ba[0] or ''):
+                tex[i] = [ba[0] or '', ta[int(i)] or '']
+            else:
+                tex.pop(i, None)
+        if rows or tex:
+            G[key] = {'h': _pack([(i, b, a) for i, (b, a) in sorted(rows.items())]), 't': tex}
+        else:
+            G.pop(key, None)
+    if G:
+        rec['ground'] = G
+    else:
+        rec.pop('ground', None)
+
+
+def _ground_back(db, rec, look=False):
+    """The ground under a made place put back as it lay before the place was made: every land point and ground
+    texture its making changed that still is as the making left it (within GROUND_SAME); what was reshaped or painted
+    since stays. What stands on the ground rides it. look: only count. The land points put back."""
+    G = rec.get('ground') or {}
+    if not G:
+        return 0
+    import landscape
+    todo, total = [], 0
+    for key, v in G.items():
+        gx, gy = (int(t) for t in key.split(','))
+        try:
+            cur = landscape.read(db, gx, gy)
+        except Exception:
+            continue
+        if not cur.get('exists') or not cur.get('h'):
+            continue
+        h, n = list(cur['h']), 0
+        for i, b, a in _unpack(v.get('h')):
+            if i < len(h) and abs(h[i] - a) <= GROUND_SAME and abs(h[i] - b) >= 1.0:
+                h[i] = b
+                n += 1
+        t, nt = list(cur.get('t') or ()), 0
+        for i, ba in (v.get('t') or {}).items():
+            i = int(i)
+            if i < len(t) and (t[i] or '') == (ba[1] or '') and (ba[0] or '') != (ba[1] or ''):
+                t[i] = ba[0]
+                nt += 1
+        if n or nt:
+            total += n
+            todo.append((gx, gy, h if n else None, t if nt else None, list(cur['h'])))
+    if look or not todo:
+        return total
+    new_h = {(gx, gy): h for gx, gy, h, _t, _b in todo if h is not None}
+    for gx, gy, h, t, before in todo:
+        after = landscape.write(db, gx, gy, h, t, None, around=landscape.around_of(db, gx, gy, new_h))
+        if h is not None:
+            landscape._follow_ground(db, gx, gy, before, after, ())
+            try:
+                landscape._follow_paths(db, gx, gy, before, after)
+            except Exception as e:
+                print('ledger: ground back, paths:', e)
+    db.sync_project()
+    return total
 
 
 def opened():
@@ -348,11 +497,12 @@ def top_of(db, pid):
 
 
 # ---------------------------------------------------------------------------------------------------- taking away
-def drop(db, pid, look=False):
+def drop(db, pid, look=False, ground=False):
     """One made place taken away as one step, whatever was built after it: its own things that still stand, the
     interiors it made (but one a door left standing still leads into stays) and the people, creatures and containers
-    it made that nothing left standing uses. The ground stays as it was shaped, and so does what you added.
-    look: only count. {'things', 'interiors', 'name', 'kind'}"""
+    it made that nothing left standing uses. What you added stays. The ground stays as it was shaped, or with ground
+    goes back to how it lay before the place was made, where nothing has reshaped it since (_ground_back).
+    look: only count. {'things', 'interiors', 'name', 'kind', 'ground': land points that would go (or went) back}"""
     import editing
     from editing import EditError
     editing._require_project(db)
@@ -391,8 +541,12 @@ def drop(db, pid, look=False):
     name = rec.get('name') or ''
     lines = _own_lines(p, recs)
     res = {'things': len(out), 'interiors': len(inside), 'name': name, 'kind': rec.get('kind'), 'id': pid,
-           'lines': sum(len(v) for v in lines.values())}
+           'lines': sum(len(v) for v in lines.values()), 'ground': 0}
     if look:
+        try:
+            res['ground'] = _ground_back(db, rec, look=True)
+        except Exception as e:
+            print('ledger: ground:', repr(e))
         return res
     if not out and not inside:
         raise EditError('Nothing of it still stands.')
@@ -420,6 +574,12 @@ def drop(db, pid, look=False):
                 dialogue._maybe_drop_dial(db, dkey)
         except Exception as e:
             print('ledger: relinking lines:', repr(e))
+    if ground:
+        try:
+            db.sync_project()
+            res['ground'] = _ground_back(db, rec)
+        except Exception as e:
+            print('ledger: ground back:', repr(e))
     for f in fam:
         pl.pop(f, None)
     if rec.get('kind') == 'town' and name:
@@ -427,8 +587,8 @@ def drop(db, pid, look=False):
         if name in later:
             p.land = dict(p.land, towns_later={k: v for k, v in later.items() if k != name})
             p.save_soon()
-    editing.commit(db, 'Removed %s%s: %d things and %d interiors' % (NOUN.get(rec.get('kind'), 'the place'), ' ' + name if name else '',
-                                                                 len(out), len(inside)))
+    editing.commit(db, 'Removed %s%s: %d things and %d interiors%s' % (NOUN.get(rec.get('kind'), 'the place'), ' ' + name if name else '',
+                                                                   len(out), len(inside), ', the ground put back' if res.get('ground') else ''))
     return res
 
 

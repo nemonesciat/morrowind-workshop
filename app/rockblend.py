@@ -95,6 +95,14 @@ MASS_PLOT = 0.7                # (a big rock's body off the plots: it laps one b
 MASS_TRIES = 25                # (the spots tried a size a round, the barest first)
 BANK_BACK = 160.0              # (a bank's rock is stood back from a street at most this far from its bank's spot)
 ROAD_NEAR = 700.0              # (a paved patch this near a street is that street's: its bank may take rocks)
+STONE_CLUMPS = 0.18            # clumps of rock a building on the town's gentle open ground by its streets: the user set 12 rocks by
+                               # hand in their town of about two dozen houses, in clumps (88 to 465 apart) at the streets' edges,
+                               # 535 and more from the houses, their feet 52 to 383 under the ground
+STONE_SLOPE = 0.35             # (on ground no steeper than this: the banks are the bank pass's)
+STONE_HOUSE = 400.0            # (this far from a building at least)
+STONE_STREET = 640.0           # (within this of a street's edge)
+STONE_APART = 1200.0           # (one clump this far from the next)
+STONE_SIZE = (420.0, 900.0)    # (its big rock across)
 BANK_SMALLEST = 200.0          # (the smallest bank rock across; banks rocks lap each other at OVERLAP, packed. 150, more tries
                                # and a lean back against the bank were tried 2026-11-11: no rock more, the rim rule drops them)
 LEAN_MAX = 38.0
@@ -1145,11 +1153,96 @@ def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, 
     # 2026-11-08: "use stones etc to reinforce the sides of raised street profiles like this, as you might need to in
     # real life to shore up similar landscaping"; ours covered 24-38% of their steep ground before this pass)
     bank = _banks(db, plan, S, K, P, rng, memo, put, boxes, outline or plan.get('outline') or [], amount)
+    try:
+        bank['stones'] = _stones(db, plan, S, K, P, rng, memo, put, outline or plan.get('outline') or [], amount)
+    except Exception as e:
+        print('rocks, stones:', e)
     if os.environ.get('TOWN_ROCK_DEBUG'):
         print('  rocks: refused spots %s; drops %s; banks %s' % (dict(S.refused), dict(drops), bank))
     return {'placed': len(out), 'dropped': drops['buried'], 'drops': dict(drops), 'kinds': dict(kinds), 'rocks': out, 'refused': dict(S.refused),
             'factor': round(f / max(1e-6, amount), 2), 'culture_factor': round(F['factor'], 2), 'surround': round(sf, 2), 'round': n_round,
             'from': F['from'], 'knoll': kn, 'banks': bank}
+
+
+def _stones(db, plan, S, K, P, rng, memo, put, outline, amount=1.0):
+    """Clumps of the town's rock on its gentle open ground by the streets, for the look of it: a big rock and one to
+    three smaller lapping it, sunk as the game sinks its rocks, STONE_HOUSE from the houses, off the streets and the
+    door ways. STONE_CLUMPS a building, times the town's own amount. What the user set by hand in a made town
+    (2026-11-13: "Same with decorative stones"). {'clumps', 'stones', 'spots'}."""
+    import townbuild
+    built = [[tuple(p_) for p_ in q['rect']] for q in plan['plots'] if q.get('b') and q.get('rect')]
+    want = int(len(built) * STONE_CLUMPS * max(0.0, min(2.0, amount)) + rng.random())
+    if want <= 0 or len(outline) < 3:
+        return {'clumps': 0, 'stones': 0, 'spots': 0}
+    outline = [tuple(p_[:2]) for p_ in outline]
+    xs, ys = [p_[0] for p_ in outline], [p_[1] for p_ in outline]
+    cand = []
+    for i in range(int(math.floor(min(xs) / 128.0)), int(math.ceil(max(xs) / 128.0)) + 1):
+        for j in range(int(math.floor(min(ys) / 128.0)), int(math.ceil(max(ys) / 128.0)) + 1):
+            x, y = i * 128.0, j * 128.0
+            if not _inside_poly(outline, x, y) or _edge_dist(outline, x, y) < 192.0:
+                continue
+            sd = townbuild._street_dist(plan, x, y)
+            if sd is None or sd > STONE_STREET:
+                continue
+            g = _ground(db, x, y, memo)
+            gr = _grad(db, x, y)
+            if g is None or g < 16 or gr is None or math.hypot(*gr) > STONE_SLOPE:
+                continue
+            if any(townbuild._in_rect(q, x, y) or _rect_dist(q, x, y) < STONE_HOUSE for q in built):
+                continue
+            if S._why(x, y, 260.0, True, False, True):
+                continue
+            cand.append((x, y))
+    rng.shuffle(cand)
+    centres, laid = [], 0
+    why = Counter()
+    for x, y in cand:
+        if len(centres) >= want:
+            break
+        if any(math.hypot(x - cx, y - cy) < STONE_APART for cx, cy in centres):
+            continue
+        size = rng.uniform(*STONE_SIZE)
+        members = [(0.0, size)] + [(1.0, size * rng.uniform(0.4, 0.7)) for _k in range(rng.randint(1, 3))]
+        got = 0
+        for far, sz in members:
+            for _try in range(6 if far else 4):
+                # (a smaller rock on whichever side of the big one has room: a fresh side each try)
+                a_ = rng.random() * 2 * math.pi
+                d_ = far * (size + sz) / 2.0 * rng.uniform(0.55, 0.85)
+                px, py = x + math.cos(a_) * d_, y + math.sin(a_) * d_
+                pk = K.pick(rng, size=sz, tall=sz * rng.uniform(0.5, 0.85) * (1.3 ** _try))
+                if not pk:
+                    why['no rock that size'] += 1
+                    break
+                rid, b, sc = pk
+                half = max(b[3] - b[0], b[4] - b[1]) * sc / 2.0
+                w_ = S._why(px, py, half, True, False, True)
+                if w_:
+                    why[w_] += 1
+                    if far:
+                        continue
+                    break
+                g = _ground(db, px, py, memo)
+                gr2 = _grad(db, px, py)
+                if g is None or g < 0 or gr2 is None or math.hypot(*gr2) > 2 * STONE_SLOPE:
+                    why['ground'] += 1
+                    if far:
+                        continue
+                    break
+                kb = slope_bin(math.hypot(*gr2))
+                rot = pose(rng, b, sc, px, py, gr2, kb, P, align=ALIGN)
+                sink = _draw(rng, P['bins'][kb]['sink'] or [20, 50, 100, 200, 400], 0.25, 0.75)
+                if put(rid, b, sc, px, py, g - sink - b[2] * sc, rot, 'stone', loose=True):
+                    got += 1
+                    break
+                why['rim shows'] += 1
+            if not got:
+                break                              # (no big rock, no clump)
+        if got:
+            centres.append((x, y))
+            laid += got
+    return {'clumps': len(centres), 'stones': laid, 'spots': len(cand), 'refused': dict(why)}
 
 
 def _banks(db, plan, S, K, P, rng, memo, put, boxes, outline, amount=1.0):

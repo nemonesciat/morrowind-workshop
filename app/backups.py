@@ -55,11 +55,50 @@ def _kept(f):
     return (stem[20:].strip().split(' ') or [''])[0] == KEPT
 
 
-def save_now(project, name=''):
+AUTO = 'before making'          # (a version the Workshop keeps by itself before a stage is made: its name begins so)
+AUTO_KEEP = 10                  # (the newest of them kept; the user's own versions are never counted or removed)
+
+
+def _auto(f):
+    stem = f[:-8] if f.endswith('.json.gz') else f[:-5]
+    return stem[20:].strip().startswith(KEPT + ' ' + AUTO)
+
+
+def _same_file(a, b):
+    """Do two files hold the same bytes (a plain copy against the mod's file)?"""
+    try:
+        if b.endswith('.gz') or os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, 'rb') as fa, open(b, 'rb') as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def save_now(project, name='', auto=False):
     """The mod as it is now, kept as a version to come back to. Returns the file, or None when the mod has no file
-    on disk yet."""
+    on disk yet. auto: one the Workshop keeps by itself before a stage is made (its name begins AUTO): not kept twice
+    when the mod has not changed since the last of them (a place tried again), and only the newest AUTO_KEEP stay."""
     name = re.sub(r'[^A-Za-z0-9 _-]', '', name or '').strip()[:40]
-    return maybe_backup(project, force=True, why=(KEPT + ' ' + name).strip())
+    d = _dir_for(project)
+    if auto:
+        mine = sorted(f for f in os.listdir(d) if _is_backup(f) and _auto(f)) if os.path.isdir(d) else []
+        if mine and os.path.isfile(project.path) and _same_file(project.path, os.path.join(d, mine[-1])):
+            return os.path.join(d, mine[-1])
+    f = maybe_backup(project, force=True, why=(KEPT + ' ' + name).strip())
+    if auto and f:
+        mine = sorted(x for x in os.listdir(d) if _is_backup(x) and _auto(x))
+        for x in mine[:-AUTO_KEEP]:
+            try:
+                os.remove(os.path.join(d, x))
+            except OSError:
+                pass
+    return f
 
 
 def remove(project, file):

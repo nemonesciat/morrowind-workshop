@@ -1104,6 +1104,13 @@ GARDEN_EDGE = 48.0             # (its fence kept this far in from the pocket's e
 POCKET_TREE_AREA = 300000.0    # a tree for about every this much open ground left (550 square) ...
 POCKET_TREE_GAP = 420.0        # ... no nearer another than this
 POCKET_STREET = 900.0          # trees on ground within this of a street first (by the road)
+SHADE_TALL = 650.0             # a shade tree is this tall or taller: the user's own in their town stood 711 to 2,650 (median 858),
+                               # the yard maker's saplings 136 to 738
+SHADE_SHARE = 0.75             # of the trees on open ground this share are shade trees, where the land has them
+OPEN_TREES = 0.35              # trees a building on the town's open ground at least, where there is room (the user set 8 by hand
+                               # in a town of about two dozen houses)
+TREE_ROOM_MOST = 220.0         # (a big tree's trunk keeps this clear at most: its crown overhangs roofs and walls as the game's do)
+_SHADE = {}
 POCKET_GARDENS = 0.25          # gardens at most this share of the town's buildings (at least one)
 WAY_ON = 2000.0                # (a street's end this near the outline along its own line: the ground between is its way on)
 # the small growth of the land a building, on the open ground between the houses (grass, bushes, flowers, mushrooms,
@@ -1336,35 +1343,52 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0, trees_k=1.0
                         add([(t['id'], t['p'], t['s'], 'garden ' + t.get('role', 'crop')) for t in laid], 'garden')
                         space.take(_rect(gx, gy, X[0], X[1], (R[2] - R[0] + 1) * st / 2.0, (R[3] - R[1] + 1) * st / 2.0))
                         cset = {a for a in cset if ok(a[0] * st, a[1] * st, TREE_SLOPE)}
-        # 2. trees on what is left of it, those by a street first
-        tp = pool('house_trees', region)
-        if not tp or not cset:
+    # 2. trees on the open ground left, in the pockets and in the gaps too small to be one, those by a street first:
+    # big shade trees of the land's own kinds where it grows them, a yard's small kinds among them. (The user set eight
+    # such by hand in a town the maker had given saplings, 2026-11-13: "with the space where no buildings or roads are,
+    # tastefully inserting trees according to some slider would be a nice touch". As many as the open ground holds at
+    # one a POCKET_TREE_AREA, OPEN_TREES a building at least, times the town's own amount.)
+    left = [a for a in sorted(pts) if ok(a[0] * st, a[1] * st, TREE_SLOPE)] if trees_k > 0 else []
+    want_n = int(max(len(left) * st * st / POCKET_TREE_AREA, OPEN_TREES * len(built)) * min(1.5, amount) * trees_k + rng.random()) if left else 0
+    cand = sorted(left, key=lambda a: (0 if streets and min((p[0] - a[0] * st) ** 2 + (p[1] - a[1] * st) ** 2 for p in streets) < POCKET_STREET ** 2 else 1, rng.random()))
+    got = 0
+    shade_n = 0
+    # (closer together as the town's amount rises: a grove at 2, where the gap at 1 alone held the count)
+    gap = POCKET_TREE_GAP / math.sqrt(max(1.0, min(1.5, amount) * trees_k))
+    for a in cand:
+        if got >= want_n:
+            break
+        x, y = a[0] * st + (rng.random() - 0.5) * st * 0.6, a[1] * st + (rng.random() - 0.5) * st * 0.6
+        if any(math.hypot(x - tx, y - ty) < gap for tx, ty in trees):
+            why['tree: by another'] = why.get('tree: by another', 0) + 1
             continue
-        want_n = int(len(cset) * st * st / POCKET_TREE_AREA * min(1.5, amount) * trees_k + rng.random()) if trees_k > 0 else 0
-        cand = sorted(cset, key=lambda a: (0 if streets and min((p[0] - a[0] * st) ** 2 + (p[1] - a[1] * st) ** 2 for p in streets) < POCKET_STREET ** 2 else 1, rng.random()))
-        got = 0
-        for a in cand:
-            if got >= want_n:
-                break
-            x, y = a[0] * st + (rng.random() - 0.5) * st * 0.6, a[1] * st + (rng.random() - 0.5) * st * 0.6
-            if any(math.hypot(x - tx, y - ty) < POCKET_TREE_GAP for tx, ty in trees):
-                continue
+        region = _region_at(db, x, y, region_memo)
+        tp = pool('house_trees', region)
+        shade = _shade_trees(db, region, x, y, memo)
+        rid, big = None, False
+        if shade and (not tp or rng.random() < SHADE_SHARE):
+            rid, big = _draw(rng, shade), True
+        if not rid and tp:
             rid = _pick(db, rng, tp)
-            bb = _bounds(db, memo, rid) if rid else None
-            if not bb:
-                continue
-            crown = max(bb[3] - bb[0], bb[4] - bb[1])
-            room = max(TREE_TRUNK, 0.3 * crown, TREE_MIN_D)
-            if not space.free(_rect(x, y, 1.0, 0.0, room, room), grows=True):
-                continue
-            sc = round(rng.uniform(0.9, 1.15), 3)
-            z = _ground_z(db, bb, x, y, sc)
-            if z is None:
-                continue
-            space.take(_rect(x, y, 1.0, 0.0, TREE_TRUNK, TREE_TRUNK))
-            add([(rid, (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc)], 'tree')
-            trees.append((x, y))
-            got += 1
+        bb = _bounds(db, memo, rid) if rid else None
+        if not bb:
+            continue
+        crown = max(bb[3] - bb[0], bb[4] - bb[1])
+        room = min(TREE_ROOM_MOST, max(TREE_TRUNK, 0.3 * crown, TREE_MIN_D))
+        if not space.free(_rect(x, y, 1.0, 0.0, room, room), grows=True):
+            why['tree: no room'] = why.get('tree: no room', 0) + 1
+            continue
+        sc = round(rng.uniform(0.9, 1.15), 3)
+        z = _ground_z(db, bb, x, y, sc)
+        if z is None:
+            continue
+        space.take(_rect(x, y, 1.0, 0.0, TREE_TRUNK, TREE_TRUNK))
+        add([(rid, (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc)], 'tree')
+        trees.append((x, y))
+        got += 1
+        shade_n += big
+    out['shade trees'] = shade_n
+    out['tree spots'] = len(left)
     # 3. the small growth of the region's own land on the open ground left by the houses, in tufts of a kind
     try:
         def on_land(x, y):
@@ -1380,6 +1404,39 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0, trees_k=1.0
     out['gardens'] = gardens
     out['pocket trees'] = len(trees)
     out['refused'] = dict(why)
+    return out
+
+
+def _shade_trees(db, region, x, y, memo):
+    """{id: weight}: the big trees for a town's open ground: the wild trees SHADE_TALL or taller of the region's own
+    land, else of its plant home's, else of the nearest lands that grow such. Empty where none grows near."""
+    key = (id(db.recs), region)
+    if key in _SHADE:
+        return _SHADE[key]
+    V = _variants(db)
+
+    def tall_of(reg):
+        out = {}
+        for base, n in (_wild_kinds(db, reg, 'trees') or {}).items():
+            ids = [rid for rid in V.get(base) or () if (lambda bb: bb and bb[5] - bb[2] >= SHADE_TALL)(_bounds(db, memo, rid))]
+            for rid in ids:
+                out[rid] = out.get(rid, 0.0) + n / float(len(ids))
+        return out
+    regs = [region] if region else []
+    home = _plant_home(db, region)
+    if home and home not in regs:
+        regs.append(home)
+    try:
+        import landdecor
+        regs += [r for r in landdecor.nearest_lands(db, math.floor(x / 8192.0), math.floor(y / 8192.0), lambda r: True, 8) if r not in regs]
+    except Exception:
+        pass
+    out = {}
+    for reg in regs:
+        out = tall_of(reg)
+        if out:
+            break
+    _SHADE[key] = out
     return out
 
 

@@ -209,6 +209,11 @@ def write(db, gx, gy, heights=None, tex=None, colors=None, around=None):
     _t, flags, data = db.files[r[3]].record_at(r[4])
     subs = [(t, bytes(d)) for t, d in iter_subrecords(data)]
     cur = read(db, gx, gy)
+    try:
+        import ledger
+        ledger.note_ground(db, gx, gy, cur)      # (the land as it lay, for the place being made: Drop can put it back)
+    except Exception as e:
+        print('land, ledger:', repr(e))
     if heights is None:
         heights = cur['h']
     if len(heights) != N * N:
