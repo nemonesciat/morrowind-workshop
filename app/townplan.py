@@ -725,6 +725,12 @@ def _districts(streets, plots, fig):
     return [out[k] for k in sorted(out)]
 
 
+# (the styles whose towns gather round a plaza with a fountain, Anvil's quarters and Charach: a square in a small town
+# of theirs too, not only where the main street runs 6,000)
+PLAZA = ('Anvil',)
+PLAZA_MAIN = 1800
+
+
 def _street_town(poly, fig, rng, spread):
     """A street town with blocks spread so far apart: (streets, roads, square, plots), finished and trimmed."""
     streets, square = _drawn_streets(poly, fig) if fig.get('_drawn') else _streets(poly, fig, rng, spread)
@@ -792,7 +798,7 @@ def _drawn_streets(poly, fig):
     streets = [{'pts': r, 'w': w if i == 0 else max(float(PATCH), w * 0.75), 'main': i == 0, 'drawn': True}
                for i, r in enumerate(runs)]
     square = None
-    if runs and fig['square'] >= 0.1 and length(runs[0]) > 6000:
+    if runs and fig['square'] >= 0.1 and length(runs[0]) > (PLAZA_MAIN if fig.get('_culture') in PLAZA else 6000):
         mid = runs[0][len(runs[0]) // 2]
         square = [round(mid[0], 1), round(mid[1], 1), round(max(PATCH * 1.5, w * 0.75), 1)]
     return streets, square
@@ -1302,7 +1308,7 @@ def _streets(poly, fig, rng, spread=1.0):
             if len(lane) >= 2:
                 streets.append({'pts': lane, 'w': max(512, w * 0.75), 'main': False, 'lane': True})
     square = None
-    if fig['square'] >= 0.1 and L > 6000:
+    if fig['square'] >= 0.1 and L > (PLAZA_MAIN if fig.get('_culture') in PLAZA else 6000):
         mid = main[len(main) // 2]
         # (a square the street's width across and a half: at 1.2 times its width each way Hlaalu's was a bare dirt field
         # 3,000 across with the houses far round its edge, the practice renders u_hla)

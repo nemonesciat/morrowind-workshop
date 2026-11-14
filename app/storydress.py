@@ -34,6 +34,12 @@ FENCES = {
     'Velothi': {'runs': [('t_de_set_x_woodfence_01', 257), ('t_de_set_x_woodfence_01_128', 128)], 'post': None},
     'Redoran': {'runs': [('t_de_set_x_woodfence_02', 257), ('t_de_set_x_woodfence_02_128', 128)], 'post': None},
     'Dunmer common': {'runs': [('t_de_set_x_woodfence_01', 257), ('t_de_set_x_woodfence_01_128', 128)], 'post': None},
+    # (Anvil's yard wall, docs/cyrodiil-study-2026-11.md: rough stone lengths under a flat cap, end to end, a capped post
+    # at every joint, 512 to 544 apart; its origin 88 to 112 over the ground, the foot 16 to 40 in it)
+    'Anvil': {'runs': [('t_imp_setanv_x_propertywall_04', 512), ('t_imp_setanv_x_propertywall_02', 256), ('t_imp_setanv_x_propertywall_03', 128)],
+              'post': 't_imp_setanv_x_propertywpill_01', 'lift': 100.0, 'gap': 32.0, 'posts': 'each'},
+    # (the rough stone wall with a crest of upright stones, Archad's and Anvil's: 256 lengths, 115 to 165 in the ground)
+    'Gold Coast poor': {'runs': [('t_imp_setanv_x_stonewall_04', 256)], 'post': 't_imp_setanv_x_stonewall_05', 'lift': 24.0, 'gap': 0.0},
 }
 # (the town survey's culture names that have no fence of their own borrow a kin's: a Nordic town got no fences at all
 # before, its key being 'Nordic' and the fence's 'Nord')
@@ -43,7 +49,7 @@ FENCE_KIN = {'Anvil': 'Imperial', 'Imperial Legion': 'Imperial', 'Indoril': 'Vel
 FARM_FENCES = {
     'Imperial': {'runs': [('t_imp_setfarm_fencestrt_01', 390)], 'post': 't_imp_setfarm_fencepost_01'},
     'Gold Coast': {'runs': [('t_imp_setfarm_fencestrt_01', 390)], 'post': 't_imp_setfarm_fencepost_01'},
-    'Anvil': {'runs': [('t_imp_setfarm_fencestrt_01', 390)], 'post': 't_imp_setfarm_fencepost_01'},
+    'Anvil': FENCES['Anvil'],              # (a garden in Anvil is walled: the Garden Quarter's)
     'Common': {'runs': [('furn_com_fence_02', 264)], 'post': 'furn_com_fence_01'},
     'Nord': {'runs': [('t_nor_setfarm_x_fencelent_01', 380), ('t_nor_setfarm_x_fencelent_02', 380)], 'post': 't_nor_setfarm_x_fencepost_01'},
 }
@@ -452,8 +458,11 @@ def _fence_run(db, space, memo, F, a, b, inward, gap_at=None):
     L = math.hypot(bx - ax, by - ay)
     runs = [(i, n) for i, n in F['runs'] if db.resolve_id(i) is not None]
     if not runs or L < runs[-1][1]:
+        WHY['fence: run too short'] = WHY.get('fence: run too short', 0) + 1
         return []
     rz = math.atan2(-dy, dx) % (2 * math.pi)     # (the piece's x along the run)
+    gap, lift = float(F.get('gap', FENCE_GAP)), float(F.get('lift') or 0.0)
+    joints = [-gap / 2.0]                        # (where a post stands when the wall has one at every joint)
     out, t, want, got = [], 0.0, 0, 0
     while True:
         piece = next(((i, n) for i, n in runs if t + n <= L + 1), None)
@@ -464,7 +473,7 @@ def _fence_run(db, space, memo, F, a, b, inward, gap_at=None):
         if not bb:
             break
         if gap_at and t < gap_at[1] and t + n > gap_at[0]:
-            t += n + FENCE_GAP               # (the gate's way: no piece across it)
+            t += n + gap                     # (the gate's way: no piece across it)
             continue
         mx, my = ax + dx * (t + n / 2.0), ay + dy * (t + n / 2.0)
         # (the piece's bounds centre on the run's middle: its origin may sit at an end)
@@ -476,10 +485,12 @@ def _fence_run(db, space, memo, F, a, b, inward, gap_at=None):
         rect = _rect(mx, my, dx, dy, n / 2.0 - 2, max(14.0, (bb[4] - bb[1]) / 2.0))
         z = _ground_z(db, bb, px, py)
         if z is not None and space.free(rect):
-            out.append((rid, (px, py, z, 0.0, 0.0, rz), 1.0, rect))
+            out.append((rid, (px, py, z + lift, 0.0, 0.0, rz), 1.0, rect))
             got += 1
-        t += n + FENCE_GAP
+            joints.append(t + n + gap / 2.0)
+        t += n + gap
     if not want or got < FENCE_SHARE * want:
+        WHY['fence: %d of %d lengths fit' % (got, want)] = WHY.get('fence: %d of %d lengths fit' % (got, want), 0) + 1
         return []
     for _rid, _p, _s, rect in out:
         space.take(rect)
@@ -488,13 +499,29 @@ def _fence_run(db, space, memo, F, a, b, inward, gap_at=None):
     if post and db.resolve_id(post) is not None:
         pb = _bounds(db, memo, post)
         ends = [(ax, ay), (ax + dx * min(L, t), ay + dy * min(L, t))]
+        if F.get('posts') == 'each':
+            ends = [(ax + dx * j_, ay + dy * j_) for j_ in joints]
         if gap_at:
             ends += [(ax + dx * gap_at[0], ay + dy * gap_at[0]), (ax + dx * gap_at[1], ay + dy * gap_at[1])]
         for ex, ey in ends:
             z = _ground_z(db, pb, ex, ey)
             if z is not None:
-                laid.append((post, (ex, ey, z, 0.0, 0.0, rz), 1.0))
+                laid.append((post, (ex, ey, z + lift, 0.0, 0.0, rz), 1.0))
     return laid
+
+
+def _fence_for(db, cult, q, rng, F):
+    """The yard wall for one house: a poor Gold Coast hut's is the rough stone wall as often as the wooden fence
+    (Archad's huts stand behind it, Thresvy's behind fences); a villa of the Anvil, Stirk or Gold Coast sets in a Gold
+    Coast town has Anvil's capped-post wall."""
+    key = str((q.get('b') or {}).get('key') or '').lower()
+    if 'setgcpoor' in key:
+        P = FENCES['Gold Coast poor']
+        return P if db.resolve_id(P['runs'][0][0]) is not None and rng.random() < 0.5 else F
+    if cult == 'Gold Coast' and re.search(r'setgc_x_|setanv_x_|setstr_x_', key):
+        A = FENCES['Anvil']
+        return A if db.resolve_id(A['runs'][0][0]) is not None else F
+    return F
 
 
 def _plot_frame(q):
@@ -892,6 +919,7 @@ def _house_height(db, q):
         return None
 
 
+ALSO_BIG = 300.0               # (a laid piece wider than this either way from its origin is kept clear of by its turned footprint)
 STANDING = 60                  # a thing of the land this wide (a rock, a tree, a ruin) is ground nothing is laid on
 
 
@@ -947,6 +975,10 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0):
     for rid, p in also:
         bb = _bounds(db, memo, rid)
         half = max(24.0, (bb[3] - bb[0]) / 2.0 if bb else 24.0, (bb[4] - bb[1]) / 2.0 if bb else 24.0)
+        if bb and half > ALSO_BIG:
+            # (a big piece, a wall's length or a whole building's shell: its own footprint as it is turned)
+            polys.append(_footprint(bb, p[0], p[1], p[5] if len(p) > 5 else 0.0, 1.0, 0.0))
+            continue
         polys.append(_rect(p[0], p[1], 1.0, 0.0, half, half))
     # (and the land's own rocks, trees and ruins standing in the town's cells: a bed of lilies came up inside a Gold
     # Coast boulder, the 3D look of 2026-11-05; the dressing's `also` list holds only what the town laid)
@@ -1001,15 +1033,16 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0):
         depth = YARD_D
         n['yards'] += 1
         # the fence: the yard's back edge, YARD_D behind the house, and its two sides from the house's back corners
-        if F:
+        Fq = _fence_for(db, cult, q, rng, F)
+        if Fq:
             far = {-1: h.at(xl, back + depth), 1: h.at(xr, back + depth)}
             near_ = {-1: h.at(xl, back + 30), 1: h.at(xr, back + 30)}
             runs = [(far[-1], far[1], (-Y[0], -Y[1])), (near_[-1], far[-1], (X[0], X[1])), (far[1], near_[1], (-X[0], -X[1]))]
             for a, b, inward in runs:
-                laid = _fence_run(db, space, memo, F, a, b, inward)
+                laid = _fence_run(db, space, memo, Fq, a, b, inward)
                 add(laid, 'fence')
                 for rid, _p, _s in laid:
-                    n['posts' if rid == F.get('post') else 'fences'] += 1
+                    n['posts' if rid == Fq.get('post') else 'fences'] += 1
         # the yard's kind, laid against the house's back
         if depth >= YARD_MIN:
             kinds = KIND_BY.get(q.get('kind') or 'house') or KIND_BY['house']

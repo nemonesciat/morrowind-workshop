@@ -36,10 +36,11 @@ def _ang(deg):
 
 
 class Pose:
-    __slots__ = ('x', 'y', 'z', 'rz', 'id')
+    __slots__ = ('x', 'y', 'z', 'rz', 'id', 's')
 
     def __init__(self, x, y, z, rz, id_=None):
         self.x, self.y, self.z, self.rz, self.id = x, y, z, rz % (2 * math.pi), id_
+        self.s = 1.0                        # (its scale: Anvil's gate arch stands at 1.14, ROUND)
 
     def then(self, e, id_=None):
         """The pose a join's exact [lx, ly, dz, turn deg] puts the next piece at (adjacency.to_world's turn)."""
@@ -101,6 +102,7 @@ def kits(db):
                 cu = out[f].setdefault('cultures', {})
                 cu[t['culture']] = cu.get(t['culture'], 0) + 1
                 out[f].setdefault('towns', []).append(t['name'])
+    _round_kits(db, out)
     _kits[k] = out
     return out
 
@@ -228,6 +230,335 @@ def _corner(corners, S, run, chain, turn, w):
     have = corners.get(side)
     if have is None or w > have['n']:
         corners[side] = {'chain': [[t, list(e)] for t, e in chain], 'p': tt, 'q': -uu, 'n': w}
+
+
+# ------------------------------------------------------------------------------------------ walls of round towers
+# Anvil's city wall (docs/cyrodiil-study-2026-11.md): no corner piece and no grid. A round tower stands over every
+# joint, at a corner and between two lengths in one line alike (28 towers to 41 lengths); each length runs from tower
+# to tower at whatever angle, its ends hidden 180 to 320 inside them; the whole ring stands at one level, the ground
+# made to fit; a way in is the low wall's great arch (citywall_03) raised and scaled between two of the taller towers.
+# Laid so here: the outline's corners are towers, each side one length or one gate.
+ROUND = {'t_imp_setanv': {
+    'straight': 't_imp_setanv_x_citywall_01', 'L': 2240.0,
+    # (tower to tower: the game's 2,380 to 2,880. Down to 2,000 here, a length's end then up to 120 past its tower's
+    # middle and still inside it (the tower 517 in radius, the wall 350 either side of its line): with 2,400 the least no
+    # side between 2,880 and 4,800 long could be walled, and a drawn town shrank by a third)
+    'side': (2000.0, 2880.0),
+    'tower': 't_imp_setanv_x_citywalltower_01', 'tall': 't_imp_setanv_x_citywalltower_02', 'tower_dz': 0.0, 'tower_r': 517.0,
+    'gate': 't_imp_setanv_x_citywall_03', 'gate_scale': 1.14, 'gate_dz': 340.0,      # (the game's: 332 to 346 over the wall's)
+    'arch': 't_imp_setanv_x_citywallent_01', 'arch_at': 465.0, 'arch_dz': 880.0,     # (on the walk, where it enters a tower)
+    'low': 't_imp_setanv_x_citywall_02', 'low_L': 1755.0, 'low_dz': -40.0,           # (the harbour's wall, and its arch)
+    'low_gate': 't_imp_setanv_x_citywall_03',
+    'rise': 24.0,                          # (a length's origin over the ground under it: 24 at the game's median)
+    'sea_z': 448.0,                        # (what stands in the sea: its origin this far over the water at most, Anvil's)
+    # (how much of each piece's foot belongs in the ground: Anvil's lengths stand 300 deep, their towers 665, the
+    # raised arch 570. Measured to their true bottoms they stood with 24 in the ground and the first street graded
+    # past a gate left the wall's foot in the air, the practice of 2026-11-13)
+    'foot': {'t_imp_setanv_x_citywall_01': 270.0, 't_imp_setanv_x_citywalltower_01': 600.0, 't_imp_setanv_x_citywalltower_02': 600.0,
+             't_imp_setanv_x_citywall_03': 500.0, 't_imp_setanv_x_citywall_02': 700.0},
+    'back': 520.0,                         # (the town planned this much further in: the wall is 700 deep, a tower 1,034)
+    'cultures': {'Anvil': 2, 'Gold Coast': 2}, 'towns': ['Anvil']},
+    # The balustrade wall round Charach's villas (docs/cyrodiil-study-2026-11.md): arcaded lengths 800 long, a round pier
+    # between every two and on every corner (405 to 452 from a length's middle), an arched gate with a pier 486 to 495
+    # either side of its middle, the gate scaled 1.3 to 1.42 and its piers 1.2. Low: it follows the ground, a piece at
+    # a time (their origins 130 to 153 over it), and no ground is moved for it. Never chosen by itself: asked for.
+    't_imp_setstr': {
+        'low': True, 'straight': 't_imp_setstr_x_wall_01', 'L': 800.0, 'side': (812.0, 905.0),
+        'tower': 't_imp_setstr_x_wallpillar_01', 'tall': 't_imp_setstr_x_wallpillar_01', 'tall_scale': 1.2, 'tower_dz': 0.0, 'tower_r': 88.0,
+        'gate': 't_imp_setstr_x_gate_01', 'gate_half': 430.0, 'gate_dz': 0.0,
+        'rise': 150.0, 'back': 0.0, 'cultures': {}, 'towns': ['Charach']}}
+ROUND_SHARP = 60.0             # (degrees: two lengths meeting sharper than this cross outside their tower)
+_FOOT = {k_.lower(): v_ for R_ in ROUND.values() for k_, v_ in (R_.get('foot') or {}).items()}
+
+
+def _round_kits(db, out):
+    """The walls of round towers the load order holds all the pieces of, as kits beside the learnt ones."""
+    for fam, R in ROUND.items():
+        ids = [R[k] for k in (('straight', 'tower', 'gate') if R.get('low') is True else ('straight', 'tower', 'tall', 'gate', 'arch', 'low'))]
+        if any(db.resolve_id(i) is None for i in ids):
+            continue
+        out[fam] = {'family': fam, 'straight': R['straight'], 'axis': 0, 'L': R['L'], 'overlap': False, 'runs': 28,
+                    'inline': {}, 'corners': {}, 'ends': {}, 'corner_towers': {}, 'models': sorted(set(i.lower() for i in ids)),
+                    'placed': sum(len(db.used_in.get(i.lower(), ())) for i in ids) or 100, 'round': R,
+                    'cultures': dict(R['cultures']), 'towns': list(R['towns'])}
+
+
+def _poly_area(P):
+    return sum(P[i][0] * P[(i + 1) % len(P)][1] - P[(i + 1) % len(P)][0] * P[i][1] for i in range(len(P))) / 2.0
+
+
+def _hull(pts):
+    pts = sorted(set((round(p[0], 1), round(p[1], 1)) for p in pts))
+    if len(pts) < 3:
+        return pts
+    cr = lambda o, a, b: (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lo, up = [], []
+    for p in pts:
+        while len(lo) >= 2 and cr(lo[-2], lo[-1], p) <= 0:
+            lo.pop()
+        lo.append(p)
+    for p in reversed(pts):
+        while len(up) >= 2 and cr(up[-2], up[-1], p) <= 0:
+            up.pop()
+        up.append(p)
+    return lo[:-1] + up[:-1]
+
+
+def round_outline(plan, kit, drawn=None):
+    """The tower spots of a wall of round towers for a town: the drawn outline (else the town's own hull, MARGIN out)
+    with only its real corners, no corner too sharp, every side whole tower-to-tower lengths, a tower between every
+    two lengths of a long side. [(x, y)], or [] where nothing can be walled."""
+    import wallangle
+    R = kit['round']
+    lo, hi = R['side']
+    D = [(float(p[0]), float(p[1])) for p in (drawn if drawn is not None else plan.get('drawn') or ()) if len(p) >= 2]
+    if len(D) < 3:
+        H = _hull(_town_pts(plan))
+        if len(H) < 3:
+            return []
+        cx, cy = sum(p[0] for p in H) / len(H), sum(p[1] for p in H) / len(H)
+        D = []
+        for x, y in H:
+            u = _unit(x - cx, y - cy)
+            D.append((x + u[0] * (MARGIN + R['back']), y + u[1] * (MARGIN + R['back'])))
+    old = wallangle.ANGLE_LEAST
+    wallangle.ANGLE_LEAST = ROUND_SHARP
+    try:
+        D = wallangle.simplify(D, lo, least=1)
+        D = wallangle.simplify(wallangle.blunt(D, lo), lo, least=1)
+    finally:
+        wallangle.ANGLE_LEAST = old
+    if len(D) < 3:
+        return []
+    D, _miss = wallangle.fit_lengths(D, lo, hide=(hi - lo) / 2.0, least=1)
+    out = []
+    n = len(D)
+    for k in range(n):
+        a, b = D[k], D[(k + 1) % n]
+        S = math.hypot(b[0] - a[0], b[1] - a[1])
+        m = max(1, int(math.ceil(S / hi - 1e-6)))
+        while m > 1 and S / m < lo - 8:
+            m -= 1
+        for i in range(m):
+            out.append((round(a[0] + (b[0] - a[0]) * i / m, 2), round(a[1] + (b[1] - a[1]) * i / m, 2)))
+    return out
+
+
+def lay_round(db, plan, fam, kit):
+    """A wall of round towers round a town plan, as lay() gives a wall: a tower on every corner of its outline, one
+    length between each two, a gate (the great arch, raised between two taller towers) where a street leaves, the
+    walk's arches where it enters a tower. Each side's piece is a 'run' of its own; the towers, the gates and the
+    arches take their level from the lengths beside them (grounded)."""
+    R = kit['round']
+    plan['_fam'] = fam
+    _KEEP_SEA[0] = False
+    if plan.get('wall_outline'):
+        poly = [(float(p[0]), float(p[1])) for p in plan['wall_outline']]
+    else:
+        poly = round_outline(plan, kit)
+        plan['_led'] = True
+    if len(poly) < 3:
+        return {'family': fam, 'kit': kit, 'pieces': [], 'outline': [], 'gates': 0, 'faults': ['No plots to wall']}
+    # (walked clockwise: a length's outer face, the arcade, is its +y, to the left of the way it runs)
+    if _poly_area(poly) > 0:
+        poly = poly[::-1]
+    n = len(poly)
+    faults = []
+    side = lambda k: (poly[k], poly[(k + 1) % n])
+    low_kit = R.get('low') is True               # (a low wall of piers: it stops at the water, and follows the ground)
+    open_ = bool(plan.get('open_sea')) or low_kit
+    # the sides that stand in the sea: left out when the town is open to the water, their towers with them
+    wet = set()
+    if db is not None:
+        for k in range(n):
+            a, b = side(k)
+            zs = sorted((-9999.0 if z is None else z) for z in (mapdata.terrain_z(db, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t) for t in (0.1, 0.3, 0.5, 0.7, 0.9)))
+            # (most of it over the water: the harbour's low wall there, or nothing when the town is open to the sea)
+            if zs[2] < ROUND_WET and zs[3] < 0:
+                wet.add(k)
+    # (the middle one of the longest run of sides in the water: the arch boats pass under)
+    water_gate = None
+    if wet and not open_:
+        runs_, cur = [], []
+        for k in list(range(n)) + list(range(n)):
+            if k in wet:
+                cur.append(k)
+            else:
+                if cur:
+                    runs_.append(cur)
+                cur = []
+        runs_ = [r_[:n] for r_ in runs_ + ([cur] if cur else [])]
+        if runs_:
+            best_ = max(runs_, key=len)
+            water_gate = best_[len(best_) // 2]
+    ok_sides = set(range(n)) - wet
+    _KEEP_SEA[0] = bool(wet) and not low_kit
+    streets, roads = _street_crossings(plan, poly)
+    if any(k not in ok_sides for k in streets):
+        streets = defaultdict(list, {k: v for k, v in streets.items() if k in ok_sides})
+    mine = user_gates(plan, poly, roads, 256.0, ok_sides or None)
+    if mine:
+        streets, roads = mine
+    elif db is not None:
+        streets, roads = _downhill_gates(db, poly, streets, roads)
+    if not any(streets.values()) and not mine:
+        streets, roads = _fallback_gate(db, plan, poly, roads, 256.0, ok_sides or None)
+    gate_sides = {k for k, v in streets.items() if v and k in ok_sides}
+    # (never two gates side by side: the one nearer its side's middle stays)
+    for k in sorted(gate_sides):
+        if (k + 1) % n in gate_sides and k in gate_sides and n > 3:
+            a, b = side(k)
+            c_, d_ = side((k + 1) % n)
+            off = lambda kk, A, B: min(abs(h - math.hypot(B[0] - A[0], B[1] - A[1]) / 2.0) for h in streets[kk])
+            gate_sides.discard(k if off(k, a, b) > off((k + 1) % n, c_, d_) else (k + 1) % n)
+    pieces = []
+    for k in range(n):
+        if k in wet and open_:
+            continue
+        a, b = side(k)
+        d = _unit(b[0] - a[0], b[1] - a[1])
+        S = math.hypot(b[0] - a[0], b[1] - a[1])
+        if k in wet:
+            # (the harbour's wall: the low length, made longer as the game makes its arch, so its ends stand inside
+            # the towers; at the towers' level less a little, as Anvil's; no ground is raised under it)
+            lid = R['low_gate'] if k == water_gate else R['low']
+            lp = Pose((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0, _rz_for(kit, d), lid)
+            lp.s = round(min(1.3, max(1.0, (S / 2.0 - 250.0) / (R['low_L'] / 2.0))), 3)
+            pieces.append({'id': lid, 'pose': lp, 'kind': 'seawall', 'dz': R['low_dz'], 'sea': True, 'nofill': True})
+            continue
+        if not (R['side'][0] - 160 <= S <= R['side'][1] + 60):
+            faults.append('side %d: %.0f from tower to tower' % (k, S))
+        mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+        rz = _rz_for(kit, d)
+        if k in gate_sides and low_kit:
+            g = Pose(mx, my, 0.0, rz, R['gate'])
+            # (the gate made as wide as its two piers stand apart, as the game scales it)
+            g.s = round(max(1.0, min(1.5, (S / 2.0 + 60.0) / R['gate_half'])), 3)
+            host = {'id': R['gate'], 'pose': g, 'kind': 'gate', 'run': k}
+        elif k in gate_sides:
+            g = Pose(mx, my, 0.0, rz, R['gate'])
+            g.s = R['gate_scale']
+            # (levelled as a length of the wall, 'lift' over it once the wall is set: grounded)
+            host = {'id': R['gate'], 'pose': g, 'kind': 'gate', 'run': k, 'lift': R['gate_dz']}
+        else:
+            host = {'id': R['straight'], 'pose': Pose(mx, my, 0.0, rz, R['straight']), 'kind': 'wall', 'run': k}
+        pieces.append(host)
+        # (the walk's arch at each end, facing along the wall, where the walk meets the tower: 58 for Anvil's 28 towers)
+        for sgn in (-1.0, 1.0) if R.get('arch') else ():
+            t = S / 2.0 - R['arch_at']
+            ap = Pose(mx + sgn * d[0] * t, my + sgn * d[1] * t, 0.0, rz + (0.0 if sgn > 0 else math.pi), R['arch'])
+            pieces.append({'id': R['arch'], 'pose': ap, 'kind': 'arch', 'dz': R['arch_dz'], 'host': host['pose']})
+    for k in range(n):
+        if open_ and (k - 1) % n in wet and k in wet:
+            continue
+        v = poly[k]
+        tall = (k in gate_sides) or ((k - 1) % n in gate_sides)
+        if not open_ and (k in wet) != ((k - 1) % n in wet):
+            tall = True                              # (where the land's wall meets the sea's: the step hides in the taller tower)
+        tid = R['tall'] if tall else R['tower']
+        d = _unit(poly[(k + 1) % n][0] - v[0], poly[(k + 1) % n][1] - v[1])
+        tw_ = {'id': tid, 'pose': Pose(v[0], v[1], 0.0, _rz_for(kit, d), tid), 'kind': 'post' if low_kit else 'bigtower', 'dz': R['tower_dz'], 'vertex': k}
+        if tall and R.get('tall_scale'):
+            tw_['pose'].s = R['tall_scale']          # (a gate's piers stand bigger)
+        gv_ = mapdata.terrain_z(db, v[0], v[1]) if db is not None else None
+        if (gv_ is not None and gv_ < 0) or (k in wet and (k - 1) % n in wet):
+            tw_.update(sea=True, nofill=True)        # (a tower in the water: Anvil's harbour towers)
+        pieces.append(tw_)
+    n_g = len([p for p in pieces if p['kind'] == 'gate'])
+    W_ = {'family': fam, 'kit': kit, 'pieces': pieces, 'outline': poly, 'gates': n_g, 'faults': faults, 'joins': 0,
+          'angled': {'poly': [list(p) for p in poly], 'fort': [], 'no_tower': [], 'round': True}, 'led': True, 'rise': R['rise'],
+          'roads': _gate_roads(poly, roads, pieces, 2000.0) if n_g else []}
+    if low_kit:
+        W_['palisade'] = True                    # (set on the ground a piece at a time, no ground moved: _palisade_grounded)
+    return W_
+
+
+GATE_WAY_DEEP = 1300.0         # (a round wall's gateway: kept clear this far in and out of the arch)
+
+
+def gate_ways(W):
+    """[[(x, y) x4]]: the way through each gate of a wall of round towers or piers, GATE_WAY_DEEP in and out of it, as
+    wide as its arch: ground nothing is set on (the town's rocks, its dressing, its trees)."""
+    if not ((W or {}).get('kit') or {}).get('round'):
+        return []
+    out = []
+    for p_ in W.get('pieces') or ():
+        cs = p_.get('corners')
+        if p_.get('kind') != 'gate' or not cs or len(cs) < 4:
+            continue
+        q_ = p_['pose']
+        c_, s_ = math.cos(q_.rz), math.sin(q_.rz)
+        hw_ = 0.33 * math.hypot(cs[1][0] - cs[0][0], cs[1][1] - cs[0][1]) + 60.0
+        out.append([(q_.x + lx * c_ + ly * s_, q_.y - lx * s_ + ly * c_) for lx, ly in ((-hw_, -GATE_WAY_DEEP), (hw_, -GATE_WAY_DEEP), (hw_, GATE_WAY_DEEP), (-hw_, GATE_WAY_DEEP))])
+    return out
+
+
+FOOT_ROCKS = ('t_cyr_terrrockgc_rock_15', 't_cyr_terrrockgc_rock_19', 't_cyr_terrrockgc_rock_21', 't_cyr_terrrockgc_rock_24', 't_cyr_terrrockgc_rock_25',
+              't_cyr_terrrockgc_rock_29', 't_cyr_terrrockgc_rock_17', 't_cyr_terrrockgc_rock_13')
+FOOT_SHOWS = 24.0              # (a foot this far out of the ground or more wants a boulder)
+FOOT_GAP = 520.0               # (boulders along a face about this far apart, none nearer another than 0.7 of it)
+
+
+def foot_rocks(db, W, seed=1):
+    """[{'id', 'p', 's', 'role': 'rock'}]: boulders under a round wall's feet where they show. A length's true foot is
+    its model's bottom (321 under its origin, of which the ground takes 270 where it can); on a bank that falls to the
+    water the land cannot be raised (the harbour's floor stays the sea's), so the foot hangs: a boulder there, its
+    bottom under the ground or the water, its top over the foot. Nothing in a gate's way."""
+    import random
+    R = (W.get('kit') or {}).get('round') or {}
+    if not R or R.get('low') is True or not W.get('pieces'):
+        return []
+    ids = [i for i in FOOT_ROCKS if db.resolve_id(i) is not None]
+    if not ids:
+        return []
+    rng = random.Random('%s|foot rocks' % seed)
+    gates = [p['pose'] for p in W['pieces'] if p.get('kind') == 'gate']
+    out, at = [], []
+    for p in W['pieces']:
+        if p.get('kind') not in ('wall', 'bigtower') or p.get('sea'):
+            continue
+        q = p['pose']
+        ri = db.resolve_id(p['id'])
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if not b:
+            continue
+        s = getattr(q, 's', 1.0) or 1.0
+        foot = q.z + b[2] * s
+        c, sn = math.cos(q.rz), math.sin(q.rz)
+        if p['kind'] == 'bigtower':
+            r_ = 0.5 * (b[3] - b[0]) * s
+            spots = [(r_ * math.cos(a_ * math.pi / 4), r_ * math.sin(a_ * math.pi / 4), math.cos(a_ * math.pi / 4), math.sin(a_ * math.pi / 4)) for a_ in range(8)]
+        else:
+            n_ = max(2, int((b[3] - b[0]) * s / FOOT_GAP))
+            xs = [b[0] * s + (b[3] - b[0]) * s * (i + 0.5) / n_ for i in range(n_)]
+            spots = [(x_, b[4] * s, 0.0, 1.0) for x_ in xs] + [(x_, b[1] * s, 0.0, -1.0) for x_ in xs]
+        for lx, ly, ox, oy in spots:
+            # (the ground just outside the face, where the eye meets the foot)
+            px, py = lx + ox * 90.0, ly + oy * 90.0
+            wx, wy = q.x + px * c + py * sn, q.y - px * sn + py * c
+            g = mapdata.terrain_z(db, wx, wy)
+            if g is None or g >= foot - FOOT_SHOWS:
+                continue
+            if any(abs((wx - g_.x) * math.cos(g_.rz) - (wy - g_.y) * math.sin(g_.rz)) < 700.0 and math.hypot(wx - g_.x, wy - g_.y) < 1500.0 for g_ in gates):
+                continue
+            if any(math.hypot(wx - a_[0], wy - a_[1]) < 0.7 * FOOT_GAP for a_ in at):
+                continue
+            rid = rng.choice(ids)
+            rb = mapdata.object_bounds(db, db.resolve_id(rid))
+            if not rb:
+                continue
+            low_ = max(g, -420.0) - 110.0                      # (its bottom well under the ground, or the water)
+            need = (foot + 170.0) - low_
+            sc = max(0.8, min(2.6, need / float(rb[5] - rb[2])))
+            z = low_ - rb[2] * sc
+            out.append({'id': rid, 'p': [round(wx, 1), round(wy, 1), round(z, 1), 0.0, 0.0, round(rng.uniform(0, 2 * math.pi), 4)], 's': round(sc, 2), 'role': 'rock'})
+            at.append((wx, wy))
+    return out
+
+
+ROUND_WET = -160.0             # (a side whose ground lies under this all along stands in the sea)
+SEA_KEEP = -24.0               # (ground under this is the harbour's floor: never raised by a wall that stands in the sea)
+_KEEP_SEA = [False]
 
 
 # ------------------------------------------------------------------------------------------------ laying a wall
@@ -1172,6 +1503,9 @@ def lay(db, plan, family=None, cell=None):
             return lay_palisade(db, plan, P)
         return {'family': None, 'pieces': [], 'outline': [], 'gates': 0, 'faults': ['No wall for this culture']}
     kit = K[fam]
+    if kit.get('round'):
+        return lay_round(db, plan, fam, kit)
+    _KEEP_SEA[0] = False
     L = kit['L']
     # (an outline whose squares are whole steps, so a side's straights fill it)
     G = cell or L * max(1, round(1024.0 / L))
@@ -1542,6 +1876,16 @@ def _palisade_grounded(db, W):
         if g is None or g < 0:
             continue
         o = townbuild._game_over_ground(db, p['id'].lower())
+        if o is None:
+            o = ((W.get('kit') or {}).get('round') or {}).get('rise')
+        if _low_wall(W) and p.get('kind') in ('wall', 'gate'):
+            # (the lowest ground along it: its foot in the ground from end to end)
+            c_, s_ = math.cos(q.rz), math.sin(q.rz)
+            h_ = 0.45 * ((W.get('kit') or {}).get('L') or 800.0) * (getattr(q, 's', 1.0) or 1.0)
+            for t_ in (-1.0, -0.5, 0.5, 1.0):
+                g2 = mapdata.terrain_z(db, q.x + c_ * h_ * t_, q.y - s_ * h_ * t_)
+                if g2 is not None and g2 >= 0:
+                    g = min(g, g2)
         q.z = g + (o if o is not None else 0.0)
         p['corners'] = _box(db, p['id'], q, memo)[0]
         keep.append(p)
@@ -2424,6 +2768,13 @@ def _box(db, pid, pose, memo):
     b = memo[pid]
     if not b:
         return None, None
+    k_ = getattr(pose, 's', 1.0) or 1.0
+    if k_ != 1.0:
+        b = [v * k_ for v in b]
+    f_ = _FOOT.get(str(pid).lower())
+    if f_:
+        b = list(b)
+        b[2] = min(b[2] + f_, -16.0)        # (a foot made for the ground or the water: the rest of it counts as its bottom)
     c, s = math.cos(pose.rz), math.sin(pose.rz)
     return [(pose.x + bx * c + by * s, pose.y - bx * s + by * c) for bx, by in ((b[0], b[1]), (b[3], b[1]), (b[3], b[4]), (b[0], b[4]))], b
 
@@ -2485,6 +2836,11 @@ LEVEL_AT = 0.7                 # (the ring's level stands at this share of its s
 DIP_MIN = 48
 
 
+def _low_wall(W):
+    """A low wall of piers (ROUND, 'low': True): it follows the ground as it lies."""
+    return ((W.get('kit') or {}).get('round') or {}).get('low') is True
+
+
 def fill_ground(db, W, skip=(), keep=()):
     """The ground under the wall's raised stretches (grounded's W['fill']) filled up to their feet: a stretch whose ground
     had been cut to the ring's level stood lower than the walls either side, a dip in the walk with a trench under it
@@ -2504,6 +2860,8 @@ def show_ground(db, W, skip=(), keep=()):
     On a steep site the wall's levels and the fills that follow them left lengths buried and lengths hanging: 12 runs of
     a Dunmer town's wall on a mountainside, up to 900 long, the check of 2026-11-13. (cells changed, lengths cut back,
     lengths filled under)."""
+    if _low_wall(W):
+        return 0, 0, 0
     cut, fill = [], []
     memo = {}
     for p in W.get('pieces') or ():
@@ -2549,7 +2907,7 @@ def inner_ground(db, W, skip=(), keep=()):
     cut within LEVEL_TOL, fading into the town's ground beyond; the buildings' and the streets' ground (keep) left to
     them. Gates and towers set no level. The cells changed."""
     outline = W.get('outline') or []
-    if len(outline) < 3:
+    if len(outline) < 3 or _low_wall(W):
         return 0
     cx = sum(p_[0] for p_ in outline) / len(outline)
     cy = sum(p_[1] for p_ in outline) / len(outline)
@@ -2816,6 +3174,8 @@ def _shape_ground(db, segs, skip, cut_tol, raise_tol, keep=(), grade=KEEP_GRADE,
                         best = (best[0], st / sw, best[2])
                     want = max(z - cut_tol, min(z + raise_tol, best[1]))
                     nz = z + best[0] * (want - z)
+                    if _KEEP_SEA[0] and z < SEA_KEEP and nz > z:
+                        continue                         # (the harbour's floor stays the sea's)
                     if abs(nz - z) >= 1:
                         if keep and any(_in_poly(k_, x, y) for k_ in keep):
                             continue                     # (a town building's own ground: left to it)
@@ -2864,13 +3224,17 @@ def grounded(db, W):
         pts.append((p['pose'].x, p['pose'].y))
         gz = [mapdata.terrain_z(db, x, y) for x, y in pts]
         zs = [z for z in gz if z is not None]
-        if not zs or max(zs) < 0:
+        if not zs or (max(zs) < 0 and not p.get('sea')):
             wet += 1
             continue
         # (its low ground the third lowest of its nine: a corner over a cliff's edge or the shore no longer drags the
         # whole run down to the sea floor, its foot showing a little there as the user set their own, Chillmorrow test4)
         zs.sort()
         p['corners'], p['_g'], p['_b'] = cs, (zs[min(2, len(zs) - 1)], zs[-1]), b
+        if p.get('lift'):
+            # (a gate that stands higher than the lengths beside it, Anvil's raised arch: levelled as if its origin
+            # were theirs, so the ring's level answers to the gate's ground too)
+            p['_b'] = list(b[:2]) + [b[2] + p['lift']] + list(b[3:5]) + [b[5] + p['lift']]
         # (a piece along a cliff's edge or a steep bank, the ground under its own footprint differing by more than
         # CLIFF_SPREAD: its foot is measured along its crest, the middle and the two end midpoints, not at the corner
         # over the drop, and no bank of earth is raised under it (_fill_under): the cliff is the wall's foot. The
@@ -2892,7 +3256,7 @@ def grounded(db, W):
         return lo, hi
     def level(ps):
         lo, hi = span(ps)
-        z = max(lo, min(hi, sum(p['_g'][0] + p['_g'][1] for p in ps) / (2.0 * len(ps)) + 208))
+        z = max(lo, min(hi, sum(p['_g'][0] + p['_g'][1] for p in ps) / (2.0 * len(ps)) + (W.get('rise') if W.get('rise') is not None else 208)))
         for p in ps:
             p['pose'].z = min(z, p['_g'][0] - SINK - p['_b'][2])
     tower_id = next((t for v in ((W.get('kit') or {}).get('corner_towers') or {}).values() for t, _e in v), None)
@@ -3027,7 +3391,14 @@ def grounded(db, W):
         near = sorted(order, key=lambda o: math.hypot(o['pose'].x - q.x, o['pose'].y - q.y))[:2]
         wz = max(o['pose'].z for o in near) if near else p['_g'][0] + 208
         gc = mapdata.terrain_z(db, q.x, q.y)
-        q.z = wz + p['dz'] if gc is None else min(wz + p['dz'], gc - SINK - p['_b'][2])
+        # (a wall of round towers: its towers and gates at the lengths' own level, as Anvil's all are)
+        q.z = wz + p['dz'] if gc is None or (W.get('kit') or {}).get('round') else min(wz + p['dz'], gc - SINK - p['_b'][2])
+        if p.get('sea') and (W.get('kit') or {}).get('round'):
+            q.z = min(wz, W['kit']['round'].get('sea_z', wz)) + p['dz']
+    for p in keep:
+        if p.get('lift') and not p.get('_lifted'):
+            p['pose'].z += p['lift']                     # (the raised gate at its own height, the wall's set)
+            p['_lifted'] = True
     keep = [p for p in keep if not p.pop('_gone', False)]
     for p in keep:
         for k_ in ('_g', '_b', '_cliff'):
@@ -3680,7 +4051,7 @@ def choices(db):
     out = []
     for f, k in kits(db).items():
         out.append({'id': f, 'piece': k['straight'], 'step': k['L'], 'towns': (k.get('towns') or [])[:4], 'cultures': k.get('cultures') or {},
-                    'placed': k['placed'], 'gate': any(v['kind'] == 'gate' for v in k['inline'].values())})
+                    'placed': k['placed'], 'gate': any(v['kind'] == 'gate' for v in k['inline'].values()) or bool((k.get('round') or {}).get('gate'))})
     P = PALISADE['Nordic']
     if db.resolve_id(P['posts'][0]) is not None and db.resolve_id(P['gate']) is not None:
         n = sum(len(db.used_in.get(m, ())) for m in P['posts'])

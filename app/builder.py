@@ -3754,6 +3754,7 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                         beside_fam[n_] = fam
     import extras
     erng = extras.seeded(name)
+    fire_extras = [0]                # (the kit's own fireplaces hung with wall pieces: they count toward the place's one or two)
     # windows that are wall sections (Indoril's Room_Window, Gold Coast's WallWindow): one stands in for a
     # loose wall on a true outside side of a room the game windows, as often as the game has them
     # (layoutsurvey.py; the props hung on walls come later, see _columns_and_windows)
@@ -3839,6 +3840,11 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         # the small things the game hangs from or stands against this piece (a rope and lantern under a
         # Hlaalu side piece, a skirting along a Gold Coast wall), as often and where it does (extras.py)
         for eid, epos in extras.for_piece(db, style, piece['id'], q, cx, cy, z0 + zf(t) + piece['zmin'], erng):
+            if re.search(r'fireplace|hearth|stove|(?<![a-z])oven', eid.lower()) and not re.search(r'tool|stand|poker|shovel|broom|log', eid.lower()):
+                # (one fireplace a place of under five rooms, two above: the game's own, interiors study 2026-11)
+                if fire_extras[0] >= (1 if len(rooms) < 5 else 2):
+                    continue
+                fire_extras[0] += 1
             refs.append((eid, epos, []))
         if piece.get('floorless') and kp.get('slab'):
             # (a wall-and-ceiling piece with no floor of its own: the set's floor slab under it)
@@ -4126,8 +4132,11 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         hm = hearth_models[0] if hearth_models and hearth_models[0]['n'] >= 5 else None
         hb = mapdata.object_bounds(db, db.resolve_id(hm['id'])) if hm else None
         if hm and hb:
+            # (one built hearth a place of under five rooms, two above: the game's own, interiors study 2026-11; a house
+            # of two rooms under two chimneys had a grand fireplace in each)
+            hearths_most = 1 if len(rooms) < 5 else 2
             for n, _r in enumerate(rooms):
-                if purposes[n] != 'kitchen':
+                if purposes[n] != 'kitchen' or len(hearth_at) + fire_extras[0] >= hearths_most:
                     continue
                 spot = _hearth_spot(grid, need, n, doorway_sides, stair_tiles | alcove_tiles, set(rail_edges) | set(gallery_edges), wells,
                                     rooms[n].get('hearth_near'))

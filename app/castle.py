@@ -34,12 +34,17 @@ from editing import EditError
 STYLES = {
     'Imperial': {'label': 'Imperial fort', 'wall': 'ex_imp', 'keep': r'^ex_imp_keep_01$', 'halls': r'^ex_imp_keep_0[12]$', 'towers': True,
                  'name': 'Fort %s', 'gaps': (500, 700, 1200)},
+    # (the Cyrodiil Legion's set, Anvil's castle and the Gold Coast forts: the survey files its forts with the Imperial
+    # ones ('from'); its own keeps and its own wall. No round wall towers of its own are built yet)
+    'Colovian': {'label': 'Cyrodiil fort', 'from': 'Imperial', 'wall': 't_imp_legioncyr', 'keep': r'^t_imp_legioncyr_x_keep_0[12]$',
+                 'halls': r'^t_imp_legioncyr_x_keep_0[12]$', 'towers': False, 'name': 'Fort %s', 'gaps': (500, 700, 1200),
+                 'only': r'^t_imp_legioncyr_x_(keep|tower|arrowslit|kdoorframe|wallent_02|plat_|foundation)|^t_imp_legion(mw|cyr)_x_window|loaddoor|traptop|trapdoor|^t_imp_legion_door'},
     'Stronghold': {'label': 'Dunmer stronghold', 'wall': None, 'keep': r'^ex_stronghold_fort00$', 'name': '%s'},
     # (Indarys's wall hugs its buildings: 4,018 by 2,994 round a group 3,300 across)
     'Redoran': {'label': 'Redoran stronghold', 'wall': 'ex_r_pcfort', 'keep': r'^ex_r_pcfort_01$', 'gaps': (200, 250, 400),
                 'name': '%s Manor'},
 }
-NAME_CULTURE = {'Imperial': 'Imperial', 'Stronghold': 'Dunmer', 'Redoran': 'Redoran'}
+NAME_CULTURE = {'Imperial': 'Imperial', 'Colovian': 'Imperial', 'Stronghold': 'Dunmer', 'Redoran': 'Redoran'}
 SIZES = {'small': 0.8, 'medium': 1.0, 'large': 1.3}
 KEEP_STOREY = 1037             # (a keep piece on a keep piece: the Ebon Tower's keep_01 over keep_01, lab w10 2026-11-05)
 TOWER_UP = {'court': 3, 'junction': 2, 'corner': 2, 'gate': 1}   # (light storeys over the walk in a tall castle: the Ebon Tower's crowns stand 512-1920 over the wall, 2-7 storeys)
@@ -101,7 +106,7 @@ def choices(db):
         if not mods:
             continue
         out.append({'id': st, 'label': d['label'], 'modules': len(mods),
-                    'examples': sorted({f['name'].split(',')[0].title() for f in S['forts'] if f['style'] == st})[:6]})
+                    'examples': sorted({m['fort'].split(',')[0].title() for m in mods})[:6]})
     return out
 
 
@@ -141,7 +146,7 @@ def _modules(S, style, which='keep'):
     the keep, a barracks, an armoury, a chapel, a prison: Frostmoth's three, Hawkmoth's barracks, Buckmoth's prison)."""
     d = STYLES[style]
     rx = re.compile(d['keep'] if which == 'keep' else d.get('halls') or '$^', re.I)
-    out = [m for m in S['modules'] if m['style'] == style and rx.search(m['main']) and m['doors']]
+    out = [m for m in S['modules'] if m['style'] == d.get('from', style) and rx.search(m['main']) and m['doors']]
     if which == 'keep':
         # (the keep holds the halls: a module whose rooms are only a prison or a chapel stands beside it, not for it)
         out = [m for m in out if 'keep' in m['roles'] or which != 'keep']
@@ -151,6 +156,10 @@ def _modules(S, style, which='keep'):
     # (a keep whose doors all lead into rooms the castle won't have is no use: a doorless shell)
     # (and one with a door on every side, Pelagiad's thirteen, is a fort's whole yard, not a keep)
     out = [m for m in out if any(not re.search(r'trap|hatch', dd['id'], re.I) for dd in m['doors']) and len(m['doors']) <= 6]
+    if d.get('only'):
+        # (the style's own keep pieces alone: whatever else stood within reach of the game's keep stays where it was)
+        ox = re.compile(d['only'], re.I)
+        out = [_reboxed(dict(m, pieces=[pc for pc in m['pieces'] if ox.search(pc[0])])) for m in out]
     # (the game fort's own wall-walk pieces left out: Moonmoth's keep carries the two sentry towers that stand on
     # Moonmoth's wall beside it, and without that wall they hung off the keep's side, the user 2026-11-03)
     out = [dict(m, pieces=[pc for pc in m['pieces'] if not KEEP_NOT.search(pc[0])]) if any(KEEP_NOT.search(pc[0]) for pc in m['pieces']) else m
@@ -162,6 +171,27 @@ def _modules(S, style, which='keep'):
     return out
 
 
+def _reboxed(m):
+    """A module with its box drawn round the pieces it has now (their turned bounds, in its own frame)."""
+    db = _DB[0]
+    if db is None or not m.get('pieces'):
+        return m
+    xs, ys = [], []
+    for pc in m['pieces']:
+        ri = db.resolve_id(pc[0])
+        b = mapdata.object_bounds(db, ri) if ri is not None else None
+        if not b:
+            continue
+        s = pc[7] if len(pc) > 7 and pc[7] else 1.0
+        c, sn = math.cos(pc[4]), math.sin(pc[4])
+        for bx, by in ((b[0], b[1]), (b[3], b[1]), (b[3], b[4]), (b[0], b[4])):
+            xs.append(pc[1] + (bx * c + by * sn) * s)
+            ys.append(pc[2] + (-bx * sn + by * c) * s)
+    if xs:
+        m['box'] = [min(xs), min(ys), max(xs), max(ys)]
+    return m
+
+
 def _kit(db, fam):
     K = tw.kits(db)
     if fam in K:
@@ -171,7 +201,7 @@ def _kit(db, fam):
 
 def _typical(S, style):
     """The style's game forts' walled ground: (short, long) sides, the medians."""
-    sz = [sorted(f['wall_size']) for f in S['forts'] if f['style'] == style and f.get('wall_size') and f.get('wall', {}).get('pieces', 0) >= 12]
+    sz = [sorted(f['wall_size']) for f in S['forts'] if f['style'] == STYLES[style].get('from', style) and f.get('wall_size') and f.get('wall', {}).get('pieces', 0) >= 12]
     if not sz:
         return 3000.0, 3800.0
     a = sorted(s[0] for s in sz)
@@ -2036,7 +2066,7 @@ def _figures(P):
 
 
 def _game_figures(S, style):
-    fs = [f for f in S['forts'] if f['style'] == style]
+    fs = [f for f in S['forts'] if f['style'] == STYLES[style].get('from', style)]
     med = lambda xs: sorted(xs)[len(xs) // 2] if xs else None
     return {'forts': len(fs), 'interiors': med([f['interiors'] for f in fs]), 'doors_out': med([f['doors_out'] for f in fs]),
             'links': med([f['links'] for f in fs]), 'npcs': med([f['npcs'] for f in fs]),

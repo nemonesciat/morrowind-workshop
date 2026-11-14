@@ -1082,6 +1082,19 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
     # the square
     if plan.get('square'):
         sx, sy, _r = plan['square']
+        # (a fountain in its middle, benches and planters round it: Anvil's Garden Quarter and Charach, FOUNTAIN)
+        try:
+            fsc = _fountain_scene(db, plan.get('culture') or '')
+            if fsc:
+                # (the square is the street's own ground: the fountain stands in it, clear of all else)
+                got = _lay(db, fsc, sx, sy, rng.choice((0, 1, 2, 3)) * math.pi / 2, _OffStreet(space), memo)
+                if any(g['id'].lower() == fsc['things'][0]['id'] for g in got):
+                    for g in got:
+                        g['role'] = 'square'
+                        space.take(g['pts'])
+                    out.extend(got)
+        except Exception as e:
+            print('fountain:', e)
         for c in near:
             scs = [s for s in L.get('square', {}).get(c, ()) if s['things']]
             if scs:
@@ -1102,6 +1115,52 @@ def dress(db, plan, seed=1, blocked=(), amount=1.0, also=()):
     _KEPT.clear()
     _KEPT.update(plan=plan, L=L, space=space, memo=memo, rng=rng, amount=amount, mine={id(o) for o in out})
     return out
+
+
+# The square's fountain (docs/cyrodiil-study-2026-11.md): Anvil's Garden Quarter and Charach stand t_imp_setanv_x_fountain_01
+# at scale 1 in the middle of their plaza, 58 over the paving, benches (19 over the ground) and planters by it.
+FOUNTAIN = {'Anvil': ('t_imp_setanv_x_fountain_01', 58.0, 1.0), 'Gold Coast': ('t_imp_setanv_x_fountain_01', 46.0, 0.8)}
+FOUNTAIN_BENCH = ('t_imp_setgc_x_bench_01', 19.0, 400.0)
+FOUNTAIN_PLANTER = ('t_imp_setgc_x_planter_01', 0.0, 540.0)
+
+
+class _OffStreet:
+    """A dressing's space with its streets left out: for what belongs in the middle of a square."""
+
+    def __init__(self, space):
+        self.space = space
+        self.polys = [p for p in space.polys if space.kind.get(id(p)) != 'street']
+        self.kind = space.kind
+
+    def free(self, pts):
+        return not any(_overlap(pts, p) for p in self.polys)
+
+    def why(self, pts):
+        return self.space.why(pts)
+
+    def take(self, pts):
+        self.polys.append(pts)
+        self.space.take(pts)
+
+
+def _fountain_scene(db, culture):
+    """The fountain with its four benches and four planters as a scene for _lay, or None where the style or the load
+    order has none."""
+    F = FOUNTAIN.get(culture)
+    if not F or db.resolve_id(F[0]) is None:
+        return None
+    things = [{'id': F[0], 'x': 0.0, 'y': 0.0, 'z': F[1] * F[2], 'rz': 0.0, 'hang': False, 's': F[2]}]
+    if db.resolve_id(FOUNTAIN_BENCH[0]) is not None:
+        r = FOUNTAIN_BENCH[2] * F[2]
+        for k in range(4):
+            a = k * math.pi / 2
+            things.append({'id': FOUNTAIN_BENCH[0], 'x': round(r * math.sin(a), 1), 'y': round(r * math.cos(a), 1), 'z': FOUNTAIN_BENCH[1], 'rz': a, 'hang': False, 's': 1.0})
+    if db.resolve_id(FOUNTAIN_PLANTER[0]) is not None:
+        r = FOUNTAIN_PLANTER[2] * F[2]
+        for k in range(4):
+            a = k * math.pi / 2 + math.pi / 4
+            things.append({'id': FOUNTAIN_PLANTER[0], 'x': round(r * math.sin(a), 1), 'y': round(r * math.cos(a), 1), 'z': FOUNTAIN_PLANTER[1], 'rz': a, 'hang': False, 's': 1.0})
+    return {'things': things}
 
 
 _KEPT = {}                     # (the last dressing's space, for lamps)

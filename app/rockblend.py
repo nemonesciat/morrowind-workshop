@@ -538,6 +538,12 @@ class _Space:
             cs = p_.get('corners')
             if cs and len(cs) >= 4:
                 self.wall.append(townbuild._grown([tuple(c) for c in cs[:4]], 32.0))
+        # (a gate of a wall of round towers or piers: its own way, in and out, kept as a door's way is)
+        try:
+            import townwalls
+            self.ways += townwalls.gate_ways(W)
+        except Exception:
+            pass
         # (and the retaining walls along the streets' sheer sides, laid before the rocks: retain.py)
         for q_ in plan.get('_retain') or ():
             self.wall.append([tuple(c_) for c_ in q_])

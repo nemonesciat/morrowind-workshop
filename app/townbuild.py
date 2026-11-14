@@ -1645,7 +1645,8 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
         # (drawn by the user, "like ridges that lock into a grid once you put down your first point", PIN2)
         K = townwalls.kits(db)
         fam = walls if walls in K else townwalls.pick_family(db, plan)
-        poly = townwalls.square_up(drawn, K[fam]['L']) if fam else []
+        # (a wall of round towers stands on the drawing's own lines, a tower on each corner: townwalls.round_outline)
+        poly = (townwalls.round_outline(plan, K[fam], drawn) if K[fam].get('round') else townwalls.square_up(drawn, K[fam]['L'])) if fam else []
     else:
         # (the wall on the town as drawn, townwalls._drawn_outline: opts['hug'] for the old wall round the buildings)
         if len(outline) >= 3 and not opts.get('hug'):
@@ -1660,7 +1661,13 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
         angled = W.get('angled')
     if len(poly) < 4:
         return plan
-    inner = townplan.inset(poly, WALL_BACK)
+    # (a deep wall, Anvil's 700 with towers 1,034 across: the town planned that much further in)
+    try:
+        fam_ = walls if walls in townwalls.kits(db) else townwalls.pick_family(db, plan)
+        deep_ = ((townwalls.kits(db).get(fam_) or {}).get('round') or {}).get('back', 0.0)
+    except Exception:
+        deep_ = 0.0
+    inner = townplan.inset(poly, WALL_BACK + deep_)
     pl = townplan.plan(db, inner, culture, seed, walled=True, ring=True, opts=opts)
     if opts.get('own'):
         pl['own'] = opts['own']
@@ -1670,8 +1677,8 @@ def planned(db, outline, culture, seed=1, walls='', opts=None):
     pl['nokeep'] = bool(opts.get('nokeep'))     # (a castle's quarter: no keep building in it)
     _say('Choosing the buildings', P * 0.85)
     try:
-        pl['wall_room'] = [list(p_) for p_ in townplan.inset(poly, WALL_ROOM)]
-        pl['wall_way'] = [list(p_) for p_ in townplan.inset(poly, WALL_WAY)]
+        pl['wall_room'] = [list(p_) for p_ in townplan.inset(poly, WALL_ROOM + deep_)]
+        pl['wall_way'] = [list(p_) for p_ in townplan.inset(poly, WALL_WAY + deep_)]
     except Exception as e:
         print('wall room:', e)
     import copy
@@ -2231,7 +2238,7 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 continue
             rk = db.project.new_ref_key()
             editing._store(cell, rk, mine, int(rk.rsplit('|', 1)[1]),
-                           set_ref_pos([('NAME', zs(db.recs[ri][1]))], (q_.x, q_.y, q_.z, 0.0, 0.0, q_.rz % (2 * math.pi)), 1.0))
+                           set_ref_pos([('NAME', zs(db.recs[ri][1]))], (q_.x, q_.y, q_.z, 0.0, 0.0, q_.rz % (2 * math.pi)), getattr(q_, 's', 1.0) or 1.0))
             wall_refs.append((key, rk, p_['id'], [q_.x, q_.y, q_.z, 0.0, 0.0, q_.rz % (2 * math.pi)]))
             wall += 1
             pieces += 1
@@ -2358,6 +2365,10 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         _say('Dressing yards and streets', 0.89)
         import towndress
         blocked = [p_['corners'] for p_ in (W or {}).get('pieces') or () if p_.get('corners')]
+        try:
+            blocked += townwalls.gate_ways(W)          # (a round wall's gateways: no dressing, no yard, no tree in them)
+        except Exception as e_:
+            print('gate ways:', e_)
         db.sync_project()
         # (what the buildings already carry: a banner of a building's own and another its surroundings brought, set
         # in one spot, flickered)
@@ -2385,6 +2396,25 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             laid_ += towndress.lamps(db, plan, laid_, also)
         except Exception as e_:
             print('town lamps:', e_)
+        # (a wall of round towers stands on boulders where the ground falls from its foot: townwalls.foot_rocks)
+        try:
+            if W and W.get('pieces'):
+                fr_ = townwalls.foot_rocks(db, W, seed)
+                if fr_:
+                    print('town: %d boulders set under the wall where its foot showed' % len(fr_))
+                laid_ += fr_
+        except Exception as e_:
+            print('town foot rocks:', e_)
+        # (a town of the Anvil or Gold Coast styles on the water: stone quays out from its shore, a ship at each, quays.py)
+        if (opts or {}).get('harbour', True):
+            try:
+                import quays
+                q_ = quays.for_town(db, plan, W, seed)
+                if q_:
+                    print('town: %d quays of %d pieces, %d ships, %d boats' % (quays.LAST.get('fingers', 0), quays.LAST.get('pieces', 0), quays.LAST.get('ships', 0), quays.LAST.get('boats', 0)))
+                laid_ += q_
+            except Exception as e_:
+                print('town quays:', e_)
         for t in laid_:
             ri = db.resolve_id(t['id'])
             if ri is None:

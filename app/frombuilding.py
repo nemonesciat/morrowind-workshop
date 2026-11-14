@@ -1310,6 +1310,8 @@ def map_features(db, b, rooms, where, T, storey):
         r = rooms[where[(t[0], t[1], 0)]]
         if r.get('hearth_near'):
             continue
+        if sum(1 for x in rooms if x.get('hearth_near')) >= (1 if len(rooms) < 5 else 2):
+            continue                                  # (one hearth a place of under five rooms, two above: the game's own)
         r['hearth_near'] = [round(px, 2), round(py, 2)]
         if not KITCHEN_RE.search(r['name']):
             was = r['name']

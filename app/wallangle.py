@@ -62,9 +62,11 @@ def _turn(a, b, c):
     return abs((math.degrees(v - u) + 180.0) % 360.0 - 180.0)
 
 
-def simplify(P, L, pinned=()):
+def simplify(P, L, pinned=(), least=None):
     """The outline with only its real corners: points that hardly turn taken out, and the corner between two sides of
-    which one is shorter than a wall can be. pinned: points that stay (a castle's corners)."""
+    which one is shorter than a wall can be. pinned: points that stay (a castle's corners). least: the lengths a side
+    holds at least (SIDE_LEAST; a wall of round towers holds one, townwalls.ROUND)."""
+    least = SIDE_LEAST if least is None else least
     P = [tuple(p) for p in P]
     pin = {(round(p[0]), round(p[1])) for p in pinned}
     is_pin = lambda p: (round(p[0]), round(p[1])) in pin
@@ -85,7 +87,7 @@ def simplify(P, L, pinned=()):
         # (the shortest side under the least: the end of it that turns less goes; a pinned end stays)
         short = sorted((_d(P[k], P[(k + 1) % n]), k) for k in range(n))
         for s, k in short:
-            if s >= (SIDE_LEAST - 0.4) * L:      # (a little short is lengthened after: fit_lengths)
+            if s >= (least - 0.4) * L:      # (a little short is lengthened after: fit_lengths)
                 break
             i, j = k, (k + 1) % n
             cand = [x for x in (i, j) if not is_pin(P[x])]
@@ -144,13 +146,13 @@ def blunt(P, L, pinned=()):
     return P
 
 
-def window(S, L):
+def window(S, L, hide=None, least=None):
     """(pieces, low, high): how many lengths a side S long holds and the lengths it may have with them."""
-    n = max(SIDE_LEAST, int((S + 1e-6) // L))
-    return n, n * L, n * L + 2.0 * HIDE
+    n = max(SIDE_LEAST if least is None else least, int((S + 1e-6) // L))
+    return n, n * L, n * L + 2.0 * (HIDE if hide is None else hide)
 
 
-def fit_lengths(P, L, fort_sides=(), pinned=()):
+def fit_lengths(P, L, fort_sides=(), pinned=(), hide=None, least=None):
     """The corners moved a little so every side holds whole lengths with its ends inside the towers: a side between
     n and n lengths and two HIDEs long as it is; one longer, shortened to that or lengthened to n + 1, whichever is
     less; each end moved half the change along the side. (P, worst miss left)."""
@@ -169,7 +171,7 @@ def fit_lengths(P, L, fort_sides=(), pinned=()):
             S = _d(P[i], P[j])
             if S < 1:
                 continue
-            m, lo, hi = window(S, L)
+            m, lo, hi = window(S, L, hide, least)
             if S < lo:
                 dl = lo - S
             elif S > hi:
