@@ -1507,6 +1507,9 @@ def _dress(db, style, dressing, kp, grid, need, choice, tile_piece, refs, centre
                 c2 = dict(canon, x=canon['x'] + max(0.0, plane - (face - 1)))
                 refs.append((pid, place(c2, cx, cy, z0 + fz_ + k * H, s), []))
     arches, beam = rules['arches'], rules['beam']
+    if kp.get('sheet_kit'):
+        _sheet_arcade(db, kp, rules, grid, need, refs, centre, zf, z0, T, H, doorway_sides, stair_tiles, wells, voids, rooms)
+        arches = []
     for t in sorted(grid):
         if t in wells or t in stair_tiles:
             continue
@@ -1540,7 +1543,7 @@ def _dress(db, style, dressing, kp, grid, need, choice, tile_piece, refs, centre
                     cx, cy = centre(t)
                     refs.append((fid, (cx, cy, z0 + zf(t) + (0.5 if t in wells else 0.2), 0, 0, 0), []))
     pil = rules['pillar']
-    if pil['id'] and (pil['corner1'] or pil['corner2'] or pil['inner']):
+    if pil['id'] and (pil['corner1'] or pil['corner2'] or pil['inner']) and not kp.get('sheet_kit'):
         cb = box(pil['id'])
         if cb:
             obx, oby = (cb[0] + cb[3]) / 2.0, (cb[1] + cb[4]) / 2.0
@@ -1615,6 +1618,108 @@ def _dress(db, style, dressing, kp, grid, need, choice, tile_piece, refs, centre
                 # (a hair out from the jamb, along the panel's own face: in the jamb's plane the jamb's own
                 # plaster face meets it exactly and shows through it)
                 refs.append((pid, (sp[0] - 1.5 * math.sin(rz), sp[1] - 1.5 * math.cos(rz), sp[2], 0, 0, rz), []))
+
+
+QUADS =(('NE', 0, 0), ('NW', -1, 0), ('SW', -1, -1), ('SE', 0, -1))        # (a point's four tiles: which, and its tile's x, y from the point's)
+# (two quarters side by side make a half: the pair, the side of the first one's tile that lies between them, the half's turn)
+HALVES = ((('NE', 'NW'), 'W', math.pi / 2), (('NW', 'SW'), 'S', 0.0), (('SW', 'SE'), 'E', 3 * math.pi / 2), (('SE', 'NE'), 'N', math.pi))
+QUARTER_TURN = {'NW': 0.0, 'NE': math.pi / 2, 'SE': math.pi, 'SW': 3 * math.pi / 2}
+SIDE_TURN = {'W': 0.0, 'N': math.pi / 2, 'E': math.pi, 'S': 3 * math.pi / 2}   # (a sheet kit's wall, door wall or arch onto a side of its tile)
+HALL_PURPOSES = ('hall', 'chapel', 'shrine', 'temple')
+
+
+def _sheet_arcade(db, kp, rules, grid, need, refs, centre, zf, z0, T, H, doorway_sides, stair_tiles, wells, voids, rooms):
+    """A sheet kit's columns and arches, stood as the game's chapels stand them (31 places read 2026-11-15, after
+    the user's Walkford chapel): a column's origin lies on a point where four tiles meet (743 of 800) at any of the
+    four turns alike, for its model is a half column that stands out west of its origin; a quarter (TileColQrt)
+    where one tile alone has the point, a room's corner. So: on every point a wall runs to, a quarter for each
+    tile round it, two side by side with nothing between them as one half; a hall's points with open floor all
+    round, two halves back to back (the game's own pair). An arch (TileArch_01, the top of a bay, 253 up) stands
+    at its tile's centre turned like a wall, its body over the tile's edge: over the open joins of a room whose
+    two ends both have a column, and no other. (Before: the half column centred on its box at no turn, behind the
+    wall on one side of the room and through it on the other; an arch over a join whatever stood under its ends.)"""
+    pil = rules.get('pillar') or {}
+    hri = db.resolve_id(pil['id']) if pil.get('id') else None
+    hb = mapdata.object_bounds(db, hri) if hri is not None else None
+    # (only a half column of the kind measured: flat-backed at its origin, standing out one way)
+    if not hb or not (abs(hb[3]) < 4 and hb[0] < -8 and abs(hb[1] + hb[4]) < 8):
+        return
+    half = db.recs[hri][1]
+    qri = db.resolve_id(re.sub(r'col_\d+$', 'colqrt_01', half.lower()))
+    qb = mapdata.object_bounds(db, qri) if qri is not None and qri != hri else None
+    quarter = db.recs[qri][1] if qb and abs(qb[3]) < 4 and abs(qb[1]) < 4 else None
+
+    import furnish
+
+    def purpose(n):
+        r = rooms[n]
+        w, h = int(r.get('w', 1)), int(r.get('h', 1))
+        return str(r.get('purpose') or furnish.purpose_for(r.get('name') or '', w * h, w, h) or '').lower()
+
+    def shut(t, s):
+        n2 = nb(t, s)
+        return n2 not in grid or n2 in wells or need[t][s] != 'open' or need[n2][OPPOSITE[s]] != 'open' \
+            or (t, s) in doorway_sides or (n2, OPPOSITE[s]) in doorway_sides
+
+    skip = _void_corners(wells, voids)
+    for st in stair_tiles:
+        for lv in (st[2], st[2] + 1):
+            for cx_ in (0, 1):
+                for cy_ in (0, 1):
+                    skip.add((st[0] + cx_, st[1] + cy_, lv))
+    points = {}
+    for (x, y, f) in grid:
+        for cx_ in (0, 1):
+            for cy_ in (0, 1):
+                points[(x + cx_, y + cy_, f)] = None
+    stood = set()
+    for (i, j, f) in sorted(points):
+        if (i, j, f) in skip:
+            continue
+        here = {q: (i + dx, j + dy, f) for q, dx, dy in QUADS}
+        here = {q: t for q, t in here.items() if t in grid and t not in wells and t not in stair_tiles}
+        if not here:
+            continue
+        # (the sides of these tiles that run to the point)
+        runs = {'NE': 'WS', 'NW': 'ES', 'SW': 'EN', 'SE': 'WN'}
+        walled = any(shut(t, s) for q, t in here.items() for s in runs[q])
+        if not walled:
+            # (open floor all round: a free column, in a hall only, never in a room people live in)
+            if len(here) < 4 or len({grid[t] for t in here.values()}) > 1 or purpose(grid[here['NE']]) not in HALL_PURPOSES:
+                continue
+        wx, wy = (i - 0.5) * T, (j - 0.5) * T
+        zt = z0 + zf(next(iter(here.values())))
+        left = set(here)
+        for (qa, qb_), side, turn in HALVES:
+            if qa in left and qb_ in left and not shut(here[qa], side):
+                refs.append((half, (wx, wy, zt - hb[2], 0, 0, turn), []))
+                left -= {qa, qb_}
+                stood.add((i, j, f))
+        for q in sorted(left):
+            if quarter:
+                refs.append((quarter, (wx, wy, zt - qb[2], 0, 0, QUARTER_TURN[q]), []))
+                stood.add((i, j, f))
+    arch = None
+    for pid, _so, _sd, _canon in rules.get('arches') or ():
+        ari = db.resolve_id(pid)
+        ab = mapdata.object_bounds(db, ari) if ari is not None else None
+        # (the top of one bay: a tile long, clear of the floor, beside its origin as the kit's walls are)
+        if ab and max(ab[3] - ab[0], ab[4] - ab[1]) <= T * 1.05 and ab[2] >= H * 0.4 and ab[3] < -T * 0.3:
+            arch = pid
+            break
+    if not arch:
+        return
+    ends = {'N': ((0, 1), (1, 1)), 'E': ((1, 0), (1, 1))}
+    for t in sorted(grid):
+        if t in wells or t in stair_tiles:
+            continue
+        for s in ('N', 'E'):
+            n2 = nb(t, s)
+            if shut(t, s) or grid[n2] != grid[t] or n2 in stair_tiles:
+                continue
+            if all((t[0] + a, t[1] + b, t[2]) in stood for a, b in ends[s]):
+                cx, cy = centre(t)
+                refs.append((arch, (cx, cy, z0 + zf(t), 0, 0, SIDE_TURN[s]), []))
 
 
 def _grid(rooms):
@@ -3931,6 +4036,21 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         cx, cy = centre(t)
         mx, my = cx + STEP[s][0] * T / 2, cy + STEP[s][1] * T / 2
         along_y = s in 'EW'
+        if kp.get('sheet_kit'):
+            # (as the game's chapels have it: the door wall on each of the two tiles, back to back like the kit's
+            # other walls between rooms, and the set's door hung on the edge between them)
+            n2 = nb(t, s)
+            c2 = centre(n2)
+            refs.append(_loose_wall_ref(db, plain_jamb, cx, cy, s, zf(t), T, kp))
+            refs.append(_loose_wall_ref(db, plain_jamb, c2[0], c2[1], OPPOSITE[s], zf(n2), T, kp))
+            inner_door = (_co_used(db, kp, 'DOOR', lambda k_: 'load' in k_ or 'door' in k_) or [None])[0]
+            dri = db.resolve_id(inner_door) if inner_door else None
+            dbx = mapdata.object_bounds(db, dri) if dri is not None else None
+            if dbx:
+                drot_ = 0 if along_y == ((dbx[3] - dbx[0]) < (dbx[4] - dbx[1])) else math.pi / 2
+                ddx, ddy = _centred(db, dri, mx, my, drot_)
+                refs.append((inner_door, (ddx, ddy, -dbx[2] + zf(t), 0, 0, drot_), []))
+            continue
         rot = 0 if along_y == plain_jamb['thin_x'] else math.pi / 2
         mx, my = _centred(db, plain_jamb['ri'], mx, my, rot)
         refs.append((plain_jamb['id'], (mx, my, -plain_jamb['zmin'] + zf(t), 0, 0, rot), []))
@@ -3987,9 +4107,14 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
         door_scale = hug['scale'] if hug else learned_door[3]
     elif exit_how == 'frame':
         jx, jy = cx + sx * T / 2, cy + sy * T / 2
-        rot = 0 if along_y == load_jamb['thin_x'] else math.pi / 2
-        px, py = _centred(db, load_jamb['ri'], jx, jy, rot)
-        refs.append((load_jamb['id'], (px, py, -load_jamb['zmin'] + zf(exit_tile), 0, 0, rot), []))
+        if kp.get('sheet_kit'):
+            # (a sheet kit's door wall is a wall like its others: one-sided, in line with the walls beside it. Centred
+            # on the edge at no chosen turn it showed the room its back, the door in a black hole)
+            refs.append(_loose_wall_ref(db, load_jamb, cx, cy, exit_side, zf(exit_tile), T, kp))
+        else:
+            rot = 0 if along_y == load_jamb['thin_x'] else math.pi / 2
+            px, py = _centred(db, load_jamb['ri'], jx, jy, rot)
+            refs.append((load_jamb['id'], (px, py, -load_jamb['zmin'] + zf(exit_tile), 0, 0, rot), []))
         dx, dy = jx, jy
     elif exit_how == 'entry' and exit_fit:
         # exactly as the game does it in this doorway: the same door, size and frame
@@ -4187,7 +4312,11 @@ def build_interior(db, name, style, rooms, doors=None, exit=None, entrance=None,
                windowed, stair_tiles, wells, voids, rooms, extras.seeded(name + ' dressing'))
     # ---- the last slits: two walls stopping short of the corner they make, anywhere in the house (_slit_posts);
     # after the dressing, whose pilasters close some of them
-    _slit_posts(db, kp, grid, choice, centre, zf, z0, T, refs)
+    # (not in a sheet kit: its walls are sheets that cross at the corner, 14 in from both edges, nothing shows
+    # between them, and its own quarter column stands there; the post was the Gold Coast's timber pillar in each
+    # corner of a marble chapel. A test chapel of three rooms: no fault with or without them, 2026-11-15)
+    if not kp.get('sheet_kit'):
+        _slit_posts(db, kp, grid, choice, centre, zf, z0, T, refs)
     # ---- some light to see by
     if lights:
         # a hanging lantern of the kind used in places like this, from the ceiling
@@ -4461,6 +4590,9 @@ def _build_house(db, name, style, rooms, doors=None, exit=None, entrance=None, l
     learned = kits.edge_doors(db, style)
     inner = next((e['door'] for e in learned if e['door'] and e['b'] != 'out'), None) or \
         next((e['door'] for e in learned if e['door']), None)
+    if not inner and kp.get('sheet_kit'):
+        # (a sheet kit learns no doorways from edges, see kits.edge_doors: the door the game stands with its pieces)
+        inner = next((d_ for d_ in _co_used(db, kp, 'DOOR', lambda k_: 'door' in k_ and 'trap' not in k_)), None)
     up_door = inner if inner and db.resolve_id(inner) is not None else 'in_hlaalu_door'
     # the way up out of a cellar: a ladder, as in the game's own cellars (a door if there's none)
     ladder = next((l for l in ('t_de_set_ladderload_03', 'ex_mh_pav_ladder_01', 'in_mh_pav_ladder', 't_imp_setkva_ladder_01')

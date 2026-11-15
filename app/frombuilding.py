@@ -522,6 +522,9 @@ def _tiles_in(cells, T, keep_door=True, cover=COVER):
     return seen
 
 
+NAVE_WHOLE = 12               # (a chapel's ground floor of up to this many tiles is one room, its nave: cut by size, the
+                              #  user's Walkford chapel of 9 tiles was a hall of 6 with three doors in it and a back room,
+                              #  no wall left for the altar but one beside the front door; 2026-11-15)
 GUEST_ROOM = 3.0              # (an inn's upper floor: a guest room for about this many tiles of it,
 GUEST_ROOMS_MOST = 5          #  this many a floor at most. The game's rooms with a bed in its taverns are 1.0 to 3.2 tiles,
                               #  two of them in the middling tavern, four in the upper quarter; the night of 2026-11-14)
@@ -874,9 +877,14 @@ def _plan(db, b, kit=None, cover=COVER, floors=None, ch=None, tiles=None, force=
     trade = shop_trade(b)
     sizes = room_sizes(db, _family(kit))
     rooms, where = [], {}
+    import styletrust
+    chapel_ = b.get('theme') == 'temple' or styletrust.KIND.get(str(kit or '').split('@')[0]) == 'chapel'
     for f, ts in sorted(per.items()):
         rng = _dealer(b, f)
-        for n, comp in enumerate(_split(ts, tile_parts, always, SHOP_ROOM_MAX if trade else None, rng, sizes) if f == 0 else
+        # (a chapel's ground floor of up to NAVE_WHOLE tiles is its nave, whole: see NAVE_WHOLE)
+        nave_ = f == 0 and chapel_ and not always and not trade and len(ts) <= NAVE_WHOLE
+        for n, comp in enumerate(_components(ts) if nave_ else
+                                 _split(ts, tile_parts, always, SHOP_ROOM_MAX if trade else None, rng, sizes) if f == 0 else
                                  [c for comp in _components(ts) for c in _split(comp, tile_parts, always, None, rng, sizes,
                                                                                min_rooms=guest_rooms(b, f, len(comp)))]):
             names = ROOM_NAMES.get(f, ['Room'])

@@ -517,7 +517,11 @@ def kit_pieces(db, prefix):
             # a wall section with a doorway through it (Tamriel Data's Redguard "Wall_Door"): the
             # same thing as a Hlaalu door frame, by another name, if there's a hole to walk through
             fh = frame_hole(db, ri)
-            if fh and fh[2] >= 64 and fh[3] >= full_h * 0.6:
+            # (a sheet kit's storey is its tall wall's, 368 in the chapel set, and the doorway of the door wall the
+            # game hangs the set's own door in, TileDoorW with DoorIn 117 times, is 218 of it: at 0.6 it was left
+            # out, and the wall with the tall portal for the great chapel doors, TileDoorF, made every doorway,
+            # the small door in a hole a storey high)
+            if fh and fh[2] >= 64 and fh[3] >= full_h * (0.55 if k.get('sheet_kit') else 0.6):
                 item['load'] = False
                 door_walls.append(item)
     # the vanilla canton sets and Tamriel Data name their doorway tile "entrance" or "entr" (Mournhold's
@@ -1405,6 +1409,13 @@ def edge_doors(db, prefix):
         return []
     if prefix in _edges and _edges[prefix][0] is db.recs:
         return _edges[prefix][1]
+    if k.get('sheet_kit'):
+        # (a sheet kit's walls, door walls and arches stand at their tile's centre, their bodies a half tile out; a
+        # piece whose origin does lie on an edge is no doorway there: the chapel's TileArch_02, an arcade two tiles
+        # long beside its origin, was learnt as the doorway between two rooms and stood across the hall as two
+        # loose piers. The builder stands such a kit's door walls itself)
+        _edges[prefix] = (db.recs, [])
+        return []
     from mapdata import ref_info
     T = k['tile']
     floor_ids = {p['id'].lower(): p for p in k['pieces']}

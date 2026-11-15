@@ -367,6 +367,9 @@ def roll(db, cell, ref, kind=None, level=None, until=None, cellar=None):
             like = ((out.get('cells') or [{}])[0].get('from')) if (out.get('plan') or {}).get('style_name') == 'Ready-made interiors' else None
             try:
                 towninside.make_own(db, key, like, 'furnished', seed, st['kind'] or None, None, level=st.get('level'))
+                # (and the roll's other storeys, where each is a place of its own: they were left bare)
+                for k_, st_ in towninside.storey_places(db, key):
+                    towninside.make_own(db, k_, k_, 'furnished', seed + st_, st['kind'] or None, None, level=st.get('level'), storey=st_)
             except EditError as e:
                 print('roll furnish:', name, e)
             db.sync_project()

@@ -134,6 +134,9 @@ DRESSED_KINDS = ('bookshelf', 'shelf', 'table', 'counter', 'rack', 'cupboard', '
 ARRANGE = True                  # lay the game's own set pieces first (arrangesurvey.py)
 SCENES = True                   # and every recipe kind the game keeps company as a scene (arrangesurvey.scene)
 TRADES = True                   # trade rooms from their own anchor sets, smith's tools only at a forge (tradesurvey.py)
+NAVE = True                    # (a temple's shrine room with the front door in it is a nave: see nave_far in furnish())
+NAVE_TILES = 6                 # (... of this many 256-tiles or more: a hut of a chapel keeps its priest's table)
+NAVE_NOT = ('table', 'chair', 'stool', 'crate', 'barrel', 'sack', 'counter', 'basket')
 SCENE_KINDS = ('table', 'bed', 'bookshelf', 'shelf', 'cupboard', 'counter', 'shrine', 'bench', 'planter', 'fire', 'chest', 'screen')
 SMALL_KINDS = ('crate', 'planter', 'urn', 'basket', 'chest', 'sack', 'barrel', 'screen')   # never alone in open floor
 # what rides on what: a set piece's small member only on the kind of main piece the game had it on
@@ -4201,6 +4204,25 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 off_ = (d_['p'][0] - mid_[0]) if inward_[1] else (d_['p'][1] - mid_[1])
                 ax_pt = (d_['p'][0], d_['p'][1]) if abs(off_) < T * 0.3 else mid_
                 entry_axis = (ax_pt, inward_)
+        # a chapel's nave: the temple's shrine room the front door opens into. The altar stands at its far end, on the
+        # door's line, and the nave holds no household's table or stores (the user's Walkford chapel, 2026-11-15: the
+        # altar on a side wall beside the door, a laid dining table with bread at the far end, a bar stool, a sack)
+        nave_far = None
+        nave = False
+        if NAVE and theme == 'temple' and purpose == 'shrine':
+            fds_ = front_doors(room, refs, T, info['rooms'])
+            if fds_:
+                d_, inward_ = fds_[0]
+                dmx_, dmy_ = d_['p'][0], d_['p'][1]
+                if d_.get('b'):
+                    # (a door's origin is its hinge: its leaf's middle)
+                    s_ = d_.get('s') or 1.0
+                    c_, sn_ = math.cos(d_['p'][5]), math.sin(d_['p'][5])
+                    lx_, ly_ = (d_['b'][0] + d_['b'][3]) / 2 * s_, (d_['b'][1] + d_['b'][4]) / 2 * s_
+                    dmx_, dmy_ = dmx_ + lx_ * c_ + ly_ * sn_, dmy_ - lx_ * sn_ + ly_ * c_
+                nave_far = (dmx_, room['y_max'] if inward_[1] > 0 else room['y_min']) if inward_[1] else \
+                    (room['x_max'] if inward_[0] > 0 else room['x_min'], dmy_)
+                nave = room['tiles'] * (T / 256.0) ** 2 >= NAVE_TILES
         MIRROR_KINDS = ('bench', 'lamp', 'planter', 'urn', 'chest', 'basket', 'screen', 'chair', 'bookshelf', 'shelf', 'barrel', 'sack')
         WALL_MIRROR = ('bench', 'chest', 'screen', 'bookshelf', 'shelf', 'barrel')   # (these keep a wall at their back on the far side too)
 
@@ -4264,6 +4286,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     if not ok_:
                         return None
                 lst = ok_ or lst
+                if nave_far is not None:
+                    # (a nave's altar is one that can stand as it is: drawn at random, the altar the game gives a
+                    # statue two times in three was left out when no statue was to hand, and with it the altar:
+                    # three of six made naves had none, 2026-11-15)
+                    lst = [r for r in lst if shrine_ok(r)[1]] or lst
             if kind in CONTAINER_KINDS:
                 # the container the game stands in rooms like this, in places like this, with its
                 # contents (a kitchen barrel's saltrice, a bedroom chest's clothes and coins); in places
@@ -4556,6 +4583,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 lw_ = bed_lengthwise(b, front, pp, gap)
                 if lw_ is not None:
                     return lw_
+            if kind == 'shrine' and near is None and nave_far is not None:
+                near = nave_far                  # (a nave's altar: the far end first, then the walls nearest it)
             order = slot_order(where, pp)
             # (a window takes up its wall: nothing that reaches over its sill stands before it. Not asked of what is
             # set under a window on purpose, a planter or a basket on the window's own line)
@@ -5923,7 +5952,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 # did: a bookshelf stood 223 units out in a study from a mid-room example; a shrine too:
                 # the game's stand at a median 90 from the wall, and the user's saint shrine stood "in
                 # the middle of a Common stone cellar room, beside a bench, nothing round it")
-                done, face = wall_spot(b, front, 'corner' if where == 'corner' else 'wall', kind=a['fam'] if a['fam'] in ('bed', 'table') else None)
+                done, face = wall_spot(b, front, 'corner' if where == 'corner' else 'wall', kind=a['fam'] if a['fam'] in ('bed', 'table') else None,
+                                       near=nave_far if a['fam'] == 'shrine' else None)
             else:
                 rot = _turn_to_face(front, (0, -1)) if front else 0.0
                 for dx, dy in ((0, 0), (64, 0), (-64, 0), (0, 64), (0, -64)):
@@ -7501,6 +7531,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             if purpose == 'mess':
                 # (a mess is one long bench table by its own rule, not the game's small table sets)
                 picks = [ex for ex in picks if ex['anchor']['fam'] != 'table']
+            if nave:
+                # (nor a nave: no table set or store among its set pieces, and the altar's first, for the far end)
+                picks = [ex for ex in picks if ex['anchor']['fam'] not in NAVE_NOT]
+                picks.sort(key=lambda ex: ex['anchor']['fam'] != 'shrine')
             if trade == 'smith':
                 picks = [ex for ex in picks if ex['anchor']['fam'] != 'forge']
             if theme == 'house' and purpose not in ('armoury', 'training', 'barracks', 'guardroom'):
@@ -7577,6 +7611,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 last_trace.append((room['name'], 'fire', 'no hearth this time: a home\'s %s has one %d times in ten' % (
                     'room under a chimney' if room.get('hearth_near') else 'room with no chimney over it', 10 * (HOME_HEARTH[0] if room.get('hearth_near') else HOME_HEARTH[1]))))
         for kind, count, where in recipe_rows:
+            if nave and kind in NAVE_NOT:
+                continue                                           # (a nave is no dining room and no store)
             if kind == 'fire' and built_hearths:
                 continue                                           # (the room has its hearth in the building)
             if kind == 'fire' and not rough and not sketch:

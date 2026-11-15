@@ -699,7 +699,21 @@ STAND_IN = {'smith': ('shop', 'Smith'), 'shop': ('shop', 'Trader'), 'tavern': ('
 SMITH_PLOT = 1000000            # (a smith's building: at least this footprint, w x d, for a ground room that takes a forge)
 
 
-def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
+STOREY_PLACES = ((': upstairs', 1), (': top floor', 2), (': cellar', -1), (': lower cellar', -2))     # (builder.FLOOR_TITLES)
+
+
+def storey_places(db, key):
+    """The other places of a building made as a place a storey (a kit with no stairs the builder trusts: floors joined
+    by doors, builder.build_house): [(place key, storey)], upper storeys positive, cellars negative."""
+    out = []
+    for tail, st in STOREY_PLACES:
+        k_ = key.lower() + tail
+        if k_ in db.project.cells and (db.project.cells[k_].get('plan') or {}).get('rooms'):
+            out.append((k_, st))
+    return out
+
+
+def household_kinds(db, key, kind, head_cls, n_rooms_hint=None, storey=None):
     """A function (room, kind read off the source, counts) -> the kind to furnish it as, for a town building of the
     plot kind with a head of that class; or None to keep the source's reading. kind 'guild:mages' / 'guild:fighters' /
     'guild:thieves' names the guild (from the sign outside); plain 'guild' goes by the head's class."""
@@ -721,6 +735,8 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
     if kind in ('house', 'manor', 'farm', 'shack') and trade in ('tavern', 'shrine'):
         trade = None                         # (a priest's or a publican's home is a home: a hut furnished as a shrine held 7 things)
     state = {'shop': False, 'living': False, 'bed': 0, 'seen': 0}
+    if storey and storey >= 2:
+        state['bed'] = 2                     # (the storey under this one holds the beds: a top floor is studies and the like)
     # (how many rooms the place has: a household gets a bedroom by its last room at the latest. The Workshop's own
     # layouts read no kind off the game's rooms, and a two-room house came out living + kitchen with no bed, lab own)
     try:
@@ -781,6 +797,10 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
         tl = rm.get('_tiles') or ()
         upper = z0 is not None and fl is not None and fl > z0 + STOREY
         cellar = z0 is not None and fl is not None and fl < z0 - STOREY
+        if storey:
+            # (a storey that is a place of its own has no front door to tell its height by: every room of it was
+            # "ground", and a chapel's upper place would have been a second shrine, an inn's a second bar)
+            upper, cellar = storey > 0, storey < 0
         big = len(tl) >= 6 or (len(tl) >= 3 and len(tl) >= ground_max)
         if kind == 'guild':
             # (a guild hall is its guild's: the mages' an enchanter's hall with an alchemist's room and studies, beds
@@ -825,7 +845,8 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
             if not upper and big and not state['shop']:
                 state['shop'] = True
                 return 'shrine'
-            return 'bedroom' if upper else 'study'
+            # (the priests' rooms: two to sleep in, the rest studies)
+            return ('bedroom' if state['bed'] < 2 else 'study') if upper else 'study'
         if kind in ('shop', 'guild') or trade:
             if not upper and not cellar and big and not state['shop']:
                 state['shop'] = True
@@ -870,7 +891,7 @@ def household_level(db, head_cls):
         return None
 
 
-def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None, level=None):
+def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None, level=None, storey=None):
     """A copied place made the Workshop's own: everything but its architecture, doors and built-in lights taken out;
     then furnished by the Workshop's own furnisher (rooms 'furnished'), or left empty with a plain light in every room
     that has none ('shells'). One step of its own. {'taken', 'placed', 'lights'}"""
@@ -890,13 +911,15 @@ def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None, 
     db.sync_project()
     placed = 0
     if rooms == 'furnished':
-        kinds = household_kinds(db, key, kind or 'house', head_cls) if (kind or head_cls) else None
+        kinds = household_kinds(db, key, kind or 'house', head_cls, storey=storey) if (kind or head_cls) else None
         # (and as full as the game's own place of this building, when the source is one: a Nord hut furnished to
         # its own recipes held 9 to 15 things where the game's huts hold 45 to 89; Estmorevale, 2026-11-04)
         import kits
         like = src if src and src != key and kits.game_made(db, src) else None
         placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), seed, kinds=kinds, level=level or household_level(db, head_cls), like=like)
-        if (kind or 'house').partition(':')[0] in ('house', 'manor', 'farm', 'shack'):
+        home_ = (kind or 'house').partition(':')[0] in ('house', 'manor', 'farm', 'shack') and not (storey and storey < 0)
+        # (and the priests' rooms over a chapel: one of the walk town's two chapels' never took a bed, three seeds)
+        if home_ or ((kind or '').partition(':')[0] == 'temple' and storey == 1):
             # (a home has a bed: where none found a spot, a tiny hall whose few wall slots went to other things first,
             # the room is laid out again, the last time without the game place as its model. 42 of 114 homes of the
             # user's North Senchal held no bed, 2026-11-09)
@@ -914,7 +937,7 @@ def make_own(db, key, src, rooms='furnished', seed=1, kind=None, head_cls=None, 
                     if not (castle.is_shell(db, rid) or _kept_light(db, rid)):
                         c['refs'].pop(rk, None)
                 db.sync_project()
-                kinds = household_kinds(db, key, kind or 'house', head_cls) if (kind or head_cls) else None
+                kinds = household_kinds(db, key, kind or 'house', head_cls, storey=storey) if (kind or head_cls) else None
                 placed = castle.furnish_shell(db, key, src, (0.0, 0.0, 0.0), (seed or 1) * 7 + try_ * 7919, kinds=kinds,
                                               level=level or household_level(db, head_cls), like=like if try_ < BED_TRIES else None)
             db.sync_project()
@@ -1384,6 +1407,13 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
         for k_, src_ in out.get('from') or [(out['key'], t)]:
             try:
                 make_own(db, k_, src_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()), kind_in, head_cls)
+            except EditError as e:
+                print('town interior made its own:', name, e)
+        # (and its other storeys, where the builder made each a place of its own: only the ground place was furnished,
+        # and the walk town's chapel had two bare rooms over its nave, a door and two chandeliers in each; 2026-11-15)
+        for k_, st_ in storey_places(db, out['key']) if out.get('own_layout') else ():
+            try:
+                make_own(db, k_, k_, rooms, zlib.crc32(('%s|%s|own' % (seed, k_)).encode()), kind_in, head_cls, storey=st_)
             except EditError as e:
                 print('town interior made its own:', name, e)
         if q.get('_of') is not None:
