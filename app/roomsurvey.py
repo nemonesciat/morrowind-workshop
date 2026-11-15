@@ -19,7 +19,7 @@ FLOOR_KINDS = ('bed', 'table', 'chair', 'bench', 'bookshelf', 'shelf', 'cupboard
                'sack', 'urn', 'rug', 'counter', 'shrine', 'bedroll', 'fire')
 TOP_KINDS = ('dish', 'bottle', 'book', 'food', 'candle')
 # which pairs to measure: (thing, what it stands by)
-THEMES = {'tavern': ('tavern', 'inn', 'cornerclub', 'corner club', 'club', 'tradehouse', 'bar'),
+THEMES = {'tavern': ('tavern', 'inn', 'cornerclub', 'corner club', 'club', 'tradehouse', 'bar', 'hostel', 'alehouse'),
           'shop': ('trader', 'shop', 'smith', 'outfitter', 'apothecary', 'alchemist', 'bookseller', 'clothier',
                    'armorer', 'pawnbroker', 'general', 'store'),
           'temple': ('temple', 'shrine', 'chapel', 'monastery'),

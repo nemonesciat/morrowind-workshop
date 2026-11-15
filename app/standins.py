@@ -156,6 +156,7 @@ def clear(db, cells, scope='standins', seed=1, say=None, rocks=True, trees_k=1.0
     rng = random.Random(seed * 13 + 5)
     mine = db.project.plugin.lower()
     removed = replaced = 0
+    laid = {}
     keys = _keys(cells)
     for n_, (gx, gy) in enumerate(keys):
         if say and n_ % 8 == 0:
@@ -225,6 +226,16 @@ def clear(db, cells, scope='standins', seed=1, say=None, rocks=True, trees_k=1.0
                 editing._store(c2, rk, mine, int(rk.rsplit('|', 1)[1]),
                                set_ref_pos([('NAME', zs(db.recs[ri][1]))], (x, y, z, 0.0, 0.0, rng.uniform(0, 2 * math.pi)), sc))
                 replaced += 1
+                laid.setdefault(ck, set()).add(rk)
     if removed:
         db.sync_project()
+    if laid:
+        # (and what the game sets on such trees and rocks: fungus, roots, lichen; details.py, 2026-11-14)
+        try:
+            import details
+            db.sync_project()
+            if details.dress(db, laid, seed)['set']:
+                db.sync_project()
+        except Exception as e:
+            print('stand-ins, details:', e)
     return {'removed': removed, 'replaced': replaced}

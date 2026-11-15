@@ -26,7 +26,9 @@ RANGE_WAVE = 9600.0                     # (the game's crest spacing, VV 9,216, T
 HANDMADE_128 = 40.0                     # (a region whose land is this rough 128 apart was made by hand; heightmaps 10-30)
 DEFAULTS = {'on': False, 'like': '', 'relief': 1.0, 'ranges': 1.0, 'valleys': 1.0, 'cliffs': 1.0, 'rocks': True, 'rockfrom': '', 'trees': True,
             'borders': True, 'plants': True, 'falls': True,
-            'paint': False, 'trees_k': 1.0, 'plants_k': 1.0}
+            'paint': False, 'trees_k': 1.0, 'plants_k': 1.0, 'sea': 1.0}
+# (sea: the sea stage, seafloor.shape: the bed under the water made as rough as the nearest hand-made sea's; no control
+# on the page, the user's 2026-11-14 "a way to automatically add variety to the sea floor")
 # (trees_k, plants_k: the Land stage's Trees and Plants sliders, 0 to 2, on what the pass and Clear first lay; the user,
 # 2026-11-09, "maybe there should be a slider or some ability to choose density of what is laid down")
 VALLEY_K = 0.02
@@ -1021,6 +1023,15 @@ def run(db, F, inside, opts, seed, here, say=None):
             v = z0 + add * shore
             # (never taking dry land under the water: half its height over 32 at most)
             z[i] = max(v, 32 + 0.5 * (z0 - 32) if z0 > 32 else z0)
+    # the bed under the water: banks, troughs and rolling ground as the nearest hand-made sea has them (seafloor.py).
+    # A preview never waits for the game's seas to be read: it shows the bed once they have been
+    if T['sea'] > 0:
+        try:
+            import seafloor
+            if F.step <= 128.0 or seafloor.ready(db):
+                info['sea'] = seafloor.shape(db, F, pts, here, seed, T['sea'], T['like'], say)
+        except Exception as e:
+            print('sea floor:', e)
     # where the escarpments go, on the land as the relief left it (a fixed function of it, as the rest)
     esc, hard, RP = None, None, None
     if T['cliffs'] > 0:

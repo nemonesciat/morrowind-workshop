@@ -1942,6 +1942,8 @@ def _kinds(plots, fig, poly, square, rng):
     my = sum(p['y'] for p in plots) / n
     R = max(math.hypot(p['x'] - mx, p['y'] - my) for p in plots) or 1.0
     free = set(range(n))
+    by_area = sorted(range(n), key=lambda i_: plots[i_]['w'] * plots[i_]['d'])
+    big_rank = {i_: r_ / float(max(1, n - 1)) for r_, i_ in enumerate(by_area)}     # (0 the smallest plot, 1 the biggest)
     for k in ('temple', 'manor', 'guild', 'tavern', 'guard', 'shop'):
         kr = (fig.get('krad') or {}).get(k, 0.35)
         ks = (fig.get('ksize') or {}).get(k)
@@ -1951,7 +1953,15 @@ def _kinds(plots, fig, poly, square, rng):
             def cost(i):
                 p = plots[i]
                 c = 2.0 * abs(math.hypot(p['x'] - mx, p['y'] - my) / R - kr)
-                if ks:
+                if ks and k == 'tavern':
+                    # (a tavern is one of a town's bigger buildings: 17 to 22 tiles of floor in the game, a common room
+                    # and rooms to let, against a house's 5; the user, 2026-11-14, "taverns are usually larger". A plot
+                    # under the culture's own tavern size costs double, a bigger one a third)
+                    lg_ = math.log(max(1.0, p['w'] * p['d']) / ks)
+                    c += -2.0 * lg_ if lg_ < 0 else lg_ / 3.0
+                elif k == 'tavern':
+                    c += 0.6 * (1.0 - big_rank.get(i, 0.5))
+                elif ks:
                     c += abs(math.log(max(1.0, p['w'] * p['d']) / ks))
                 # (zones: a kind goes in its own zone where one is drawn, and never into another's)
                 z = p.get('zone')

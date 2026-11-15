@@ -1046,6 +1046,15 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/landmap':
                 # every outdoor cell by how freely it may be shaped, and the cells marked (landsurvey.py)
                 import landsurvey
+                try:
+                    # (the game's sea floors, read in the background the first time the land map is opened: a
+                    # Make land that reaches the sea before that is done reads them itself, about a minute)
+                    import seafloor
+                    seafloor.warm(db)
+                    import details
+                    details.warm(db)
+                except Exception as e:
+                    print('sea floor:', e)
                 self._json(landsurvey.landmap(db))
             elif u.path == '/api/land/shadeinfo':
                 # what the game's shading near this cell is like (landshade.py)

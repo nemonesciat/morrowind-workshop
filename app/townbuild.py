@@ -1266,6 +1266,7 @@ def _world(x, y, c, s, dx, dy):
 
 
 SPECIAL = ('temple', 'guild', 'guard', 'tavern')
+TAVERN_FOOT = 900000.0          # (a tavern's building: under this footprint, w x d, it costs)
 CHAPEL = re.compile(r'setchapel(?!.*tower)|_x_temple|oe_chapel|velothi_temple', re.I)
 
 
@@ -1458,6 +1459,11 @@ def fit(db, plan, seed=1):
                 k = max(k, 4.0)          # (a barn on a house plot was a home with one barrel in it, lab th0)
             sw, sd = c['w'] / pw, c['d'] / pd
             size = abs(math.log(sw)) + abs(math.log(sd)) + (2.0 * (max(sw, sd) - 1.15) if max(sw, sd) > 1.15 else 0.0)
+            if q['kind'] == 'tavern' and c['w'] * c['d'] < TAVERN_FOOT:
+                # (a tavern in a building of a tavern's size: the game's own stand on 700,000 to 3,000,000 square units;
+                # in a house of 560,000 a Hlaalu town's club had a common room of four tiles with five doorways, where
+                # no table found a spot; the night of 2026-11-14)
+                size += 1.5 * math.log(TAVERN_FOOT / float(max(1, c['w'] * c['d'])))
             fam = 0.6 * -math.log(max(0.02, share.get(family(c['key']), 0.02))) if share else 0.0
             if q['kind'] == 'temple' and CHAPEL.search(c['key']):
                 fam = 0.0                # (a chapel is its own set in every town it stands in)

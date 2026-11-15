@@ -16,6 +16,9 @@ LAMP = re.compile(r'lamp|lantern|torch|brazier')
 NOT_LAMP = re.compile(r'sconce|candle|wall|hang|chandelier|_de_paper|torch')     # (a torch is a wall mount: stood on the floor it floated)
 
 
+TAVERN_TABLES = (4.5, 6.0)                       # (a tavern room's tables a nine tiles: at least, at most)
+TAVERN_STORES = (('barrel', 3.5), ('crate', 2.0), ('sack', 2.0))     # (a nine tiles of common room, at least)
+TAVERN_SEATS = 2.4                               # (and its chairs a table at least, the benches besides)
 ONE_ONLY = ('bed', 'counter', 'shrine')          # one to a room, whatever the game's average (a bunk room comes as a set piece)
 MIN_PER_9 = 0.2                                  # a kind the game stands less often than this per 3 x 3 room is left to the set pieces
 TABLE_CAP = {'bedroom': 1, 'living': 2, 'storage': 1, 'hall': 1, 'kitchen': 2, 'shop': 1, 'study': 2, 'shrine': 1,
@@ -266,6 +269,20 @@ def recipe(db, purpose, fallback, like=None, theme='house'):
         if not any(f == 'bench' for f, _c, _w in out):
             out.append(('bench', 1.0, 'by_table'))
         out = [r for r in out if r[0] == 'bench'] + [r for r in out if r[0] != 'bench']
+        # (a common room's tables and seats by its floor: half a table a tile and two or three seats a table. The
+        # game's tavern rooms hold 0.41 tables a tile by the room survey, 0.67 in the room with most tables by the
+        # interiors count, and 0.9 to 2 seats a tile; a made common room, capped at three tables whatever its size,
+        # held 0.29 and 0.89; the night of 2026-11-14)
+        # (and the bar's stores: the game's taverns keep 13 to 23 crates, barrels, sacks and baskets, most in a store
+        # room or a cellar a made tavern has not got; its common room keeps the kegs and a few sacks and crates)
+        for f_, least_ in TAVERN_STORES:
+            if any(f == f_ for f, _c, _w in out):
+                out = [(f, max(float(c), least_) if f == f_ else c, w) for f, c, w in out]
+            else:
+                out.append((f_, least_, 'corner' if f_ == 'barrel' else 'wall'))
+        tb_ = max([float(c) for f, c, _w in out if f == 'table'] or [0.0])
+        tb_ = min(TAVERN_TABLES[1], max(TAVERN_TABLES[0], tb_))
+        out = [(f, tb_ if f == 'table' else max(float(c), TAVERN_SEATS * tb_) if f == 'chair' else c, w) for f, c, w in out]
     if purpose == 'kitchen' and not any(f == 'fire' for f, _c, _w in out):
         # a hearth in every kitchen (the user's catalogue: a Common stone kitchen's fireplace with a pot
         # beside it). The game's kit kitchens have a free-standing one in only one room in twelve, because

@@ -522,7 +522,19 @@ def _tiles_in(cells, T, keep_door=True, cover=COVER):
     return seen
 
 
-def _split(tiles, parts=None, always=False, room_max=None, rng=None, sizes=None):
+GUEST_ROOM = 3.0              # (an inn's upper floor: a guest room for about this many tiles of it,
+GUEST_ROOMS_MOST = 5          #  this many a floor at most. The game's rooms with a bed in its taverns are 1.0 to 3.2 tiles,
+                              #  two of them in the middling tavern, four in the upper quarter; the night of 2026-11-14)
+
+
+def guest_rooms(b, floor, n_tiles):
+    """How many rooms an inn's upper floor is cut into at least (0: as any building's)."""
+    if floor < 1 or b.get('theme') != 'tavern' or n_tiles < 5:
+        return 0
+    return max(2, min(GUEST_ROOMS_MOST, int(n_tiles // GUEST_ROOM)))
+
+
+def _split(tiles, parts=None, always=False, room_max=None, rng=None, sizes=None, min_rooms=0):
     """A floor's tiles cut into rooms: first where the building's parts meet (parts: tile -> part; always
     for a prefab of the game's buildings, a room or more per building; for a building only when the floor
     must be cut anyway: the game's rooms change across a wall inside the outline 1.5 times as often as
@@ -535,17 +547,17 @@ def _split(tiles, parts=None, always=False, room_max=None, rng=None, sizes=None)
             out = []
             for g in groups.values():
                 for comp in _components(g):
-                    out += _split_size(comp, room_max, rng, sizes)
+                    out += _split_size(comp, room_max, rng, sizes, min_rooms=min_rooms if len(comp) >= 0.6 * len(tiles) else 0)
             return _merge_scraps(out)
-    return _split_size(tiles, room_max, rng, sizes)
+    return _split_size(tiles, room_max, rng, sizes, min_rooms=min_rooms)
 
 
-def _split_size(tiles, room_max=None, rng=None, sizes=None):
+def _split_size(tiles, room_max=None, rng=None, sizes=None, min_rooms=0):
     """A floor's tiles cut into rooms of at most ROOM_MAX tiles: across the longer side, through the
     middle, again and again. [set of tiles] (each joined). With a dealer (rng), the game's way instead
     (_split_organic)."""
     if rng is not None:
-        return _split_organic(tiles, rng, sizes or room_sizes(None), room_max)
+        return _split_organic(tiles, rng, sizes or room_sizes(None), room_max, min_rooms)
     def parts(ts):
         ts = set(ts)
         if len(ts) <= (room_max or ROOM_MAX):
@@ -636,7 +648,7 @@ def room_sizes(db, fam=None):
     return out
 
 
-def _split_organic(tiles, rng, sizes, room_max=None):
+def _split_organic(tiles, rng, sizes, room_max=None, min_rooms=0):
     """A storey's tiles cut into rooms the game's way: as many rooms as the game gives a storey this size, made by
     straight cuts at any line (not only the middle); of ORGANIC_TRIES such cuttings, the one whose room sizes the
     game makes most often, few one-wide rooms, none longer than three times its width. [set of tiles]."""
@@ -654,7 +666,7 @@ def _split_organic(tiles, rng, sizes, room_max=None):
     want = rng.choice(ra.get(band_) or [1])
     if n_t > 39:
         want = int(round(want * n_t / 38.0))       # (past the survey's bands: as many again for each band's worth)
-    want = max(want, int(math.ceil(n_t / float(big * 3))))
+    want = max(want, int(math.ceil(n_t / float(big * 3))), min_rooms)
     if want <= 1:
         return [tiles]
     p = sizes['p']
@@ -865,7 +877,8 @@ def _plan(db, b, kit=None, cover=COVER, floors=None, ch=None, tiles=None, force=
     for f, ts in sorted(per.items()):
         rng = _dealer(b, f)
         for n, comp in enumerate(_split(ts, tile_parts, always, SHOP_ROOM_MAX if trade else None, rng, sizes) if f == 0 else
-                                 [c for comp in _components(ts) for c in _split(comp, tile_parts, always, None, rng, sizes)]):
+                                 [c for comp in _components(ts) for c in _split(comp, tile_parts, always, None, rng, sizes,
+                                                                               min_rooms=guest_rooms(b, f, len(comp)))]):
             names = ROOM_NAMES.get(f, ['Room'])
             nm = names[min(n, len(names) - 1)]
             if n >= len(names) - 1 and n > 0:
@@ -1474,6 +1487,12 @@ def _build(db, cell_key, ref_key, name, door_key=None, kit=None, floors=None, ti
     import release
     b = building_at(db, cell_key, ref_key, door_key)
     b['seed'] = int(seed or 0)
+    try:
+        # (what the place's name says it is: an inn's upper floors are cut into guest rooms, guest_rooms)
+        import roomsurvey
+        b['theme'] = roomsurvey.theme_of(name)
+    except Exception:
+        b['theme'] = None
     # (a town's building is the pieces the town set down as one (project.town_parts), not whatever touches them: in a
     # dense town the group ran into the neighbours, and a Nordic house's neighbours' shells became "Pod 2..7" places
     # of its own, with the neighbours' doors; those doors were relinked to the neighbours' own interiors later and the

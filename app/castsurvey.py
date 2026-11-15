@@ -189,6 +189,9 @@ def person(db, ri):
 
 
 # ---------------------------------------------------------------- places
+FORT_NAME = re.compile(r'(^|[^a-z])(fort|barracks|garrison|legion)([^a-z]|$)')
+
+
 def setting_of(db, name, ids, exterior=False, region=''):
     """(setting, theme, culture) of a place: its setting ('house', 'tavern', 'shop', 'temple', 'guild', 'manor'
     for a settlement's places, else 'cave', 'mine', 'sewer', 'dwemer', 'daedric', 'ruin', 'tomb', 'stronghold',
@@ -205,7 +208,10 @@ def setting_of(db, name, ids, exterior=False, region=''):
             and not re.search(r'tomb|monastery|abbey|infirmary|ghostgate|guard', low):
         return 'tower', 'tower', _culture(styles)
     for setting, words in NAME_SETTINGS:
-        if any(re.search(r'(^|[^a-z])%s' % re.escape(w), low) for w in words):
+        # (a whole word, or its plural: by its beginning alone "Miner Wide-Arm's Tradehouse" was a mine and "Miner
+        # Kati's House" too, the town maker's own names, and their people a mine's band of assassins and smugglers;
+        # the night of 2026-11-14)
+        if any(re.search(r'(^|[^a-z])%s(e?s)?([^a-z]|$)' % re.escape(w), low) for w in words):
             return setting, setting, _culture(styles)
     dungeon = Counter({STYLE_SETTINGS[s]: n for s, n in styles.items() if s in STYLE_SETTINGS})
     total = sum(styles.values())
@@ -214,6 +220,12 @@ def setting_of(db, name, ids, exterior=False, region=''):
         return s, s, _culture(styles)
     theme = roomsurvey.theme_of(name)
     culture = _culture(styles)
+    if FORT_NAME.search(low) and not re.search(r'guild', low):
+        # (a fort's rooms are a garrison's. Read as a guild hall's (the room survey's theme for "fort" and
+        # "barracks"), a made fort's barracks held a healer, two battlemages, a smith, a sailor and two guards of five
+        # races, the user's Fort Fostmoth; of the people in the game's 144 fort interiors two thirds are soldiers.
+        # The night of 2026-11-14)
+        return 'guard', 'guard', culture
     if theme == 'house':
         for setting, words in MORE_THEMES:
             if any(re.search(r'(^|[^a-z])%s(e?s)?([^a-z]|$)' % re.escape(w), low) for w in words):

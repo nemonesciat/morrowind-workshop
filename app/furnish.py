@@ -100,6 +100,10 @@ TURN_RATES = {'chair': (0.66, 0.13, (12.0, 22.0, 34.0)), 'crate': (0.54, 0.19, (
               'screen': (0.49, 0.22, (7.0, 14.0, 25.0)), 'rug': (0.27, 0.17, (7.0, 16.0, 29.0))}
 TURN_GROW = 14.0                # (a turned piece may reach this much further each way than it did square)
 TURN_EASE = 12.0                # (and is eased this far off a wall at most to clear it)
+SEAT_PITCH = 72.0               # (a seat for each of these along a table's side)
+TAVERN_SMALL = 6.0              # (a common room under this many tiles of 256: a bar of one or two pieces)
+TAVERN_HEARTH = 0.7             # (a tavern's common room has the place's hearth this often where no chimney stands over it)
+SEAT_BEHIND_TAVERN = 8          # (the clear floor behind a tavern's seat begins this far behind it; 64 elsewhere)
 TURN_TABLE = 120.0              # (a table longer than this stays square: its seats and its rug are set to it)
 TABLE_TO_WALL = True            # a home's table at a wall or in a corner as often as the game's (for the lab: off to compare)
 # (the share of the game's tables free of every wall, by the room's size in tiles of 256, in its Cyrodiil homes; and of
@@ -3077,7 +3081,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 if h.get('arch') or not h.get('b') or h['type'] not in ('STAT', 'ACTI', 'CONT'):
                     continue
                 hf = _footprint([v * (h.get('s') or 1.0) for v in h['b']], h['p'][5], h['p'][0], h['p'][1])
-                if hf[0] - 8 <= x <= hf[2] + 8 and hf[1] - 8 <= y <= hf[3] + 8 and abs(h['p'][2] - z) < 80 \
+                # (on this floor: the thing's own height is not worked out yet at this point, and reading it stopped the
+                # whole furnishing with "cannot access local variable 'z'": the place was left empty, a chapel one time
+                # in five; found the night of 2026-11-14, in every build since the rule was written)
+                if hf[0] - 8 <= x <= hf[2] + 8 and hf[1] - 8 <= y <= hf[3] + 8 and (floor is None or abs(h['p'][2] - floor) < 150) \
                         and roomsurvey.family_of(db, h['id'], h['type']) in ('bath', 'fire', 'planter', 'urn'):
                     host = True
                     break
@@ -5052,6 +5059,11 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             # shop's; a run longer than three quarters of the room's longer wall only when none shorter fits)
             long_wall = max(room['x_max'] - room['x_min'], room['y_max'] - room['y_min'])
             n_cap = max(3, int(round(room['tiles'] * 0.5)))    # (a four-by-three shop: six segments at most)
+            if purpose == 'tavern' and tiles_ < TAVERN_SMALL:
+                # (a small common room keeps its floor for its tables: a three-piece bar in a four-tile club, with its
+                # keeper's side and the doors' clearings, left no spot for one table or one seat: a Hlaalu town's
+                # tavern held two bars, seven bar pieces, and nothing to sit on; the night of 2026-11-14)
+                n_cap = 1 if tiles_ < 5 else 2
             suits = [r_ for r_ in cands if r_['length'] <= 0.75 * long_wall and r_['n'] <= n_cap]
             if len(suits) < 3:
                 # (a style with few runs of its own that fit, Common plain's five: the runs of its
@@ -5061,6 +5073,21 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 cands += wider
                 suits += [r_ for r_ in wider if r_['length'] <= 0.75 * long_wall and r_['n'] <= n_cap]
                 rng.shuffle(suits)                      # (the one run of the style's own not first every seed)
+            # (of the runs that suit, first those as long as the game's counter in a room of the kind this size: the
+            # room survey's pieces a nine tiles, 4.7 in a tavern's room and 11 in a shop's. Drawn at random, a
+            # single piece came as often as a bar: 1.6 and 1.8 pieces a tavern and a shop to the game's 7.7 and 5.8)
+            try:
+                import roomsurvey as _rs_c
+                rate_c = (((_rs_c.ready(db) or {}).get('kinds') or {}).get(purpose) or {}).get('per_9', {}).get('counter')
+                if rate_c:
+                    want_c = max(1, min(n_cap, int(round(rate_c * tiles_ / 9.0))))
+                    suits.sort(key=lambda r_: abs(r_['n'] - want_c))
+            except Exception as e_c:
+                print('counter length:', e_c)
+            if purpose == 'tavern' and tiles_ < TAVERN_SMALL and any(r_['n'] <= 2 for r_ in cands):
+                # (and no long run by the back door: the shortest run by length was an L of four small pieces)
+                cands = [r_ for r_ in cands if r_['n'] <= 2]
+                suits = [r_ for r_ in suits if r_['n'] <= 2]
             cands = suits[:8] + sorted(cands, key=lambda r_: r_['length'])[:4] + [r_ for r_ in cands if r_ not in suits][:4]
             order = [sl for sl in slot_order('wall', pp) if not sl.get('column') and not sl['corner']]
             order += [sl for sl in slot_order('wall', pp) if not sl.get('column') and sl['corner']]   # (a corner slot last: an L's elbow in the room's corner)
@@ -5609,7 +5636,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             fy = -f[0] * math.sin(rot) + f[1] * math.cos(rot)
             cx_, cy_ = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
             w_ = max(box[2] - box[0], box[3] - box[1]) / 2 + 10
-            ax_, ay_ = cx_ - fx * (w_ + 64), cy_ - fy * (w_ + 64)
+            # (a common room's seats stand back to back: the game sits two a tile there, and with half a tile kept
+            # behind every chair a made one sat 0.9, its chairs finding "no spot" at tables with free sides)
+            d_ = SEAT_BEHIND_TAVERN if purpose == 'tavern' else 64
+            ax_, ay_ = cx_ - fx * (w_ + d_), cy_ - fy * (w_ + d_)
             return (ax_ - w_, ay_ - w_, ax_ + w_, ay_ + w_)
 
         def keep_approach(box, rot, front):
@@ -5814,6 +5844,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             # or a kitchen: the user's altar slab in a Common living room, "a strange choice here")
             if a['fam'] == 'shrine' and purpose != 'shrine' and theme != 'temple' and 'shrine' not in extras_left:
                 return kinds_laid
+            if a['fam'] == 'counter' and purpose == 'kitchen' and theme == 'tavern' and room['tiles'] * (T / 256.0) ** 2 < 4:
+                return kinds_laid         # (a tavern's little side room is no second bar)
             if a['fam'] == 'counter' and purpose not in ('shop', 'tavern', 'kitchen'):
                 return kinds_laid
             if a['fam'] == 'fire' and not rough and re.search(r'pit|campfire|cookingfire|cookfire|bonfire', rid.lower()):
@@ -7440,6 +7472,9 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
 
         import roomrules as _rr
         table_cap = _rr.TABLE_CAP.get(purpose, 3)
+        if purpose == 'tavern':
+            # (a common room's tables by its floor, not three whatever its size: roomrules.TAVERN_TABLES)
+            table_cap = max(3, int(round(_rr.TAVERN_TABLES[1] * room['tiles'] * (T / 256.0) ** 2 / 9.0)))
 
         def lay_pending():
             while picks:
@@ -7476,6 +7511,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             last_trace.append((room['name'], 'home', '-', 'the whole home in one room: its stores and tableware at the one-room rates of the game'))
         if HALL_ROUND and purpose in HALL_PURPOSES and not sketch:
             recipe_rows = []          # (a hall's floor is the hallway round's, after the room's set pieces: hall_round)
+        if purpose == 'tavern' and not walls_only and room['tiles'] * (T / 256.0) ** 2 < TAVERN_SMALL:
+            # (a small common room's tables before its bar: the bar first, a four-piece run where the style has no
+            # shorter, left a Hlaalu club of four tiles and five doorways with nothing to sit at)
+            recipe_rows = [r_ for r_ in recipe_rows if r_[0] == 'table'] + [r_ for r_ in recipe_rows if r_[0] != 'table']
         if built_hearths and not walls_only and purpose in ('kitchen', 'dining', 'living', 'tavern', 'mess'):
             bh_ = built_hearths[0]
             got.extend(dress_hearth(bh_, purpose))     # (the built-in hearth's own dressing: the game's logs and tools by that model)
@@ -7505,7 +7544,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 continue                                           # (the room has its hearth in the building)
             if kind == 'fire' and not rough and not sketch:
                 # (a house's hearth comes whole, from the game's own sets, or not at all: hearthsurvey)
-                h_ = lay_hearth_set(purpose)
+                # (a tavern's by the place, not by the room: 57 to 89% of the game's taverns have a fireplace, 28% of
+                # their rooms; a made tavern's ground floor is the one room, and at the room's rate two in nine had one)
+                if purpose == 'tavern' and fires_in_place() == 0 and (room.get('hearth_near') or rng.random() < TAVERN_HEARTH):
+                    h_ = lay_hearth_set(purpose, sure=True)
+                else:
+                    h_ = lay_hearth_set(purpose)
                 if h_:
                     lay_work_table(h_)
                 if h_ is not None:
@@ -7921,12 +7965,18 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                     i0_ = len(got) % len(tables)
                     order_t = tables[i0_:] + tables[:i0_]
                     is_stool = bool(re.search(r'stool', rid.lower()))
+                    spot_why.clear()
                     for t in order_t:
                         if t.get('counter') and not (purpose == 'tavern' and is_stool):
                             continue             # (a chair at a counter: only a tavern's bar stools, R9)
                         tb = t['box']
-                        sides = [((tb[0] + tb[2]) / 2, tb[3] + 30, (0, -1)), ((tb[0] + tb[2]) / 2, tb[1] - 30, (0, 1)),
-                                 (tb[2] + 30, (tb[1] + tb[3]) / 2, (-1, 0)), (tb[0] - 30, (tb[1] + tb[3]) / 2, (1, 0))]
+                        # (a seat for each SEAT_PITCH of a side: a long table sits two or three down each long side,
+                        # where it sat one, and a tavern's chairs found "no spot" at its four tables)
+                        mx_, my_ = (tb[0] + tb[2]) / 2, (tb[1] + tb[3]) / 2
+                        ux_ = [(k_ + 0.5) / max(1, int((tb[2] - tb[0]) // SEAT_PITCH)) - 0.5 for k_ in range(max(1, int((tb[2] - tb[0]) // SEAT_PITCH)))]
+                        uy_ = [(k_ + 0.5) / max(1, int((tb[3] - tb[1]) // SEAT_PITCH)) - 0.5 for k_ in range(max(1, int((tb[3] - tb[1]) // SEAT_PITCH)))]
+                        sides = [(mx_ + u_ * (tb[2] - tb[0]), tb[3] + 30, (0, -1)) for u_ in ux_] + [(mx_ + u_ * (tb[2] - tb[0]), tb[1] - 30, (0, 1)) for u_ in ux_] + \
+                                [(tb[2] + 30, my_ + u_ * (tb[3] - tb[1]), (-1, 0)) for u_ in uy_] + [(tb[0] - 30, my_ + u_ * (tb[3] - tb[1]), (1, 0)) for u_ in uy_]
                         if t.get('counter') and t.get('open'):
                             # (the bar's customer side only, spread along the segment: the stools in a row)
                             ox_, oy_ = t['open']
@@ -7942,6 +7992,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                             if ok_ and keep_approach(box, rot, front):
                                 done = (x + (-face[0]) * 10, y + (-face[1]) * 10, rot, box)
                                 break
+                            spot_why['no way to it' if ok_ else why_not(box)] += 1
                         if done:
                             break
                 elif where == 'on_table' and tables:
@@ -7970,7 +8021,7 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                             done, face, where = (cx + dx, cy + dy, rot, box), (0, -1), 'centre'
                             break
                 if not done:
-                    why_ = (': ' + ', '.join('%d %s' % (n_, k_) for k_, n_ in spot_why.most_common(3))) if where in ('wall', 'corner') and spot_why else ''
+                    why_ = (': ' + ', '.join('%d %s' % (n_, k_) for k_, n_ in spot_why.most_common(3))) if where in ('wall', 'corner', 'by_table') and spot_why else ''
                     last_trace.append((room['name'], kind, rid, 'no spot (%s), %d slots left%s' % (where, len(slots), why_)))
                     continue
                 if kind == 'table' and where != 'bedside' and done[3] is not None and any(_overlaps(done[3], f['box'], -100) for f in fronts if f.get('kind') == 'bed'):

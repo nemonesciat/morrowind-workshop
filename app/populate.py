@@ -24,6 +24,9 @@ from esm import ENC
 from project import join_subs, zs
 
 DENSITY = {'quiet': 0.55, 'usual': 1.0, 'busy': 1.7}
+# (how often a further person of a place takes its first person's race outright; the rest are drawn as before, and some
+# of those come out the same)
+ONE_RACE = {'house': 0.3, 'manor': 0.3, 'shop': 0.3, 'camp': 0.3, 'guard': 0.3, 'temple': 0.3}
 MAX_PEOPLE = 30
 HOUSEHOLDS = ('house', 'manor', 'shop', 'tavern', 'camp')        # (places whose people are a household: one family name, owned beds)
 OWNED = ('bed', 'chest', 'cupboard', 'barrel', 'crate', 'sack', 'drawer', 'dresser', 'desk', 'closet', 'wardrobe', 'urn',
@@ -142,6 +145,12 @@ def how_many(S, info, density='usual'):
         n = min(n, max(2, beds) + 2, 6)
     elif info['setting'] == 'shop':
         n = min(n, 3)
+    elif info['setting'] == 'tavern':
+        # (a tavern holds who it can seat and sleep: a one-room hut named a tradehouse, two stools in it, is no
+        # place for nine. The game's taverns hold 3 to 7, the middling one 5; the user, 2026-11-14: "when you add a
+        # large number of npcs, make sure the interior makes sense for it")
+        seats = sum(1 for f in info.get('furniture') or () if f.get('fam') in ('chair', 'bench'))
+        n = min(n, 10, max(3, int(round(0.6 * seats)) + 2))
     return n
 
 
@@ -692,7 +701,14 @@ def cast(db, cell_key, params=None, keep=None, seed=None):
                 continue
             p = person(db, S, rng, cls, C, params, None, taken, race=head_['race'] if roll < two['couple'] + two['race'] else None)
         else:
-            p = person(db, S, rng, cls, C, params, None, taken)
+            # (most of a place's people are of one race, its head's: the commonest race is 80% of the game's households,
+            # manors and shops of two or more, 78% of its garrisons, 72% of its temples, 65% of its taverns; drawn each
+            # apart, a made barracks of eight held five races. Not a slave or a servant, who is of their own)
+            same_ = None
+            if people and not band_D and not params.get('races') and not any(w in cls.lower() for w in ('slave', 'servant')) \
+                    and rng.random() < ONE_RACE.get(setting, 0.0):
+                same_ = people[0]['race']
+            p = person(db, S, rng, cls, C, params, None, taken, race=same_)
         # a band: its first is its leader, a few levels over the rest; every one of them fights on sight
         if band_D:
             p['fight'] = max(p['fight'], 90)

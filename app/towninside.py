@@ -440,6 +440,17 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
     import frombuilding
     import zlib
     ways = [{} for _ in range(OWN_TRIES)] + [{'route': 'plan'}] + ([{'route': 'plan', 'floors': 1}] if floors != 1 else [])
+    # (a tavern is bigger inside than a house of its size: the game's hold 17 to 22 tiles of floor on three or four
+    # rooms, with rooms to let and a store; the user, 2026-11-14, "taverns are usually larger ... rentable beds and
+    # rooms with beds". Two floors at least, whatever the building's height says, and a cellar of the game's usual
+    # size for the style. A Hlaalu town's club was its smallest place: one floor of six tiles, a bar and no bed)
+    inn_floors = None
+    try:
+        import roomsurvey
+        if floors is None and kit is None and roomsurvey.theme_of(name) == 'tavern':
+            inn_floors = max(INN_FLOORS, frombuilding.tall_floors(frombuilding.building_at(db, dr[0], dr[1], dr[1])))
+    except Exception as e:
+        print('town own layout: %s, an inn\'s floors: %s' % (name, e))
     seen_ = None
     go = 0
     while go < len(ways):
@@ -447,6 +458,10 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
         kw = dict(door_key=dr[1], kit=kit, floors=way.get('floors', floors), seed=zlib.crc32(('%s|%s|%d' % (seed, name, n + 1000 * go)).encode()) % 100000)
         if way.get('route'):
             kw['route'] = way['route']
+        elif inn_floors:
+            kw['floors'] = min(inn_floors, INN_FLOORS + 1)
+            if inn_floors <= INN_FLOORS:
+                kw['cellar'] = 'usual'       # (a low inn's store is under it; a tall one's is its attic, household_kinds)
         try:
             out = frombuilding.build(db, dr[0], dr[1], name, **kw)
         except EditError as e:
@@ -478,6 +493,7 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
     return None
 
 
+INN_FLOORS = 2                 # (a tavern's floors at least: the common room and the rooms to let over it)
 OWN_TRIES = 3                  # (layouts tried for a building before the game's own interior stands in)
 OPEN_KINDS = ('hole', 'gap', 'doorway')
 
@@ -690,6 +706,13 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
         rooms_ = furnish.rooms(db, key)['rooms']
     except Exception:
         rooms_ = []
+    # (the ground floor is the floor the front door stands on, the highest not over the door's own height: a door's
+    # origin is up to a hundred over its sill, and against that the Gold Coast and Anvil kits' second storey, 256
+    # up, was no upper storey at all (STOREY 200): an inn's upstairs was furnished as a kitchen and held no bed,
+    # 0.2 beds a tavern to the game's 2.8, the night of 2026-11-14)
+    floors_ = sorted({r['floor'] for r in rooms_ if r.get('floor') is not None})
+    if z0 is not None and floors_:
+        z0 = max([f_ for f_ in floors_ if f_ <= z0 + 64] or [floors_[0]])
     ground_max = max((len(r.get('_tiles') or ()) for r in rooms_
                       if not (z0 is not None and r.get('floor') is not None and (r['floor'] > z0 + STOREY or r['floor'] < z0 - STOREY))), default=0)
     guild = gtype or ('mages' if head_cls and _re.search(r'mage|sorcer|wizard|conjur|healer|battlemage|enchant|alchem|witch', head_cls, _re.I) else
@@ -750,7 +773,20 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
             if not upper and big and not state['shop']:
                 state['shop'] = True
                 return 'tavern'
-            return 'bedroom' if upper else ('storage' if cellar else 'kitchen')
+            if upper:
+                # (up to four rooms to let: the game's taverns have beds in one to four rooms, two in the middling
+                # one; a room past those is the house's store, once, then a parlour)
+                state['bed'] += 1
+                if state['bed'] <= 4:
+                    return 'bedroom'
+            elif not cellar:
+                # (one kitchen; the other small rooms downstairs are parlours with a table and seats, not more stores:
+                # with every side room a kitchen and every spare room a store a made tavern held 35 crates, barrels and
+                # sacks to the game's 13 to 23)
+                state['kitchen'] = state.get('kitchen', 0) + 1
+                return 'kitchen' if state['kitchen'] == 1 else 'living'
+            state['store'] = state.get('store', 0) + 1
+            return 'storage' if state['store'] == 1 else 'living'
         if kind == 'temple' or trade == 'shrine':
             if not upper and big and not state['shop']:
                 state['shop'] = True

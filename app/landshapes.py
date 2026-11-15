@@ -1505,6 +1505,7 @@ def _apply(db, cells, plan):
     rocks = 0
     refs_of = lambda k: set((db.project.cells.get('#%d,%d' % k) or {}).get('refs') or {})
     had = {k: refs_of(k) for k in keys}
+    in_water = {}
     clad = 0
     # (only with ground shapes: the region pass alone sets no rocks, a town drawn beside it shapes nothing)
     if dress['rocks'] > 0 and plan.get('layers') and not t_only:
@@ -1596,8 +1597,24 @@ def _apply(db, cells, plan):
         # waterplants, landpair; the press's own, taken out with its rocks when it is shaped again. 2026-11-09)
         try:
             import waterplants
-            F.info['plants']['set'] += cliffrocks.place(db, waterplants.grow(db, dk, lambda gx, gy: reg.get((gx, gy)), int(plan.get('seed') or 1),
-                                                                             hat=lambda x, y: cliffrocks._height(F, x, y)))
+            def _free(x, y):
+                fx, fy = int(round((x - F.ox) / F.step)), int(round((y - F.oy) / F.step))
+                return 0 <= fx < F.w and 0 <= fy < F.h and not (hold_ and hold_[fy * F.w + fx])
+            rk_ = {}
+
+            def _rock_from(gx, gy):
+                r0 = reg.get((gx, gy)) or ''
+                if r0 not in rk_:
+                    rk_[r0] = TR['rockfrom'] or landregion.rock_region(db, r0, ((F.info.get('terrain') or {}).get('like') or {}).get(r0, ''))
+                return rk_[r0]
+            # (and the bed's own things with them, its rocks at the Rocks slider's share: the sea floor, 2026-11-14)
+            wp = waterplants.grow(db, dk, lambda gx, gy: reg.get((gx, gy)), int(plan.get('seed') or 1),
+                                  hat=lambda x, y: cliffrocks._height(F, x, y), free=_free, amount=TR['plants_k'],
+                                  rocks=float(dress['rocks'] or 0), like=TR['like'], rock_from=_rock_from)
+            w0_ = {k: refs_of(k) for k in keys}
+            F.info['plants']['water'] = cliffrocks.place(db, wp)
+            in_water = {k: refs_of(k) - w0_[k] for k in keys}
+            F.info['plants']['set'] += F.info['plants']['water']
             db.sync_project()
         except Exception as e:
             print('water plants:', e)
@@ -1613,6 +1630,29 @@ def _apply(db, cells, plan):
         import cover
         _say('Laying the cover', 0.985)
         F.info['cover'] = cover.lay(db, [_clean(L) for L in covers], keys, {k: refs_of(k) - had[k] for k in keys}, int(plan.get('seed') or 1))
+    if TR['on'] and TR['plants']:
+        # (the small details on what the press laid: fungus on its trees, roots at their feet, lichen and barnacles on
+        # its rocks, at the share of each model the game dresses so, details.py; the press's own, taken out with the
+        # rest when it is shaped again. 2026-11-14)
+        try:
+            import details
+            _say('Setting the small details', 0.99)
+            pf_ = (F.info.get('plants') or {}).get('from') or {}
+            lk_ = (F.info.get('terrain') or {}).get('like') or {}
+
+            def _looks(ck):
+                # (as the region its plants came from dresses the model, then the region its land takes after, the
+                # Like chosen, its own)
+                gx_, gy_ = (int(v) for v in ck[1:].split(','))
+                r0 = reg.get((gx_, gy_)) or ''
+                return [pf_.get(r0), lk_.get(r0), dress['region'], r0]
+            dt = details.dress(db, {'#%d,%d' % k: refs_of(k) - had[k] - in_water.get(k, set()) for k in keys}, int(plan.get('seed') or 1), amount=TR['plants_k'],
+                               regions_for=_looks)
+            F.info['details'] = dt['set']
+            if dt['set']:
+                db.sync_project()
+        except Exception as e:
+            print('details:', e)
     set_rocks = {k: sorted(refs_of(k) - had[k]) for k in keys}
     shaded = [m for m in ('texture', 'seams', 'hollows') if m in shaded]
     cl = ['%d,%d' % k for k in keys]

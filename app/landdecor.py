@@ -537,6 +537,9 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
         chains[(gx, gy)] = [reg] + [r for r in nearest_lands(db, gx, gy, lambda r: _broad(db, r), FALLBACKS + 1) if r != reg][:FALLBACKS]
     region_of = lambda x, y: chains.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), [''])
     rocks = grown = 0
+    refs_of = lambda k: set((db.project.cells.get('#%d,%d' % k) or {}).get('refs') or ())
+    had0 = {k: refs_of(k) for k in want}
+    in_water = {}
     mine = None
     if float(parts.get('growth') or 0) > 0:
         from_ = {}
@@ -556,7 +559,9 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
             # (and what grows in the water: lily pads, kelp, reeds, as the region's own water has them; waterplants)
             try:
                 import waterplants
+                w0_ = {k: refs_of(k) for k in want}
                 grown += cliffrocks.place(db, waterplants.grow(db, want, lambda gx, gy: looks.get((gx, gy)), seed))
+                in_water = {k: refs_of(k) - w0_[k] for k in want}
             except Exception as e:
                 print('water plants:', e)
         # (nothing new where a tree now stands: the rocks keep clear of it)
@@ -587,6 +592,18 @@ def dress_all(db, cells, like='', parts=None, seed=None, outline=None, brush='')
         except Exception as e:
             print('rocks and trees:', e)
     db.sync_project()
+    if not mine and (rocks or grown):
+        # (and what the game sets on such trees and rocks: fungus, roots, lichen, each as the region it came from
+        # dresses it; details.py, 2026-11-14)
+        try:
+            import details
+            dt = details.dress(db, {'#%d,%d' % k: refs_of(k) - had0[k] - in_water.get(k, set()) for k in want}, seed,
+                               regions_for=lambda ck: chains.get(tuple(int(v) for v in ck[1:].split(',')), []))
+            if dt['set']:
+                grown += dt['set']
+                db.sync_project()
+        except Exception as e:
+            print('details:', e)
     if rocks or grown:
         what = ' and '.join(w for w in ('%d rocks' % rocks if rocks else '', '%d trees and plants' % grown if grown else '') if w)
         editing.commit(db, 'Dressed %d cell%s with %s' % (len(want), '' if len(want) == 1 else 's', what))
