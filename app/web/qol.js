@@ -73,7 +73,7 @@ function qolLookAt(p){
   W.cam.x = p[0]; W.cam.y = p[1]; if (W.cam.z < 0.15) W.cam.z = 0.3; drawMap();
 }
 
-// after the sidebar panels are drawn: the View panel's extras, the test setup by Play, My changes
+// after the sidebar panels are drawn: the Show window's extras, the test setup by Play, My changes
 function qolAfterRender(){
   qolCss();
   const view = PNL.body('world', 'view'), pane = view && view.querySelector('.wpane');
@@ -285,6 +285,7 @@ function qolEmptyMap(){
 // change shows as you drag), a field to type into, a few marks to click; Enter or a click elsewhere keeps
 // it, Esc puts it back. o: {title, value, min, max, step, marks, fmt, input(v), keep(v), cancel()}.
 // modes: [{id, label, tip}] a row of buttons, one of them chosen (mode), onMode(id) when another is picked.
+// again: {label, tip, run()} one button that does something and shows the result; always: kept even at its first value.
 const QOL_PT = {x: innerWidth / 2, y: innerHeight / 2};
 document.addEventListener('pointerdown', e => { QOL_PT.x = e.clientX; QOL_PT.y = e.clientY; }, true);
 document.addEventListener('contextmenu', e => { QOL_PT.x = e.clientX; QOL_PT.y = e.clientY; }, true);
@@ -298,6 +299,7 @@ function qolSlide(o){
     <div class="qs-row"><input type="range" class="qs-r" min="${o.min}" max="${o.max}" step="${o.step}" value="${o.value}">
       <input class="inp qs-n" value="${fmt(o.value)}" spellcheck="false"></div>
     ${o.marks ? `<div class="qs-m">${o.marks.map(m => `<button class="btn sm" type="button" data-qm="${m}">${fmt(m)}</button>`).join('')}</div>` : ''}
+    ${o.again ? `<div class="qs-m"><button class="btn sm" type="button" data-qa title="${esc(o.again.tip || '')}">${esc(o.again.label)}</button></div>` : ''}
     ${o.modes ? `<div class="qs-m qs-w">${o.modes.map(m => `<button class="btn sm${m.id === o.mode ? ' on' : ''}" type="button" data-qw="${esc(m.id)}" title="${esc(m.tip || '')}">${esc(m.label)}</button>`).join('')}</div>` : ''}
     <div class="qs-f"><span class="msg">Enter or click away keeps it · Esc undoes</span><button class="btn sm" type="button" data-qx>✕</button><button class="btn sm primary" type="button" data-qk>✓</button></div>`;
   document.body.appendChild(box);
@@ -319,6 +321,7 @@ function qolSlide(o){
   N.oninput = () => { const x = parseFloat(N.value.replace(',', '.')); if (isFinite(x) && x > 0) set(x, 'n'); };
   box.onwheel = e => { e.preventDefault(); set(Math.round((v - Math.sign(e.deltaY) * o.step) / o.step) * o.step, null); };
   box.querySelectorAll('[data-qm]').forEach(b => b.onclick = () => set(parseFloat(b.dataset.qm), null));
+  { const qa = box.querySelector('[data-qa]'); if (qa) qa.onclick = () => { o.again.run(); o.input && o.input(v); }; }
   // (another way picked: shown at once at the slider's value)
   box.querySelectorAll('[data-qw]').forEach(b => b.onclick = () => {
     box.querySelectorAll('[data-qw]').forEach(x => x.classList.toggle('on', x === b));
@@ -335,7 +338,7 @@ function qolSlide(o){
     box.remove(); qolSlideOpen = null;
     document.removeEventListener('pointerdown', away, true);
     document.removeEventListener('keydown', keys, true);
-    if (keep && v !== o.value) o.keep(v); else o.cancel && o.cancel();
+    if (keep && (o.always || v !== o.value)) o.keep(v); else o.cancel && o.cancel();
   }
   box.querySelector('[data-qk]').onclick = () => done(true);
   box.querySelector('[data-qx]').onclick = () => done(false);
@@ -389,6 +392,44 @@ async function qolScale(){
       const say = one ? `${name} now at size ${Math.round(xs_[0].s * 100) / 100}` : `Scaled ${name} by ${Math.round(v * 100) / 100}${each ? ', each in place' : ''}`;
       await groupAction('/api/group/move', {moves}, say + (clamped ? ` (${clamped} stopped at the game's limit of 0.5 to 2)` : ''));
     }});
+}
+
+// ---------------------------------------------------------------- turn each its own way
+// Every selected thing turned by its own random amount where it stands, and leaned a little if asked: rocks and trees
+// set down in a row look planted until each faces its own way. A tester, 2026-11-15 ("randomize rotation": Tilt them
+// gives all the same lean). The slider is the lean, up to so many degrees either way on top of what each has;
+// Roll again draws new turns and leans. Shown as you go, written as one change when you keep it.
+function qolTurnEach(){
+  const sel = selectionRefs(); if (!sel.length) return false;
+  const was = sel.map(([cell, r]) => ({cell, r, p: r.p.slice()}));
+  let roll = [];
+  const reroll = () => { roll = was.map(() => [Math.random() * 2 * Math.PI, Math.random() * 2 - 1, Math.random() * 2 - 1]); };
+  reroll();
+  const plan = v => was.map((w, n) => {
+    const p = w.p.slice(), k = v * Math.PI / 180;
+    p[5] = roll[n][0]; p[3] = w.p[3] + roll[n][1] * k; p[4] = w.p[4] + roll[n][2] * k;
+    return {w, p};
+  });
+  const redraw = () => { drawMap(); if (typeof v3Refresh === 'function' && typeof V3 !== 'undefined' && V3.on) v3Refresh(); };
+  const show = v => { for (const x of plan(v)) x.w.r.p = x.p; redraw(); };
+  const back = () => { for (const w of was) w.r.p = w.p; redraw(); };
+  const name = sel.length === 1 ? (sel[0][1].name || sel[0][1].id) : sel.length + ' objects';
+  qolSlide({
+    title: sel.length === 1 ? `Turn ${name} at random · lean up to (°)` : `Turn the ${sel.length} each its own way · lean up to (°)`,
+    value: 0, min: 0, max: 45, step: 1, marks: [0, 5, 10, 20, 30, 45],
+    fmt: v => String(Math.round(v)),
+    again: {label: '↻ Roll again', tip: 'Other turns and leans, drawn anew', run: reroll},
+    always: true,
+    input: show,
+    cancel: back,
+    keep: async v => {
+      const xs = plan(v);
+      back();
+      if (!await needProject()) return;
+      const moves = xs.map(x => ({cell: x.w.cell, ref: x.w.r.k, p: x.p, s: x.w.r.s || 1}));
+      await groupAction('/api/group/move', {moves}, sel.length === 1 ? `Turned ${name} at random` : `Turned ${name}, each its own way`);
+    }});
+  show(0);
 }
 
 // ---------------------------------------------------------------- tilt: lean what's selected forwards or sideways
@@ -527,6 +568,7 @@ CF_ACT.push(
   {id: 'reopen', label: 'Reopen the last place you worked on', keys: [], run: () => qolReopen()},
   {id: 'scale', label: 'Scale what\'s selected…', keys: [], world: true, run: () => qolScale()},
   {id: 'tilt', label: 'Tilt what\'s selected…', keys: [], world: true, run: () => qolTilt()},
+  {id: 'turneach', label: 'Turn what\'s selected each its own way…', keys: [], world: true, run: () => qolTurnEach()},
   {id: 'replace', label: 'Search and replace objects…', keys: ['Ctrl+H'], world: true, run: () => qolReplace(cfSelRef() ? cfSelRef().id : '')},
   {id: 'setups', label: 'Test setups for Play…', keys: [], run: () => qolSetups()},
   {id: 'find', label: 'Find in the list (Objects, or the search box)', keys: ['Ctrl+F'], run: () => {

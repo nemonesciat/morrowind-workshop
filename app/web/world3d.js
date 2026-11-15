@@ -89,6 +89,7 @@ async function v3Enable(on){
   $('#map').style.display = on ? 'none' : 'block';
   document.querySelectorAll('#mapnav, .mapzoom').forEach(e => e.style.display = on ? 'none' : '');
   $('#v3tools').style.display = on ? 'flex' : 'none';
+  document.querySelectorAll('#viewsw .flatonly').forEach(e => e.style.display = on ? 'none' : '');   // (Show and the lock: on the 3D bar in 3D)
   if (typeof tbApply === 'function') tbApply();          // (where you put the buttons, now they can be measured)
   document.querySelectorAll('[data-view3d]').forEach(b => b.classList.toggle('on', (b.dataset.view3d === '1') === on));
   try { localStorage.setItem('ws-3d', on ? '1' : '0'); } catch (e) {}
@@ -2237,7 +2238,7 @@ function v3Click(e){
   const h = v3Pick(e, false);
   if (h && h.obj && e.shiftKey){ toggleMulti(h.obj.ck, h.obj.k); return; }
   if (h && h.obj){ selectRef(h.obj.ck, h.obj.k); return; }
-  if (h && h.locked) toast('Walls and buildings are locked. Untick "Lock walls & buildings" in the View panel to select them.');
+  if (h && h.locked) toast('Walls and buildings are locked. Click 🔒 Lock walls on the bar to turn the lock off.');
   W.sel = null; renderWside(); v3Refresh();
 }
 
@@ -2929,7 +2930,7 @@ function v3Tools(){
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
     <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button>
     <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">⤢ Scale</button>
-    <button class="btn sm" data-v3="space" title="${v3Space() === 'local' ? 'Handles on its own axes: front, side and up as it is turned. Click for the world\'s axes.' : 'Handles on the world\'s axes: east, north and up. Click for its own axes, as it is turned.'}">${V3.space === 'local' ? '⟀ Own axes' : '✛ World axes'}</button></div>
+    <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">✛ World axes</button></div>
     <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
         <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
@@ -2940,7 +2941,7 @@ function v3Tools(){
     <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">🧲 Physics</button></div>
     <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">✚ Create</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
     ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Build out piece by piece from open edges">⬚ Extend</button>` : ''}
-    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">${v3LightMode() === 'game' ? '💡 Game light' : '☀ Bright'}</button>
+    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">💡 Game light</button>
     <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">👁 View ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
         <label title="Lines at the move step (128 when off)"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128}, bright every ${(V3.grid || 128) * 4})</span></label>
@@ -2960,6 +2961,8 @@ function v3Tools(){
           style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
           <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
       </div></span>
+    <button class="btn sm" data-v3="show" title="${SHOW_TIP}">☑ Show</button>
+    <button class="btn sm ${W.lockArch ? 'primary' : ''}" data-v3="lock" title="${lockTip()}">${lockLabel()}</button>
     <button class="btn sm" data-v3="home" title="Back to the start view">◎</button>
     <button class="btn sm" data-v3="help" title="Controls">?</button></div>`;
   if (typeof tbApply === 'function') tbApply();
@@ -2980,6 +2983,8 @@ function v3Tools(){
     else if (a === 'tilt'){ V3.tilt = !V3.tilt; V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
     else if (a === 'space'){ V3.space = V3.space === 'local' ? 'world' : 'local'; try { localStorage.setItem('ws-space', V3.space); } catch (e) {} v3ApplyMode(); v3Tools(); }
     else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; v3Tools(); }
+    else if (a === 'show') showToggle();
+    else if (a === 'lock') lockToggle();
     else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
     else if (a === 'gridturn') v3GridToSel(true);

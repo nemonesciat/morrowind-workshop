@@ -273,6 +273,7 @@ function cfMenuAt(e, hit, at, locked){
     items.push({label: '⧉ Copy', act: () => groupDo('copy')}, {label: 'Duplicate', act: () => groupDo('dup')},
       {label: '⟳ Turn 90°', act: () => groupDo('turn')}, {label: '⟲ Turn 90° the other way', act: () => groupDo('turnback')},
       {label: '⤢ Scale them…', act: () => cfRun('scale')}, {label: '⤡ Tilt them…', act: () => cfRun('tilt')},
+      {label: '🎲 Turn each its own way…', act: () => cfRun('turneach')},
       ...(typeof v3AlignItems === 'function' && V3.on ? [{label: '⇹ Align them…', act: () => { const r = W.sel && findRef(W.sel.cell, W.sel.k); pnlMenu(pt, v3AlignItems(W.multi.size, r ? r.id : 'the last picked', v3Align)); }}] : []),
       {label: '🫳 Settle them', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0]}, `${W.multi.size} objects`)},
       {label: '🫳 Settle them, tipping over what can\'t stand', act: () => cfSettle({refs: [...W.multi.values()].map(m => m.k), cell: hit[0], tip: true}, `${W.multi.size} objects`)},
@@ -585,7 +586,7 @@ function cfStatus(){
   const r = cfSelRef();
   if (W.multi.size > 1) parts.push(`<span><b>${W.multi.size} selected</b></span>`);
   else if (r) parts.push(`<span data-copy="${n1(r.p[0])}, ${n1(r.p[1])}, ${n1(r.p[2])}" title="What's selected (click to copy where it is)"><b>${esc(r.name || r.id)}</b> · ${n1(r.p[0])}, ${n1(r.p[1])}, ${n1(r.p[2])} · ${deg(r.p[5])}°${r.s && r.s !== 1 ? ' · ×' + r.s : ''}${r.mine ? ' · <span class="on">changed</span>' : ''}</span>`);
-  if (W.onlyMine) parts.push('<span class="mode" title="Only what your mod changed is shown (View panel)">Only my changes</span>');
+  if (W.onlyMine) parts.push('<span class="mode" title="Only what your mod changed is shown (☑ Show)">Only my changes</span>');
   if (W.hide.size) parts.push(`<span title="Hidden for now: Alt+H shows them again">◌ ${W.hide.size} hidden</span>`);
   parts.push('<span class="grow"></span>');
   parts.push(typeof LINK !== 'undefined' && LINK.connected ? '<span class="on lk" title="The game is running and linked: changes show up in it">● In game</span>' : '<span class="lk" title="Start the game from the Workshop to see changes in it live">○ Game not linked</span>');

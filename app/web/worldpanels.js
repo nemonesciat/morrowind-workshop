@@ -5,12 +5,12 @@
 const WP = {places: (() => { try { return JSON.parse(localStorage.getItem('ws-places') || '[]'); } catch (e){ return []; } })()};
 
 const WP_PRESETS = {
-  'Building': {right: {size: 340, groups: [{tabs: ['place', 'sel', 'objs', 'view', 'sky', 'land', 'paths'], on: 'place', grow: 1}]},
+  'Building': {right: {size: 340, groups: [{tabs: ['place', 'sel', 'objs', 'sky', 'land', 'paths'], on: 'place', grow: 1}]},
                left: {size: 300, groups: []}, bottom: {size: 220, groups: []}, floats: []},
   'Furnishing': {right: {size: 360, groups: [{tabs: ['place', 'library', 'prefabs'], on: 'place', grow: 1.3}, {tabs: ['sel', 'objs'], on: 'sel', grow: 1}]},
                  left: {size: 300, groups: []}, bottom: {size: 220, groups: []}, floats: []},
   'Two sides': {left: {size: 300, groups: [{tabs: ['place', 'library'], on: 'place', grow: 1}, {tabs: ['places'], on: 'places', grow: 0.5}]},
-                right: {size: 330, groups: [{tabs: ['sel', 'objs', 'view', 'sky', 'land', 'paths'], on: 'sel', grow: 1}]}, bottom: {size: 200, groups: []}, floats: []},
+                right: {size: 330, groups: [{tabs: ['sel', 'objs', 'sky', 'land', 'paths'], on: 'sel', grow: 1}]}, bottom: {size: 200, groups: []}, floats: []},
   'Big view': {left: {size: 300, groups: []}, right: {size: 340, groups: []}, bottom: {size: 220, groups: []},
                floats: [{tabs: ['place', 'objs'], on: 'place', x: 16, y: 56, w: 330, h: 420}, {tabs: ['sel'], on: 'sel', x: -16, y: 56, w: 320, h: 380}]},
 };
@@ -30,7 +30,13 @@ function worldPanelsInit(){
     }});
   PNL.define('world', 'objs', {title: 'Objects', cls: 'wside', onShow: scan, multi: true,
     cloneState: () => ({filter: ''}), titleFor: it => it.state && it.state.filter ? 'Objects: ' + it.state.filter : 'Objects'});
-  PNL.define('world', 'view', {title: 'View', cls: 'wside'});
+  // (Show: what is shown. A window opened by ☑ Show on the bar; in the ready-made layouts no longer a tab beside
+  //  Objects, but ticked in Panels it is that tab again. A tester and the user, 2026-11-15: "this window could be a
+  //  button and window on the 3d bar. show seems like a better name too"; "keep the view just in case there's
+  //  someone that wanna keep the tab where it is ... just disable the checkbox by default")
+  PNL.define('world', 'view', {title: 'Show', icon: '☑', w: 300, h: 460, cls: 'wside',
+    // (closed, its body is out of the page and its ticks are bound by a look-up in the page: drawn anew when opened)
+    onShow: () => { if (typeof renderWside === 'function' && W.key) renderWside(); }});
   PNL.define('world', 'paths', {title: 'Paths', icon: '🚶', cls: 'wside'});   // (drawn with the others, by renderWside)
   PNL.define('world', 'sky', {title: 'Sky', icon: '🌤', cls: 'wside'});
   PNL.define('world', 'land', {title: 'Land', icon: '⛰', cls: 'wside'});
@@ -63,7 +69,7 @@ function worldPanelsInit(){
   if (typeof mmPanels === 'function') mmPanels();      // (the Minimap: minimap.js)
   if (typeof pcpPanels === 'function') pcpPanels();      // (Pieces: the workbench's shelf beside the view, piecepanel.js)
   PNL.start('world');
-  wpAddPathsTab(); wpAddSkyLandTabs();
+  wpAddPathsTab(); wpAddSkyLandTabs(); wpShowWindow();
   for (const it of Object.values(PNL.spaces.world.inst)){ const t = PNL.spaces.world.types[it.type]; if (t.render && it.id !== 'objs') t.render(it); }
   // the button that lists every panel and the layouts
   const sw = $('#viewsw');
@@ -71,7 +77,32 @@ function worldPanelsInit(){
     const b = document.createElement('button'); b.id = 'w-panels'; b.title = 'Panels: open, close and arrange the tools; layouts'; b.textContent = '▤ Panels';
     b.onclick = e => { e.stopPropagation(); PNL.windowsMenu('world', b); };
     sw.appendChild(b);
+    // (on the flat map, Show and the lock here; in 3D they stand on the 3D bar beside View: v3Tools)
+    const s = document.createElement('button'); s.id = 'w-show'; s.className = 'flatonly'; s.title = SHOW_TIP; s.textContent = '☑ Show';
+    s.onclick = e => { e.stopPropagation(); showToggle(); };
+    const k = document.createElement('button'); k.id = 'w-lockb'; k.className = 'flatonly';
+    k.onclick = e => { e.stopPropagation(); lockToggle(); };
+    sw.appendChild(s); sw.appendChild(k);
+    lockSync();
+    if (typeof V3 !== 'undefined' && V3.on) sw.querySelectorAll('.flatonly').forEach(x => x.style.display = 'none');
   }
+}
+
+// (2.7.22) a layout kept from when Show was the View tab: taken out of the docks once; ☑ Show opens it as a window
+function wpShowWindow(){
+  try { if (localStorage.getItem('ws-show-window')) return; localStorage.setItem('ws-show-window', '1'); } catch (e){ return; }
+  const L = PNL.spaces.world.layout;
+  let had = false;
+  for (const d of ['left', 'right', 'bottom']){
+    for (const g of (L[d] || {}).groups || []){
+      if (!g.tabs.includes('view')) continue;
+      had = true;
+      g.tabs = g.tabs.filter(t => t !== 'view');
+      if (!g.tabs.includes(g.on)) g.on = g.tabs[0];
+    }
+    if (L[d]) L[d].groups = L[d].groups.filter(g => g.tabs.length);
+  }
+  if (had) PNL.useLayout('world', L);
 }
 
 // (2.1) a layout kept from before Paths had its own panel: put it once beside View, as a tab

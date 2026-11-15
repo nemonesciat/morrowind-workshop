@@ -43,15 +43,15 @@ Esc puts it back). Without that choice, give those two a key of your own there.
 - **Esc** deselects. **Right-click** anything for what you can do with it.
 - **H** hides what's selected (to get at what's behind), **Shift+H** everything else, **Alt+H** shows it all
   again. Hiding only changes what you see, not the game.
-- **Lock walls & buildings** (View panel) stops you moving them by accident; pick them in the Objects list
-  instead.
+- **🔒 Lock walls** (a button on the bar, lit when on) stops you moving walls and buildings by accident; pick them
+  in the Objects list instead, or click it to turn the lock off.
 
 ## Moving, turning and changing
 
 **In 3D**, drag the arrows to move what's selected and the rings to turn it: **G** move, **R** turn, **⤡ Tilt** to
 lean it, **⤢ Scale** (**3**) to size it: drag any handle and it grows or shrinks evenly, ×0.5 to ×2 (several
-selected: the Scale dialog). **✛ World axes / ⟀ Own axes** switches the handles between the world's directions and the thing's
-own. **End** (or **⤓ Drop down**) sets it on what's below, **Del** removes it. **Esc** or a right-click while you
+selected: the Scale dialog). **✛ World axes** (lit: the world's directions; plain: the thing's own) sets which way the
+handles point. **End** (or **⤓ Drop down**) sets it on what's below, **Del** removes it. **Esc** or a right-click while you
 are still dragging puts it back, and Undo gets no step for it.
 
 **On the flat map**, drag it. Outdoors its height follows the ground.
@@ -112,7 +112,7 @@ group anywhere later.
 | Place | Go to a place, Play here, Create, Style palette, Second window; indoors **Auto-furnish**, **Find gaps**, **Check place**; placing. |
 | Selected | The thing selected (above). **📌 Pin** keeps one in its own panel, to compare or tweak several. |
 | Objects | Every object in the place, with a filter. Open more Objects lists, each with its own filter. |
-| View | What's shown (buildings, doors, containers, lights, people, creatures, items), lock walls, your changes, hidden things; indoors, **Floors** hides everything above a height to see lower storeys. |
+| ☑ Show | A window, opened by **☑ Show** on the bar (tick it in **▤ Panels** to have it as a tab instead): what's shown (buildings, doors, containers, lights, people, creatures, items), your changes, hidden things; indoors, **Floors** hides everything above a height to see lower storeys. |
 | Sky | Region, weather and time of day outdoors; an interior's lighting. See *Sky, regions and weather*. |
 | Land | Land shaping and height maps. See *Shaping the land*. |
 | Paths | The walking paths people and creatures follow. |
@@ -121,7 +121,7 @@ group anywhere later.
 ## Your changes
 
 - On the map, your mod's changes are marked: **green** new, **gold** changed, a **red ✕** where you took something
-  out (right-click it to bring it back). Turn the marks on in the View panel.
+  out (right-click it to bring it back). Turn the marks on in **☑ Show**.
 - **Show only what your mod changed** hides the rest.
 - **My changes** lists them all, each with **Open on map** and **Undo**.
 
@@ -129,8 +129,10 @@ group anywhere later.
 
 | Button | What it does |
 |---|---|
-| 💡 Game light / ☀ Bright | The game's own lighting, or bright even light to work by. |
+| 💡 Game light | Lit: the game's own lighting. Off: bright, even light to work by. |
 | 👁 View ▾ | Grid (at the move step, or **At the selection**, **Turned to it**), cell borders, wireframe, field of view; outdoors the ground, water, sky and how far cells load. |
+| ☑ Show | The Show window: what's shown, floors, your changes, hidden things. |
+| 🔒 Lock walls | Lit: walls and buildings can't be picked or moved by accident. |
 | ⛰ Ground | Outdoors: shape and paint the ground. See *Shaping the land*. |
 | ⬚ Extend | Indoors: build out piece by piece from open edges. See *Building interiors*. |
 

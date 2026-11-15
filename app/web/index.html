@@ -3012,7 +3012,7 @@ window.addEventListener('mouseup', async e => {
       W.sel = null; renderWside(); drawMap();
       hitTest(e.offsetX, e.offsetY);
       if (W.lockedHit){
-        if (!W.lockedHintAt || Date.now() - W.lockedHintAt > 8000){ W.lockedHintAt = Date.now(); toast('That is a wall or building piece, and walls and buildings are locked. Untick "Lock walls & buildings" in the View panel to select it (or pick it under Objects).'); }
+        if (!W.lockedHintAt || Date.now() - W.lockedHintAt > 8000){ W.lockedHintAt = Date.now(); toast('That is a wall or building piece, and walls and buildings are locked. Click 🔒 Lock walls on the bar to turn the lock off (or pick it under Objects).'); }
       }
     }
   }
@@ -3330,7 +3330,23 @@ function drawPlayer(){
 }
 
 // sidebar: a short header (place, play, game link), then tabs
-const WTABS = [['place', 'Place'], ['sel', 'Selected'], ['objs', 'Objects'], ['view', 'View']];
+const WTABS = [['place', 'Place'], ['sel', 'Selected'], ['objs', 'Objects'], ['view', 'Show']];
+// Show (what is shown: kinds of things, floors, your changes, hidden things) is a window opened from the bar, and
+// the lock on walls and buildings a button there: on the 3D bar beside View, beside Map / 3D / Panels on the flat
+// map. A tester and the user, 2026-11-15.
+const SHOW_TIP = 'What is shown: kinds of things, floors, your changes, hidden things';
+function showToggle(){
+  const sp = PNL.spaces.world, w = pnlWhere(sp, 'view');
+  if (w && w.where === 'float'){ PNL.close('world', 'view'); return; }
+  if (w){ PNL.show('world', 'view'); return; }          // (ticked in Panels, a tab in a dock: brought to the front)
+  const R = sp.root.getBoundingClientRect();
+  sp.layout.floats.push({tabs: ['view'], on: 'view', x: 16, y: 104, w: 300, h: Math.max(180, Math.min(460, R.height - 130))});
+  PNL.show('world', 'view');
+}
+function lockLabel(){ return '🔒 Lock walls'; }       // (one name: lit when on, as Game light is)
+function lockTip(){ return W.lockArch ? 'On: you can\'t pick or move walls and buildings by accident. Click to turn it off.' : 'Off: walls and buildings can be picked and moved. Click to lock them.'; }
+function lockSync(){ const b = $('#w-lockb'); if (b){ b.textContent = lockLabel(); b.title = lockTip(); b.classList.toggle('on', !!W.lockArch); } }
+function lockToggle(){ W.lockArch = !W.lockArch; lockSync(); if (typeof v3Tools === 'function' && V3.on) v3Tools(); }
 W.tab = 'place';
 function thumbImg(id, type, size, cls){
   return `<img class="thumb ${cls || ''}" data-tid="${esc(id)}" data-tt="${esc(type || '')}" data-ts="${size || 96}" alt="">`;
@@ -3451,7 +3467,7 @@ function renderWside_(){
       <div class="glist">${mr.slice(0, 14).map(([ck, r]) => `<div data-gone="${esc(mkey(ck, r.k))}">${thumbImg(r.id, r.type, 48, 'sm')}<span>${esc(r.name || r.id)}</span><button class="btn sm" data-gdrop="${esc(mkey(ck, r.k))}" title="Leave this one out">✕</button></div>`).join('')}
         ${mr.length > 14 ? `<div class="msg">…and ${mr.length - 14} more</div>` : ''}</div>
       <div class="actions"><button class="btn sm" data-ga="copy" title="Ctrl+C">⧉ Copy</button><button class="btn sm" data-ga="dup" title="Ctrl+D">Duplicate</button>
-        <button class="btn sm" data-ga="turn" title="Turn 90° clockwise">⟳ 90°</button><button class="btn sm" data-ga="turnback" title="Turn 90° the other way">⟲ 90°</button>
+        <button class="btn sm" data-ga="turn" title="Turn 90° clockwise">⟳ 90°</button><button class="btn sm" data-ga="turnback" title="Turn 90° the other way">⟲ 90°</button><button class="btn sm" data-ga="turneach" title="Turn each its own way…">🎲</button>
         <button class="btn sm danger" data-ga="delete">Delete all</button><button class="btn sm" data-ga="clear">Clear</button></div>
       <div class="actions" style="align-items:center" title="How these are turned (⟳ 90°, the 3D rings) and sized (Scale them…)"><span class="msg" style="font-size:11.5px">Turn and size</span>${[['group', 'As a group', 'About the middle of the group: they keep their places to each other. For a set, or the pieces of a building. (Blender: median point)'], ['each', 'Each in place', 'Each where it stands: nothing moves. For rocks and trees on the land. (Blender: individual origins)']].map(([k, lab, tip]) => `<button class="btn sm" data-pivot="${k}" title="${tip}"${(k === 'each') === pivotEach() ? ' style="outline:1px solid var(--gold);background:color-mix(in srgb,var(--gold) 22%,transparent)"' : ''}>${lab}</button>`).join('')}</div>
       <h3>Save as a prefab</h3><div class="msg">Keep this group to drop anywhere later, in any place and any of your mods.</div>
@@ -3485,7 +3501,7 @@ function renderWside_(){
   cut.push(h.length);
   // --- View
   h += `<div class="wpane on" data-pane="view"><h3 style="margin-top:4px">Show${typeof guideLink === 'function' ? guideLink('the-world-map.md', 'The panels') : ''}</h3><div class="legend">${LAYERS.map((L, n) => `<label><input type="checkbox" data-layer="${n}" ${W.hidden.has(n) ? '' : 'checked'}><i style="background:${L[2]}"></i>${L[0]}</label>`).join('')}</div>
-    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="w-lock" ${W.lockArch ? 'checked' : ''}> Lock walls &amp; buildings (so you can't move them by accident)</label>`;
+    `;
   if (i.interior && refs.length){
     const zs = refs.map(r => r.p[2]), lo = Math.floor(Math.min(...zs)), hi = Math.ceil(Math.max(...zs));
     if (hi - lo > 300) h += `<h3>Floors</h3><label class="msg">Hide everything above height: <b id="w-cutv">${W.cut == null ? 'show all' : Math.round(W.cut)}</b></label>
@@ -3630,6 +3646,7 @@ $('#world').addEventListener('click', async e => {
   if (ga){
     const a = ga.dataset.ga;
     if (a === 'clear'){ W.multi.clear(); renderWside(); drawMap(); }
+    else if (a === 'turneach') qolTurnEach();
     else if (a === 'paste' && W.clip) startGroupPlace(W.clip.items, W.clip.label);
     else groupDo(a);
     e.stopPropagation(); return;
@@ -3690,7 +3707,7 @@ function bindWside(){
   document.querySelectorAll('[data-wtab]').forEach(b => b.onclick = () => wsTab(b.dataset.wtab));
   document.querySelectorAll('[data-layer]').forEach(c => c.onchange = () => { c.checked ? W.hidden.delete(+c.dataset.layer) : W.hidden.add(+c.dataset.layer); drawMap(); });
   const wf = $('#w-filter'); if (wf) wf.oninput = () => { W.filter = wf.value; renderOList(W.cells[W.key].refs); };
-  const lk = $('#w-lock'); if (lk) lk.onchange = () => { W.lockArch = lk.checked; };
+  // (the lock on walls and buildings is a button on the bar: lockToggle)
   const pth = $('#w-paths'); if (pth) pth.onchange = () => { W.showPaths = pth.checked; drawMap(); };
   const edp = $('#w-editpaths'); if (edp) edp.onclick = () => { if (W.mode === 'paths') setMode(null); else peStart(); };
   const dsp = $('#w-discardpaths'); if (dsp) dsp.onclick = () => { if (PE) PE.discard = true; setMode(null); };
