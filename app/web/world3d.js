@@ -2671,8 +2671,11 @@ function v3Snap(){
     // 2.7.2-test6 only their turn about the up axis was followed, so with Tilt on the red and green rings turned
     // the handles and left the things standing; tosky0890 on Discord, 2026-11-12)
     const d = V3.pivot.position.clone().sub(D.start), dq = V3.pivot.quaternion.clone().multiply(D.startQ.clone().invert());
+    // (each in place, pivotEach: the rings turn or tilt every one where it stands, nothing swung round the middle)
+    const each = V3.mode === 'rotate' && typeof pivotEach === 'function' && pivotEach();
     for (const m of D.members){
-      m.o.g.position.copy(m.pos).sub(D.start).applyQuaternion(dq).add(D.start).add(d);
+      if (each) m.o.g.position.copy(m.pos).add(d);
+      else m.o.g.position.copy(m.pos).sub(D.start).applyQuaternion(dq).add(D.start).add(d);
       // (the handles' turn on top of its own; a tilted thing keeps its tilt)
       m.o.g.quaternion.copy(dq).multiply(m.q);
       m.o.g.updateMatrixWorld(true);
@@ -2864,7 +2867,7 @@ async function v3DragEnd(){
       p[3] = -e.x; p[4] = -e.y; p[5] = ((-e.z) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
       return {cell: m.o.ck, ref: r.k, p};
     });
-    await groupAction('/api/group/move', {moves}, `${V3.mode === 'rotate' ? 'Turned' : 'Moved'} ${moves.length} objects`);
+    await groupAction('/api/group/move', {moves}, `${V3.mode === 'rotate' ? 'Turned' : 'Moved'} ${moves.length} objects${V3.mode === 'rotate' && typeof pivotEach === 'function' && pivotEach() ? ', each in place' : ''}`);
     return;
   }
   const g = D.o.g;

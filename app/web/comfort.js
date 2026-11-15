@@ -22,6 +22,7 @@ function cfCss(){
   .qslide .qs-row{display:flex;gap:8px;align-items:center}.qslide .qs-r{flex:1;accent-color:var(--gold)}
   .qslide .qs-n{width:58px;text-align:right;padding:3px 6px}
   .qslide .qs-m{display:flex;gap:4px;margin-top:6px}.qslide .qs-m .btn{flex:1;padding:2px 0;min-width:0}
+  .qslide .qs-w .btn.on{outline:1px solid var(--gold);background:color-mix(in srgb,var(--gold) 22%,transparent)}
   .qslide .qs-f{display:flex;gap:4px;align-items:center;margin-top:8px}.qslide .qs-f .msg{flex:1;font-size:11px}
   .pmenu button[disabled]{cursor:default}
   .pmenu button:hover:not([disabled]){background:#ffffff12}.pmenu button[disabled]:hover{background:none}

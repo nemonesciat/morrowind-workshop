@@ -1828,6 +1828,13 @@ WALK_DEEP = 220.0               # (the walk through a door, this far either side
 # every one at a turn's doorway, and 6 of them (1.5%) are crossed by this test; made tower rooms hung theirs on the
 # stairwell's far walls, where the steps climb, 33 of 37 crossed. The user: "tapestries hanging down and clipping
 # into the stairs", 2026-11-15)
+# (a prison's walls. The game's fort places with cell doors hold from no cloth hanging to 1.5 a passage piece
+# (25 places, median 0.21; its three old Legion prisons 0.56 to 1.52), and the made prison of the user's walk held
+# 0.61, each one-tile stretch of its passage a room that drew a hanging of its own: "way too heavy on the
+# tapestries in general in here", 2026-11-15. The user's eye decides: the low end)
+BARRED_DOOR = re.compile(r'jail|celldoor|doorcell|prisondoor', re.I)
+PRISON_DOORS = 2                # (a place with this many barred doors, half its doors or more, is a prison)
+PRISON_CLOTH = 0.2              # (its wall hangings: this many a floor tile, whatever its rooms' kinds)
 CROSS_FRONT = 5.0               # (the lines stand this far in front of the thing's face)
 CROSS_PART = 0.66               # (its lower part only: a vaulted passage's wall leans in over a hanging's rod)
 CROSS_DEEP = 10.0               # (the building this far up a line from the thing's foot, or more, crosses it)
@@ -1951,7 +1958,7 @@ def house_hangings(db, decor, rng, band=None, theme=None):
     return out
 
 
-def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=1.0, themed=None):
+def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=1.0, themed=None, count=None):
     """Hang things on the free walls of one room: flat against the wall, facing in, at the height the
     game hangs them, never over a doorway or into furniture that stands that high. hung: what hangs in
     the house so far, [(x, y, floor, direction it faces)]. hang_k: the game's count, times this (a poor
@@ -2152,6 +2159,8 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
         want = max(0 if hang_k < 1 else 1, min(3, int(want_f) + (1 if rng.random() < want_f - int(want_f) else 0)))
         avoid = {'bed': 0.4, 'cupboard': 0.5, 'counter': 0.6, 'shrine': 0.7}
     want = max(want, extra)                          # (the stair's flanking pair comes whatever the room's count)
+    if count is not None:
+        want = count                                 # (a prison's: so many, whatever the game's rate for the room's kind)
     kinds = DECOR_KINDS.get(purpose)
     pool = [d for d in decor if not kinds or d[2] in kinds] or decor
     lights = [d for d in pool if d[2] in ('sconce', 'light')]
@@ -2860,6 +2869,8 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             print('walking ways:', cell_key, e)
     T = info['tile'] or (128 if piece is not None else info['tile'])    # (as above: one piece in a place of no rooms)
     surf = [dict(r) for r in refs]           # for finding floor and table heights as things are added
+    n_bar_ = sum(1 for r in refs if r['type'] == 'DOOR' and BARRED_DOOR.search(r['id']))
+    prison = n_bar_ >= PRISON_DOORS and 2 * n_bar_ >= sum(1 for r in refs if r['type'] == 'DOOR')
     placed = []
     # the rugs here (box, floor height): rugs don't lie next to or over each other
     rugs = [(_footprint([v * (r['s'] or 1.0) for v in r['b']], r['p'][5], r['p'][0], r['p'][1]), r['p'][2])
@@ -8596,7 +8607,12 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 th_ = themesurvey.room_theme([(p['id'], p['type']) for p in placed if p.get('room') == room['name'] and p['type'] in themesurvey.SMALL])
                 if th_:
                     themed = themesurvey.wall_piece(db, th_, rng)
-            got += _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=(L['hang'] if L else 1.0) * hall_hang, themed=themed)
+            count_ = None
+            if prison:
+                f_ = PRISON_CLOTH * room['tiles'] * (T / 256.0) ** 2
+                count_ = int(f_) + (1 if rng.random() < f_ - int(f_) else 0)
+            got += _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=(L['hang'] if L else 1.0) * hall_hang, themed=themed,
+                             count=count_)
             got += void_banners()
         if not walls_only and purpose == 'bath':
             # the game's bathing rooms have 5.5 lights per nine tiles, a standing lamp or a candle on

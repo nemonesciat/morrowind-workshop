@@ -57,7 +57,10 @@ DEFAULTS = {
     'cliff': {'height': 600, 'side': 0, 'amount': 1, 'raise': 0, 'seed': 1},
     'town': {'culture': '', 'seed': 1, 'walls': '', 'bare': False, 'name': '', 'inside': '', 'noinside': False, 'nopeople': False,
              'streets': '', 'density': 1.0, 'counts': {}, 'skip': [], 'proposed': False, 'place': '', 'trade': '',
-             'marker': False, 'built': '', 'sea': False},   # (sea: no wall where it faces the water; marker: put down as a marker, its outline fitted to the land when made)
+             'marker': False, 'built': '', 'sea': False,
+             # (rocks_k, trees_k: its own amounts, the Rocks and Trees sliders, 1 as its culture's towns have them. Left
+             #  out of this list they were dropped at every save, and the sliders set nothing: a tester, 2026-11-15)
+             'rocks_k': 1.0, 'trees_k': 1.0},   # (sea: no wall where it faces the water; marker: put down as a marker, its outline fitted to the land when made)
     # (proposed: laid by Propose places, taken away by the next proposal unless built; place: 'village', 'town', 'city')
     'dungeon': {'kit': 'cave_mud', 'name': '', 'size': 'small', 'rz': 0.0, 'built': '', 'proposed': False, 'place': 'cave'},
     'road': {'culture': '', 'proposed': False, 'bridges': []},
@@ -202,6 +205,11 @@ def _clean(L):
     for k, v in (L.get('p') or {}).items():
         if k in prm:
             prm[k] = v
+    for k in ('rocks_k', 'trees_k') if kind == 'town' else ():
+        try:
+            prm[k] = max(0.0, min(2.0, float(prm[k])))
+        except (TypeError, ValueError):
+            prm[k] = 1.0
     # (only: the regions it acts in, fading at their border; like: the region whose character its ground takes, its
     # roughness and slopes, while the textures stay the cell's own region's. Not for coasts, worked out together.)
     only = [str(r).lower()[:64] for r in (L.get('only') or []) if r][:20] if kind != 'coast' else []

@@ -2296,11 +2296,43 @@ class _Writer:
         return key, rk, pos
 
 
-def _pair_dead(db, cells, links, load_only=()):
+# (a barred door: one sees through it, and a cell lies behind it. The game: of 415 placed, 10 lead anywhere (Ebon
+# Tower's cells, Goldstone's sewer). The user, of a made fort's prison whose cell doors led to its hall and keep:
+# "you should never use these barred prison doors as a teleporting door", 2026-11-15)
+BARRED = re.compile(r'jail|celldoor|doorcell|prisondoor', re.I)
+
+
+def _unbar(db, ck, rk, rid):
+    """A barred door that has to lead somewhere becomes its set's plain door (in_impsmall_door_jail_01 becomes
+    in_impsmall_door_01), in place. False where the set has none: the door is then left to swing."""
+    import editing
+    from project import zs
+    plain = re.sub(r'_?(jail|cell|prison)', '', rid, flags=re.I)
+    ri = db.resolve_id(plain)
+    if ri is None or plain.lower() == rid.lower() or db.recs[ri][0] != 'DOOR':
+        return False
+    c, refs = editing._cell(db, ck)
+    ref = refs.get(rk)
+    if ref is None:
+        return False
+    subs = [(t, zs(db.recs[ri][1]) if t == 'NAME' else d) for t, d in ref['subs']]
+    # (its foot where the barred door's was: the two models' origins are not at one height, 15 apart in the fort set)
+    from project import ref_info, set_ref_pos
+    b0, b1 = mapdata.object_bounds(db, db.resolve_id(rid)), mapdata.object_bounds(db, ri)
+    if b0 and b1 and abs(b0[2] - b1[2]) > 0.5:
+        _id, pos, scale, _d = ref_info(subs)
+        subs = set_ref_pos(subs, (pos[0], pos[1], pos[2] + (b0[2] - b1[2]) * scale, pos[3], pos[4], pos[5]), scale)
+    editing._store(c, rk, ref['origin'], ref['idx'], subs)
+    return True
+
+
+def _pair_dead(db, cells, links, load_only=(), swing=()):
     """The doors of these rooms that lead nowhere (no link set, not a trap door) paired two by two, each to the
     other's room at the other's spot (face_arrivals then sets the arrival at the door's face); an odd one left
     leads out where the room's first way out does. The number of doors linked. load_only: cells whose doors that
-    only swing in their frames are left alone (a made keep's in_impsmall_door_01 are not ways anywhere)."""
+    only swing in their frames are left alone (a made keep's in_impsmall_door_01 are not ways anywhere). swing:
+    (cell, ref key) of the doors that only swing in the game's room a place was copied from: a cell's door, a room's
+    door. They led nowhere there and lead nowhere here; nor does any barred door."""
     import doors
     linked = {(ck, rk) for ck, rk, _d, _p in links}
     dead = []
@@ -2310,6 +2342,8 @@ def _pair_dead(db, cells, links, load_only=()):
         for r in m.get('refs') or ():
             if r['type'] == 'DOOR' and not r.get('to') and (ck, r['k']) not in linked and not re.search(r'trap|hatch', r['id'], re.I):
                 if ck in load_only and not re.search(r'loaddoor', r['id'], re.I):
+                    continue
+                if (ck, r['k']) in swing or BARRED.search(r['id']):
                     continue
                 dead.append((ck, nm, r))
     if not dead:
@@ -2629,6 +2663,7 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     keys = {}
     to_towers = []                               # (cell, rk) inside doors the game led to its towers
     loose = []                                   # inside doors that led out where this castle has no door
+    swing = set()                                # (cell, rk) inside doors that only swing in the game's room: never linked
     made = None
     if rooms == 'made':
         # (the keep's interiors made anew, several of them linked door to door, and one interior for each run of wall
@@ -2658,10 +2693,16 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
             tm, cm = mapdata.cellmap(db, g), mapdata.cellmap(db, keys[(mi, g)])
             copies = [r for r in cm['refs'] if r['type'] == 'DOOR']
             for r in tm['refs']:
-                if r['type'] != 'DOOR' or not r.get('to'):
+                if r['type'] != 'DOOR':
                     continue
                 cr = min(copies, key=lambda o: math.dist(o['p'][:3], r['p'][:3]), default=None)
                 if cr is None or math.dist(cr['p'][:3], r['p'][:3]) > 2:
+                    continue
+                if not r.get('to'):
+                    swing.add((keys[(mi, g)], cr['k']))
+                    continue
+                if BARRED.search(cr['id']) and not _unbar(db, keys[(mi, g)], cr['k'], cr['id']):
+                    swing.add((keys[(mi, g)], cr['k']))
                     continue
                 to = r['to']
                 tc = (to.get('cell') or '').lower()
@@ -2709,7 +2750,7 @@ def _make(db, outline, style, size, seed, name, people, rooms='furnished', gate=
     # Estmoth. Paired across the castle's own rooms so each opens somewhere, the odd one out by the way in)
     try:
         n_dead = _pair_dead(db, [k for k in keys.values()] + ([tower_key] if tower_key else []) + (made['cells'] if made else []), links,
-                            load_only=set(made['cells']) if made else ())
+                            load_only=set(made['cells']) if made else (), swing=swing)
         if n_dead:
             print('castle: %d door(s) that led nowhere paired within %s' % (n_dead, name))
     except Exception as e:

@@ -284,6 +284,7 @@ function qolEmptyMap(){
 // A small box where the pointer last was, in place of a dialog asking for a number: a slider to drag (the
 // change shows as you drag), a field to type into, a few marks to click; Enter or a click elsewhere keeps
 // it, Esc puts it back. o: {title, value, min, max, step, marks, fmt, input(v), keep(v), cancel()}.
+// modes: [{id, label, tip}] a row of buttons, one of them chosen (mode), onMode(id) when another is picked.
 const QOL_PT = {x: innerWidth / 2, y: innerHeight / 2};
 document.addEventListener('pointerdown', e => { QOL_PT.x = e.clientX; QOL_PT.y = e.clientY; }, true);
 document.addEventListener('contextmenu', e => { QOL_PT.x = e.clientX; QOL_PT.y = e.clientY; }, true);
@@ -297,6 +298,7 @@ function qolSlide(o){
     <div class="qs-row"><input type="range" class="qs-r" min="${o.min}" max="${o.max}" step="${o.step}" value="${o.value}">
       <input class="inp qs-n" value="${fmt(o.value)}" spellcheck="false"></div>
     ${o.marks ? `<div class="qs-m">${o.marks.map(m => `<button class="btn sm" type="button" data-qm="${m}">${fmt(m)}</button>`).join('')}</div>` : ''}
+    ${o.modes ? `<div class="qs-m qs-w">${o.modes.map(m => `<button class="btn sm${m.id === o.mode ? ' on' : ''}" type="button" data-qw="${esc(m.id)}" title="${esc(m.tip || '')}">${esc(m.label)}</button>`).join('')}</div>` : ''}
     <div class="qs-f"><span class="msg">Enter or click away keeps it · Esc undoes</span><button class="btn sm" type="button" data-qx>✕</button><button class="btn sm primary" type="button" data-qk>✓</button></div>`;
   document.body.appendChild(box);
   const R = box.querySelector('.qs-r'), N = box.querySelector('.qs-n');
@@ -317,6 +319,12 @@ function qolSlide(o){
   N.oninput = () => { const x = parseFloat(N.value.replace(',', '.')); if (isFinite(x) && x > 0) set(x, 'n'); };
   box.onwheel = e => { e.preventDefault(); set(Math.round((v - Math.sign(e.deltaY) * o.step) / o.step) * o.step, null); };
   box.querySelectorAll('[data-qm]').forEach(b => b.onclick = () => set(parseFloat(b.dataset.qm), null));
+  // (another way picked: shown at once at the slider's value)
+  box.querySelectorAll('[data-qw]').forEach(b => b.onclick = () => {
+    box.querySelectorAll('[data-qw]').forEach(x => x.classList.toggle('on', x === b));
+    o.onMode && o.onMode(b.dataset.qw);
+    o.input && o.input(v);
+  });
   const away = e => { if (!box.contains(e.target)) done(true); };
   const keys = e => {
     if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(false); }
@@ -338,19 +346,23 @@ function qolSlide(o){
 }
 
 // ---------------------------------------------------------------- scaling (one thing or a group)
-// One thing: its own size, 0.5 to 2 as the game allows. Several: by how much, round their middle, so they
-// keep their places to each other. Shown as you drag, written as one change when you keep it.
+// One thing: its own size, 0.5 to 2 as the game allows. Several: by how much, either round their middle, so they
+// keep their places to each other (a set, the pieces of a building), or each where it stands (rocks and trees on
+// the land): two buttons in the box, the choice remembered and shared with turning (pivotEach). A tester, 2026-11-15: "when you have a bunch of selected
+// rocks on a landscape, you want to scale them without changing their individual position".
+// Shown as you drag, written as one change when you keep it.
 async function qolScale(){
   const sel = selectionRefs(); if (!sel.length) return false;
   const one = sel.length === 1;
   const was = sel.map(([cell, r]) => ({r, p: r.p.slice(), s: r.s || 1}));
   const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2, cz = Math.min(...sel.map(s => s[1].p[2]));
+  let each = pivotEach();                   // (the one choice for turning and sizing several: index.html)
   // (what each would become for a slider value v: the size for one, the factor for several)
   const plan = v => was.map(w => {
     const f = one ? v / w.s : v;
     const p = w.p.slice();
-    if (!one){ p[0] = cx + (w.p[0] - cx) * f; p[1] = cy + (w.p[1] - cy) * f; p[2] = cz + (w.p[2] - cz) * f; }
+    if (!one && !each){ p[0] = cx + (w.p[0] - cx) * f; p[1] = cy + (w.p[1] - cy) * f; p[2] = cz + (w.p[2] - cz) * f; }
     const s = Math.round(Math.max(0.5, Math.min(2, w.s * f)) * 1000) / 1000;      // (the game allows 0.5 to 2)
     return {w, p, s, clamped: w.s * f < 0.5 - 1e-6 || w.s * f > 2 + 1e-6};
   });
@@ -362,6 +374,10 @@ async function qolScale(){
     value: one ? was[0].s : 1, min: 0.5, max: 2, step: 0.01,
     marks: one ? [0.5, 0.75, 1, 1.25, 1.5, 2] : [0.5, 0.8, 1, 1.25, 1.5, 2],
     fmt: v => (Math.round(v * 100) / 100).toString(),
+    modes: one ? null : [{id: 'group', label: 'As a group', tip: 'About the middle of the group: they keep their places to each other. For a set, or the pieces of a building. (Blender: median point)'},
+                         {id: 'each', label: 'Each in place', tip: 'Each where it stands: nothing moves. For rocks and trees on the land. (Blender: individual origins)'}],
+    mode: each ? 'each' : 'group',
+    onMode: m => { each = m === 'each'; pivotSet(each); },
     input: show,
     cancel: back,
     keep: async v => {
@@ -370,7 +386,7 @@ async function qolScale(){
       if (!await needProject()) return;
       const moves = xs_.map((x, n) => ({cell: sel[n][0], ref: sel[n][1].k, p: x.p, s: x.s}));
       const clamped = xs_.filter(x => x.clamped).length;
-      const say = one ? `${name} now at size ${Math.round(xs_[0].s * 100) / 100}` : `Scaled ${name} by ${Math.round(v * 100) / 100}`;
+      const say = one ? `${name} now at size ${Math.round(xs_[0].s * 100) / 100}` : `Scaled ${name} by ${Math.round(v * 100) / 100}${each ? ', each in place' : ''}`;
       await groupAction('/api/group/move', {moves}, say + (clamped ? ` (${clamped} stopped at the game's limit of 0.5 to 2)` : ''));
     }});
 }
