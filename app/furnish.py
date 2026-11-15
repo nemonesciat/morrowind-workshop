@@ -1824,6 +1824,15 @@ WINDOW_SILL = 120.0             # (a window wall a storey tall has no sill of it
 
 WALK_HALF = 34.0                # (a walker's half-width, and a little)
 WALK_DEEP = 220.0               # (the walk through a door, this far either side of it)
+# (a hung thing the building runs through: the game's forts hang 400 tapestries and banners at their spiral stairs,
+# every one at a turn's doorway, and 6 of them (1.5%) are crossed by this test; made tower rooms hung theirs on the
+# stairwell's far walls, where the steps climb, 33 of 37 crossed. The user: "tapestries hanging down and clipping
+# into the stairs", 2026-11-15)
+CROSS_FRONT = 5.0               # (the lines stand this far in front of the thing's face)
+CROSS_PART = 0.66               # (its lower part only: a vaulted passage's wall leans in over a hanging's rod)
+CROSS_DEEP = 10.0               # (the building this far up a line from the thing's foot, or more, crosses it)
+CROSS_LINES = 2                 # (... on this many of five lines across it)
+CROSSED = 'the building runs through it: left out'
 WALK_HEAD = 140.0               # (a walker's height over the door's foot: what hangs lower is in the way)
 
 
@@ -2210,6 +2219,11 @@ def _decorate(db, room, purpose, T, decor, refs, placed, put, rng, hung, hang_k=
             if rec is None:
                 # (no flat wall behind this spot, or a window: the next spot, not no hanging at all. Of 42 hangings a
                 # made town lost this way every one had a free spot left, lab decdiag, 2026-11-10)
+                if last_trace and last_trace[-1][1:] == ('hang', rid, CROSSED):
+                    # (a spot the building runs through holds nothing of this room's: given up, and not counted
+                    # against the six, or a tower's stairwell spots would end the room's hangings)
+                    spots.remove(sp)
+                    continue
                 refused += 1
                 if refused >= 6:
                     break
@@ -2935,6 +2949,37 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
         d = min(min(r_) for r_ in rows) - 6 - 1.5
         return x - fx * d, y - fy * d
 
+    def crossed_by_building(b, rot, x, y, z, front, scale=1.0):
+        """Whether the building runs through a thing hung on a wall: a hand in front of its face, CROSS_LINES or
+        more of five lines down its lower part meet the building's real surfaces (a stair's steps climbing the wall
+        it hangs on, a landing, a pillar's foot). The wall behind it is asked for elsewhere (wall_by_ray, wall_fit)."""
+        if not _scene:
+            floor_by_mesh(x, y, z)
+        if not _scene[0].tris:
+            return False
+        f = front or (0.0, -1.0)
+        c_, s_ = math.cos(rot), math.sin(rot)
+        fx, fy = f[0] * c_ + f[1] * s_, -f[0] * s_ + f[1] * c_
+        if abs(fx) < 0.5 and abs(fy) < 0.5:
+            return False
+        n_ = math.hypot(fx, fy)
+        fx, fy = fx / n_, fy / n_
+        box = _footprint([v * scale for v in b], rot, x, y)
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        depth, width = (box[3] - box[1], box[2] - box[0]) if abs(fy) > abs(fx) else (box[2] - box[0], box[3] - box[1])
+        z0 = z + b[2] * scale
+        top = (b[5] - b[2]) * scale * CROSS_PART
+        if top < 30:
+            return False
+        n = 0
+        for wf in (-0.42, -0.21, 0.0, 0.21, 0.42):
+            ox, oy = cx + fx * (depth / 2 + CROSS_FRONT) - fy * width * wf, cy + fy * (depth / 2 + CROSS_FRONT) + fx * width * wf
+            d1 = _scene[0].nearest_any((ox, oy, z0 + top), (0.0, 0.0, -1.0), top - 2)
+            d2 = _scene[0].nearest_any((ox, oy, z0 + 1), (0.0, 0.0, 1.0), top - 2)
+            if max((top - d1[0]) if d1 is not None else 0.0, (top - d2[0]) if d2 is not None else 0.0) > CROSS_DEEP:
+                n += 1
+        return n >= CROSS_LINES
+
     def ceiling_over(x, y, z0, reach=900):
         """The height of the building's surface straight over (x, y) from z0 up, by the real geometry
         of the pieces (the way the health check looks for a ceiling), or None when nothing is above:
@@ -3267,6 +3312,10 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
                 _win_cache['#walks'] = door_walks(refs)
             if any(_overlaps(hb_, w_[0], 0) and z + b[2] * scale < w_[1] + WALK_HEAD and z + b[5] * scale > w_[1] for w_ in _win_cache['#walks']):
                 last_trace.append((room, 'hang', rid, 'in a doorway\'s walk at head height: left out'))
+                return None
+            # (nor where the building runs through it: a spiral stair's steps climb the wall of its well)
+            if tag in ('STAT', 'ACTI', 'CONT') and room_ is not None and crossed_by_building(b, rot, x, y, z, front_of(db, rid), scale):
+                last_trace.append((room, 'hang', rid, CROSSED))
                 return None
         else:
             # on this room's own floor (not up on the floor of a room above it), or on a table in it; a
