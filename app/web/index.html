@@ -59,7 +59,7 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 #jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
 #jumpme svg{flex:none;display:block}
 @container (max-width:720px){#togetherbtn .tl{display:none}}
-@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#savebtn .tl,#openbtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
+@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#filebtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
 @container (max-width:500px){#aibtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
@@ -271,6 +271,17 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .omwmenu button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--text);padding:8px 10px;border-radius:7px;cursor:pointer;font:inherit}
 .omwmenu button:hover{background:var(--hover)}
 .omwmenu button small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.filemenu{width:250px}
+.filemenu button{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:6px 10px}
+.filemenu button[disabled]{opacity:.45;cursor:default}
+.filemenu button[disabled]:hover{background:none}
+.filemenu .k{font-size:11.5px;color:var(--faint);flex:none}
+.filemenu hr{border:0;border-top:1px solid var(--line);margin:4px 6px}
+.filemenu .filerow{position:relative}
+.filemenu .filesub{display:none;position:absolute;right:calc(100% - 2px);top:-6px;width:250px;background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 12px 40px #000c;padding:6px;max-height:60vh;overflow:auto}
+.filemenu .filerow:hover .filesub,.filemenu .filesub.on{display:block}
+.filemenu.subright .filesub{right:auto;left:calc(100% - 2px)}
+.filemenu .filesub .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .omwfoot{border-top:1px solid var(--line);margin-top:4px;padding:8px 10px 4px;font-size:11.5px;color:var(--faint);word-break:break-all}
 .lobar{display:flex;gap:8px;align-items:center;margin:4px 0 12px;flex-wrap:wrap}
 .lot .lorow.over td{border-top:2px solid var(--gold)}
@@ -279,6 +290,10 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .xbtn{background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px;line-height:1;padding:2px 4px;border-radius:4px;margin-left:8px;vertical-align:middle}
 .xbtn:hover{color:var(--text);background:#ffffff14}
 .modal-bg{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:40}
+/* scrollbars in the theme's own colours, everywhere and from the start */
+*{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
 .modal{background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:22px 24px;width:min(480px,92vw);max-height:92vh;overflow:auto}
 .modal h2{font-family:Cinzel,serif;color:var(--gold2);margin:0 0 6px;font-weight:600}
 .modal label{display:block;font-size:12.5px;color:var(--muted);margin:12px 0 4px}
@@ -810,7 +825,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="savebtn" title="Save a version of your mod to come back to (Ctrl+S). The mod itself is saved after every change" disabled>💾<span class="tl"> Save</span></button><div class="omwwrap"><button class="btn" id="openbtn" title="Open: earlier versions of this mod, your other mods, an .esp">📂<span class="tl"> Open</span> ▾</button><div class="omwmenu" id="openmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="filebtn" title="New, open, save, earlier versions, your mods">📁<span class="tl"> File</span> ▾</button><div class="omwmenu filemenu" id="filemenu"></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -945,7 +960,9 @@ async function busyPoll(){
     try {
       const ctl = new AbortController(); setTimeout(() => ctl.abort(), 2500);
       const r = await (await fetch('/api/busy', {signal: ctl.signal})).json();
-      busyShow(r.busy && r.busy.length ? r.busy : null, r.making);
+      // (a file picker waiting for the user is not the Workshop being busy: "Looking through your plugins · 108 s")
+      const busy = (r.busy || []).filter(b => !PICK_WAIT.test(b.what));
+      busyShow(busy.length ? busy : null, r.making);
     } catch (e){ busyShow([{what: '', seconds: Math.round((now - first) / 1000)}]); }
   }
   setTimeout(busyPoll, 1500);
@@ -1750,7 +1767,6 @@ setInterval(async () => {
 function renderProjectPill(){
   const p = S.summary && S.summary.project, el = $('#projpill');
   const ub = $('#undobtn');
-  $('#savebtn').disabled = !p;
   ub.disabled = !(p && p.undo_depth);
   ub.title = p && p.undo_depth ? 'Undo: ' + p.undo_note + ' (Ctrl+Z)' : 'Nothing to undo';
   const rb = $('#redobtn');
@@ -1782,12 +1798,15 @@ const BUSY_WHAT = [[/\/api\/land\/plan\/preview/, 'previewing the land'], [/\/ap
   [/\/api\/fixit|\/api\/gaps/, 'finding or fixing gaps'], [/\/api\/project\/(open|new|adopt|saveas)/, 'switching mods'],
   [/\/api\/project/, 'reading your mod'], [/\/api\/adopt/, 'looking through your plugins'],
   [/\/api\/merge/, 'merging a mod'], [/\/api\/check|placecheck/, 'checking a place']];
-function slowWait(btn, note, label){
+// (own: what to say instead while the wait is for the user, in the computer's file picker)
+const PICK_WAIT = /\/api\/(adopt|openmw)\/pick$/, PICK_NOTE = 'The file picker is open in its own window.';
+function slowWait(btn, note, label, own){
   const was = btn ? btn.textContent : '';
   if (btn){ btn.disabled = true; if (label) btn.textContent = label; }
   let stop = false;
   const tick = async () => {
     if (stop) return;
+    if (own){ if (note){ note.className = 'msg'; note.textContent = own; } return; }
     let what = '';
     try {
       const ctl = new AbortController(); setTimeout(() => ctl.abort(), 2500);
@@ -1803,7 +1822,7 @@ function slowWait(btn, note, label){
     setTimeout(tick, 4000);
   };
   setTimeout(tick, 3000);
-  return () => { stop = true; if (btn){ btn.disabled = false; btn.textContent = was; } if (note && /^Still waiting/.test(note.textContent)) note.textContent = ''; };
+  return () => { stop = true; if (btn){ btn.disabled = false; btn.textContent = was; } if (note && (/^Still waiting/.test(note.textContent) || note.textContent === own)) note.textContent = ''; };
 }
 // (newOnly: from ＋ New mod… and Your mods' Start a new mod, where switching and opening an .esp are on the page
 // already, so the window is only the new mod's name and details)
@@ -1818,7 +1837,7 @@ function projectModal(newOnly){
   const cur = S.summary && S.summary.project ? S.summary.project.name : '';
   newOnly = newOnly === true;
   bg.innerHTML = `<div class="modal"><h2>${newOnly ? 'Start a new mod' : projects.length ? 'Switch to a mod, or start one' : 'Start a mod'}</h2>
-    ${cur ? (newOnly ? `<p class="msg"><b>${esc(cur)}</b> is saved already and stays as it is; Your mods… switches back to it.</p>`
+    ${cur ? (newOnly ? `<p class="msg"><b>${esc(cur)}</b> is saved already and stays as it is; File → Open recent switches back to it.</p>`
       : `<p class="msg">You are working on <b>${esc(cur)}</b>. It is saved already; switching keeps everything in it.</p>`) : ''}
     ${projects.length ? `<label>Open one of your mods</label><select class="inp" id="pm-open"><option value="">(choose)</option>${projects.filter(p => p !== cur).map(p => `<option>${esc(p)}</option>`).join('')}</select>
       <div class="msg" style="margin:14px 0 4px;color:var(--text-b)">…or start a new one:</div>` : ''}
@@ -1826,13 +1845,13 @@ function projectModal(newOnly){
     <label>Mod name</label><input class="inp" id="pm-name" placeholder="e.g. Hlaalu Manor Expansion" maxlength="60">
     <label>Author (optional)</label><input class="inp" id="pm-author" maxlength="31">
     <label>Short description (optional)</label><input class="inp" id="pm-desc" maxlength="255">
-    ${newOnly ? '' : `<p class="msg" style="margin-top:10px">…or, as in the Construction Set, make an existing plugin the active file: <button class="btn sm" id="pm-adopt">📂 Set a plugin as the active file…</button></p>`}
+    ${newOnly ? '' : `<p class="msg" style="margin-top:10px">…or open an existing plugin: <button class="btn sm" id="pm-adopt">📂 Open a file…</button></p>`}
     <div class="msg err" id="pm-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="pm-cancel">Cancel</button><button class="btn primary" id="pm-ok">Create mod</button></div></div>`;
   document.body.appendChild(bg);
   $('#pm-name').focus();
   $('#pm-cancel').onclick = () => bg.remove();
-  if ($('#pm-adopt')) $('#pm-adopt').onclick = () => { bg.remove(); adoptModal(); };
+  if ($('#pm-adopt')) $('#pm-adopt').onclick = () => { bg.remove(); fileOpen(); };
   $('#pm-ok').onclick = async () => {
     const open = $('#pm-open') && $('#pm-open').value;
     const name = $('#pm-name').value.trim();
@@ -1936,64 +1955,50 @@ function mergeModal(){
     } catch (e){ err.textContent = e.message; ok.disabled = false; }
   };
 }
-// Open an existing plugin (.esp or .omwaddon) as the mod itself: the file's records and places become the
-// project, with its objects' indices as they are, and the Workshop saves straight back into that file (a
-// dated copy is made beside it first; later copies go under Backups). POST /api/project/adopt {path} (adopt.py).
-// (picked: a file chosen already with the computer's file picker, from Your mods' Choose another file: {path, name,
-// in_data}; the dialog opens with it chosen)
-async function adoptModal(preset, picked){
-  const NOT_DATA = 'That folder is not one of OpenMW\'s data folders: the game won\'t see the file until the folder is added in the OpenMW Launcher (Data Files > Directories).';
-  const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal" style="width:min(680px,94vw)"><h2>Set a plugin as the active file</h2>
-    <p class="msg">The plugin becomes the mod you work on, and every change is saved into it, as in the Construction Set. Nothing in it is lost: placed objects keep their numbers, so saved games still work.</p>
-    <p class="msg" title="Other plugins in your load order stay as they are; changes to their things go into the active file, which then lists them as masters. Master files (.esm) can't be opened this way.">A dated copy is made beside it first; later copies go under <b>Backups</b>.</p>
-    <div id="ad-list" style="max-height:min(42vh,420px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking in your data folders…</div>
-    <div class="actions" style="margin-top:8px"><button class="btn sm" id="ad-browse">📂 Choose another file…</button><span class="msg" id="ad-picked"></span></div>
-    <div class="msg err" id="ad-err" style="margin-top:8px"></div>
-    <div class="foot"><button class="btn" id="ad-cancel">Cancel</button><button class="btn primary" id="ad-ok" disabled>Set as active file</button></div></div>`;
-  document.body.appendChild(bg);
-  const q = s => bg.querySelector(s);
-  let chosen = null, chosenName = '';
-  const choose = (path, name) => { chosen = path; chosenName = name; q('#ad-ok').disabled = !path; q('#ad-picked').textContent = path ? name + '  ·  ' + path : ''; };
-  q('#ad-cancel').onclick = () => bg.remove();
-  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+// File > Open...: the computer's own file picker at once. A file that is one of your mods switches to it; any other
+// .esp or .omwaddon becomes the mod itself after one question: the file's records and places become the project, with
+// its objects' indices as they are, and the Workshop saves straight back into that file (a dated copy is made beside
+// it first; later copies go under Backups). POST /api/adopt/pick, then /api/project/open or /api/project/adopt
+// (adopt.py). (The user, 2026-11-15: "OPEN is one of the most important functions in the workshop"; it was Open, then
+// Open a plugin as your mod, then Choose another file before any file picker, and that one opened behind the window.)
+const FILE_NOT_DATA = 'That folder is not one of OpenMW\'s data folders: the game won\'t see the file until the folder is added in the OpenMW Launcher (Data Files > Directories).';
+let FILE_PICKING = false;
+async function fileOpen(){
+  if (FILE_PICKING){ toast(PICK_NOTE); return; }
+  FILE_PICKING = true;
   try {
-    const listing = slowWait(null, q('#ad-err'));
-    let c;
-    try { c = await api('/api/adopt/candidates'); } finally { listing(); }
-    const rows = c.plugins;
-    const row = p => `<label class="arow" style="padding:5px 8px;gap:10px;align-items:center;cursor:pointer"><input type="radio" name="ad-pick" value="${esc(p.path)}" data-name="${esc(p.name)}" ${p.clash ? 'disabled' : ''}>
-        <span class="atext"><b>${esc(p.name)}</b> <span class="msg">${(p.size / 1024).toFixed(0)} KB · ${p.enabled ? 'in your load order' : 'switched off'}${p.adopted ? ' · <span style="color:var(--gold2)">opened here before</span>' : ''}${p.clash ? ' · <span class="sev-warning">a mod of this name already exists here</span>' : ''}</span>
-        <div class="msg" style="font-size:11.5px">${esc(p.folder)}${p.masters.length ? ' · needs ' + p.masters.map(esc).join(', ') : ''}</div></span></label>`;
-    q('#ad-list').innerHTML = rows.length ? `<div class="alist">${rows.map(row).join('')}</div>` : '<div class="msg">No .esp or .omwaddon files in your data folders besides your own mod. Choose a file below.</div>';
-    bg.querySelectorAll('[name=ad-pick]').forEach(r => r.onchange = () => choose(r.value, r.dataset.name));
-    if (preset){
-      const r = [...bg.querySelectorAll('[name=ad-pick]')].find(x => x.value.toLowerCase() === preset.toLowerCase());
-      if (r && !r.disabled){ r.checked = true; choose(r.value, r.dataset.name); }
-    }
-    if (picked && !chosen){ choose(picked.path, picked.name); if (!picked.in_data) q('#ad-err').textContent = NOT_DATA; }
-  } catch (e){ q('#ad-list').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
-  q('#ad-browse').onclick = async () => {
-    q('#ad-err').textContent = '';
-    // (one file picker at a time: clicks made while the Workshop was busy each opened one when it caught up)
-    const done = slowWait(q('#ad-browse'), q('#ad-err'), 'Opening a file picker…');
-    try {
-      const r = await post('/api/adopt/pick', {});
-      done();
-      if (r.cancelled) return;
-      bg.querySelectorAll('[name=ad-pick]').forEach(x => x.checked = false);
-      choose(r.path, r.name);
-      if (!r.in_data) q('#ad-err').textContent = NOT_DATA;
-    } catch (e){ done(); q('#ad-err').className = 'msg err'; q('#ad-err').textContent = e.message; }
-  };
-  q('#ad-ok').onclick = async () => {
-    if (!chosen) return;
-    if (!confirm(`Open ${chosenName} as your mod?\n\nFrom now on every change you make is saved into this file. A dated copy of it is made beside it first.`)) return;
-    q('#ad-ok').disabled = true; q('#ad-err').textContent = '';
+    const r = await post('/api/adopt/pick', {});
+    if (r.cancelled) return;
+    if (r.mod){ if (r.current) toast(r.mod + ' is the mod open now.'); else await fileSwitch(r.mod); return; }
+    openFileConfirm(r);
+  } catch (e){ toast(e.message, true); }
+  finally { FILE_PICKING = false; }
+}
+async function fileSwitch(name){
+  rememberSelection();
+  try { await post('/api/project/open', {name}); toast('Switched to ' + name + '. Reading your data…'); setTimeout(poll, 300); }
+  catch (e){ toast(e.message, true); }
+}
+// (f: {path, name, in_data}; in_data false when the file's folder is not one the game reads)
+function openFileConfirm(f){
+  document.querySelectorAll('.modal-bg[data-of]').forEach(x => x.remove());
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.of = '1';
+  bg.innerHTML = `<div class="modal"><h2>Open ${esc(f.name)}?</h2>
+    <p class="msg" title="${esc(f.path)}&#10;&#10;As the Construction Set's active file. Nothing in it is lost: placed objects keep their numbers, so saved games still work. Other plugins stay as they are. Later copies go under Backups.">Every change is saved into this file from now on. A dated copy is made beside it first.</p>
+    ${f.in_data === false ? `<p class="msg warn">${FILE_NOT_DATA}</p>` : ''}
+    <div class="msg err" id="of-err"></div>
+    <div class="foot"><button class="btn" id="of-cancel">Cancel</button><button class="btn primary" id="of-ok">Open</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = x => bg.querySelector(x);
+  q('#of-cancel').onclick = () => bg.remove();
+  bg.onclick = e => { if (e.target === bg) bg.remove(); };
+  q('#of-ok').focus();
+  q('#of-ok').onclick = async () => {
+    q('#of-err').textContent = '';
     rememberSelection();
-    const done = slowWait(q('#ad-ok'), q('#ad-err'), 'Opening it…');
+    const done = slowWait(q('#of-ok'), q('#of-err'), 'Opening it…');
     try {
-      const r = await post('/api/project/adopt', {path: chosen});
+      const r = await post('/api/project/adopt', {path: f.path});
       done(); bg.remove();
       const bits = [`${fmtN(r.records)} record${r.records === 1 ? '' : 's'}`, `${fmtN(r.places)} place${r.places === 1 ? '' : 's'}`, `${fmtN(r.objects)} object${r.objects === 1 ? '' : 's'} of its own`];
       if (r.master_objects) bits.push(`${fmtN(r.master_objects)} changed object${r.master_objects === 1 ? '' : 's'} of its masters`);
@@ -2003,7 +2008,7 @@ async function adoptModal(preset, picked){
       if (r.problems.length) msg += ` Odd in the file: ${r.problems.slice(0, 3).join('; ')}.`;
       toast(msg + ' Reading your data…', !!(r.missing_masters.length || r.problems.length));
       setTimeout(poll, 300);
-    } catch (e){ done(); q('#ad-err').className = 'msg err'; q('#ad-err').textContent = e.message; q('#ad-ok').disabled = false; }
+    } catch (e){ done(); q('#of-err').className = 'msg err'; q('#of-err').textContent = e.message; }
   };
 }
 // The Construction Set's Save As: the mod's changes go into a new .esp or .omwaddon in your mods folder, the
@@ -2054,24 +2059,10 @@ async function modsModal(){
     <p class="msg" title="Delete sends the mod's project, plugin, scripts and grass files to the ${osw('bin')}, where they can be restored, and takes it out of the load order. The open mod can't be deleted: switch first.">Every mod you made or opened here, newest first.</p>
     <div id="mx-list" style="max-height:min(56vh,560px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking…</div>
     <div class="msg err" id="mx-err" style="margin-top:8px"></div>
-    <div class="foot"><button class="btn" id="mx-new">＋ Start a new mod…</button><button class="btn" id="mx-file" title="Open an .esp or .omwaddon that is not in this list as your mod">📂 Choose another file…</button><button class="btn" id="mx-close">Close</button></div></div>`;
+    <div class="foot"><button class="btn" id="mx-close">Close</button></div></div>`;
   document.body.appendChild(bg);
   const q = s => bg.querySelector(s);
   q('#mx-close').onclick = () => bg.remove();
-  q('#mx-new').onclick = () => { bg.remove(); projectModal(true); };
-  // (a file the user did not make here: the same file picker as Set a plugin as the active file, whose dialog then
-  // opens with the file chosen, so what opening it means is said before it is done. The user's "it should have a
-  // choose another file button like the open esp page does", 2026-11-15)
-  q('#mx-file').onclick = async () => {
-    q('#mx-err').textContent = '';
-    const done = slowWait(q('#mx-file'), q('#mx-err'), 'Opening a file picker…');
-    try {
-      const r = await post('/api/adopt/pick', {});
-      done();
-      if (r.cancelled) return;
-      bg.remove(); adoptModal(r.path, r);
-    } catch (e){ done(); q('#mx-err').className = 'msg err'; q('#mx-err').textContent = e.message; }
-  };
   bg.onclick = e => { if (e.target === bg) bg.remove(); };
   const draw = async () => {
     let r;
@@ -2079,7 +2070,7 @@ async function modsModal(){
     const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
     q('#mx-list').innerHTML = `<div class="alist">${r.mods.map(m => `<div class="arow" style="padding:6px 8px;gap:10px;align-items:center">
         <span class="atext"><b>${esc(m.name)}</b>${m.current ? ' <span class="sev-ok">· open now</span>' : ''}
-          <div class="msg" style="font-size:11.5px">${esc(m.plugin)}${m.exists ? ' · ' + kb(m.size) : ' · <span class="sev-warning">no plugin file yet</span>'} · ${esc(m.modified)}${m.in_load_order ? ' · in your load order' : ''}${m.adopted ? ' · opened from an existing file' : ''}</div></span>
+          <div class="msg" style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file)}">${esc(m.plugin)}${m.exists ? ' · ' + kb(m.size) : ' · <span class="sev-warning">no plugin file yet</span>'} · ${esc(m.modified)}${m.in_load_order ? ' · in your load order' : ''}${m.adopted ? ' · opened from a file' : ''}</div></span>
         <button class="btn sm" data-mxshow="${esc(m.name)}" title="${esc(m.file)}">📁 Show folder</button>
         ${m.current ? '' : `<button class="btn sm" data-mxopen="${esc(m.name)}">Switch to it</button><button class="btn sm danger" data-mxdel="${esc(m.name)}" data-adopted="${m.adopted ? 1 : ''}" data-plugin="${esc(m.plugin)}">Delete…</button>`}</div>`).join('')}</div>`;
     bg.querySelectorAll('[data-mxshow]').forEach(b => b.onclick = async () => { try { await post('/api/mods/show', {name: b.dataset.mxshow}); } catch (e){ q('#mx-err').textContent = e.message; } });
@@ -2119,7 +2110,7 @@ async function renderMyMod(){
   const wrap = $('#mymodwrap');
   if (!S.summary || !S.summary.project){
     wrap.innerHTML = `<h1>My mod</h1><p class="lead">You haven't started a mod yet. A mod is your own plugin file: every edit, new item and moved object goes into it, and your original game files are never touched.</p>
-      <div class="actions"><button class="btn primary" onclick="projectModal()">＋ Start a mod</button><button class="btn" onclick="adoptModal()" title="An existing .esp or .omwaddon becomes the mod you work on, saved back into that file">📂 Open a plugin as your mod…</button></div>`;
+      <div class="actions"><button class="btn primary" onclick="projectModal()">＋ Start a mod</button><button class="btn" onclick="fileOpen()" title="An existing .esp or .omwaddon becomes the mod you work on, saved back into that file">📂 Open a file…</button></div>`;
     return;
   }
   const P = await api('/api/project');
@@ -2127,9 +2118,9 @@ async function renderMyMod(){
   const byType = {};
   P.changes.forEach(c => (byType[c.type] = byType[c.type] || []).push(c));
   let h = `<h1>${esc(p.name)}${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'My mod') : ''}</h1>
-    <p class="lead">Saved automatically after every change. <b>💾 Save</b> at the top keeps a version to come back to; <b>📂 Open</b> has the earlier ones. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span> (📁 Show folder opens it)</p>
+    <p class="lead">Saved automatically after every change. <b>File → Save a version</b> keeps one to come back to. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span></p>
     ${p.source ? `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): this mod <b>is</b> that file, opened as your mod. Its objects keep the numbers the file gave them, its masters stay as the file listed them, and a dated copy of the file as it was is kept beside it (later copies under Backups).${p.plain_esp ? ' A plain .esp holds no Lua scripts: any you write stay in the project and are not written out.' : ''}</p>`
-               : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
+               : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>File → Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
     <div class="cards">
       <div class="card"><div class="big">${fmtN(p.changes)}</div><div class="lab">changes in this mod</div></div>
       <div class="card"><div class="big ${p.enabled_in_cfg ? 'sev-ok' : 'sev-warning'}">${p.enabled_in_cfg ? 'On' : 'Off'}</div><div class="lab">${p.enabled_in_cfg ? 'Enabled in your normal OpenMW load order' : 'Not in your normal load order yet. Play buttons still load it for testing.'}</div></div>
@@ -2138,13 +2129,6 @@ async function renderMyMod(){
     <div class="actions" style="margin-bottom:22px">
       <button class="btn primary" id="mm-release" title="Check the mod, write a readme and pack a zip to share">📦 Get ready to share</button>
       ${p.enabled_in_cfg ? '' : `<button class="btn" id="mm-enable">Add to my OpenMW load order</button>`}
-      <button class="btn" id="mm-folder" title="Open the folder with ${esc(p.plugin)} in ${osw('files')}, the file picked out">📁 Show folder</button>
-      <button class="btn" id="mm-new" title="Start another mod (this one stays as it is)">＋ New mod…</button>
-      <button class="btn" id="mm-mods" title="Switch to another of your mods, start a new one, or delete the ones you no longer want">🗂 Your mods…</button>
-      <button class="btn" id="mm-together" title="Build this mod together with other people, live, from wherever they are">👥 Build together…</button>
-      <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>
-      <button class="btn" id="mm-adopt" title="An existing .esp or .omwaddon becomes the active file: the mod you work on, saved back into that file">📂 Open a plugin as your mod…</button>
-      <button class="btn" id="mm-saveas" title="Save everything into a new .esp or .omwaddon, which becomes the active file (the Construction Set's Save As)">💾 Save as…</button>
     </div>`;
   if (!P.changes.length) h += `<div class="card">No changes yet. Open anything in <b>Browse</b> and press <b>✎ Edit</b> or <b>⧉ Use as template</b>, or move things around on the <b>World map</b>.</div>`;
   // (the changed ground's rows can be picked as in a file list: click, Shift+click a run, Ctrl+click one more or one
@@ -2258,13 +2242,6 @@ async function renderMyMod(){
     try { const r = await post('/api/project/enable'); toast(r.already ? 'Already enabled' : 'Enabled. Backup saved next to openmw.cfg'); await afterChange(); renderMyMod(); }
     catch (err){ toast(err.message, true); }
   };
-  $('#mm-together').onclick = () => togOpen();
-  $('#mm-folder').onclick = async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } };
-  $('#mm-mods').onclick = modsModal;
-  $('#mm-new').onclick = () => projectModal(true);
-  $('#mm-merge').onclick = mergeModal;
-  $('#mm-adopt').onclick = () => adoptModal();
-  $('#mm-saveas').onclick = saveAsModal;
   $('#mm-release').onclick = () => showView('release');
   const la = $('#mm-logall'); if (la) la.onclick = () => { S.logAll = true; renderMyMod(); };
   const su = $('#mm-undone'); if (su) su.onchange = () => { S.showUndone = su.checked; renderMyMod(); };
@@ -5063,26 +5040,57 @@ async function saveVersion(name){
   if (!p){ toast('Start a mod first.'); return; }
   try {
     await post('/api/backups/now', {name: name || ''});
-    toast('Saved a version' + (name ? ' "' + name + '"' : '') + '. 📂 Open has the earlier ones.');
+    toast('Saved a version' + (name ? ' "' + name + '"' : '') + '. File → Earlier versions has them.');
     if ($('#vr-bg')) versionsModal();
   } catch (err){ toast(err.message, true); }
 }
-$('#savebtn').onclick = () => saveVersion();
-$('#openbtn').onclick = e => {
-  e.stopPropagation(); if (typeof topMenusClose === 'function') topMenusClose('openmenu');
-  const m = $('#openmenu'), p = S.summary && S.summary.project, show = m.style.display !== 'block';
-  m.innerHTML = `${p ? '<button data-op="versions"><b>🕘 Earlier versions…</b><small>Put the mod back to a saved version or a backup.</small></button>' : ''}
-    <button data-op="mods"><b>🗂 Your mods…</b><small>Switch to another of your mods.</small></button>
-    <button data-op="adopt"><b>📂 Open a plugin as your mod…</b></button>
-    ${p ? '<button data-op="saveas"><b>💾 Save as…</b><small>Everything into a new file, which becomes the active one.</small></button>' : ''}
-    <button data-op="new"><b>＋ New mod…</b></button>`;
+// File: what a program's File menu holds, one line each (the user, 2026-11-15: "I really don't like the file system
+// we have now, with these crappy buttons"; before it a Save button, an Open menu of five dialogs and nine buttons on
+// My mod).
+function fileKey(id){ try { const a = CF_ACT.find(x => x.id === id); return a ? (cfKeysOf(a)[0] || '') : ''; } catch (e){ return ''; } }
+$('#filebtn').onclick = e => {
+  e.stopPropagation(); if (typeof topMenusClose === 'function') topMenusClose('filemenu');
+  const m = $('#filemenu'), p = S.summary && S.summary.project, show = m.style.display !== 'block', off = p ? '' : ' disabled';
+  m.innerHTML = `<button data-op="new">New mod…</button>
+    <button data-op="open" title="Any .esp or .omwaddon, or one of your mods">Open…<span class="k">${fileKey('open')}</span></button>
+    <div class="filerow"><button data-op="recent">Open recent<span class="k">▸</span></button><div class="filesub" id="filerecent"></div></div>
+    <hr>
+    <button data-op="save"${off} title="Keeps the mod as it is now, to come back to. The mod itself is saved after every change.">Save a version<span class="k">${fileKey('save')}</span></button>
+    <button data-op="saveas"${off} title="Everything into a new .esp or .omwaddon, which becomes the active file">Save as…</button>
+    <button data-op="versions"${off} title="Put the mod back to a saved version or a backup">Earlier versions…</button>
+    <hr>
+    <button data-op="merge"${off} title="Add everything another of your mods holds to this one">Merge a mod into this one…</button>
+    <button data-op="folder"${off}>Show in folder</button>
+    <button data-op="mods" title="Every mod you made or opened here: switch, show its folder, delete">Manage mods…</button>
+    <button data-op="share"${off} title="Check the mod, write a readme and pack a zip">Get ready to share…</button>`;
   m.style.display = show ? 'block' : 'none';
+  // (towards the side with room: the bar sits at the right in a wide window and wraps to the left in a narrow one)
+  m.style.left = ''; m.style.right = '';
+  if (show){
+    if (m.getBoundingClientRect().left < 4){ m.style.left = '0'; m.style.right = 'auto'; }
+    m.classList.toggle('subright', m.getBoundingClientRect().left < 256);
+    fileRecent();
+  }
 };
-document.addEventListener('click', e => { if (!e.target.closest('#openmenu')) $('#openmenu').style.display = 'none'; });
-$('#openmenu').addEventListener('click', e => {
-  const b = e.target.closest('button[data-op]'); if (!b) return;
-  $('#openmenu').style.display = 'none';
-  ({versions: versionsModal, mods: modsModal, adopt: () => adoptModal(), saveas: saveAsModal, new: () => projectModal(true)})[b.dataset.op]();
+async function fileRecent(){
+  const el = $('#filerecent'); if (!el) return;
+  el.innerHTML = '<div class="msg" style="padding:6px 10px">Looking…</div>';
+  try {
+    const list = (await api('/api/mods/recent')).mods;
+    el.innerHTML = list.length ? list.map(m => `<button data-recent="${esc(m.name)}" title="Last worked on ${esc(m.modified)}"><span class="nm">${esc(m.name)}</span></button>`).join('')
+      : '<div class="msg" style="padding:6px 10px">No other mods yet.</div>';
+  } catch (e){ el.innerHTML = `<div class="msg err" style="padding:6px 10px">${esc(e.message)}</div>`; }
+}
+document.addEventListener('click', e => { if (!e.target.closest('#filemenu')) $('#filemenu').style.display = 'none'; });
+$('#filemenu').addEventListener('click', e => {
+  const rc = e.target.closest('button[data-recent]');
+  if (rc){ $('#filemenu').style.display = 'none'; fileSwitch(rc.dataset.recent); return; }
+  const b = e.target.closest('button[data-op]'); if (!b || b.disabled) return;
+  if (b.dataset.op === 'recent'){ $('#filerecent').classList.toggle('on'); return; }
+  $('#filemenu').style.display = 'none';
+  ({new: () => projectModal(true), open: fileOpen, save: () => saveVersion(), saveas: saveAsModal, versions: versionsModal, merge: mergeModal,
+    folder: async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } },
+    mods: modsModal, share: () => showView('release')})[b.dataset.op]();
 });
 // The versions of the open mod: the ones you saved (kept until you remove them) and the backups the Workshop makes
 // by itself (rotated: Settings says how many). Restore backs up how the mod is now first.

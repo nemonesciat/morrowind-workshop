@@ -400,11 +400,21 @@ def pick_file(db):
     import osplat
     cfg = db.config or {}
     start = cfg.get('data_local') or os.path.join(cfg.get('userdata') or cfg.get('userdir', ''), 'data')
-    path = osplat.pick_file('Open a plugin as your mod', start, ('Morrowind plugins', ['*.esp', '*.omwaddon']))
+    try:
+        path = osplat.pick_file('Open a plugin as your mod', start, ('Morrowind plugins', ['*.esp', '*.omwaddon']))
+    except osplat.PickerOpen as e:
+        raise EditError(str(e))
     if path is None:
         raise EditError(osplat.NO_PICKER)
     if not path:
         return {'ok': False, 'cancelled': True}
     known = {os.path.normcase(os.path.abspath(d)) for d in (db.config or {}).get('data', [])}
-    return {'ok': True, 'path': path, 'name': os.path.basename(path),
+    # (the file of one of your mods: File > Open switches to that mod, it is not opened a second time)
+    mod, current = None, False
+    try:
+        import modfiles
+        mod, current = modfiles.by_file(db, path)
+    except Exception:
+        pass
+    return {'ok': True, 'path': path, 'name': os.path.basename(path), 'mod': mod, 'current': current,
             'in_data': os.path.normcase(os.path.abspath(os.path.dirname(path))) in known}

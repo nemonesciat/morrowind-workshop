@@ -1,7 +1,7 @@
 # What OpenMW 0.52 adds
 
 *Everything the Workshop does with OpenMW 0.52's new powers, and where to find it. Your mod must be an
-**.omwaddon** (My mod → Save as…), since these are made by OpenMW Lua scripts. On OpenMW 0.51 the rest of the
+**.omwaddon** (File → Save as…), since these are made by OpenMW Lua scripts. On OpenMW 0.51 the rest of the
 Workshop works as before; About shows which OpenMW you have.*
 
 ## Where to start

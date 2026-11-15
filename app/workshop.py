@@ -490,7 +490,10 @@ def openmw_info():
 def pick_openmw():
     """Ask for OpenMW's folder with the computer's own folder picker; remember it and reload."""
     exe = osplat.program_name()
-    path = osplat.pick_folder('Choose the folder OpenMW is installed in (the one with %s)' % exe)
+    try:
+        path = osplat.pick_folder('Choose the folder OpenMW is installed in (the one with %s)' % exe)
+    except osplat.PickerOpen as e:
+        raise editing.EditError(str(e))
     if path is None:
         raise editing.EditError(osplat.NO_PICKER)
     if not path:
@@ -766,6 +769,10 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/surveys':
                 import background
                 self._json(background.status())
+            elif u.path == '/api/mods/recent':
+                # your other mods, newest first (File > Open recent)
+                import modfiles
+                self._json({'mods': modfiles.recent(db)})
             elif u.path == '/api/mods':
                 # your mods and where their files are (My mod > Your mods)
                 import modfiles

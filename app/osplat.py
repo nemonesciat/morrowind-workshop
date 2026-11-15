@@ -10,6 +10,7 @@ import glob
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 WINDOWS = os.name == 'nt'
@@ -411,10 +412,37 @@ def trash_name():
 
 
 # ------------------------------------------------------------------ asking for a file or folder
+class PickerOpen(Exception):
+    """A picker is open already: a second one is not opened over it."""
+
+
+ALREADY = 'The file picker is open already: look for its window.'
+_PICKING = threading.Lock()
+
+# The picker's owner: a window nobody sees (no border, clear, 1 by 1), on the screen the mouse is on, shown and THEN
+# made topmost, so the picker it owns is above every window. The picker is another program's window (powershell's,
+# started by the Workshop's server, which is not the program in front), and Windows opens such a window BEHIND the
+# one in front: with the Workshop's window large the picker was wholly hidden, and "Choose another file" seemed to do
+# nothing (the user's 2.7.15, three pickers waiting behind the window, 2026-11-15). A form's TopMost set before it is
+# shown gave no topmost window (measured: the owner and the picker both plain).
+_PS_OWNER = ("Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
+             "$a = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea; "
+             "$o = New-Object System.Windows.Forms.Form; $o.ShowInTaskbar = $false; $o.FormBorderStyle = 'None'; "
+             "$o.StartPosition = 'Manual'; $o.Opacity = 0; $o.Size = New-Object System.Drawing.Size(1, 1); "
+             "$o.Location = New-Object System.Drawing.Point(($a.X + [int]($a.Width / 2)), ($a.Y + [int]($a.Height / 2))); "
+             "$o.Show(); $o.TopMost = $true; $o.Activate(); ")
+
+
 def _ps_dialog(script):
-    r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', script], capture_output=True, text=True,
-                       creationflags=NO_WINDOW)
-    return (r.stdout or '').strip()
+    """The picker's answer. One at a time: PickerOpen while another is open."""
+    if not _PICKING.acquire(blocking=False):
+        raise PickerOpen(ALREADY)
+    try:
+        r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', _PS_OWNER + script + '; $o.Close()'],
+                           capture_output=True, text=True, creationflags=NO_WINDOW)
+        return (r.stdout or '').strip()
+    finally:
+        _PICKING.release()
 
 
 def _q(s):
@@ -435,9 +463,8 @@ def pick_folder(title, start=None):
     """A folder chosen in the desktop's own folder picker: its path, '' when cancelled, None when this computer
     has no picker the Workshop can use."""
     if WINDOWS:
-        return _ps_dialog("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+        return _ps_dialog("$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
                           "$d.Description = %s; %s"
-                          "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
                           "if ($d.ShowDialog($o) -eq 'OK') { $d.SelectedPath }" % (
                               _q(title), ('$d.SelectedPath = %s; ' % _q(start)) if start else ''))
     s = (start or HOME).rstrip('/') + '/'
@@ -452,9 +479,8 @@ def pick_file(title, start=None, kinds=None):
         if kinds:
             pats = ';'.join(kinds[1])
             filt = "$d.Filter = %s; " % _q('%s (%s)|%s|All files (*.*)|*.*' % (kinds[0], pats, pats))
-        return _ps_dialog("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; "
+        return _ps_dialog("$d = New-Object System.Windows.Forms.OpenFileDialog; "
                           "$d.Title = %s; %s%s"
-                          "$o = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}; "
                           "if ($d.ShowDialog($o) -eq 'OK') { $d.FileName }" % (
                               _q(title), filt, ('$d.InitialDirectory = %s; ' % _q(start)) if start else ''))
     s = (start or HOME).rstrip('/') + '/'

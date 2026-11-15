@@ -42,10 +42,8 @@ function cfCss(){
   .cf-keys kbd button{background:none;border:0;color:var(--faint);cursor:pointer;padding:0 0 0 4px;font-size:10px}
   .cf-keys kbd button:hover{color:#ff9c8a}
   .cf-wait{color:var(--gold2)!important;border-color:var(--gold)!important}
-  /* a calmer, more even look everywhere */
-  *{scrollbar-width:thin;scrollbar-color:#463b2c transparent}
-  ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#463b2c;border-radius:6px;border:2px solid transparent;background-clip:padding-box}
-  ::-webkit-scrollbar-thumb:hover{background-color:#5c4d39}::-webkit-scrollbar-track{background:transparent}
+  /* a calmer, more even look everywhere (the scrollbars are in index.html's own style now: they were set here, and
+     until the map had been opened once every list had the computer's white scrollbar, Your mods among them) */
   :focus-visible{outline:2px solid var(--gold);outline-offset:1px}
   .btn,.ptab,.pmenu button{transition:background-color .12s,border-color .12s,color .12s}`;
   document.head.appendChild(c);
@@ -64,6 +62,7 @@ const CF_ACT = [
   {id: 'undo', label: 'Undo', keys: ['Ctrl+Z'], run: () => doUndo()},
   {id: 'redo', label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doRedo()},
   {id: 'save', label: 'Save a version of your mod', keys: ['Ctrl+S'], typing: true, any: true, run: () => saveVersion()},
+  {id: 'open', label: 'Open a mod or plugin file', keys: ['Ctrl+O'], typing: true, run: () => fileOpen()},
   // (not while a land shape is being drawn: there Backspace takes its last point back, landmap.js, and with a thing
   // selected under it that thing was deleted instead)
   {id: 'delete', label: 'Delete what\'s selected', keys: ['Delete', 'Backspace'], world: true,

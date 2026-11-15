@@ -263,7 +263,7 @@ function rcLinksHtml(){
 
 function rcDraw(){
   const box = $('#myrec'), D = RC.data, k = RC.kind, one = RC_KINDS.find(x => x[0] === k)[2];
-  const warn = !D.lua ? `<div class="msg warn" style="margin-bottom:10px">These are made by OpenMW Lua scripts, which a plain .esp can't carry: Save as… on My mod makes it an .omwaddon.</div>`
+  const warn = !D.lua ? `<div class="msg warn" style="margin-bottom:10px">These are made by OpenMW Lua scripts, which a plain .esp can't carry: File → Save as… makes it an .omwaddon.</div>`
     : !D.ready ? `<div class="msg warn" style="margin-bottom:10px">Needs OpenMW ${D.needs} or newer; the Workshop starts ${D.openmw ? 'OpenMW ' + esc(D.openmw) : 'an OpenMW it can\'t date'}. Made now, they show once you play on ${D.needs}.</div>` : '';
   box.innerHTML = `<aside class="dside"><div class="actions" style="margin-top:0"><button class="btn sm primary" id="rc-new">+ New ${one}</button><button class="btn sm" id="rc-back">← Create</button></div>
       <div class="rctabs">${RC_KINDS.map(([kk, l]) => `<button class="btn sm ${kk === k ? 'on' : ''}" data-rctab="${kk}">${l}</button>`).join('')}</div>

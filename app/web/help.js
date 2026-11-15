@@ -3,7 +3,7 @@
 
 // ----- the Help menu at the top
 // (one top-bar menu open at a time: opening one closes the others)
-function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu', 'learnmenu', 'openmenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
+function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu', 'learnmenu', 'filemenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
 $('#helpbtn').onclick = e => { e.stopPropagation(); topMenusClose('helpmenu'); const m = $('#helpmenu'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; };
 document.addEventListener('click', e => { if (!e.target.closest('#helpmenu')) $('#helpmenu').style.display = 'none'; });
 $('#helpmenu').addEventListener('click', e => {
@@ -228,8 +228,8 @@ function renderGuide(){
     <tr><td><b>Dialogue</b></td><td>Greetings, topics and quests with their journal stages. Lines can depend on quest stages, items and more.</td></tr>
     <tr><td><b>Scripts</b></td><td>Morrowind scripts and OpenMW Lua scripts, checked as you type.</td></tr>
     <tr><td><b>Rules</b></td><td>Factions, classes, races, birthsigns, skills, regions and weather, sounds (and the sounds creatures make), magic effects, global variables and game settings.</td></tr>
-    <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip. <b>Merge another mod into this one</b> folds another of your mods into this one as one change.
-      As in the Construction Set, your mod is the <b>active file</b>: <b>Open a plugin as your mod</b> (also in a plugin's ⋯ menu on the Load order page) makes an existing .esp or .omwaddon the active file, saved straight back into; its placed objects keep their numbers, so saved games still work. <b>Save as…</b> puts everything into a new .esp or .omwaddon, which is the active file from then on.</td></tr>
+    <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip.</td></tr>
+    <tr><td><b>📁 File</b> (at the top)</td><td><b>Open…</b> opens any .esp or .omwaddon, or one of your mods, from your computer's file picker. As in the Construction Set the file is the <b>active file</b>, saved straight back into; its placed objects keep their numbers, so saved games still work. <b>Save a version</b> and <b>Earlier versions</b> keep and bring back the mod as it was. <b>Save as…</b> puts everything into a new .esp or .omwaddon, which is the active file from then on. <b>Merge a mod into this one</b> folds another of your mods into this one as one change. <b>Manage mods</b> lists them all, to switch or delete.</td></tr>
     <tr><td><b>Health check</b></td><td>Problems in your load order, like missing masters, models or textures, and <b>Check my mod</b>: every record of your mod checked the way the game's editor checks them.</td></tr>
     <tr><td><b>Load order</b></td><td>Switch plugins on or off and change their order (saved to OpenMW's settings, with a backup).</td></tr>
   </table>

@@ -143,7 +143,7 @@ async function loWaitAdd(){
 // clicks: browse a plugin, switch on/off, move
 $('#pluginwrap').addEventListener('click', e => {
   const ad = e.target.closest('[data-loadopt]');
-  if (ad){ document.querySelectorAll('.lomenu').forEach(m => m.style.display = 'none'); adoptModal(ad.dataset.loadopt); return; }
+  if (ad){ document.querySelectorAll('.lomenu').forEach(m => m.style.display = 'none'); openFileConfirm({path: ad.dataset.loadopt, name: ad.dataset.loadopt.split(/[\\/]/).pop()}); return; }
   const p = e.target.closest('[data-plug]');
   if (p){ S.plugin = p.dataset.plug; S.types = []; buildSide(); showView('browse'); runSearch(); return; }
   const m = e.target.closest('[data-lomove]');

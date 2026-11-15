@@ -82,12 +82,7 @@ const NAV_MENU = {
   rules: () => RU_TABS.map(([k, l]) => ({label: l, act: () => ruShow(k)})),
   mymod: () => [
     {label: '📦 Get ready to share', act: () => navGo('mymod', '#mm-release')},
-    {label: '💾 Save as…', act: () => navGo('mymod', '#mm-saveas')},
-    {label: '📁 Show folder', act: () => navGo('mymod', '#mm-folder')}, '-',
-    {label: '🗂 Your mods…', act: () => navGo('mymod', '#mm-mods')},
-    {label: '👥 Build together…', act: () => togOpen()},
-    {label: '📂 Open a plugin as your mod…', act: () => navGo('mymod', '#mm-adopt')},
-    {label: '⊕ Merge another mod into this one…', act: () => navGo('mymod', '#mm-merge')}],
+    {label: '👥 Build together…', act: () => togOpen()}],
   health: () => [['all', 'Everything'], ['error', 'Needs fixing'], ['warning', 'Worth a look'], ['info', 'Good to know']]
     .map(([k, l]) => ({label: l, act: () => navGo('health', `[data-hf="${k}"]`)})),
   plugins: () => [

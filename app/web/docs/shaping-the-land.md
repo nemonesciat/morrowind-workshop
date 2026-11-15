@@ -292,7 +292,7 @@ It is built inside the line you drew; drag its points to change it. Try again bu
 
 **Made** (under Make places) lists every town, castle, dungeon and interior the mod's Makes have built. 👁 goes there. ↻ Try again takes that one away and makes it anew with another layout. ✕ Drop only this takes away what it built and its interiors, whatever was made after it; what you added stays. With **Put the ground back as it was** ticked, the land under it and the ground it paved go back to how they lay before it was made, wherever you have not reshaped them since. Each is one Undo step.
 
-Before a stage is made the Workshop keeps a version of your mod by itself, named for it ("before making Uda"): **📂 Open → Earlier versions** has the newest ten, each with **Restore**, for when you want everything back as it stood. Places made by older versions are not listed.
+Before a stage is made the Workshop keeps a version of your mod by itself, named for it ("before making Uda"): **File → Earlier versions** has the newest ten, each with **Restore**, for when you want everything back as it stood. Places made by older versions are not listed.
 
 Places is the second stage. **🎲 Suggest** puts towns, roads, dungeons, farms, small things and names on the map as
 markers to move or drop; nothing is built. **Make places** lays the roads, builds the towns and castles (outsides

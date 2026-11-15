@@ -96,6 +96,63 @@ def mods(db):
     return out
 
 
+def recent(db, most=12):
+    """[{name, modified}] of your other mods by when each was last worked on, newest first: File > Open recent. Only
+    the folder is listed: mods() reads every project whole, seconds the first time with many big ones."""
+    pdir, _plug = _dirs(db)
+    cur = os.path.abspath(db.project.path).lower() if db.project else ''
+    out = []
+    for f in (os.listdir(pdir) if os.path.isdir(pdir) else []):
+        if not f.endswith('.json'):
+            continue
+        p = os.path.join(pdir, f)
+        if os.path.abspath(p).lower() == cur:
+            continue
+        try:
+            out.append((os.path.getmtime(p), f[:-5]))
+        except OSError:
+            continue
+    out.sort(reverse=True)
+    return [{'name': name, 'modified': time.strftime('%Y-%m-%d %H:%M', time.localtime(t))} for t, name in out[:most]]
+
+
+def _plugin_quick(pj):
+    """The plugin's name from the head of a project file (Project.save writes the name first and the plugin second);
+    None when the head does not read so."""
+    try:
+        with open(pj, 'rb') as f:
+            head = f.read(4096)
+        m = re.match(rb'\s*\{"name": "(?:[^"\\]|\\.)*", "plugin": ("(?:[^"\\]|\\.)*")', head)
+        return json.loads(m.group(1).decode('utf-8')) if m else None
+    except (OSError, ValueError):
+        return None
+
+
+def by_file(db, path):
+    """(name, open now?) of your mod whose plugin file `path` is; (None, False) when it is none of them. Projects whose
+    plugin has another name are not read further."""
+    pdir, _plug = _dirs(db)
+    want = os.path.normcase(os.path.abspath(path))
+    base = os.path.basename(path).lower()
+    cur = os.path.abspath(db.project.path).lower() if db.project else ''
+    hits = []
+    for f in (os.listdir(pdir) if os.path.isdir(pdir) else []):
+        if not f.endswith('.json'):
+            continue
+        pj = os.path.join(pdir, f)
+        quick = _plugin_quick(pj)
+        if quick is not None and quick.lower() != base:
+            continue
+        try:
+            _pj, pfile, _extra, _adopted = _files(db, f[:-5])
+        except EditError:
+            continue
+        if os.path.normcase(os.path.abspath(pfile)) == want:
+            hits.append((os.path.abspath(pj).lower() != cur, f[:-5]))
+    hits.sort()
+    return (hits[0][1], not hits[0][0]) if hits else (None, False)
+
+
 def show(db, name=None):
     """Explorer at the mod's plugin, picked out (the mod open now when no name is given)."""
     if name:

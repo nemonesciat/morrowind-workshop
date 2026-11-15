@@ -26,12 +26,24 @@ a town or a big shape out of reach:
 |---|---|
 | 📦 Get ready to share | Check, describe, test and pack the mod (below). |
 | Add to my OpenMW load order | Switches it on for normal play. |
-| 📁 Show folder | The folder with your mod file in it. |
-| ＋ New mod…, 🗂 Your mods… | Start another mod; switch between them, or delete ones you no longer want. |
 | 👥 Build together… | Work on it with others, live (below). |
-| ⊕ Merge another mod into this one… | Adds everything another of your mods holds to this one, as one change. It clears this mod's Undo history; a backup is kept. |
-| 📂 Open a plugin as your mod… | An existing .esp or .omwaddon becomes the mod you work on, saved straight back into that file, as the Construction Set's active file. Its placed objects keep their numbers, so saved games still work; a dated copy of the file as it was is kept beside it. |
-| 💾 Save as… | Everything into a new .esp or .omwaddon, which is the active file from then on. |
+
+## The File menu
+
+**📁 File** at the top holds what a program's File menu holds.
+
+| Entry | What it does |
+|---|---|
+| New mod… | Start another mod; this one stays as it is. |
+| Open… (Ctrl+O) | Your computer's file picker. One of your mods switches to it. Any other .esp or .omwaddon becomes the mod you work on, saved straight back into that file, as the Construction Set's active file. Its placed objects keep their numbers, so saved games still work; a dated copy of the file as it was is kept beside it. |
+| Open recent | Your other mods, newest first: one click switches. |
+| Save a version (Ctrl+S) | Keeps the mod as it is now, to come back to (see Backups). |
+| Save as… | Everything into a new .esp or .omwaddon, which is the active file from then on. |
+| Earlier versions… | The versions you saved and the Workshop's own backups, each with Restore. |
+| Merge a mod into this one… | Adds everything another of your mods holds to this one, as one change. It clears this mod's Undo history; a backup is kept. |
+| Show in folder | The folder with your mod file in it. |
+| Manage mods… | Every mod you made or opened: switch, show its folder, or delete the ones you no longer want. |
+| Get ready to share… | The same as the button on My mod. |
 
 A plain **.esp** can't hold OpenMW's Lua scripts. An **.omwaddon** can; tools that need Lua say so.
 
@@ -87,7 +99,7 @@ from wherever they are. Everyone sees every change within a second or so, in the
 
 ## Backups
 
-**💾 Save** at the top (**Ctrl+S**) keeps a version of your mod as it is now, until you remove it. **📂 Open →
+**File → Save a version** (**Ctrl+S**) keeps a version of your mod as it is now, until you remove it. **File →
 Earlier versions** lists them with the Workshop's own backups, each with **Restore**. The Workshop also keeps
 one by itself before each Make on the Land panel ("before making Uda"), the newest ten.
 
