@@ -2494,6 +2494,34 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                 stall_refs.setdefault(t['stall'], []).append((key, rk))
             if t.get('role') in ('stall', 'storage', 'sign', 'awning'):
                 life_refs.append((key, rk, t['role'], t.get('stall')))
+    # (and every door walked to from the streets: each maker keeps a door's own strip clear and none looks at the whole
+    # way. A house whose door opened into the court behind it was shut in by its yard's cage, crate and fence: the game
+    # found no way from that door, the first walk of a made town by machine, 2026-11-15. The dressing on the cheapest
+    # way out is taken out again; a stall stays, its seller stands at it. townreach.py)
+    if dress and made and doors:
+        try:
+            import townreach
+            _say('Checking every door can be walked to', 0.955)
+            db.sync_project()
+            stalls_ = {x_[1] for x_ in life_refs if x_[2] == 'stall'}
+            # (every door the town set down, not the plots' list: the second house of a joined pair has its own
+            # door, which that list leaves out, and it was the one shut in)
+            doors_ = [(ck_, r_['k']) for ck_ in sorted(cells) for r_ in mapdata.cellmap(db, ck_).get('refs') or ()
+                      if r_['type'] == 'DOOR' and r_.get('k') in new_refs]
+            reach_ = townreach.open_ways(db, sorted(cells), doors_, _street_points(plan), dress_refs - stalls_, say=print)
+            gone_ = {x_[1] for x_ in reach_.get('removed') or ()}
+            # (and what of the dressing lies under the land the town has shaped since it was laid)
+            gone_ |= {x_[1] for x_ in townreach.under_land(db, sorted(cells), dress_refs - stalls_ - gone_, say=print)}
+            if gone_:
+                new_refs -= gone_
+                dress_refs -= gone_
+                life_refs = [x_ for x_ in life_refs if x_[1] not in gone_]
+                for k_ in list(stall_refs):
+                    stall_refs[k_] = [x_ for x_ in stall_refs[k_] if x_[1] not in gone_]
+                dressed -= len(gone_)
+                pieces -= len(gone_)
+        except Exception as e_:
+            print('town doors\' ways:', e_)
     painted = 0
     inside = {}
     import towninside

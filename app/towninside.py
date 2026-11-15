@@ -439,7 +439,13 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
     the game's own interior stands in."""
     import frombuilding
     import zlib
-    ways = [{} for _ in range(OWN_TRIES)] + [{'route': 'plan'}] + ([{'route': 'plan', 'floors': 1}] if floors != 1 else [])
+    # (after the usual tries, the roof kit's base set: Common thatch's roof storey is reached by its gable stair alone,
+    # and where that stair finds no place the family's tall stair comes up under the thatch 122 short of it, two holes
+    # every roll. The game never does that: its tall stair comes out on a plain storey in all 8 of its thatched places
+    # that have one. So the storeys in Common plain, flat ceilings under the thatched outside, before one storey:
+    # 6 of a plain Imperial town's 20 interiors were made on one storey for this, the walk mod, 2026-11-15)
+    ways = [{} for _ in range(OWN_TRIES)] + ([{'base_kit': True}] if kit is None else []) + [{'route': 'plan'}] + ([{'route': 'plan', 'floors': 1}] if floors != 1 else [])
+    style_seen = None
     # (a tavern is bigger inside than a house of its size: the game's hold 17 to 22 tiles of floor on three or four
     # rooms, with rooms to let and a store; the user, 2026-11-14, "taverns are usually larger ... rentable beds and
     # rooms with beds". Two floors at least, whatever the building's height says, and a cellar of the game's usual
@@ -451,20 +457,37 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
             inn_floors = max(INN_FLOORS, frombuilding.tall_floors(frombuilding.building_at(db, dr[0], dr[1], dr[1])))
     except Exception as e:
         print('town own layout: %s, an inn\'s floors: %s' % (name, e))
+    inn_cellar = bool(inn_floors) and inn_floors <= INN_FLOORS
     seen_ = None
     go = 0
     while go < len(ways):
         way = ways[go]
         kw = dict(door_key=dr[1], kit=kit, floors=way.get('floors', floors), seed=zlib.crc32(('%s|%s|%d' % (seed, name, n + 1000 * go)).encode()) % 100000)
+        if way.get('base_kit'):
+            import kits
+            base_ = kits.ROOF_KITS.get((style_seen or '').lower())
+            if not base_:
+                go += 1
+                continue
+            kw['kit'] = base_
         if way.get('route'):
             kw['route'] = way['route']
         elif inn_floors:
             kw['floors'] = min(inn_floors, INN_FLOORS + 1)
-            if inn_floors <= INN_FLOORS:
+            if inn_cellar:
                 kw['cellar'] = 'usual'       # (a low inn's store is under it; a tall one's is its attic, household_kinds)
+        had_ = set(db.project.cells)
         try:
             out = frombuilding.build(db, dr[0], dr[1], name, **kw)
         except EditError as e:
+            if inn_floors and not way.get('route') and (inn_cellar or inn_floors > INN_FLOORS):
+                # (the inn's third floor or its cellar is what the building will not take: the walk town's inn laid
+                # out on two floors without a fault on every roll, 31 tiles, and with three floors or a cellar had
+                # "no way out on any outside wall of the Hall" on every roll, so the first try's error left it to
+                # the game's own interior. Two floors, the least an inn has, before that; 2026-11-15)
+                print('town own layout: %s, an inn on %d floors%s: %s; on two floors' % (name, kw.get('floors') or 0, ' with a cellar' if kw.get('cellar') else '', e))
+                inn_floors, inn_cellar = INN_FLOORS, False
+                continue
             if not way:
                 raise
             print('town own layout: %s, %s: %s' % (name, 'from its outline' + (', one storey' if way.get('floors') else ''), e))
@@ -476,19 +499,28 @@ def _own_building(db, dr, name, seed, n, kit=None, floors=None):
             go += 1
             continue
         bad = _open_faults(db, out['key'])
+        # (the style from the made place: build() hands back its key and name only)
+        style_seen = ((db.project.cells.get(out['key']) or {}).get('plan') or {}).get('style') or style_seen
         if not bad:
-            if way:
+            if way.get('base_kit'):
+                print('town own layout: %s made in the roof kit\'s base set (%s)' % (name, kw.get('kit')))
+            elif way:
                 print('town own layout: %s made from its outline%s' % (name, ', on one storey' if way.get('floors') else ''))
             return {'key': out['key'], 'name': name, 'own_layout': True,
                     'ready': (out.get('plan') or {}).get('style_name') == 'Ready-made interiors'}
         print('town own layout: %s has %d open faults (%s)' % (name, len(bad), ', '.join(sorted({i.get('kind') or '?' for i in bad}))))
         p = db.project
-        p.cells.pop(out['key'], None)
-        p.records.pop('PGRD|' + out['key'], None)
+        # (every place the try made: a building of ready-made interiors is a place a storey, "<name>: Upstairs" and
+        # "<name>: Top Floor" beside the first. Left behind, they stopped the next try by their names ("There is
+        # already a place called ...") and the game's own interior after it: the walk town's Garrison stood as three
+        # bare places with four open doorways and nobody in them, 2026-11-15)
+        for k_ in [out['key']] + [k_ for k_ in p.cells if k_ not in had_]:
+            p.cells.pop(k_, None)
+            p.records.pop('PGRD|' + k_, None)
         db.sync_project()
         # (the same faults again: it is the footprint, another roll will not mend it; on to the next way)
         same_ = not way and seen_ is not None and len(bad) == seen_
-        seen_ = len(bad)
+        seen_ = len(bad) if not way else None
         go = OWN_TRIES if (same_ and go < OWN_TRIES) else go + 1
     return None
 
@@ -775,9 +807,11 @@ def household_kinds(db, key, kind, head_cls, n_rooms_hint=None):
                 return 'tavern'
             if upper:
                 # (up to four rooms to let: the game's taverns have beds in one to four rooms, two in the middling
-                # one; a room past those is the house's store, once, then a parlour)
-                state['bed'] += 1
-                if state['bed'] <= 4:
+                # one; a room past those is the house's store, once, then a parlour. Counted on its own: kinds()
+                # counts every bedroom in state['bed'] too, so "four" was two, and where those two were the stair's
+                # landing and a room that is all doorways the inn had no bed at all, the walk town's, 2026-11-15)
+                state['let'] = state.get('let', 0) + 1
+                if state['let'] <= 4:
                     return 'bedroom'
             elif not cellar:
                 # (one kitchen; the other small rooms downstairs are parlours with a table and seats, not more stores:
@@ -1397,6 +1431,29 @@ def furnish(db, plan, town, culture, seed=1, people=True, catalog=None, say=None
                     # in the new place)
                     import random as _random
                     info_ = populate.place_info(db, out['key'])
+                    # (and no more of them than the made place holds: the cast was counted for the game's place, and
+                    # the walk mod's tradehouse, made on one storey with five seats, was given the ten of the game's
+                    # inn; found making the walk mod for 2.7.14, 2026-11-15. The first cast stay: its head, its publican)
+                    try:
+                        import castsurvey
+                        S_ = castsurvey.ready(db)
+                        most_ = populate.how_many(S_, info_) if S_ else len(ppl)
+                        if len(ppl) > most_:
+                            # (its head first: cut by the order they were cast in, a house of a slave and its master
+                            # kept the slave, and with no head nothing in it was anybody's, 12 containers and a bed;
+                            # the last game walk of the night)
+                            heads_ = [p_ for p_ in ppl if p_.get('relation') in ('head', 'leader')][:1]
+                            ppl = (heads_ + [p_ for p_ in ppl if p_ not in heads_])[:most_]
+                        elif kind == 'tavern' and len(ppl) < most_:
+                            # (and no fewer, in a tavern: the cast was the game's place's, and a Hlaalu town's club of
+                            # three floors, three beds and seven seats held its publican and nobody else; the game's
+                            # taverns hold five, three to seven. The rest are cast for the place that was made)
+                            import zlib as _zlib
+                            more_ = populate.cast(db, out['key'], {}, keep=ppl, seed=_zlib.crc32(('%s|%s|guests' % (seed, out['key'])).encode()))
+                            if len((more_ or {}).get('people') or ()) > len(ppl):
+                                ppl = more_['people'][:most_]
+                    except Exception as e_:
+                        print('town people, how many the place holds:', e_)
                     rng_ = _random.Random('%s|%s|spots' % (seed, out['key']))
                     taken_, used_ = [], set()
                     for p_ in ppl:

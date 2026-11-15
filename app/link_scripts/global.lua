@@ -500,6 +500,23 @@ local function useDoor(door, actor)
   return false
 end
 
+-- A handle kept in a save is a load-order slot and a number, nothing more. A save made while another mod was open
+-- in that slot (or with another load order) hands back a handle that names some other thing now, and "putting it
+-- back" took that thing out of its place: the user's first walk of a made town, 2026-11-15, started by Play here
+-- from a save made in another mod of theirs, stood before a chapel with a wall gone, and 21 more things of the
+-- town were gone with it by their numbers. So each kept thing is saved with what it is and where it stood, and is
+-- put back only if the handle still gives that: the same record, within a step of the same spot.
+-- A save from before this has neither. From it only what the link made itself is taken away again (a made thing's
+-- handle has no load-order slot and can name nothing else); what it had moved is left as the save has it.
+local function stillSame(l)
+  local ok, yes = pcall(function()
+    if not (l.obj and l.obj:isValid()) then return false end
+    if l.rid == nil or l.at == nil then return l.kind == 'created' end
+    return tostring(l.obj.recordId):lower() == tostring(l.rid):lower() and (l.obj.position - l.at):length() < 16
+  end)
+  return ok and yes == true
+end
+
 local function onUpdate(dt)
   if not doorHandler and I.Activation then
     doorHandler = true
@@ -507,7 +524,16 @@ local function onUpdate(dt)
   end
   clock = clock + dt
   if cleanupPending then
-    for _, l in ipairs(cleanupPending) do pcall(putBack, l) end
+    local back, left = 0, 0
+    for _, l in ipairs(cleanupPending) do
+      if stillSame(l) then
+        back = back + 1
+        pcall(putBack, l)
+      else
+        left = left + 1
+      end
+    end
+    if back + left > 0 then say('cleanup\t%d\t%d', back, left) end
     cleanupPending = nil
   end
   -- previews the Workshop never confirmed (e.g. it refused the placement)
@@ -547,9 +573,14 @@ return {
     -- what we touched so it can be put back when that save is loaded.
     onSave = function()
       local list = {}
-      for _, l in pairs(live) do list[#list + 1] = l end
-      for _, o in pairs(ghosts) do list[#list + 1] = { obj = o, kind = 'created' } end
-      for _, gh in ipairs(placedGhosts) do list[#list + 1] = { obj = gh.obj, kind = 'created' } end
+      -- (with what it is and where it stands now, to know it again when the save is loaded: stillSame)
+      local function keep(obj, kind, orig)
+        local ok, rid, at = pcall(function() return obj.recordId, obj.position end)
+        if ok and rid and at then list[#list + 1] = { obj = obj, kind = kind, orig = orig, rid = rid, at = at } end
+      end
+      for _, l in pairs(live) do keep(l.obj, l.kind, l.orig) end
+      for _, o in pairs(ghosts) do keep(o, 'created') end
+      for _, gh in ipairs(placedGhosts) do keep(gh.obj, 'created') end
       return { live = list }
     end,
     onLoad = function(data)

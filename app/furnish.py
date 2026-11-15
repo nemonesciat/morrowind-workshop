@@ -1819,6 +1819,35 @@ WINDOW_OVER = 32.0              # (a thing may reach this far over a window's si
 WINDOW_SILL = 120.0             # (a window wall a storey tall has no sill of its own to read: nothing over this stands before it)
 
 
+WALK_HALF = 34.0                # (a walker's half-width, and a little)
+WALK_DEEP = 220.0               # (the walk through a door, this far either side of it)
+WALK_HEAD = 140.0               # (a walker's height over the door's foot: what hangs lower is in the way)
+
+
+def door_walks(refs):
+    """[((x0, y0, x1, y1), foot)] for every door of the place: the strip a walker takes straight through it (along the
+    thin side of the door's box), and the door's foot. Doors turned off the axes are left out: their strip is no box."""
+    out = []
+    for d in refs:
+        if d.get('type') != 'DOOR' or not d.get('b'):
+            continue
+        s_ = d.get('s') or 1.0
+        b_ = d['b']
+        c_, sn_ = math.cos(d['p'][5]), math.sin(d['p'][5])
+        lx_, ly_ = (b_[0] + b_[3]) / 2 * s_, (b_[1] + b_[4]) / 2 * s_
+        dx_, dy_ = d['p'][0] + lx_ * c_ + ly_ * sn_, d['p'][1] - lx_ * sn_ + ly_ * c_
+        wx_, wy_ = (b_[3] - b_[0]) * s_, (b_[4] - b_[1]) * s_
+        if min(wx_, wy_) >= 0.8 * max(wx_, wy_):
+            continue
+        nx_, ny_ = (c_, -sn_) if wx_ < wy_ else (sn_, c_)
+        n_ = (int(round(nx_)), int(round(ny_)))
+        if abs(n_[0]) + abs(n_[1]) != 1:
+            continue
+        hx_, hy_ = (WALK_DEEP, WALK_HALF) if n_[0] else (WALK_HALF, WALK_DEEP)
+        out.append(((dx_ - hx_, dy_ - hy_, dx_ + hx_, dy_ + hy_), d['p'][2] + b_[2] * s_))
+    return out
+
+
 def window_fronts(refs, T):
     """Every window that hangs on a wall or stands in one, as room it takes up: [((x0, y0, x1, y1), sill z, top z)].
     Its own box, WINDOW_FRONT further across its thin way; its sill the foot of its box, or WINDOW_SILL over it for
@@ -3227,6 +3256,14 @@ def furnish(db, cell_key, plan=None, seed=None, walls=True, walls_only=False, re
             hb_ = _footprint([v * scale for v in b], rot, x, y)
             if any(_overlaps(hb_, w_[0], 0) and w_[1] < z + b[5] * scale and w_[2] > z + b[2] * scale for w_ in _win_cache['#fronts']):
                 last_trace.append((room, 'hang', rid, 'over a window: left out'))
+                return None
+            # (nor into a doorway's walk at a walker's height: a trophy hung on the side wall of a shop's narrow entry
+            # stood in the arrival, and the game set the player down 12 off it; the walk of Walkford by machine,
+            # 2026-11-15. The strip straight through each door, a walker wide, WALK_DEEP either way)
+            if '#walks' not in _win_cache:
+                _win_cache['#walks'] = door_walks(refs)
+            if any(_overlaps(hb_, w_[0], 0) and z + b[2] * scale < w_[1] + WALK_HEAD and z + b[5] * scale > w_[1] for w_ in _win_cache['#walks']):
+                last_trace.append((room, 'hang', rid, 'in a doorway\'s walk at head height: left out'))
                 return None
         else:
             # on this room's own floor (not up on the floor of a room above it), or on a table in it; a

@@ -30,7 +30,7 @@ a town or a big shape out of reach:
 | ＋ New mod…, 🗂 Your mods… | Start another mod; switch between them, or delete ones you no longer want. |
 | 👥 Build together… | Work on it with others, live (below). |
 | ⊕ Merge another mod into this one… | Adds everything another of your mods holds to this one, as one change. It clears this mod's Undo history; a backup is kept. |
-| 📂 Open an .esp as your mod… | An existing .esp or .omwaddon becomes the mod you work on, saved straight back into that file, as the Construction Set's active file. Its placed objects keep their numbers, so saved games still work; a dated copy of the file as it was is kept beside it. |
+| 📂 Open a plugin as your mod… | An existing .esp or .omwaddon becomes the mod you work on, saved straight back into that file, as the Construction Set's active file. Its placed objects keep their numbers, so saved games still work; a dated copy of the file as it was is kept beside it. |
 | 💾 Save as… | Everything into a new .esp or .omwaddon, which is the active file from then on. |
 
 A plain **.esp** can't hold OpenMW's Lua scripts. An **.omwaddon** can; tools that need Lua say so.

@@ -1826,7 +1826,7 @@ function projectModal(newOnly){
     <label>Mod name</label><input class="inp" id="pm-name" placeholder="e.g. Hlaalu Manor Expansion" maxlength="60">
     <label>Author (optional)</label><input class="inp" id="pm-author" maxlength="31">
     <label>Short description (optional)</label><input class="inp" id="pm-desc" maxlength="255">
-    ${newOnly ? '' : `<p class="msg" style="margin-top:10px">…or, as in the Construction Set, make an existing plugin the active file: <button class="btn sm" id="pm-adopt">📂 Set an .esp as the active file…</button></p>`}
+    ${newOnly ? '' : `<p class="msg" style="margin-top:10px">…or, as in the Construction Set, make an existing plugin the active file: <button class="btn sm" id="pm-adopt">📂 Set a plugin as the active file…</button></p>`}
     <div class="msg err" id="pm-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="pm-cancel">Cancel</button><button class="btn primary" id="pm-ok">Create mod</button></div></div>`;
   document.body.appendChild(bg);
@@ -1939,7 +1939,10 @@ function mergeModal(){
 // Open an existing plugin (.esp or .omwaddon) as the mod itself: the file's records and places become the
 // project, with its objects' indices as they are, and the Workshop saves straight back into that file (a
 // dated copy is made beside it first; later copies go under Backups). POST /api/project/adopt {path} (adopt.py).
-async function adoptModal(preset){
+// (picked: a file chosen already with the computer's file picker, from Your mods' Choose another file: {path, name,
+// in_data}; the dialog opens with it chosen)
+async function adoptModal(preset, picked){
+  const NOT_DATA = 'That folder is not one of OpenMW\'s data folders: the game won\'t see the file until the folder is added in the OpenMW Launcher (Data Files > Directories).';
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(680px,94vw)"><h2>Set a plugin as the active file</h2>
     <p class="msg">The plugin becomes the mod you work on, and every change is saved into it, as in the Construction Set. Nothing in it is lost: placed objects keep their numbers, so saved games still work.</p>
@@ -1968,6 +1971,7 @@ async function adoptModal(preset){
       const r = [...bg.querySelectorAll('[name=ad-pick]')].find(x => x.value.toLowerCase() === preset.toLowerCase());
       if (r && !r.disabled){ r.checked = true; choose(r.value, r.dataset.name); }
     }
+    if (picked && !chosen){ choose(picked.path, picked.name); if (!picked.in_data) q('#ad-err').textContent = NOT_DATA; }
   } catch (e){ q('#ad-list').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
   q('#ad-browse').onclick = async () => {
     q('#ad-err').textContent = '';
@@ -1979,7 +1983,7 @@ async function adoptModal(preset){
       if (r.cancelled) return;
       bg.querySelectorAll('[name=ad-pick]').forEach(x => x.checked = false);
       choose(r.path, r.name);
-      if (!r.in_data) q('#ad-err').textContent = 'That folder is not one of OpenMW\'s data folders: the game won\'t see the file until the folder is added in the OpenMW Launcher (Data Files > Directories).';
+      if (!r.in_data) q('#ad-err').textContent = NOT_DATA;
     } catch (e){ done(); q('#ad-err').className = 'msg err'; q('#ad-err').textContent = e.message; }
   };
   q('#ad-ok').onclick = async () => {
@@ -2050,11 +2054,24 @@ async function modsModal(){
     <p class="msg" title="Delete sends the mod's project, plugin, scripts and grass files to the ${osw('bin')}, where they can be restored, and takes it out of the load order. The open mod can't be deleted: switch first.">Every mod you made or opened here, newest first.</p>
     <div id="mx-list" style="max-height:min(56vh,560px);overflow:auto;margin-top:8px"><span class="spin"></span> Looking…</div>
     <div class="msg err" id="mx-err" style="margin-top:8px"></div>
-    <div class="foot"><button class="btn" id="mx-new">＋ Start a new mod…</button><button class="btn" id="mx-close">Close</button></div></div>`;
+    <div class="foot"><button class="btn" id="mx-new">＋ Start a new mod…</button><button class="btn" id="mx-file" title="Open an .esp or .omwaddon that is not in this list as your mod">📂 Choose another file…</button><button class="btn" id="mx-close">Close</button></div></div>`;
   document.body.appendChild(bg);
   const q = s => bg.querySelector(s);
   q('#mx-close').onclick = () => bg.remove();
   q('#mx-new').onclick = () => { bg.remove(); projectModal(true); };
+  // (a file the user did not make here: the same file picker as Set a plugin as the active file, whose dialog then
+  // opens with the file chosen, so what opening it means is said before it is done. The user's "it should have a
+  // choose another file button like the open esp page does", 2026-11-15)
+  q('#mx-file').onclick = async () => {
+    q('#mx-err').textContent = '';
+    const done = slowWait(q('#mx-file'), q('#mx-err'), 'Opening a file picker…');
+    try {
+      const r = await post('/api/adopt/pick', {});
+      done();
+      if (r.cancelled) return;
+      bg.remove(); adoptModal(r.path, r);
+    } catch (e){ done(); q('#mx-err').className = 'msg err'; q('#mx-err').textContent = e.message; }
+  };
   bg.onclick = e => { if (e.target === bg) bg.remove(); };
   const draw = async () => {
     let r;
@@ -2102,7 +2119,7 @@ async function renderMyMod(){
   const wrap = $('#mymodwrap');
   if (!S.summary || !S.summary.project){
     wrap.innerHTML = `<h1>My mod</h1><p class="lead">You haven't started a mod yet. A mod is your own plugin file: every edit, new item and moved object goes into it, and your original game files are never touched.</p>
-      <div class="actions"><button class="btn primary" onclick="projectModal()">＋ Start a mod</button><button class="btn" onclick="adoptModal()" title="An existing .esp or .omwaddon becomes the mod you work on, saved back into that file">📂 Open an .esp as your mod…</button></div>`;
+      <div class="actions"><button class="btn primary" onclick="projectModal()">＋ Start a mod</button><button class="btn" onclick="adoptModal()" title="An existing .esp or .omwaddon becomes the mod you work on, saved back into that file">📂 Open a plugin as your mod…</button></div>`;
     return;
   }
   const P = await api('/api/project');
@@ -2126,7 +2143,7 @@ async function renderMyMod(){
       <button class="btn" id="mm-mods" title="Switch to another of your mods, start a new one, or delete the ones you no longer want">🗂 Your mods…</button>
       <button class="btn" id="mm-together" title="Build this mod together with other people, live, from wherever they are">👥 Build together…</button>
       <button class="btn" id="mm-merge" title="Add everything another of your mods holds to this one (clears this mod's Undo history; a backup is kept)">⊕ Merge another mod into this one…</button>
-      <button class="btn" id="mm-adopt" title="An existing .esp or .omwaddon becomes the active file: the mod you work on, saved back into that file">📂 Open an .esp as your mod…</button>
+      <button class="btn" id="mm-adopt" title="An existing .esp or .omwaddon becomes the active file: the mod you work on, saved back into that file">📂 Open a plugin as your mod…</button>
       <button class="btn" id="mm-saveas" title="Save everything into a new .esp or .omwaddon, which becomes the active file (the Construction Set's Save As)">💾 Save as…</button>
     </div>`;
   if (!P.changes.length) h += `<div class="card">No changes yet. Open anything in <b>Browse</b> and press <b>✎ Edit</b> or <b>⧉ Use as template</b>, or move things around on the <b>World map</b>.</div>`;
@@ -5056,7 +5073,7 @@ $('#openbtn').onclick = e => {
   const m = $('#openmenu'), p = S.summary && S.summary.project, show = m.style.display !== 'block';
   m.innerHTML = `${p ? '<button data-op="versions"><b>🕘 Earlier versions…</b><small>Put the mod back to a saved version or a backup.</small></button>' : ''}
     <button data-op="mods"><b>🗂 Your mods…</b><small>Switch to another of your mods.</small></button>
-    <button data-op="adopt"><b>📂 Open an .esp as your mod…</b></button>
+    <button data-op="adopt"><b>📂 Open a plugin as your mod…</b></button>
     ${p ? '<button data-op="saveas"><b>💾 Save as…</b><small>Everything into a new file, which becomes the active one.</small></button>' : ''}
     <button data-op="new"><b>＋ New mod…</b></button>`;
   m.style.display = show ? 'block' : 'none';

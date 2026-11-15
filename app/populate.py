@@ -29,9 +29,17 @@ DENSITY = {'quiet': 0.55, 'usual': 1.0, 'busy': 1.7}
 ONE_RACE = {'house': 0.3, 'manor': 0.3, 'shop': 0.3, 'camp': 0.3, 'guard': 0.3, 'temple': 0.3}
 MAX_PEOPLE = 30
 HOUSEHOLDS = ('house', 'manor', 'shop', 'tavern', 'camp')        # (places whose people are a household: one family name, owned beds)
+KEPT = ('guard', 'guild', 'temple')                              # (places that are no household and whose things are kept all the same)
 OWNED = ('bed', 'chest', 'cupboard', 'barrel', 'crate', 'sack', 'drawer', 'dresser', 'desk', 'closet', 'wardrobe', 'urn',
          'basket', 'pot_', 'cookpot', 'hamper', 'bag', 'box')   # (a house's baskets and pots too: 22 food baskets stood free in
                                                                # the lab's Sketh, the in-game walk 2026-11-06)
+BEDS = ('bed', 'bunk', 'hammock', 'cot_')     # (what is slept in: two bunks stood free in Walkford's houses, the game walk
+                                              # by machine, 2026-11-15; "bed" alone missed active_com_bunk_02)
+VAR_CONT = re.compile(r'_var_[a-z]{2,4}\d|_j\d[a-z]|jar|jug|amphora|vase|keg|cask|coffer|trunk|cabinet|armoire|strongbox|lockbox|locker')
+                                              # (and jars and the like, and the longer codes: t_mwcom_var_bss1pos and three
+                                              # t_cyrimp_dngcolb_j2empty jars stood free in a Hlaalu town's homes, the second walk)
+                                              # (the variant containers named by a code, t_cyrcom_var_cr5grain a crate of grain,
+                                              # ..._bs1food a basket, ..._sk3g050 a sack: no word of OWNED in them, 4 stood free)
 MATERIALS = ('daedric', 'ebony', 'glass', 'dwemer', 'dwarven', 'orcish', 'adamantium', 'indoril', 'her_hand', 'bonemold', 'chitin',
              'netch', 'imperial', 'steel', 'iron', 'silver', 'nordic', 'fur', 'leather', 'dreugh', 'riverwatch', 'redoran', 'hlaalu',
              'telvanni', 'templar', 'colovian', 'ringmail', 'chain', 'kagouti', 'molecrab', 'newtscale', 'goblin', 'bear', 'wolf')
@@ -852,15 +860,22 @@ def place(db, cell_key, people, own=True, crs=(), lts=(), routines=False, lived=
                                                     tuple(sp[:3]) + (0.0, 0.0, float(sp[3])), 1.0))
     owned = 0
     head = next((nid for nid, p in made if p.get('relation') == 'head'), None)
-    if own and head and info['setting'] in HOUSEHOLDS:
+    # (a fort's, a guild hall's and a temple's things are somebody's too. The game's forts: 89% of their containers
+    # and 85% of their beds a person's or a faction's (2,600 containers, 371 beds in 108 places; guild halls 92% and
+    # 88%, temples 60% and 50%). A made fort walked in the game by machine, 2026-11-15: 85 containers and 3 beds, all
+    # free for the taking. Its people have no head: the first of them keeps its things)
+    # (and a household whose people have no head among them: the first of them)
+    if head is None and made and info['setting'] in KEPT + HOUSEHOLDS:
+        head = made[0][0]
+    if own and head and info['setting'] in HOUSEHOLDS + KEPT:
         for rk, ref in refs.items():
             rid, _pos, _s, deleted = ref_info(ref['subs'])
             ri = db.resolve_id(rid)
             low = rid.lower()
             # (only what can be taken from or slept in: containers, and beds, which are activators in the game)
-            if deleted or ri is None or 'marker' in low or not (db.recs[ri][0] == 'CONT' or (db.recs[ri][0] == 'ACTI' and 'bed' in low)):
+            if deleted or ri is None or 'marker' in low or not (db.recs[ri][0] == 'CONT' or (db.recs[ri][0] == 'ACTI' and any(w in low for w in BEDS))):
                 continue
-            if db.recs[ri][0] == 'CONT' and not any(w in low for w in OWNED):
+            if db.recs[ri][0] == 'CONT' and not any(w in low for w in OWNED) and not VAR_CONT.search(low):
                 continue                       # (a corpse, a plant's harvest, a guild chest: not the household's)
             subs = list(ref['subs'])
             if any(t in ('ANAM', 'CNAM', 'BNAM') for t, _d in subs):

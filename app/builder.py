@@ -1646,6 +1646,13 @@ def _grid(rooms):
     return grid, names
 
 
+def _roof_stair(rid):
+    """Whether a stair piece is a roof kit's own (kits.ROOF_KITS): named for the roof kit's word in its family."""
+    low = rid.lower()
+    words = low.split('_')
+    return any(low.startswith(rk.rsplit('_', 1)[0] + '_') and rk.rsplit('_', 1)[1] in words for rk in kits.ROOF_KITS)
+
+
 def _square_roof(kp, grid):
     """A roof kit's top storey squared off: the game's thatch roofs are rectangles (hip corners, sides and
     centres, 2 to 4 tiles across) and the set has no piece for a re-entrant corner, so an L-shaped top floor
@@ -2259,6 +2266,18 @@ def _stair_candidates(db, style, kp, info, grid, used, f, want, doors_, at=None,
         # of a room with no corner beside it the ridge opened on the void; the user's Estmorevale, 2026-11-04)
         own_roof = bool(kp.get('roof_kit')) and kp['prefix'].lower().split('_')[-1] in piece['id'].lower().split('_')
         if own_roof and g != top:
+            continue
+        if not kp.get('roof_kit') and piece.get('height', 0) > H + kp['height'] + 32 \
+                and kp['prefix'].lower().split('_')[-1] not in piece['id'].lower().split('_'):
+            # (and any other set's stair that stands taller than this kit's storey: Common rich's gable stair,
+            # in_c_stair_rich_pend_01, 620 tall, is among Common plain's stairs too, and its gable opened on the void
+            # over a plain storey's ceiling at 498 as the thatch one's did)
+            continue
+        if not own_roof and _roof_stair(piece['id']):
+            # (another kit's roof stair: Common thatch's gable stair is listed among Common plain's stairs too, the game
+            # standing it in houses whose ground floor is plain. Under a plain storey's flat ceiling its gable opens
+            # on the void: every plain Imperial town building of two floors had a hole at the stair's top and was
+            # made again on one storey, 7 of the walk town's 20 interiors, its tavern among them; 2026-11-15)
             continue
         # a piece several tiles long climbs the whole storey on its own
         L = piece.get('len', 1)

@@ -56,6 +56,17 @@ NOT_SELLER = re.compile(r'caravaner|shipmaster|gondolier|guide|riverstrider|silt
 SPECIAL = ('guard', 'manor', 'temple', 'tavern', 'guild')
 TOWN_FIGHT = 30                # (no one in a town attacks on sight: towninside's cap)
 GUARD_KINDS = 3                # (a town's guards share this many records, as the game's own generic guards do)
+
+
+def _guard_name(cls, faction):
+    """What the game calls a guard of that class and faction."""
+    low = ('%s %s' % (cls or '', faction or '')).lower()
+    if 'ordinator' in low:
+        return 'Ordinator'
+    for house in ('Hlaalu', 'Redoran', 'Telvanni', 'Indoril', 'Dres'):
+        if house.lower() in low:
+            return house + ' Guard'
+    return 'Guard'
 SEEN = {}                      # (the last town's figures, for the checks)
 BIG_TOWN = 25                  # (a town of this many buildings or more lives as the game's big towns do: their own rates)
 AWNING = re.compile(r'awning|canopy|overhang', re.I)
@@ -1264,6 +1275,10 @@ def people(db, plan, culture, seed, cells, new_refs, W=None, stall_refs=None):
                 if p is None:
                     continue
                 p['wander'] = _wander(L, culture, 'guard|street', rng, 512) if walk else 0
+                # (a record several guards share is no one person: the game's are "Guard", "Hlaalu Guard",
+                # "Ordinator". With a person's name the same Llayno Indaram stood at three places in Walkford and
+                # Tredyn Herothran at three more; the walk by machine, 2026-11-15)
+                p['name'] = _guard_name(cf[0], cf[1] if len(cf) > 1 else '')
                 G[key] = (new_record(p), p)
             nid, p = G[key]
             counts['guards'] += 1
