@@ -381,9 +381,9 @@ async function qolScale(){
   const sel = selectionRefs(); if (!sel.length) return false;
   const one = sel.length === 1;
   const was = sel.map(([cell, r]) => ({r, p: r.p.slice(), s: r.s || 1}));
-  const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
-  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2, cz = Math.min(...sel.map(s => s[1].p[2]));
-  let each = pivotEach();                   // (the one choice for turning and sizing several: index.html)
+  // (about the pivot point, the one choice for turning, tilting and sizing several: ⊙ Pivot, index.html. Its two
+  //  buttons here went to the 3D bar, a tester 2026-11-16: here they read as Scale's alone)
+  const [cx, cy, cz] = pivotAt(sel), each = pivotEach();
   // (what each would become for a slider value v: the size for one, the factor for several)
   const plan = v => was.map(w => {
     const f = one ? v / w.s : v;
@@ -396,14 +396,10 @@ async function qolScale(){
   const back = () => { for (const w of was){ w.r.p = w.p; w.r.s = w.s; } drawMap(); if (W.sel) renderWside && renderWside(); };
   const name = one ? (sel[0][1].name || sel[0][1].id) : sel.length + ' objects';
   qolSlide({
-    title: one ? `Size of ${name}` : `Make the ${sel.length} bigger or smaller (×)`,
+    title: one ? `Size of ${name}` : `Make the ${sel.length} bigger or smaller (×) · ${PIVOTS.find(p => p[0] === pivotMode())[2]}`,
     value: one ? was[0].s : 1, min: 0.5, max: 2, step: 0.01,
     marks: one ? [0.5, 0.75, 1, 1.25, 1.5, 2] : [0.5, 0.8, 1, 1.25, 1.5, 2],
     fmt: v => (Math.round(v * 100) / 100).toString(),
-    modes: one ? null : [{id: 'group', label: 'As a group', tip: 'About the middle of the group: they keep their places to each other. For a set, or the pieces of a building. (Blender: median point)'},
-                         {id: 'each', label: 'Each in place', tip: 'Each where it stands: nothing moves. For rocks and trees on the land. (Blender: individual origins)'}],
-    mode: each ? 'each' : 'group',
-    onMode: m => { each = m === 'each'; pivotSet(each); },
     input: show,
     cancel: back,
     keep: async v => {
@@ -455,6 +451,25 @@ function qolTurnEach(){
   show(0);
 }
 
+// (turns as three.js keeps them, which is not loaded until the 3D view opens: a quaternion [x, y, z, w] from the
+//  turns about X, Y and Z in that order, and back; a thing's turn is (-p[3], -p[4], -p[5]), as v3Commit writes it)
+function qolQuat(x, y, z){
+  const c1 = Math.cos(x / 2), c2 = Math.cos(y / 2), c3 = Math.cos(z / 2), s1 = Math.sin(x / 2), s2 = Math.sin(y / 2), s3 = Math.sin(z / 2);
+  return [s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3];
+}
+function qolQMul(a, b){
+  return [a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+          a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]];
+}
+function qolQRot(q, v){ const r = qolQMul(qolQMul(q, [v[0], v[1], v[2], 0]), [-q[0], -q[1], -q[2], q[3]]); return [r[0], r[1], r[2]]; }
+function qolEuler(q){
+  const [x, y, z, w] = q;
+  const m11 = 1 - 2 * (y * y + z * z), m12 = 2 * (x * y - z * w), m13 = 2 * (x * z + y * w);
+  const m22 = 1 - 2 * (x * x + z * z), m23 = 2 * (y * z - x * w), m32 = 2 * (y * z + x * w), m33 = 1 - 2 * (x * x + y * y);
+  const ey = Math.asin(Math.max(-1, Math.min(1, m13)));
+  return Math.abs(m13) < 0.9999999 ? [Math.atan2(-m23, m33), ey, Math.atan2(-m12, m11)] : [Math.atan2(m32, m22), ey, 0];
+}
+
 // ---------------------------------------------------------------- tilt: lean what's selected forwards or sideways
 // (the game keeps a turn about X, Y and Z for everything placed; each thing leans about its own spot)
 function qolTilt(){
@@ -464,19 +479,31 @@ function qolTilt(){
   const deg = v => Math.round(((v * 180 / Math.PI + 540) % 360 - 180) * 10) / 10;
   // (one thing starts at its own tilt; several start level, and the sliders add to what each has)
   let fx = one ? deg(was[0].p[3]) : 0, fy = one ? deg(was[0].p[4]) : 0;
-  const plan = () => was.map(w => {
-    const p = w.p.slice();
-    if (one){ p[3] = fx * Math.PI / 180; p[4] = fy * Math.PI / 180; }
-    else { p[3] = w.p[3] + fx * Math.PI / 180; p[4] = w.p[4] + fy * Math.PI / 180; }
-    return {w, p};
-  });
+  // (several, about the pivot point but Individual origins: leaned together, as one piece, as the 3D rings do; the
+  //  spots swing round the pivot and each one's lean is the same world lean on top of its own)
+  const together = !one && !pivotEach(), pv = pivotAt(sel);
+  const plan = () => {
+    const L = together && qolQuat(-fx * Math.PI / 180, -fy * Math.PI / 180, 0);
+    return was.map(w => {
+      const p = w.p.slice();
+      if (one){ p[3] = fx * Math.PI / 180; p[4] = fy * Math.PI / 180; }
+      else if (!together){ p[3] = w.p[3] + fx * Math.PI / 180; p[4] = w.p[4] + fy * Math.PI / 180; }
+      else {
+        const d = qolQRot(L, [w.p[0] - pv[0], w.p[1] - pv[1], w.p[2] - pv[2]]);
+        p[0] = pv[0] + d[0]; p[1] = pv[1] + d[1]; p[2] = pv[2] + d[2];
+        const e = qolEuler(qolQMul(L, qolQuat(-w.p[3], -w.p[4], -w.p[5])));
+        p[3] = -e[0]; p[4] = -e[1]; p[5] = ((-e[2]) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+      }
+      return {w, p};
+    });
+  };
   const show = () => { for (const x of plan()) x.w.r.p = x.p; drawMap(); if (typeof v3Refresh === 'function') v3Refresh(); };
   const back = () => { for (const w of was) w.r.p = w.p; drawMap(); if (typeof v3Refresh === 'function') v3Refresh(); };
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   const row = (k, label, v) => `<label>${label}</label><div style="display:flex;gap:8px;align-items:center">
       <input type="range" min="-90" max="90" step="1" value="${v}" data-tr="${k}" style="flex:1"><input class="inp" data-tn="${k}" value="${v}" style="width:70px"><span class="msg">°</span></div>`;
   bg.innerHTML = `<div class="modal" style="width:min(460px,94vw)"><h2>Tilt ${esc(name)}</h2>
-    <div class="msg">${one ? 'Lean it forwards or sideways' : 'Lean each of them forwards or sideways, on top of the tilt it has'}, keeping which way it faces. The game keeps it as it is shown here.</div>
+    <div class="msg">${one ? 'Lean it forwards or sideways' : together ? `Lean them together, about the ${PIVOTS.find(p => p[0] === pivotMode())[1].toLowerCase()} (⊙ Pivot)` : 'Lean each of them forwards or sideways, on top of the tilt it has'}, keeping which way it faces. The game keeps it as it is shown here.</div>
     <div class="frow" style="margin-top:10px">${row('x', 'Forwards (X)', fx)}${row('y', 'Sideways (Y)', fy)}</div>
     <div class="actions" style="margin-top:12px"><button class="btn sm" data-tl="level">Level ${one ? 'it' : 'them'}</button>
       ${typeof V3 !== 'undefined' && V3.on ? '<button class="btn sm" data-tl="handles" title="The turning handles in the 3D view, with the two tilt rings shown">Tilt with the handles</button>' : ''}

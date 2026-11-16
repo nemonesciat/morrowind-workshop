@@ -245,7 +245,11 @@ function v3Sync(){
       const box = new THREE.Box3();
       members.forEach(o => box.expandByObject(o.g));
       const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
-      V3.pivot.position.set(c.x, c.y, box.min.z); V3.pivot.rotation.set(0, 0, 0); V3.pivot.updateMatrixWorld();
+      V3.pivot.position.set(c.x, c.y, box.min.z); V3.pivot.rotation.set(0, 0, 0);
+      // (Active element: the handles on the one clicked last, so the rest turn and tilt round it)
+      const act = typeof pivotMode === 'function' && pivotMode() === 'active' && W.sel && W.multi.has(mkey(W.sel.cell, W.sel.k)) && V3.objs.get(W.sel.cell + '|' + W.sel.k);
+      if (act) V3.pivot.position.copy(act.g.position);
+      V3.pivot.updateMatrixWorld();
       V3.pivotR = Math.max(sz.x, sz.y, sz.z) / 2 || 32;      // (the group's size, for v3HandleSize: the pivot holds nothing)
     }
     if (V3.tc.object !== V3.pivot) V3.tc.attach(V3.pivot);
@@ -2936,6 +2940,8 @@ function v3Tools(){
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
     <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button>
     <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">⤢ Scale</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.pivotOpen ? 'primary' : ''}" data-v3="pivotmenu" title="Pivot point: what several selected things turn, tilt and size about">⊙ Pivot <span class="v3snapnow">${PIVOTS.find(p => p[0] === pivotMode())[2]}</span> ▾</button>
+      <div class="v3viewmenu v3snapmenu" style="display:${V3.pivotOpen ? 'block' : 'none'}">${PIVOTS.map(([k, lab, , tip]) => `<label title="${tip}" style="justify-content:flex-start"><input type="radio" name="v3pivot" data-v3p="${k}" ${k === pivotMode() ? 'checked' : ''}> ${lab}</label>`).join('')}</div></span>
     <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">✛ World axes</button></div>
     <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
@@ -2988,12 +2994,16 @@ function v3Tools(){
     // (tilting turns: on, the turning handles with their two tilt rings)
     else if (a === 'tilt'){ V3.tilt = !V3.tilt; V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
     else if (a === 'space'){ V3.space = V3.space === 'local' ? 'world' : 'local'; try { localStorage.setItem('ws-space', V3.space); } catch (e) {} v3ApplyMode(); v3Tools(); }
-    else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; v3Tools(); }
+    else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; V3.pivotOpen = false; v3Tools(); }
+    else if (a === 'pivotmenu'){ V3.pivotOpen = !V3.pivotOpen; V3.snapOpen = false; V3.viewOpen = false; v3Tools(); }
     else if (a === 'show') showToggle();
     else if (a === 'lock') lockToggle();
-    else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; v3Tools(); }
+    else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; V3.pivotOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
     else if (a === 'gridturn') v3GridToSel(true);
+  });
+  t.querySelectorAll('[data-v3p]').forEach(c => c.onchange = () => {
+    pivotSet(c.dataset.v3p); V3.pivotOpen = false; v3Refresh(); v3Tools(); if (W.multi.size > 1) renderWside();
   });
   t.querySelectorAll('[data-v3v]').forEach(c => c.onchange = () => {
     V3.view[c.dataset.v3v] = c.checked;

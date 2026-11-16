@@ -53,7 +53,9 @@ Esc puts it back). Without that choice, give those two a key of your own there.
 
 **In 3D**, drag the arrows to move what's selected and the rings to turn it: **G** move, **R** turn, **⤡ Tilt** to
 lean it, **⤢ Scale** (**3**) to size it: drag any handle and it grows or shrinks evenly, ×0.5 to ×2 (several
-selected: the Scale dialog). **✛ World axes** (lit: the world's directions; plain: the thing's own) sets which way the
+selected: the Scale dialog). **⊙ Pivot** sets what several selected things turn, tilt and size about: **Median
+point** (the group's middle, so they keep their places to each other), **Individual origins** (each where it stands)
+or **Active element** (the one clicked last). The Selected panel has the same choice for the flat map. **✛ World axes** (lit: the world's directions; plain: the thing's own) sets which way the
 handles point. **End** (or **⤓ Drop down**) sets it on what's below, **Del** removes it. **Esc** or a right-click while you
 are still dragging puts it back, and Undo gets no step for it.
 

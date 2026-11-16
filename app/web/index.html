@@ -3124,8 +3124,20 @@ function selRefsBody(){ return selectionRefs().map(([cell, r]) => ({cell, ref: r
 // How several things are turned or sized together: as a group, about the group's middle (a set, the pieces of a
 // building), or each in place (rocks and trees on the land). One choice for Turn 90°, the 3D rings and Scale,
 // remembered. Testers and the user, 2026-11-15 (Blender's pivot point: median point, individual origins).
-function pivotEach(){ try { return localStorage.getItem('ws-pivot') === 'each'; } catch (e){ return false; } }
-function pivotSet(each){ try { localStorage.setItem('ws-pivot', each ? 'each' : 'group'); } catch (e){} }
+// A tester, 2026-11-16: the choice sat in the Scale box and read as Scale's alone, so turning "lost the median
+// point"; now ⊙ Pivot on the 3D bar (and the Selected panel), with a third, the active one: the thing clicked last.
+const PIVOTS = [['group', 'Median point', 'median', 'About the middle of the group: they keep their places to each other. For a set, or the pieces of a building.'],
+  ['each', 'Individual origins', 'origins', 'Each where it stands: nothing moves. For rocks and trees on the land.'],
+  ['active', 'Active element', 'active', 'About the one clicked last: it stays where it is and the others go round it.']];
+function pivotMode(){ try { const m = localStorage.getItem('ws-pivot'); return m === 'each' || m === 'active' ? m : 'group'; } catch (e){ return 'group'; } }
+function pivotEach(){ return pivotMode() === 'each'; }
+function pivotSet(m){ if (typeof m === 'boolean') m = m ? 'each' : 'group'; try { localStorage.setItem('ws-pivot', m); } catch (e){} }
+// the point several things turn, tilt and size about: the group's middle at its lowest, or the active one's own spot
+function pivotAt(sel){
+  if (pivotMode() === 'active' && W.sel){ const a = sel.find(([c, r]) => c === W.sel.cell && r.k === W.sel.k); if (a) return a[1].p.slice(0, 3); }
+  const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, Math.min(...sel.map(s => s[1].p[2]))];
+}
 async function groupDo(a){
   const sel = selectionRefs(); if (!sel.length) return;
   if (a === 'copy'){
@@ -3149,11 +3161,10 @@ async function groupDo(a){
     const r = await groupAction('/api/group/place', {cell: sel[0][0], items: c.items, x: cx + dupWidth(sel), y: cy, z: cz, yaw: 0, label: 'a copy'}, `Duplicated ${sel.length} object${sel.length > 1 ? 's' : ''}`);
     if (r){ W.multi.clear(); r.placed.forEach(p => W.multi.set(mkey(p.cell, p.ref), {cell: p.cell, k: p.ref})); const l = r.placed[r.placed.length - 1]; W.sel = {cell: l.cell, k: l.ref}; if (W.multi.size < 2) W.multi.clear(); renderWside(); drawMap(); }
   } else if (a === 'turn' || a === 'turnback'){
-    // turn the group 90° around its middle, or each of them where it stands (pivotEach)
+    // turn the group 90° around its middle or the active one, or each of them where it stands (pivotMode)
     const each = pivotEach();
     const ang = (a === 'turn' ? 1 : -1) * Math.PI / 2, cs = Math.cos(ang), sn = Math.sin(ang);
-    const xs = sel.map(s => s[1].p[0]), ys = sel.map(s => s[1].p[1]);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const [cx, cy] = pivotAt(sel);
     const moves = sel.map(([cell, r]) => {
       const dx = r.p[0] - cx, dy = r.p[1] - cy, p = r.p.slice();
       if (!each){ p[0] = cx + dx * cs + dy * sn; p[1] = cy - dx * sn + dy * cs; }
@@ -3469,7 +3480,7 @@ function renderWside_(){
       <div class="actions"><button class="btn sm" data-ga="copy" title="Ctrl+C">⧉ Copy</button><button class="btn sm" data-ga="dup" title="Ctrl+D">Duplicate</button>
         <button class="btn sm" data-ga="turn" title="Turn 90° clockwise">⟳ 90°</button><button class="btn sm" data-ga="turnback" title="Turn 90° the other way">⟲ 90°</button><button class="btn sm" data-ga="turneach" title="Turn each its own way…">🎲</button>
         <button class="btn sm danger" data-ga="delete">Delete all</button><button class="btn sm" data-ga="clear">Clear</button></div>
-      <div class="actions" style="align-items:center" title="How these are turned (⟳ 90°, the 3D rings) and sized (Scale them…)"><span class="msg" style="font-size:11.5px">Turn and size</span>${[['group', 'As a group', 'About the middle of the group: they keep their places to each other. For a set, or the pieces of a building. (Blender: median point)'], ['each', 'Each in place', 'Each where it stands: nothing moves. For rocks and trees on the land. (Blender: individual origins)']].map(([k, lab, tip]) => `<button class="btn sm" data-pivot="${k}" title="${tip}"${(k === 'each') === pivotEach() ? ' style="outline:1px solid var(--gold);background:color-mix(in srgb,var(--gold) 22%,transparent)"' : ''}>${lab}</button>`).join('')}</div>
+      <div class="actions" style="align-items:center" title="What these turn (⟳ 90°, the 3D rings), tilt and size about"><span class="msg" style="font-size:11.5px">Pivot point</span>${PIVOTS.map(([k, lab, , tip]) => `<button class="btn sm" data-pivot="${k}" title="${tip}"${k === pivotMode() ? ' style="outline:1px solid var(--gold);background:color-mix(in srgb,var(--gold) 22%,transparent)"' : ''}>${lab}</button>`).join('')}</div>
       <h3>Save as a prefab</h3><div class="msg">Keep this group to drop anywhere later, in any place and any of your mods.</div>
       <div style="display:flex;gap:6px;margin-top:6px"><input class="inp" id="g-prefabname" placeholder="e.g. Market stall, Alchemist's corner"><button class="btn sm primary" data-ga="prefab">Save</button></div>`;
   } else if (sel){
@@ -3651,7 +3662,7 @@ $('#world').addEventListener('click', async e => {
     else groupDo(a);
     e.stopPropagation(); return;
   }
-  const pv = e.target.closest('[data-pivot]'); if (pv){ pivotSet(pv.dataset.pivot === 'each'); renderWside(); e.stopPropagation(); return; }
+  const pv = e.target.closest('[data-pivot]'); if (pv){ pivotSet(pv.dataset.pivot); renderWside(); if (V3.on){ v3Refresh(); v3Tools(); } e.stopPropagation(); return; }
   const gd = e.target.closest('[data-gdrop]'); if (gd){ W.multi.delete(gd.dataset.gdrop); if (W.multi.size < 2) W.multi.clear(); renderWside(); drawMap(); e.stopPropagation(); return; }
   const pd = e.target.closest('[data-pfdel]');
   if (pd){ e.stopPropagation(); const p = W.prefabs[+pd.dataset.pfdel]; if (confirm(`Delete the prefab "${p.name}"? Things already placed stay.`)){ await post('/api/prefabs/delete', {name: p.file}); W.prefabs = null; renderPrefabs(); } return; }
