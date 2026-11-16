@@ -290,7 +290,9 @@ function owDrawRef(keepTyped){
     const bind = (f, types) => {
       const inp = $('#ow-' + f); if (!inp) return;
       ddSearch('ow-' + f, types, x => { d[f] = x.id; d[f + '_name'] = x.name || ''; d[f + '_missing'] = false; if (f === 'faction') d.owner = ''; owDrawRef(); });
-      inp.addEventListener('change', () => { d[f] = inp.value.trim(); d[f + '_missing'] = false; d[f + '_name'] = ''; if (f === 'faction' && !d[f]) d.rank = 0; owDrawRef(); });
+      // (a pick from the list blurs the box first: what was typed, "galar", must not be taken and the window
+      //  drawn again under the click, so the pick itself was lost: a tester on Discord, 2026-11-16)
+      inp.addEventListener('change', () => { const l = $('#ow-' + f + '-l'); if (l && l.style.display !== 'none' && l.matches(':hover')) return; d[f] = inp.value.trim(); d[f + '_missing'] = false; d[f + '_name'] = ''; if (f === 'faction' && !d[f]) d.rank = 0; owDrawRef(); });
     };
     bind('owner', 'NPC_'); bind('faction', 'FACT'); bind('global', 'GLOB'); bind('key', 'MISC'); bind('trap', 'SPEL'); bind('soul', 'CREA');
     const rk = $('#ow-rank'); if (rk) rk.onchange = () => { d.rank = +rk.value; };

@@ -14,6 +14,8 @@ function qolCss(){
   .qol-list > div > span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .qol-list small{color:var(--faint)}
   .qol-list > div > .qol-tag{font-size:10.5px;padding:1px 6px;border-radius:8px;flex:none}
+  .qol-list > .qol-sec{font-weight:600;color:var(--gold2);padding-top:9px;user-select:none}
+  .qol-list > .qol-sec small{flex:none}
   .qol-tag.new{background:#2a4a2a;color:#a6eea6}.qol-tag.changed{background:#4a3c20;color:var(--gold2)}.qol-tag.gone{background:#4a2420;color:#ffb0a2}
   .qol-uses h3{margin:14px 0 6px}
   .qol-uses .qol-list{max-height:220px;overflow:auto}
@@ -37,6 +39,18 @@ function qolChanges(){
   return out;
 }
 const QOL_KIND = {new: 'new', changed: 'changed', gone: 'removed'};
+// My changes in sections by kind, as Browse names them (Containers, Statics, Weapons…), each folding away on a click
+// and A to Z inside (a tester on Discord, 2026-11-16: "objects such as statics and containers are mixed within the
+// same long list"). [label, indexes into the list], the sections A to Z.
+let QOL_SHUT = new Set();
+try { QOL_SHUT = new Set(JSON.parse(localStorage.getItem('ws-changes-shut') || '[]')); } catch (e) {}
+function qolSections(all){
+  const by = new Map();
+  all.forEach((x, i) => { const t = x.r.type || ''; const lab = (S.typeLabels && S.typeLabels[t]) || t || 'Other'; if (!by.has(lab)) by.set(lab, []); by.get(lab).push(i); });
+  const nm = i => String(all[i].r.name || all[i].r.id || '').toLowerCase();
+  for (const l of by.values()) l.sort((a, b) => nm(a) < nm(b) ? -1 : nm(a) > nm(b) ? 1 : a - b);
+  return [...by.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
 
 function qolPanels(){
   PNL.define('world', 'changes', {title: 'My changes', icon: '✎', cls: 'wside', render: qolRenderChanges, onShow: it => qolRenderChanges(it)});
@@ -48,9 +62,18 @@ function qolRenderChanges(it){
   it.el.innerHTML = `<div class="msg" style="margin-bottom:8px">${all.length ? `Here your mod has <b>${n('new')}</b> new, <b>${n('changed')}</b> changed and <b>${n('gone')}</b> removed object${all.length === 1 ? '' : 's'}.` : 'Your mod hasn\'t changed anything here yet.'}</div>
     <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="qol-only" ${W.onlyMine ? 'checked' : ''}> Show only what your mod changed</label>
     ${n('gone') ? '<button class="btn sm" data-q="backall" style="margin-top:6px">↶ Bring back everything removed</button>' : ''}
-    <div class="qol-list" style="margin-top:8px">${all.slice(0, 400).map((x, i) => `<div data-qi="${i}"><span class="qol-tag ${x.kind}">${QOL_KIND[x.kind]}</span><span>${esc(x.r.name || x.r.id)} <small>${esc(x.r.name ? x.r.id : '')}</small></span>
-      <button class="btn sm" data-qr="${i}" title="${x.kind === 'gone' ? 'Bring it back' : x.kind === 'new' ? 'Take it out again' : 'Put it back as it was'}">↶</button></div>`).join('')}</div>
-    ${all.length > 400 ? `<div class="msg">…and ${all.length - 400} more</div>` : ''}`;
+    <div class="qol-list" style="margin-top:8px">${qolSections(all).map(([lab, list]) => {
+      const shut = QOL_SHUT.has(lab);
+      return `<div class="qol-sec" data-qsec="${esc(lab)}" title="${shut ? 'Show them' : 'Fold them away'}"><span>${shut ? '▸' : '▾'} ${esc(lab)}</span><small>${list.length}</small></div>`
+        + (shut ? '' : list.slice(0, 300).map(i => { const x = all[i]; return `<div data-qi="${i}"><span class="qol-tag ${x.kind}">${QOL_KIND[x.kind]}</span><span>${esc(x.r.name || x.r.id)} <small>${esc(x.r.name ? x.r.id : '')}</small></span>
+      <button class="btn sm" data-qr="${i}" title="${x.kind === 'gone' ? 'Bring it back' : x.kind === 'new' ? 'Take it out again' : 'Put it back as it was'}">↶</button></div>`; }).join('')
+        + (list.length > 300 ? `<div class="msg">…and ${list.length - 300} more</div>` : ''));
+    }).join('')}</div>`;
+  it.el.querySelectorAll('[data-qsec]').forEach(d => d.onclick = () => {
+    const lab = d.dataset.qsec; QOL_SHUT.has(lab) ? QOL_SHUT.delete(lab) : QOL_SHUT.add(lab);
+    try { localStorage.setItem('ws-changes-shut', JSON.stringify([...QOL_SHUT])); } catch (e) {}
+    qolRenderChanges(it);
+  });
   it.el.querySelector('.qol-only').onchange = e => { W.onlyMine = e.target.checked; drawMap(); renderWside(); };
   const ba = it.el.querySelector('[data-q=backall]');
   if (ba) ba.onclick = () => qolRestore(all.filter(x => x.kind === 'gone'));

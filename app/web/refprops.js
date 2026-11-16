@@ -51,7 +51,8 @@ async function refPropsRender(){
   const bind = (f, types) => {
     const inp = $('#rp-' + f); if (!inp) return;
     ddSearch('rp-' + f, types, r => { d[f] = r.id; d[f + '_name'] = r.name || ''; d[f + '_missing'] = false; if (f === 'faction'){ d.owner = d.owner && ''; } refPropsRender(); });
-    inp.addEventListener('change', () => { d[f] = inp.value.trim(); d[f + '_missing'] = false; d[f + '_name'] = ''; if (f === 'faction' && !d[f]) d.rank = 0; refPropsRender(); });
+    // (a pick from the list blurs the box first: the typed text must not be taken and the panel drawn again under the click)
+    inp.addEventListener('change', () => { const l = $('#rp-' + f + '-l'); if (l && l.style.display !== 'none' && l.matches(':hover')) return; d[f] = inp.value.trim(); d[f + '_missing'] = false; d[f + '_name'] = ''; if (f === 'faction' && !d[f]) d.rank = 0; refPropsRender(); });
   };
   bind('owner', 'NPC_'); bind('faction', 'FACT'); bind('global', 'GLOB'); bind('key', 'MISC'); bind('trap', 'SPEL'); bind('soul', 'CREA');
   const rk = $('#rp-rank'); if (rk) rk.onchange = () => { d.rank = +rk.value; refPropsRender(); };

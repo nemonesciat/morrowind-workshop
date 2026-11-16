@@ -67,6 +67,23 @@ function cmPlace(it){
   return [CM_MORE[0], 99];
 }
 function cmGroupOf(it){ return cmPlace(it)[0]; }
+// Favourites (a tester on Discord, 2026-11-16, after Blender's Quick Favorites): ☆ beside any entry keeps it at the
+// top of the menu, and Shift+F opens only them where the mouse is. An entry is kept by what it does, not by what it
+// was done to: "Select all the Pillow here" is "select all the * here", so it shows for any thing that has it, and
+// only there (an entry the thing hasn't, isn't shown).
+const CM_FAV = 'ws-menu-fav';
+function cmFavKey(label, names){
+  let b = cmBare(label);
+  for (const n of (names || []).filter(n => n && String(n).length >= 3).map(String).sort((x, y) => y.length - x.length))
+    b = b.replace(new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '*');
+  return cmNorm(b);
+}
+function cmFavGet(){ try { const v = JSON.parse(localStorage.getItem(CM_FAV) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function cmFavToggle(k){
+  if (!k) return;
+  const f = cmFavGet(), on = f.includes(k);
+  try { localStorage.setItem(CM_FAV, JSON.stringify(on ? f.filter(x => x !== k) : [...f, k].slice(-40))); } catch (e) {}
+}
 function cmRecentGet(){ try { return JSON.parse(localStorage.getItem(CM_KEY) || '[]'); } catch (e) { return []; } }
 function cmRecentAdd(label){
   const k = cmNorm(label); if (!k) return;
@@ -89,22 +106,39 @@ function cmMenu(pt, items, ctx){
   real.forEach((it, n) => { const [g, i] = cmPlace(it); it._cmo = i * 1000 + n; if (!by.has(g)) by.set(g, []); by.get(g).push(it); });
   for (const list of by.values()) list.sort((a, b) => a._cmo - b._cmo);
   const order = [...CM_GROUPS.map(g => [g[0], g[1]]), CM_MORE].filter(([n]) => by.has(n));
-  // quick: the two or three this kind of thing is right-clicked for most
-  const quick = [];
-  for (const re of CM_QUICK[(ctx && ctx.kind) || 'thing'] || CM_QUICK.thing){
-    const it = real.find(x => !quick.includes(x) && !x.disabled && re.test(cmBare(x.label)));
-    if (it) quick.push(it);
-  }
-  const recent = [];
-  for (const k of cmRecentGet()){
-    const it = real.find(x => cmNorm(x.label) === k && !quick.includes(x) && !recent.includes(x) && !x.disabled);
-    if (it && recent.length < 3) recent.push(it);
-  }
+  // your favourites (☆), then quick: the two or three this kind of thing is right-clicked for most, then recent
+  const names = (ctx && ctx.names) || [title];
+  const fkey = it => cmFavKey(it.label, names);
+  let favs = [], quick = [], recent = [], onlyFav = !!(ctx && ctx.favs);
+  const tops = () => {
+    const fk = cmFavGet();
+    favs = []; quick = []; recent = [];
+    for (const k of fk){ const it = real.find(x => !x.disabled && !favs.includes(x) && fkey(x) === k); if (it) favs.push(it); }
+    for (const re of CM_QUICK[(ctx && ctx.kind) || 'thing'] || CM_QUICK.thing){
+      const it = real.find(x => !favs.includes(x) && !quick.includes(x) && !x.disabled && re.test(cmBare(x.label)));
+      if (it) quick.push(it);
+    }
+    for (const k of cmRecentGet()){
+      const it = real.find(x => cmNorm(x.label) === k && !favs.includes(x) && !quick.includes(x) && !recent.includes(x) && !x.disabled);
+      if (it && recent.length < 3) recent.push(it);
+    }
+  };
+  tops();
+  if (keep && keep.whole) onlyFav = false;         // (drawn again after "The whole menu" was clicked)
   const m = document.createElement('div'); m.className = 'pmenu cmenu';
   const all = [];                                  // (every entry drawn, by index, for the clicks)
-  const btn = (it, extra) => { all.push(it); return `<button data-cm="${all.length - 1}" class="${it.on ? 'on' : ''}" ${it.disabled ? 'disabled style="opacity:.45"' : ''} title="${esc(it.title || '')}">${esc(it.label)}${extra || ''}</button>`; };
+  const btn = (it, extra) => {
+    all.push(it);
+    const fav = !it.disabled && favs.includes(it);
+    const star = it.disabled ? '' : `<span class="cmstar${fav ? ' fav' : ''}" data-star="${all.length - 1}" title="${fav ? 'Take it out of your favourites' : 'Keep it in your favourites, at the top of this menu (Shift+F: only them)'}">${fav ? '★' : '☆'}</span>`;
+    return `<button data-cm="${all.length - 1}" class="${it.on ? 'on' : ''}" ${it.disabled ? 'disabled style="opacity:.45"' : ''} title="${esc(it.title || '')}">${star}${esc(it.label)}${extra || ''}</button>`;
+  };
   const main = () => {
     let h = '';
+    // (Shift+F: your favourites alone, for this thing; the search still finds any entry)
+    if (onlyFav) return (favs.length ? favs.map(it => btn(it)).join('') : '<div class="cmlab">No favourites for this yet: ☆ an entry in the right-click menu.</div>')
+      + '<hr><button data-cmall="1">☰ The whole menu</button>';
+    if (favs.length) h += '<div class="cmlab">Favourites</div>' + favs.map(it => btn(it)).join('') + '<hr>';
     if (quick.length) h += quick.map(it => btn(it)).join('');
     if (recent.length) h += '<hr><div class="cmlab">Recent</div>' + recent.map(it => btn(it)).join('');
     if (quick.length || recent.length) h += '<hr>';
@@ -121,14 +155,25 @@ function cmMenu(pt, items, ctx){
     `<input class="inp cmq" placeholder="Find an action (go, tilt, furnish…)" autocomplete="off" spellcheck="false"><div class="cmbody">${main()}</div>`;
   document.body.appendChild(m);
   const body = m.querySelector('.cmbody'), q = m.querySelector('.cmq');
-  let sub = null;
-  const closeSub = () => { if (sub){ sub.remove(); sub = null; } m.querySelectorAll('.cmgrp.cmon').forEach(b => b.classList.remove('cmon')); };
+  let sub = null, openGrp = null;
+  const closeSub = () => { if (sub){ sub.remove(); sub = null; } openGrp = null; m.querySelectorAll('.cmgrp.cmon').forEach(b => b.classList.remove('cmon')); };
+  // (a star clicked: the entry in or out of your favourites, and the menu drawn again as it was, the group open still)
+  const star = e => {
+    const s = e.target.closest('[data-star]'); if (!s) return false;
+    e.preventDefault(); e.stopPropagation();
+    cmFavToggle(fkey(all[+s.dataset.star]));
+    const g = openGrp; tops();
+    if (q.value){ q.oninput(); return true; }
+    closeSub(); all.length = 0; body.innerHTML = main(); bind(); place();
+    if (g){ const b = [...body.querySelectorAll('.cmgrp')].find(x => x.dataset.grp === g); if (b) openSub(b); }
+    return true;
+  };
   const close = () => { closeSub(); m.remove(); document.removeEventListener('pointerdown', off, true); document.removeEventListener('keydown', keys, true); if (CM_OPEN && CM_OPEN.m === m) CM_OPEN = null; };
   const run = it => { if (!it || it.disabled) return; cmRecentAdd(it.label); close(); if (it.act) it.act(); };
   const openSub = b => {
     closeSub();
     const list = by.get(b.dataset.grp) || [];
-    b.classList.add('cmon');
+    b.classList.add('cmon'); openGrp = b.dataset.grp;
     sub = document.createElement('div'); sub.className = 'pmenu cmsub';
     sub.innerHTML = `<div class="phd">${esc(b.dataset.label || b.dataset.grp)}</div>` + list.map(it => btn(it)).join('');
     document.body.appendChild(sub);
@@ -136,7 +181,7 @@ function cmMenu(pt, items, ctx){
     const left = mr.right + sub.offsetWidth + 4 <= innerWidth ? mr.right + 2 : Math.max(8, mr.left - sub.offsetWidth - 2);
     const top = Math.max(8, Math.min(innerHeight - sub.offsetHeight - 8, r.top - 26));
     Object.assign(sub.style, {left: left + 'px', top: top + 'px'});
-    sub.onclick = e => { const x = e.target.closest('[data-cm]'); if (x) run(all[+x.dataset.cm]); };
+    sub.onclick = e => { if (star(e)) return; const x = e.target.closest('[data-cm]'); if (x) run(all[+x.dataset.cm]); };
   };
   const bind = () => {
     body.querySelectorAll('.cmgrp').forEach(b => {
@@ -145,7 +190,11 @@ function cmMenu(pt, items, ctx){
     });
     body.querySelectorAll('[data-cm]').forEach(b => b.onmouseenter = () => closeSub());
   };
-  m.onclick = e => { const x = e.target.closest('[data-cm]'); if (x) run(all[+x.dataset.cm]); };
+  m.onclick = e => {
+    if (star(e)) return;
+    if (e.target.closest('[data-cmall]')){ e.stopPropagation(); onlyFav = false; all.length = 0; body.innerHTML = main(); bind(); place(); return; }
+    const x = e.target.closest('[data-cm]'); if (x) run(all[+x.dataset.cm]);
+  };
   // search: every entry that matches, with its group's name
   q.oninput = () => {
     closeSub();
@@ -168,7 +217,7 @@ function cmMenu(pt, items, ctx){
     Object.assign(m.style, {left: Math.max(8, left) + 'px', top: top + 'px'});
   };
   bind(); place();
-  CM_OPEN = {m, pt, close, state: () => ({q: q.value, grp: (m.querySelector('.cmgrp.cmon') || {}).dataset ? m.querySelector('.cmgrp.cmon').dataset.grp : null})};
+  CM_OPEN = {m, pt, close, state: () => ({q: q.value, whole: !!(ctx && ctx.favs) && !onlyFav, grp: (m.querySelector('.cmgrp.cmon') || {}).dataset ? m.querySelector('.cmgrp.cmon').dataset.grp : null})};
   if (keep && keep.q){ q.value = keep.q; q.oninput(); }
   else if (keep && keep.grp){ const b = [...body.querySelectorAll('.cmgrp')].find(x => x.dataset.grp === keep.grp); if (b) openSub(b); }
   setTimeout(() => { try { q.focus({preventScroll: true}); } catch (e) {} }, 0);
@@ -185,6 +234,8 @@ function cmMenu(pt, items, ctx){
   .cmenu .cmarr{margin-left:auto;opacity:.6}
   .cmenu .cmlab{font-size:11px;color:var(--faint);padding:2px 10px}
   .cmenu .cmtag{float:right;font-size:11px;color:var(--faint);margin-left:10px}
+  .cmstar{float:right;margin-left:8px;padding:0 3px;color:var(--gold2);opacity:0;cursor:pointer}
+  .pmenu button:hover .cmstar{opacity:.55}.pmenu button .cmstar:hover,.pmenu button .cmstar.fav{opacity:1}
   .cmsub{min-width:240px;max-width:380px;max-height:calc(100vh - 16px);overflow:auto}`;
   document.head.appendChild(s);
 })();

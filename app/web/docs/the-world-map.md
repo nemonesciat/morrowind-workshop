@@ -41,6 +41,9 @@ Esc puts it back). Without that choice, give those two a key of your own there.
   then adds every one of its kind.
 - **Drag a box** on an empty spot to select many (in 3D; **Shift+drag** on the flat map).
 - **Esc** deselects. **Right-click** anything for what you can do with it.
+- **☆** beside an action in that menu (shown when the mouse is over it) keeps it in your **Favourites**, at the top
+  of the menu wherever it applies. **Shift+F** opens only them, for what's selected; **☰ The whole menu** shows the
+  rest.
 - **H** hides what's selected (to get at what's behind), **Shift+H** everything else, **Alt+H** shows it all
   again. Hiding only changes what you see, not the game.
 - **🔒 Lock walls** (a button on the bar, lit when on) stops you moving walls and buildings by accident; pick them
@@ -123,7 +126,8 @@ group anywhere later.
 - On the map, your mod's changes are marked: **green** new, **gold** changed, a **red ✕** where you took something
   out (right-click it to bring it back). Turn the marks on in **☑ Show**.
 - **Show only what your mod changed** hides the rest.
-- **My changes** lists them all, each with **Open on map** and **Undo**.
+- **My changes** lists them all, each with **Open on map** and **Undo**, in sections by kind (Containers, Statics…),
+  A to Z. Click a section's name to fold it away.
 
 ## The 3D view
 

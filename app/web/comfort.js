@@ -91,7 +91,24 @@ const CF_ACT = [
   {id: 'fixit', label: 'Find gaps in this place', keys: [], world: true, run: () => W.info && W.info.interior ? fixitOpen(W.info.key) : toast('Open an interior first.')},
   {id: 'check', label: 'Check this place (what\'s wrong with the furnishing)', keys: [], world: true, run: () => W.info && W.info.interior ? placecheckOpen(W.info.key) : toast('Open an interior first.')},
   {id: 'play', label: 'Play here (pick a spot)', keys: [], world: true, run: () => W.key ? setMode('play') : toast('Open a place first.')},
+  {id: 'favs', label: 'Your favourite actions (☆ in the right-click menu), for what\'s selected', keys: ['Shift+F'], world: true, run: () => cfFavMenu()},
 ];
+// where the mouse is, for Shift+F's menu
+const CF_PT = {x: innerWidth / 2, y: innerHeight / 2};
+document.addEventListener('pointermove', e => { CF_PT.x = e.clientX; CF_PT.y = e.clientY; }, {capture: true, passive: true});
+// Your favourites alone, at the mouse (Blender's Quick Favorites, a tester on Discord): for what's selected, or with
+// nothing selected for the spot under the mouse; an entry the selection hasn't, isn't shown.
+function cfFavMenu(){
+  if (!cfWorldOn() || !W.key) return false;
+  const ev = {clientX: CF_PT.x, clientY: CF_PT.y, shiftKey: false};
+  let hit = null, at = null;
+  if (W.sel){ const r = findRef(W.sel.cell, W.sel.k); if (r) hit = [W.sel.cell, r]; }
+  try {
+    if (V3.on && typeof v3Pick === 'function'){ const h = v3Pick(ev, true); if (h && h.point){ V3.lastPick = h; at = h.world; } }
+    else { const b = cv.getBoundingClientRect(); if (ev.clientX >= b.left && ev.clientX <= b.right && ev.clientY >= b.top && ev.clientY <= b.bottom) at = toWorld(ev.clientX - b.left, ev.clientY - b.top); }
+  } catch (err) {}
+  cfMenuAt(ev, hit, at, null, {favs: true});
+}
 const CF_FIXED = [
   ['W A S D', '3D: fly (Q / E down and up, Shift faster)'], ['Esc', 'Stop: placing, flying, or clear the selection'],
   ['Right-drag', '3D: look around'], ['Middle-drag', '3D: slide the view'], ['Alt + drag', '3D: circle around what\'s selected'],
@@ -262,10 +279,12 @@ function cfPasteItem(at){
 }
 
 // hit: [cell, ref] under the mouse (or null); at: the world spot [x, y, z] under it (or null)
-function cfMenuAt(e, hit, at, locked){
+// opt: {favs: true} for Shift+F, your favourites alone (ctxmenu.js)
+function cfMenuAt(e, hit, at, locked, opt){
   if (!cfWorldOn() || !W.key) return;
   if (W.mode === 'paths'){ peMenu(e); return; }
   const items = [], pt = {x: e.clientX, y: e.clientY}, tok = {};
+  let roomName = null;
   const sep = () => { if (items.length && items[items.length - 1] !== '-') items.push('-'); };
   const head = t => items.push({label: t, disabled: true, head: true});
   if (hit && W.multi.size > 1 && inMulti(hit[0], hit[1].k)){
@@ -343,7 +362,7 @@ function cfMenuAt(e, hit, at, locked){
         items.push({label: '➕ Add one thing', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); addOne(ck, r.k, r.name || r.id); }});
         if (d.book_dressings) items.push({label: '📚 Fill with books', act: () => { if (!(W.sel && W.sel.k === r.k)) selectRef(ck, r.k, true); dressPiece(ck, r.k, r.name || r.id, true); }});
       }
-      else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } }); }
+      else { const p = dressProbe(ck, r); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked, opt); } }); }
     }
     if (['STAT', 'ACTI', 'CONT', 'DOOR', 'LIGH', 'MISC'].includes(r.type)){
       // secret entrances (web/secretdoor.js); a light (a log pile) or a misc thing with a model can be one too
@@ -433,7 +452,7 @@ function cfMenuAt(e, hit, at, locked){
         if (ld.book_dressings) items.push({label: '📚 Fill with books', act: () => dressPiece(lck, lr.k, lr.name || lr.id, true)});
         items.push({label: '➕ Add one thing', act: () => addOne(lck, lr.k, lr.name || lr.id)});
       }
-      else { const p = dressProbe(lck, lr); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } }); }
+      else { const p = dressProbe(lck, lr); if (p) p.then(d2 => { if (d2 && d2.dressable && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked, opt); } }); }
     }
     else if (W.info && W.info.interior && at && typeof fixhereMenu === 'function') items.push({label: '🧱 Fix this edge: what the game stands here…', act: () => fixhereMenu(W.info.key, null, pt, [at[0], at[1], V3.on && at[2] != null ? at[2] : null])});
     if (W.info && W.info.ruin && typeof ruinAgain === 'function') items.push({label: '🎲 Make this place again', act: () => ruinAgain(W.info.key)});
@@ -453,7 +472,7 @@ function cfMenuAt(e, hit, at, locked){
     const ri = W.roomInfo && W.roomInfo[roomKey(rck, spot)];
     if (ri && ri.room != null){
       sep();
-      const nm = ri.name || 'room';
+      const nm = ri.name || 'room'; roomName = nm;
       items.push({label: ri.furnished ? `🎲 Furnish the ${nm} again (${ri.furnished} things now)` : `🪑 Furnish the ${nm} (the game's way)`, act: () => furnishRoom(rck, ri.room, null, nm)});
       items.push({label: `🪑 Furnish the ${nm} as…`, act: () => { const ms = ri.purposes.map(p => ({label: (p === ri.purpose ? '● ' : '') + p, act: () => furnishRoom(rck, ri.room, p, nm)})); setTimeout(() => pnlMenu(pt, ms), 0); }});
       // between one piece and a whole house: every dressable piece in the room, one Undo
@@ -464,7 +483,7 @@ function cfMenuAt(e, hit, at, locked){
       const p = roomProbe(rck, spot);
       // (the menu drawn again with everything it was given: the locked wall under the mouse too, or its
       // "Fix here" and "Add a room through this wall" went missing whenever the room's answer came late)
-      if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked); } });
+      if (p) p.then(r2 => { if (r2 && r2.room != null && cfMenuOpen && cfMenuOpen.isConnected && cfMenuOpen._tok === tok){ cfMenuOpen.remove(); cfMenuAt(e, hit, at, locked, opt); } });
     }
   }
   // (the grid, put where you clicked: level on a floor, upright along a wall; world3d.js)
@@ -483,7 +502,10 @@ function cfMenuAt(e, hit, at, locked){
     : ['DOOR', 'NPC_', 'CREA'].includes(r_.type) ? r_.type : r_.arch ? 'piece'
     : (['STAT', 'ACTI', 'CONT'].includes(r_.type) && r_.b && Math.max(r_.b[3] - r_.b[0], r_.b[4] - r_.b[1]) * (r_.s || 1) > 140) ? 'furniture'
     : ['WEAP', 'ARMO', 'CLOT', 'MISC', 'BOOK', 'ALCH', 'INGR', 'APPA', 'LIGH'].includes(r_.type) ? 'item' : 'thing';
-  const m = typeof cmMenu === 'function' ? cmMenu(pt, items, {kind}) : pnlMenu(pt, items);
+  // (the names in its entries, so a favourite is kept by what it does: "Select all the * here", "Furnish the * again")
+  const names = [r_ && r_.name, r_ && r_.id, locked && locked[1].name, locked && locked[1].id, roomName, W.clip && W.clip.label,
+    W.info && W.info.name, typeof QOL !== 'undefined' && QOL.back.length ? QOL.back[QOL.back.length - 1].name : null];
+  const m = typeof cmMenu === 'function' ? cmMenu(pt, items, {kind, names, favs: !!(opt && opt.favs)}) : pnlMenu(pt, items);
   m._tok = tok;                    // (a late answer redraws only the menu it was asked for)
   cfMenuOpen = m;
   if (typeof cmMenu !== 'function') m.querySelectorAll('button').forEach((b, n) => { const it = items.filter(x => x !== '-')[n]; if (it && it.head){ b.className = 'phd'; } });
