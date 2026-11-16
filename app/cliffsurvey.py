@@ -455,9 +455,13 @@ def ready(db):
 def figures(db, region):
     """A region's figures for the pass, each band and zone its own where it has BAND_MIN pieces, else the nearest
     band's (the steeper first), and the world's when the region set under ENOUGH pieces in all. {'region', 'bands',
-    'zones', 'knolls', 'borrowed'}."""
-    S = survey(db)
+    'zones', 'knolls', 'borrowed'}. A key 'my:<id>@<region>': that region's figures with one of your brushes' things."""
     region = (region or '').lower()
+    if region.startswith('my:'):
+        import landregion
+        bkey, _at, base = region.partition('@')
+        return landregion.brush_figures(db, figures(db, base), bkey)
+    S = survey(db)
     R = S['regions'].get(region)
     borrowed = ''
     if not R or R['n'] < ENOUGH:

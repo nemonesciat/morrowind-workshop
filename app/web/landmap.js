@@ -43,7 +43,7 @@ async function lmLoad(force, keepPlan){
 // drawn over the new mod or saved into it; the user, 2026-11-09, "on a new mod ... I still see all these remnants".
 // The panel's own settings stay, and the counters go on so an answer still on its way for the old mod is dropped)
 const LM_KEEP = new Set(['show', 'height', 'coast', 'rough', 'paint', 'prevOn', 'texView', 'doneOpen', 'countsOpen', 'csOpen', 'flowOn',
-  'warned', 'hooked', 'dress', 'handmade', 'handmadeAsk', 'clads', 'cultures', 'culturesAsked', 'walls', 'csStyles', 'csAsked',
+  'warned', 'hooked', 'dress', 'handmade', 'handmadeAsk', 'clads', 'rockregs', 'rockAsk', 'brushes', 'brushAt', 'brushAsk', 'cultures', 'culturesAsked', 'walls', 'csStyles', 'csAsked',
   'prevN', 'planN', 'markSeq', 'flowN', 'gen', 'prevBusy', 'townBusy', 'csBusy']);
 function lmForget(){
   for (const t of ['saveT', 'histT', 'townT', 'csT', 'flowT', 'poll']) clearTimeout(LM[t]);
@@ -884,6 +884,40 @@ function lsPlacesBind(P){
     const b1 = $('#lsd-build'); if (b1) b1.onclick = () => lsBuildDungeons([sel], b1);
   }
 }
+// Whose rocks: the land's own where it stands real ones (the default), or a region picked here. The regions with
+// rocks of their own, asked once (landregion.own_regions). A tester, 2026-11-15: rocks that are not the local ones.
+const ROCKS_FROM_TIP = 'Whose rocks: the land\'s own where it has real ones, or another region\'s';
+function lsRockRegs(){
+  if (!LM.rockregs && !LM.rockAsk){
+    LM.rockAsk = true;
+    api('/api/land/handmade').then(r => { LM.rockregs = r.rocks || []; if (!LM.handmade){ LM.handmade = r.regions || []; LM.clads = r.clads || []; LM.handmadeAsk = true; } renderWside(); }).catch(() => { LM.rockAsk = false; });
+  }
+  return LM.rockregs || [];
+}
+// (your own scatter brushes, asked again after a while, so one made in the Scatter tool since shows: [{key, label}])
+const TREES_FROM_TIP = 'Whose trees: the land\'s own, or one of your scatter brushes (Ground → Scatter → + New brush)';
+function lsBrushes(){
+  if (!LM.brushAsk && (!LM.brushes || Date.now() - (LM.brushAt || 0) > 15000)){
+    LM.brushAsk = true;
+    api('/api/scatter/sets?cell=').then(r => {
+      const was = JSON.stringify(LM.brushes || []);
+      LM.brushes = (r.sets || []).filter(s => s.mine).map(s => ({key: s.key, label: s.label}));
+      LM.brushAt = Date.now(); LM.brushAsk = false;
+      if (JSON.stringify(LM.brushes) !== was) renderWside();
+    }).catch(() => { LM.brushAsk = false; });
+  }
+  return LM.brushes || [];
+}
+function lsBrushOpts(cur){
+  const mine = lsBrushes();
+  const gone = cur && cur.startsWith('my:') && !mine.some(b => b.key === cur) ? `<option value="${esc(cur)}" selected>★ a brush that is gone</option>` : '';
+  return mine.length || gone ? `<optgroup label="Your brushes">${mine.map(b => `<option value="${esc(b.key)}" ${b.key === cur ? 'selected' : ''}>★ ${esc(b.label)}</option>`).join('')}${gone}</optgroup>` : '';
+}
+function lsRocksFromOpts(cur, more){
+  const all = [...new Set([...lsRockRegs(), ...(more || []), ...(cur && !cur.startsWith('my:') ? [cur] : [])])].sort((a, b) => lsRegionName(a).localeCompare(lsRegionName(b)));
+  return `<option value="">this land's</option>` + all.map(r => `<option value="${esc(r)}" ${r === (cur || '') ? 'selected' : ''}>${esc(lsRegionName(r))}</option>`).join('') + lsBrushOpts(cur || '');
+}
+function lsTreesFromOpts(cur){ return `<option value="">this land's</option>` + lsBrushOpts(cur || ''); }
 function lsRegionPassHtml(P){
   const T = P.terrain = Object.assign({}, LS_TERRAIN, P.terrain || {});
   if (!LM.handmade && !LM.handmadeAsk){
@@ -905,7 +939,7 @@ function lsRegionPassHtml(P){
         ${sl('valleys', 'Valleys', 'The rain carves valleys into the result: deep where much ground drains. 0: none')}
         ${sl('cliffs', 'Cliffs', 'Hard rock stepped into cliffs and ledges where the game has its steep ground: high over the valleys, mid-slope, where the land is rough, in the rock texture of such ground. As much as the region it takes after has. 0: none')}
         ${T.cliffs > 0 ? `<label class="msg" style="display:flex;gap:6px;align-items:center" title="Clad the steep ground in cliff pieces, faces, lips, feet and outcrops, as the game does (the land's own rocks stay and follow the ground)"><input type="checkbox" id="lst-rocks" ${T.rocks ? 'checked' : ''}> Rock the cliffs</label>
-        ${T.rocks ? `<label title="Whose cliff pieces. Nearest: the region's own where the game clad its cliffs, else the region nearest in weather and on the map that did">Rock <select class="inp" id="lst-rockfrom"><option value="">nearest in weather</option>${(LM.clads || []).map(r => `<option value="${esc(r)}" ${r === T.rockfrom ? 'selected' : ''}>${esc(lsRegionName(r))}</option>`).join('')}</select></label>` : ''}` : ''}
+        ${T.rocks ? `<label title="Whose cliff pieces. Nearest: the region's own where the game clad its cliffs, else the region nearest in weather and on the map that did">Rock <select class="inp" id="lst-rockfrom">${lsRocksFromOpts(T.rockfrom, LM.clads)}</select></label>` : ''}` : ''}
         <label class="msg" style="display:flex;gap:6px;align-items:center" title="The land's own trees stood as the game's: few on steep ground, gathered into groves with a few more of their kind, fewer in the open between. Your own trees stay"><input type="checkbox" id="lst-trees" ${T.trees ? 'checked' : ''}> Trees in groves</label>
         <label class="msg" style="display:flex;gap:6px;align-items:center" title="Plants where the land has none of its own: those of the nearest region in weather and on the map that has, as its own land grows them, up to about the game's number"><input type="checkbox" id="lst-plants" ${T.plants ? 'checked' : ''}> Plants</label>
         <label class="msg" style="display:flex;gap:6px;align-items:center" title="Waterfalls where the streams drop over the new cliffs, as the game lays them: the fall scaled to the drop, a plunge pool dug at its foot, mist and its sound. Needs Tamriel_Data"><input type="checkbox" id="lst-falls" ${T.falls ? 'checked' : ''}> Waterfalls</label>
@@ -1195,6 +1229,8 @@ function lsBind(){
   const tpl = $('#lst-plants'); if (tpl) tpl.onchange = () => { T.plants = tpl.checked; lsChanged(); };
   const tfa = $('#lst-falls'); if (tfa) tfa.onchange = () => { T.falls = tfa.checked; lsChanged(); };
   const trf = $('#lst-rockfrom'); if (trf) trf.onchange = () => { T.rockfrom = trf.value; lsChanged(); };
+  { const rf2 = $('#lst-rfrom'); if (rf2) rf2.onchange = () => { T.rockfrom = rf2.value; lsChanged(); }; }
+  { const tf2 = $('#lst-tfrom'); if (tf2) tf2.onchange = () => { T.treesfrom = tf2.value; lsChanged(); }; }
   root.querySelectorAll('[data-tr]').forEach(r => r.oninput = () => {
     const was = T[r.dataset.tr]; T[r.dataset.tr] = +r.value; r.nextElementSibling.textContent = r.value;
     // (Cliffs to or from 0 shows or hides Rock the cliffs)
@@ -1335,7 +1371,9 @@ function lsTownHtml(sel){
     <label title="The town's name: its interiors are called after it (Balmora, …). Blank: the one shown">Name <input class="inp" id="ls-tname" value="${esc(p.name || '')}" placeholder="${esc((T && T.plan && T.plan.name) || '')}" maxlength="40" spellcheck="false"></label>
     <label title="How many buildings, against the culture's own towns of this size (1). Up for a city, down for a hamlet. A walled town fills its wall at 1 and over">Density <input type="range" id="ls-tdens" min="0.3" max="4" step="0.1" value="${p.density || 1}"><span>${p.density || 1}</span></label>
     <label title="How many rocks it sets: into its steep ground and banks, and in clumps on its open ground by the streets. 0 none, 2 twice the clumps">Rocks <input type="range" id="ls-trocks" min="0" max="2" step="0.1" value="${p.rocks_k ?? 1}"><span>${p.rocks_k ?? 1}</span></label>
+    <label title="${ROCKS_FROM_TIP}">Rocks from <select class="inp" id="ls-trfrom">${lsRocksFromOpts(p.rocks_from)}</select></label>
     <label title="How many trees stand on its open ground, where no building or street is, and by its houses: big shade trees of the land's own kinds. 0 none, 2 twice where there is room">Trees <input type="range" id="ls-ttrees" min="0" max="2" step="0.1" value="${p.trees_k ?? 1}"><span>${p.trees_k ?? 1}</span></label>
+    <label title="${TREES_FROM_TIP}">Trees from <select class="inp" id="ls-ttfrom">${lsTreesFromOpts(p.trees_from)}</select></label>
     <label title="How wide its streets are. A street is painted in whole ground squares, 512 across">Streets <select class="inp" id="ls-tstreets"><option value="">as its towns'</option><option value="narrow" ${p.streets === 'narrow' ? 'selected' : ''}>narrower</option><option value="lanes" ${p.streets === 'lanes' ? 'selected' : ''}>lanes</option></select></label>
     <label title="What its people live by, as the game's towns of that trade: fishers and sailors, farmers and herders or miners in its homes and streets, the goods on its stalls, and its mix of shops, taverns and guard posts">Trade <select class="inp" id="ls-ttrade"><option value="">any</option>${[['harbour', 'fishing'], ['farm', 'farming'], ['mine', 'mining'], ['trade', 'trading']].map(([v, t]) => `<option value="${v}" ${p.trade === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <div class="v3lrow" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center" title="Draw the town's own streets, quarters, wall or gates: the town follows them">Draw ${['street', 'zone', 'wall', 'gate'].map(k => `<button class="btn sm" data-add="${k}" title="${esc(LS_KINDS[k].how)}">${LS_KINDS[k].icon} ${LS_KINDS[k].label}</button>`).join('')}</div>
@@ -1372,6 +1410,8 @@ function lsTownBind(){
   const ttr = $('#ls-ttrade'); if (ttr) ttr.onchange = () => { sel.p.trade = ttr.value; lsChanged(true); };
   const tdn = $('#ls-tdens'); if (tdn){ tdn.oninput = () => { tdn.nextElementSibling.textContent = tdn.value; }; tdn.onchange = () => { sel.p.density = +tdn.value; lsChanged(true); }; }
   // (its own rocks and trees: they change nothing of the plan, so nothing is planned again)
+  { const tf_ = $('#ls-ttfrom'); if (tf_) tf_.onchange = () => { if (tf_.value) sel.p.trees_from = tf_.value; else delete sel.p.trees_from; lsChanged(false); }; }
+  { const rf_ = $('#ls-trfrom'); if (rf_) rf_.onchange = () => { if (rf_.value) sel.p.rocks_from = rf_.value; else delete sel.p.rocks_from; lsChanged(false); }; }
   for (const [id_, k_] of [['ls-trocks', 'rocks_k'], ['ls-ttrees', 'trees_k']]){
     const e_ = $('#' + id_); if (!e_) continue;
     e_.oninput = () => { e_.nextElementSibling.textContent = e_.value; };
@@ -1482,6 +1522,8 @@ function lsTownOpts(T){
   if (p.density && +p.density !== 1) o.density = +p.density;
   if (p.rocks_k != null && +p.rocks_k !== 1) o.rocks_k = +p.rocks_k;
   if (p.trees_k != null && +p.trees_k !== 1) o.trees_k = +p.trees_k;
+  if (p.rocks_from) o.rocks_from = p.rocks_from;
+  if (p.trees_from) o.trees_from = p.trees_from;
   if (p.trade) o.trade = p.trade;
   if (p.counts && Object.keys(p.counts).length) o.counts = p.counts;
   if (p.skip && p.skip.length) o.skip = p.skip;
@@ -1581,7 +1623,7 @@ function lsTownsSoon(){
   clearTimeout(LM.townT); LM.townT = setTimeout(lsTowns, 350);
 }
 // (its Rocks and Trees amounts are no part of the plan: moving them plans nothing again)
-function lsTownKey(L){ const o = Object.assign({}, lsTownOpts(L)); delete o.rocks_k; delete o.trees_k; return JSON.stringify([L.pts, L.p.culture || '', L.p.seed || 1, lsTownWalls(L), o]); }
+function lsTownKey(L){ const o = Object.assign({}, lsTownOpts(L)); delete o.rocks_k; delete o.trees_k; delete o.rocks_from; delete o.trees_from; return JSON.stringify([L.pts, L.p.culture || '', L.p.seed || 1, lsTownWalls(L), o]); }
 // (one plan asked at a time: every change asked for its own, each ran to the end on the server one after another, and
 // a few edits and 🎲 Another left the town on "Planning…" for minutes, the user and PIN2 2026-11-01. A change while one
 // is on its way asks again once it is back, for the plan as it is then)

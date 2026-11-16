@@ -2367,6 +2367,13 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
     # island came up ringed with boulders and nothing to turn them down by; a user on Discord, 2026-11-13)
     rocks_k = _amount_of(opts, 'rocks_k')
     trees_k = _amount_of(opts, 'trees_k')
+    # (rocks_from: whose rocks, a region's name; none given, the land's own where it stands real rocks: rockblend.figures)
+    rock_from = str((opts or {}).get('rocks_from') or '').strip().lower()
+    # (trees_from: one of your brushes for its trees by the houses and on its open ground; none, the land's own)
+    tree_ids = None
+    if str((opts or {}).get('trees_from') or '').strip().lower().startswith('my:'):
+        import scatter
+        tree_ids = {it['id']: it.get('n') or 1 for it in scatter.brush_items(db, opts['trees_from'])} or None
     if pieces and made and (opts or {}).get('rocks', True) and rocks_k > 0 and os.environ.get('TOWN_ROCKS', '1') != '0':
         _say('Setting rocks into the hill', 0.885)
         try:
@@ -2380,7 +2387,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
             if os.environ.get('TOWN_RETAIN', '1') != '0':
                 try:
                     import retain
-                    rw = retain.revet(db, plan, W, new_refs, cells, plan.get('culture') or culture, seed, outline=plan.get('outline') or outline)
+                    rw = retain.revet(db, plan, W, new_refs, cells, plan.get('culture') or culture, seed, outline=plan.get('outline') or outline,
+                                      rock_from=rock_from)
                     if rw.get('rocks'):
                         pieces += rw['rocks']
                         print('town: %d rocks holding %d sheer sides of its streets (%d land points regraded, %d sides with a gap)'
@@ -2390,7 +2398,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
                     import traceback
                     traceback.print_exc()
                     print('town retaining walls:', e)
-            rb = rockblend.blend(db, plan, plan.get('culture') or culture, seed, W, new_refs, cells, amount=rocks_k, outline=plan.get('outline') or outline)
+            rb = rockblend.blend(db, plan, plan.get('culture') or culture, seed, W, new_refs, cells, amount=rocks_k, outline=plan.get('outline') or outline,
+                                 rock_from=rock_from)
             rb['walls'] = rw or {}
             if rb['rocks']:
                 rocks_n = rockblend.place(db, rb['rocks'], new_refs, cells)
@@ -2437,7 +2446,8 @@ def _make(db, outline, culture, seed=1, walls='', dress=False, interiors=False, 
         # storydress.yards. Kept clear of what the dressing laid)
         try:
             import storydress
-            laid_ += storydress.yards(db, plan, seed, blocked, also=also + [(t_['id'], t_['p']) for t_ in laid_], trees_k=trees_k)
+            laid_ += storydress.yards(db, plan, seed, blocked, also=also + [(t_['id'], t_['p']) for t_ in laid_], trees_k=trees_k,
+                                      tree_ids=tree_ids)
         except Exception as e_:
             print('town yards:', e_)
         # (and round each shack and hut, what the game sets round that model outside: ropes and hooks on its walls,

@@ -1656,7 +1656,11 @@ function v3ScatRegionOpts(S_){
   const cap = r => r.replace(/\b\w/g, c => c.toUpperCase());
   if (!V3.lookList){ V3.lookList = []; api('/api/land/looks').then(r => { V3.lookList = r.looks || []; const sel = $('#v3lscreg'); if (sel && sel.options.length <= 1) v3ScatterPanel(); }).catch(() => {}); }
   const rows = V3.lookList.filter(o => o.region !== here);
-  return `<option value="">${esc(here ? cap(here) + ' (here)' : 'the cells around here')}</option>` + rows.map(o => `<option value="${esc(o.region)}" ${o.region === want ? 'selected' : ''}>${esc(o.name)}</option>`).join('');
+  // (and your own brushes at its foot: picking one picks the brush, as its \u2605 button does. A tester read From as the only
+  //  choice and took the brushes for the region's alone, 2026-11-15)
+  const mine = S_.sets.filter(s => s.mine);
+  return `<option value="">${esc(here ? cap(here) + ' (here)' : 'the cells around here')}</option>` + rows.map(o => `<option value="${esc(o.region)}" ${o.region === want ? 'selected' : ''}>${esc(o.name)}</option>`).join('')
+    + (mine.length ? `<optgroup label="Your brushes">${mine.map(s => `<option value="${esc(s.key)}">\u2605 ${esc(s.label)}</option>`).join('')}</optgroup>` : '');
 }
 // (your own brushes: buttons while there are a few; past three, one list, so they don't pile up, the user 2026-11-04)
 function v3OwnBrushesHtml(S_, B){
@@ -1746,7 +1750,9 @@ async function v3ScatterPanel(){
   }
   box.querySelectorAll('[data-ss]').forEach(b => b.onclick = () => { B.scatSet = b.dataset.ss; v3LandSave(); v3ScatterPanel(); });
   const ob = $('#v3lown'); if (ob) ob.onchange = () => { if (ob.value){ B.scatSet = ob.value; v3LandSave(); v3ScatterPanel(); } };
-  const rg = $('#v3lscreg'); if (rg) rg.onchange = () => { B.scatRegion = rg.value; B.scatOff = {}; V3.scatSets = null; v3LandSave(); v3ScatterPanel(); };
+  const rg = $('#v3lscreg'); if (rg) rg.onchange = () => {
+    if (rg.value.startsWith('my:')){ B.scatSet = rg.value; v3LandSave(); v3ScatterPanel(); return; }       // (one of your brushes)
+    B.scatRegion = rg.value; B.scatOff = {}; V3.scatSets = null; v3LandSave(); v3ScatterPanel(); };
   box.querySelectorAll('[data-se]').forEach(b => b.onclick = () => { B.scatErase = b.dataset.se === '1'; v3LandSave(); v3ScatterPanel(); });
   $('#v3lthick').oninput = e => { B.scatThick = +e.target.value; e.target.nextElementSibling.textContent = B.scatThick; v3LandSave(); };
   box.querySelectorAll('[data-si]').forEach(c => c.onchange = () => { const k = c.dataset.si.toLowerCase(); if (c.checked) delete B.scatOff[k]; else B.scatOff[k] = 1; v3LandSave(); const l = c.parentElement; if (l.classList.contains('br-tile')) l.classList.toggle('off', !c.checked); else l.classList.toggle('on', c.checked); });

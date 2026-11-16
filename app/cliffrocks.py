@@ -133,8 +133,13 @@ class _Feet:
 
 def learn(db, region, sample=90):
     """The region's figures: {'bands': [{area, n, per_mu (rocks a million square units), items: [...]}], 'cells'}.
-    Read from up to `sample` of its cells (spread over it), cached on disk by the load order."""
+    Read from up to `sample` of its cells (spread over it), cached on disk by the load order. A key
+    'my:<id>@<region>': that region's figures with one of your brushes' things (landregion.rock_choice)."""
     region = (region or '').lower()
+    if region.startswith('my:'):
+        import landregion
+        bkey, _at, base = region.partition('@')
+        return landregion.brush_figures(db, learn(db, base, sample), bkey)
     key = (id(db.recs), region, tuple(sorted(HOLDOUT)))
     if key in _mem:
         return _mem[key]

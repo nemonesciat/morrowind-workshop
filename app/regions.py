@@ -59,7 +59,7 @@ def all_regions(db):
     for k, reg in region_map(db).items():
         counts[reg] = counts.get(reg, 0) + 1
     out = []
-    for (tag, key), lst in db.by_key.items():
+    for (tag, key), lst in list(db.by_key.items()):       # (a copy: a make adds records while the page asks)
         if tag != 'REGN':
             continue
         live = [v for v in lst if v not in db.dead]
@@ -82,7 +82,7 @@ def all_regions(db):
 def region_map(db):
     """'gx,gy' -> region id (lower case) for every outdoor cell that has one."""
     out = {}
-    for (tag, key), lst in db.by_key.items():
+    for (tag, key), lst in list(db.by_key.items()):       # (a copy: a make adds records while the page asks)
         if tag != 'CELL' or not key.startswith('#'):
             continue
         live = [v for v in lst if v not in db.dead]

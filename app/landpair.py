@@ -86,7 +86,7 @@ def learn(db, region):
     return out
 
 
-def pair(db, cells, region_of, seed=1, hold=None, amount=1.0):
+def pair(db, cells, region_of, seed=1, hold=None, amount=1.0, trees_from=None):
     """For the dressed cells ('gx,gy' or (gx, gy)), trees by their bare rocks at the game's share and distances; placed,
     in the cells' own regions' trees. The number of trees set."""
     import cliffrocks
@@ -126,6 +126,12 @@ def pair(db, cells, region_of, seed=1, hold=None, amount=1.0):
         rng.shuffle(bare)
         ids = [i for i, _n in L['trees']]
         wts = [n for _i, n in L['trees']]
+        sink_ = L['sink']
+        if trees_from:
+            # (one of your brushes for the trees by the rocks: its things, set as the brush sets them)
+            ids = [it['id'] for it in trees_from]
+            wts = [it.get('n') or 1 for it in trees_from]
+            sink_ = {it['id'].lower(): -((it.get('sink') or 0.0) + (it.get('zmin') or 0.0)) for it in trees_from}
         for r in bare:
             if want <= 0 or room <= 0:
                 break
@@ -152,7 +158,7 @@ def pair(db, cells, region_of, seed=1, hold=None, amount=1.0):
                     c_, _r = editing._cell(db, key)
                 except editing.EditError:
                     break
-                z = g + L['sink'].get(tid.lower(), -8.0)
+                z = g + sink_.get(tid.lower(), -8.0)
                 sc = rng.uniform(0.85, 1.15)
                 tb = mapdata.object_bounds(db, ri)
                 if tb:

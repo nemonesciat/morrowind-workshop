@@ -1045,7 +1045,7 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/land/handmade':
                 # the regions whose land was made by hand, the ones the region pass takes after (landregion.py)
                 import landregion
-                self._json({'regions': sorted(landregion.handmade(db)), 'clads': landregion.clad_regions(db)})
+                self._json({'regions': sorted(landregion.handmade(db)), 'clads': landregion.clad_regions(db), 'rocks': landregion.own_regions(db)})
             elif u.path == '/api/land/looks':
                 # the regions whose rocks can dress land (cliffrocks.py)
                 import cliffrocks

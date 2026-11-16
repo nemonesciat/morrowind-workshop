@@ -173,7 +173,9 @@ function lstLandHtml(P){
     const D = P.dress = Object.assign({}, LS_DRESS, P.dress || {});
     const sl = (a, k, v, lab, tip) => `<label title="${esc(tip)}" style="display:flex;gap:6px;align-items:center;font-size:12px">${lab} <input type="range" data-${a}="${k}" min="0" max="2" step="0.1" value="${v}" style="flex:1;min-width:0"><span style="width:26px;text-align:right">${v}</span></label>`;
     g = `<div class="lst-gearbox">${sl('dr', 'rocks', D.rocks, 'Rocks', 'How many rocks on the steep ground: 1 as the game sets them, 0 none, 2 twice')}
+      <label title="${esc(ROCKS_FROM_TIP)}" style="display:flex;gap:6px;align-items:center;font-size:12px">Rocks from <select class="inp" id="lst-rfrom" style="flex:1;min-width:0">${lsRocksFromOpts(T.rockfrom, LM.clads)}</select></label>
       ${sl('tr', 'trees_k', T.trees_k != null ? T.trees_k : 1, 'Trees', 'How many trees: 1 as the land would have them, 0 none, 2 twice')}
+      <label title="${esc(TREES_FROM_TIP)}" style="display:flex;gap:6px;align-items:center;font-size:12px">Trees from <select class="inp" id="lst-tfrom" style="flex:1;min-width:0">${lsTreesFromOpts(T.treesfrom)}</select></label>
       ${sl('tr', 'plants_k', T.plants_k != null ? T.plants_k : 1, 'Plants', 'How many plants: 1 as the land would have them, 0 none, 2 twice')}</div>`;
   }
   const nc = lstCliffs().length;

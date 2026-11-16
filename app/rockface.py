@@ -577,13 +577,15 @@ def _bounds(db, rid, memo):
 # ---------------------------------------------------------------- the pass
 
 def clad(db, cells, mask=None, keep=None, like='', amount=1.0, seed=None, commit=False, field=None, region_of=None,
-         say=None, parts=('face', 'lip', 'foot', 'bank', 'outcrop'), weight=None):
+         say=None, parts=('face', 'lip', 'foot', 'bank', 'outcrop'), weight=None, own_pieces=True):
     """The region's rock and cliff pieces over the cells' steep ground (see the module's head). cells: ['gx,gy'] or
     (gx, gy) keys. mask: where to clad (None: all the steep ground; a bytearray over the field; outlines; a callable):
     the steep ground within it. keep: points left alone besides roads, buildings and water (a bytearray, outlines or
     a callable). like: a region whose pieces to use (else each cell's own). amount: 1 as the game. field: (F, inside,
     hold) from the shaping flow (the land as shaped, the plan's holds), else read from the cells as they are; weight:
     points the plan made (0..1), only those are clad when given. region_of(x, y): the region to take after at a spot.
+    own_pieces: where the land's own region stands real rocks, its pieces in the amounts of the region taken after
+    (landregion.with_own); False where the region was chosen by hand.
     {'rocks', 'parts': {face, lip, foot, bank, outcrop}, 'dropped', 'steep_points', 'cover', 'naked', 'placed'}."""
     import cliffrocks
     import cliffsurvey
@@ -664,15 +666,21 @@ def clad(db, cells, mask=None, keep=None, like='', amount=1.0, seed=None, commit
     for gx, gy in keys:
         reg = (like or '').lower() or landrange._region_of(db, gx, gy)
         looks[(gx, gy)] = reg
+    by_like = bool(like) and region_of is None            # (a region chosen by hand: its own pieces, whatever the land's)
     if region_of is None:
         region_of = lambda x, y: looks.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
     figs = {}
 
     def fig(x, y):
         reg = (region_of(x, y) or '').lower()
-        if reg not in figs:
-            figs[reg] = cliffsurvey.figures(db, reg)
-        return figs[reg]
+        land = (landrange._region_of(db, int(math.floor(x / 8192.0)), int(math.floor(y / 8192.0))) or '').lower() if own_pieces and not by_like else ''
+        if (reg, land) not in figs:
+            Fg = cliffsurvey.figures(db, reg)
+            if land and land != reg:
+                import landregion
+                Fg = landregion.with_own(db, Fg, land)
+            figs[(reg, land)] = Fg
+        return figs[(reg, land)]
     def ground_at(x, y):
         g = _height(F, x, y)
         return g if g is not None else mapdata.terrain_z(db, x, y)

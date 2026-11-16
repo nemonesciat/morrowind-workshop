@@ -235,6 +235,20 @@ def custom_sets(db):
     return out
 
 
+def brush_items(db, key):
+    """The things on one of your brushes ('my:<id>'; anything after an '@' is not the brush's) that this load order
+    has, as the makers read a region's: [{id, n, size, zmin, smin, smax, sink, tilt, tilt_share}]; [] for none, or
+    for a brush that is gone. A Library model not yet in the mod is left out: the makers place records."""
+    k = str(key or '').strip().lower().split('@')[0]
+    if not k.startswith('my:'):
+        return []
+    for s in custom_sets(db):
+        if s['key'].lower() == k:
+            return [dict(it, tilt=it.get('tilt') or 0.0, tilt_share=it.get('tilt_share') or 0.0)
+                    for it in s['items'] if db.resolve_id(it['id']) is not None]
+    return []
+
+
 def save_brush(db, brush):
     """Add or change one of your brushes. Returns it as saved."""
     b = _clean(db, brush)

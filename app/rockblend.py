@@ -330,9 +330,44 @@ def _one_family(db, ids, region):
     return best[1]
 
 
-def figures(db, P, culture, region=''):
+LAND_BANDS = 3                 # (a town's rocks of the land: those its ground under 45 degrees stands)
+LAND_FEW = 30                  # (... where they are this many or more)
+
+
+def _land_rocks(db, region):
+    """The rocks a region's own land stands, kept to its commonest set: ({id: n}, {id: its usual scale}); ({}, {})
+    where it stands too few."""
+    import cliffrocks
+    try:
+        R = cliffrocks.learn(db, (region or '').lower()) or {}
+    except Exception as e:
+        print('rocks of the land:', e)
+        return {}, {}
+    ids, sc = Counter(), {}
+    for b in (R.get('bands') or [])[:LAND_BANDS]:
+        for it in b.get('items') or ():
+            low = (it.get('id') or '').lower()
+            if not low or low.startswith('dlt_') or db.resolve_id(low) is None:
+                continue
+            ids[it['id']] += it.get('n', 1)
+            ss = sorted(p[4] for p in it.get('poses') or () if len(p) > 4 and p[4])
+            sc.setdefault(it['id'], ss[len(ss) // 2] if ss else ((it.get('smin') or 1.0) + (it.get('smax') or 1.0)) / 2.0)
+    fams = Counter()
+    for i, n in ids.items():
+        fams[rock_family(i)] += n
+    if not fams or sum(ids.values()) < LAND_FEW:
+        return {}, {}
+    best = fams.most_common(1)[0][0]
+    keep = {i: n for i, n in ids.items() if rock_family(i) == best}
+    return keep, {i: sc[i] for i in keep}
+
+
+def figures(db, P, culture, region='', rock_from=''):
     """The culture's figures (its own, or a kin's when its hill towns stood too few rocks), with only the rocks this
-    load order has: {'rate', 'ids': {id: n}, 'scale', 'near', 'factor', 'from'}."""
+    load order has: {'rate', 'ids': {id: n}, 'scale', 'near', 'factor', 'from', 'rocks_from'}. The rocks themselves
+    are the land's own set where the region stands real rocks (landregion.own_rocks), or the region's asked for
+    (rock_from); the culture says how many and how near. A town's rocks were its culture's wherever it stood: an
+    Imperial town on Azura's Coast laid Red Mountain's rock, a tester 2026-11-15."""
     seen = []
     name = culture
     C = None
@@ -355,10 +390,24 @@ def figures(db, P, culture, region=''):
         name = ''
     import landregion
     # (a home region's rocks only at home: Narsis's red sandstone in a Hlaalu town elsewhere, HOME_ROCKS)
-    ids = {i: n for i, n in C['ids'].items() if db.resolve_id(i) is not None and landregion.home_rock_ok(i, region)}
-    ids = _one_family(db, ids, region)
-    return {'rate': C['rate'], 'ids': ids, 'scale': C.get('scale') or {}, 'near': C.get('near') or {},
-            'factor': max(0.25, min(3.0, C['rate'] / float(P['rate_all'] or 5.0))), 'from': name}
+    src = (rock_from or '').lower() or ((region or '').lower() if landregion.own_rocks(db, region) is not None else '')
+    if landregion.is_brush(src):
+        # (one of your brushes: its things, each as often as the brush has it, at the middle of its sizes)
+        import scatter
+        its = scatter.brush_items(db, src)
+        ids, scale = {it['id']: it.get('n') or 1 for it in its}, {it['id']: ((it.get('smin') or 1.0) + (it.get('smax') or 1.0)) / 2.0 for it in its}
+        if not ids:
+            # (a brush that is gone, or has nothing this load order has: as if none was chosen)
+            src = (region or '').lower() if landregion.own_rocks(db, region) is not None else ''
+    if not landregion.is_brush(src):
+        ids, scale = _land_rocks(db, src) if src else ({}, {})
+    if not ids:
+        src = ''
+        ids = {i: n for i, n in C['ids'].items() if db.resolve_id(i) is not None and landregion.home_rock_ok(i, region)}
+        ids = _one_family(db, ids, region)
+        scale = C.get('scale') or {}
+    return {'rate': C['rate'], 'ids': ids, 'scale': scale, 'near': C.get('near') or {},
+            'factor': max(0.25, min(3.0, C['rate'] / float(P['rate_all'] or 5.0))), 'from': name, 'rocks_from': src}
 
 
 def surroundings(db, plan, P, cells=()):
@@ -804,7 +853,7 @@ def _sample_count(rng, F, P, bin_, scale=1.0):
     return int(n) + (1 if rng.random() < n - int(n) else 0)
 
 
-def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, outline=None):
+def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, outline=None, rock_from=''):
     """The town's rocks laid (see the module's head): {'placed': n, 'dropped': n, 'kinds': {kind: n}, 'rocks': [...],
     'factor', 'from'}. Nothing is placed when the survey is not to hand (ready)."""
     import townbuild
@@ -820,7 +869,7 @@ def blend(db, plan, culture, seed=1, W=None, new_refs=(), cells=(), amount=1.0, 
             region = landrange._region_of(db, gx, gy) or ''
     except Exception:
         region = ''
-    F = figures(db, P, culture, region)
+    F = figures(db, P, culture, region, rock_from)
     if not F['ids']:
         return {'placed': 0, 'dropped': 0, 'kinds': {}, 'rocks': [], 'factor': F['factor'], 'from': F['from']}
     rng = random.Random(seed * 104729 + 7)

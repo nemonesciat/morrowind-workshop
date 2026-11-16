@@ -26,7 +26,8 @@ RANGE_WAVE = 9600.0                     # (the game's crest spacing, VV 9,216, T
 HANDMADE_128 = 40.0                     # (a region whose land is this rough 128 apart was made by hand; heightmaps 10-30)
 DEFAULTS = {'on': False, 'like': '', 'relief': 1.0, 'ranges': 1.0, 'valleys': 1.0, 'cliffs': 1.0, 'rocks': True, 'rockfrom': '', 'trees': True,
             'borders': True, 'plants': True, 'falls': True,
-            'paint': False, 'trees_k': 1.0, 'plants_k': 1.0, 'sea': 1.0}
+            'paint': False, 'trees_k': 1.0, 'plants_k': 1.0, 'sea': 1.0,
+            'treesfrom': ''}        # (treesfrom: one of your brushes, 'my:<id>', for the trees Make land adds; '' the land's)
 # (sea: the sea stage, seafloor.shape: the bed under the water made as rough as the nearest hand-made sea's; no control
 # on the page, the user's 2026-11-14 "a way to automatically add variety to the sea floor")
 # (trees_k, plants_k: the Land stage's Trees and Plants sliders, 0 to 2, on what the pass and Clear first lay; the user,
@@ -387,6 +388,111 @@ def _clads(R):
     return n >= ROCK_STEEP and cover >= ROCK_COVER
 
 
+# ---------- the land's own rocks ----------
+# (a tester, 2026-11-15: "the generated rocks in my cell testing (Azura's Coast region) are not the same as the local
+# rocks (while the generated trees reflect the local flora)". Azura's Coast stands 56% its own set, 25% the coastal
+# set, 9% Grazelands rock, and leaves its steep ground nearly bare (7 to 10% under a rock): rock_region lent it the
+# Grazelands' cliff pieces, and Make land laid 91% Grazelands rock there. A region that stands real rocks of its own
+# is clad and scattered with them, in the amounts of the region rock_region names; and a town's rocks are the land's.)
+OWN_ROCKS = 150               # (a region whose cells read stand this many rocks has rocks of its own ...)
+OWN_WIDE = 300.0              # (... with OWN_MODELS models this wide at their biggest, for a cliff to be built of ...)
+OWN_MODELS = 3
+OWN_STANDIN = 0.3             # (... and no more than this share of them Tamriel.esm's stand-ins)
+_OWN = {}
+
+
+def own_rocks(db, region):
+    """The region's own rock pieces, where it stands real ones: the cliff survey's figures of the region itself
+    ({'region', 'bands', 'zones', ...}); else None (too few rocks, none big, stand-ins, or figures borrowed from the
+    world's)."""
+    import cliffsurvey
+    region = (region or '').lower()
+    if not region:
+        return None
+    S = cliffsurvey.ready(db)
+    if S is None:
+        return None
+    key = (cliffsurvey._sig(db), region)
+    if key not in _OWN:
+        out = None
+        if region in (S.get('regions') or {}):
+            Fg = cliffsurvey.figures(db, region) or {}
+            its = {}
+            for b in Fg.get('bands') or ():
+                for it in b.get('items') or ():
+                    its.setdefault(it['id'].lower(), it)
+            n = sum(it.get('n', 1) for it in its.values()) or 1
+            fake = sum(it.get('n', 1) for i, it in its.items() if i.startswith('dlt_'))
+            wide = sum(1 for it in its.values() if max(it['size'][0], it['size'][1]) * (it.get('smax') or 1.0) >= OWN_WIDE)
+            if not Fg.get('borrowed') and (Fg.get('n') or 0) >= OWN_ROCKS and wide >= OWN_MODELS and fake <= OWN_STANDIN * n:
+                out = Fg
+        _OWN[key] = out
+    return _OWN[key]
+
+
+def with_own(db, Fg, land):
+    """A region's figures (how thickly its steep ground is clad, how big, how stacked) with the pieces of the land's
+    own region where it stands real ones: each band's and zone's pieces the land's, the nearest band's where the
+    land's own band is empty."""
+    O = own_rocks(db, land)
+    if O is None or not Fg or (Fg.get('region') or '') == (O.get('region') or ''):
+        return Fg
+    ob = O.get('bands') or []
+
+    def of_band(i):
+        for d in range(len(ob)):
+            for j in (i - d, i + d):
+                if 0 <= j < len(ob) and ob[j].get('items'):
+                    return ob[j]['items']
+        return None
+    out = dict(Fg)
+    out['bands'] = [dict(b, items=of_band(i) or b.get('items') or []) for i, b in enumerate(Fg.get('bands') or [])]
+    oz = O.get('zones') or {}
+    out['zones'] = {k: dict(z, items=(oz.get(k) or {}).get('items') or z.get('items') or []) for k, z in (Fg.get('zones') or {}).items()}
+    out['own'] = O.get('region') or land
+    return out
+
+
+def is_brush(key):
+    """Is this Rocks from or Trees from one of your scatter brushes ('my:<id>')?"""
+    return str(key or '').strip().lower().startswith('my:')
+
+
+def rock_choice(db, rockfrom, region, like=''):
+    """The terrain's Rocks from as the rock makers read it: '' when none was chosen; a region's name; for one of your
+    brushes 'my:<id>@<region>', the brush's things in the amounts of the land's own region where it stands rocks of its
+    own, else of the region it is lent (cliffrocks.learn and cliffsurvey.figures read such a key)."""
+    rf = str(rockfrom or '').strip().lower()
+    if not rf:
+        return ''
+    if is_brush(rf):
+        base = region if own_rocks(db, region) is not None else rock_region(db, region, like)
+        return rf.split('@')[0] + '@' + (base or '')
+    return rf
+
+
+def brush_figures(db, Fg, key):
+    """A region's figures (how thickly, how big, how stacked) with the things of one of your brushes in every band and
+    zone that had pieces; the figures as they were when the brush has nothing this load order has."""
+    import scatter
+    items = scatter.brush_items(db, key)
+    if not items or not Fg:
+        return Fg
+    out = dict(Fg)
+    out['bands'] = [dict(b, items=[dict(it) for it in items] if b.get('items') else []) for b in Fg.get('bands') or []]
+    if isinstance(Fg.get('zones'), dict):
+        out['zones'] = {k: dict(z, items=[dict(it) for it in items] if z.get('items') else []) for k, z in Fg['zones'].items()}
+    out['brush'] = str(key).split('@')[0]
+    return out
+
+
+def own_regions(db):
+    """The regions that stand rocks of their own (the choices for a town's Rocks from)."""
+    import cliffsurvey
+    S = cliffsurvey.ready(db)
+    return sorted(r for r in ((S or {}).get('regions') or {}) if own_rocks(db, r) is not None)
+
+
 def clad_regions(db):
     """The regions whose steep ground the game clad in cliff pieces (the choices for Rocks from)."""
     import cliffsurvey
@@ -480,7 +586,7 @@ def _draw(rk):
     return (h % 100000) / 100000.0
 
 
-def thin_trees(db, keys, F, hold=None, seed=1, amount=1.0):
+def thin_trees(db, keys, F, hold=None, seed=1, amount=1.0, trees_from=None):
     """The land's own trees (another plugin's, never the mod's) stood as the game's: taken out on steep ground
     (TREE_SLOPE) and more of them in the open between groves (TREE_OPEN), and the ones kept in a grove joined by a
     few of their own kind round them (TREE_GROW), so the trees gather in groves at about the land's own number.
@@ -565,6 +671,13 @@ def thin_trees(db, keys, F, hold=None, seed=1, amount=1.0):
                 if sl is None or g is None or g <= 48 or rng.random() >= _slope_keep(sl) * _grove(nx, ny, seed):
                     continue
                 stand(nx, ny)
+                if trees_from:
+                    # (one of your brushes: the new trees of a grove are its things, set as the brush sets them)
+                    it = rng.choices(trees_from, [t_.get('n') or 1 for t_ in trees_from])[0]
+                    s_ = rng.uniform(it.get('smin') or 0.9, max(it.get('smin') or 0.9, it.get('smax') or 1.1))
+                    grown.append({'id': it['id'], 'x': nx, 'y': ny, 'z': g - ((it.get('sink') or 0.0) + (it.get('zmin') or 0.0)) * s_,
+                                  'rx': 0.0, 'ry': 0.0, 'rz': rng.uniform(0, 2 * math.pi), 's': round(s_, 3)})
+                    break
                 grown.append({'id': rid, 'x': nx, 'y': ny, 'z': g + over, 'rx': rx, 'ry': ry, 'rz': rng.uniform(0, 2 * math.pi),
                               's': round(sc * rng.uniform(0.85, 1.15), 3)})
                 break
@@ -630,7 +743,7 @@ def cliff_texture(db, region, like='', rockfrom=''):
     key = (id(db.recs), region, like, rockfrom)
     if key not in _CLIFFTEX:
         got = None
-        for r in [region, rockfrom or rock_region(db, region, like), like]:
+        for r in [region, (rockfrom if not is_brush(rockfrom) else '') or rock_region(db, region, like), like]:
             if r:
                 got = _steep_texture(db, r)
                 if got:
@@ -958,7 +1071,7 @@ def run(db, F, inside, opts, seed, here, say=None):
     info = {'like': {r: p['like'] for r, p in plans.items() if any(here[r][i] >= 0.5 for i in pts)}, 'regions': {}}
     if T['rocks'] and T['cliffs'] > 0:
         # (whose cliff pieces the steep ground will be clad in when it is shaped, landshapes._apply)
-        info['rocks'] = {r: T['rockfrom'] or rock_region(db, r, l) for r, l in info['like'].items()}
+        info['rocks'] = {r: rock_choice(db, T['rockfrom'], r, l) or rock_region(db, r, l) for r, l in info['like'].items()}
     if T['plants']:
         info['plants'] = {r: plant_region(db, r, l) for r, l in info['like'].items()}
     if not pts:

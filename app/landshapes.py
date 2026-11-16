@@ -60,7 +60,11 @@ DEFAULTS = {
              'marker': False, 'built': '', 'sea': False,
              # (rocks_k, trees_k: its own amounts, the Rocks and Trees sliders, 1 as its culture's towns have them. Left
              #  out of this list they were dropped at every save, and the sliders set nothing: a tester, 2026-11-15)
-             'rocks_k': 1.0, 'trees_k': 1.0},   # (sea: no wall where it faces the water; marker: put down as a marker, its outline fitted to the land when made)
+             'rocks_k': 1.0, 'trees_k': 1.0,
+             # (rocks_from: whose rocks, a region's name; '' the land's own, landregion.own_rocks)
+             'rocks_from': '',
+             # (trees_from: one of your brushes, 'my:<id>', for its trees by the houses and on its open ground)
+             'trees_from': ''},   # (sea: no wall where it faces the water; marker: put down as a marker, its outline fitted to the land when made)
     # (proposed: laid by Propose places, taken away by the next proposal unless built; place: 'village', 'town', 'city')
     'dungeon': {'kit': 'cave_mud', 'name': '', 'size': 'small', 'rz': 0.0, 'built': '', 'proposed': False, 'place': 'cave'},
     'road': {'culture': '', 'proposed': False, 'bridges': []},
@@ -205,6 +209,9 @@ def _clean(L):
     for k, v in (L.get('p') or {}).items():
         if k in prm:
             prm[k] = v
+    if kind == 'town':
+        prm['rocks_from'] = str(prm.get('rocks_from') or '').lower()[:64]
+        prm['trees_from'] = str(prm.get('trees_from') or '').lower()[:64]
     for k in ('rocks_k', 'trees_k') if kind == 'town' else ():
         try:
             prm[k] = max(0.0, min(2.0, float(prm[k])))
@@ -1369,9 +1376,10 @@ def apply(db, cells, plan):
             # (the stand-in rocks not swapped when the press sets its own: the region's rocks at its rate already, and the
             # swapped ones were another region's, red Shipal-Shin rock among pale Grazelands, the user's 3D view 2026-11-09)
             TRc = landregion.clean(plan.get('terrain'))
+            import scatter
             cleared = standins.clear(db, [k for k in keys if '%d,%d' % k not in kept], plan['clear'], int(plan.get('seed') or 1),
                                      say=lambda f: _say('Clearing what stands there', f), rocks=not (TRc['on'] and TRc['rocks']),
-                                     trees_k=TRc['trees_k'])
+                                     trees_k=TRc['trees_k'], trees_from=scatter.brush_items(db, TRc['treesfrom']) or None)
             _SPAN[:] = [0.15, 1.0, '']
             if cleared['removed']:
                 commit(db, 'Cleared %d object%s from %d cell%s%s' % (cleared['removed'], '' if cleared['removed'] == 1 else 's', len(keys), '' if len(keys) == 1 else 's',
@@ -1449,6 +1457,8 @@ def _apply(db, cells, plan):
     dress = _clean_opts(plan.get('dress'), DRESS)
     ids, files = {}, {}
     TR = landregion.clean(plan.get('terrain'))
+    if landregion.is_brush(TR['rockfrom']) and not __import__('scatter').brush_items(db, TR['rockfrom']):
+        TR['rockfrom'] = ''            # (a brush that is gone, or has nothing this load order has: as if none was chosen)
     t_only = terrain_only(plan)
     # (the region pass alone keeps the land's textures unless asked: it changes the relief, not the ground's look)
     # (and roads alone keep them too: a press with only road layers repainted every marked cell, 2026-11-08)
@@ -1522,9 +1532,13 @@ def _apply(db, cells, plan):
         # (whose rocks: the region's own where the game clad its own steep ground, else the like region's with cliff
         # pieces, as the region pass alone has it. By the cell's own region a drawn ridge in a Tamriel.esm stand-in
         # region got that region's pebbles and its DLT stand-in rocks set again, the user's Topal Bay 2026-11-10)
-        rr_ = {k: TR['rockfrom'] or landregion.rock_region(db, reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
+        rr_ = {k: landregion.rock_choice(db, TR['rockfrom'], reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
+               or landregion.rock_region(db, reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
                for k in reg}
         region_of = lambda x, y: rr_.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
+        # (the scatter by the land's own region where it stands real rocks and none was chosen: landregion.own_rocks)
+        sc_ = {k: (reg[k] if not TR['rockfrom'] and landregion.own_rocks(db, reg[k]) is not None else rr_[k]) for k in reg}
+        scatter_of = lambda x, y: sc_.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
         hold = F.hold
         # (the steep ground of a ridge, valley, river or plateau clad first, the way the game's gorges and hilltops
         # are: faces, lips, feet, banks and outcrops, every piece settled by the rim rule, rockface.py; the gentle
@@ -1534,13 +1548,13 @@ def _apply(db, cells, plan):
             _say('Cladding the steep ground', 0.80)
             rf = rockface.clad(db, dk, like=dress['region'], amount=float(dress['rocks']), seed=int(plan.get('seed') or 1),
                                field=(F, inside, F.hold), region_of=region_of, weight=F.shaped,
-                               say=lambda what, frac: _say(what, 0.80 + 0.03 * frac))
+                               say=lambda what, frac: _say(what, 0.80 + 0.03 * frac), own_pieces=not TR['rockfrom'])
             clad = rf['rocks']
             F.info['clad'] = {k: v for k, v in rf.items() if k in ('parts', 'dropped', 'cover', 'steep_points', 'zone_points', 'knolls', 'rejects', 'why')}
             if rf.get('why') != 'learning' and len(rf['zones']) >= len(F.z):
                 hold = [max(F.hold[i] if F.hold else 0.0, 1.0 if rf['zones'][i] else 0.0) for i in range(len(F.z))]
         _say('Setting the rocks', 0.83)
-        rocks = clad + cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, region_of, float(dress['rocks']),
+        rocks = clad + cliffrocks.place(db, cliffrocks.plan_rocks(db, F, inside, F.shaped, scatter_of, float(dress['rocks']),
                                                                  int(plan.get('seed') or 1), hold))
         db.sync_project()
     elif t_only and TR['rocks'] and TR['cliffs'] > 0 and dress['rocks'] > 0:
@@ -1548,13 +1562,14 @@ def _apply(db, cells, plan):
         # region's of like weather; the land's own scattered rocks stay and follow the ground, no second scatter)
         import rockface
         F.z = list(G.z)
-        rr = {k: TR['rockfrom'] or landregion.rock_region(db, reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
+        rr = {k: landregion.rock_choice(db, TR['rockfrom'], reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
+              or landregion.rock_region(db, reg[k], ((F.info.get('terrain') or {}).get('like') or {}).get(reg[k], ''))
               for k in keys}
         region_of = lambda x, y: rr.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')
         _say('Cladding the steep ground', 0.84)
         rf = rockface.clad(db, dk, amount=float(dress['rocks']), seed=int(plan.get('seed') or 1),
                            field=(F, inside, F.hold), region_of=region_of, weight=F.shaped, keep=getattr(F, 'wet', None),
-                           say=lambda what, frac: _say(what, 0.84 + 0.1 * frac))
+                           say=lambda what, frac: _say(what, 0.84 + 0.1 * frac), own_pieces=not TR['rockfrom'])
         clad = rocks = rf['rocks']
         F.info['clad'] = {k: v for k, v in rf.items() if k in ('parts', 'dropped', 'cover', 'steep_points', 'zone_points', 'knolls', 'rejects', 'why')}
         F.info['clad']['from'] = sorted(set(rr.values()))
@@ -1568,7 +1583,8 @@ def _apply(db, cells, plan):
         F.z = list(G.z)
         wet = getattr(F, 'wet', None)
         thinned, grown = landregion.thin_trees(db, dk, F, [max(F.hold[i] if F.hold else 0.0, 1.0 if wet[i] else 0.0) for i in range(len(F.z))]
-                                               if wet else F.hold, int(plan.get('seed') or 1))
+                                               if wet else F.hold, int(plan.get('seed') or 1),
+                                               trees_from=__import__('scatter').brush_items(db, TR['treesfrom']) or None)
         F.info['trees'] = {'out': sum(len(v) for v in thinned.values()), 'grown': cliffrocks.place(db, grown)}
         db.sync_project()
     if getattr(F, 'bridges', None):
@@ -1613,7 +1629,9 @@ def _apply(db, cells, plan):
             def _rock_from(gx, gy):
                 r0 = reg.get((gx, gy)) or ''
                 if r0 not in rk_:
-                    rk_[r0] = TR['rockfrom'] or landregion.rock_region(db, r0, ((F.info.get('terrain') or {}).get('like') or {}).get(r0, ''))
+                    # (the sea bed keeps the land's rocks where a brush was chosen: its region, not the brush)
+                    rk_[r0] = landregion.rock_choice(db, TR['rockfrom'], r0, ((F.info.get('terrain') or {}).get('like') or {}).get(r0, '')).split('@')[-1] or (r0 if landregion.own_rocks(db, r0) is not None else
+                                                 landregion.rock_region(db, r0, ((F.info.get('terrain') or {}).get('like') or {}).get(r0, '')))
                 return rk_[r0]
             # (and the bed's own things with them, its rocks at the Rocks slider's share: the sea floor, 2026-11-14)
             wp = waterplants.grow(db, dk, lambda gx, gy: reg.get((gx, gy)), int(plan.get('seed') or 1),
@@ -1629,7 +1647,7 @@ def _apply(db, cells, plan):
         try:
             import landpair
             F.info['plants']['set'] += landpair.pair(db, dk, lambda x, y: [reg.get((math.floor(x / 8192.0), math.floor(y / 8192.0)), '')], int(plan.get('seed') or 1),
-                                                     amount=TR['trees_k'])
+                                                     amount=TR['trees_k'], trees_from=__import__('scatter').brush_items(db, TR['treesfrom']) or None)
         except Exception as e:
             print('rocks and trees:', e)
     covers = [L for L in plan.get('layers') or [] if L.get('kind') == 'cover' and L.get('on', True) is not False]

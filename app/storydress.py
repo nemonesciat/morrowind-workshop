@@ -440,9 +440,12 @@ def _species(db, what, region, culture, fallback=()):
 
 
 def _pick(db, rng, pool):
-    """One model id of a species pool: a kind-name by weight, then one of its variants."""
+    """One model id of a species pool: a kind-name by weight, then one of its variants. A key '@<id>' is that model
+    itself (one of your brushes' things, yards' tree_ids)."""
     V = _variants(db)
     base = _draw(rng, pool)
+    if base and base.startswith('@'):
+        return base[1:] if db.resolve_id(base[1:]) is not None else None
     if not base or not V.get(base):
         return None
     return rng.choice(V[base])
@@ -948,7 +951,7 @@ def _standing(db, plan, memo, cells=None):
     return out
 
 
-def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0):
+def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0, tree_ids=None):
     """[{'id', 'p', 's', 'role'}]: fences, yard sets, garden rows, beds, trees, planters and vines for a made town
     (plan as townbuild.fit left it). blocked: polygons kept clear (the wall); also: [(id, p)] things laid already
     (the dressing's), kept clear of. trees_k: the town's own amount of trees, by its houses and on its open ground (1 as
@@ -1009,6 +1012,8 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0):
     pools = {}
 
     def pool(what, region):
+        if what == 'house_trees' and tree_ids:
+            return {'@' + i: n for i, n in tree_ids.items()}       # (one of your brushes for the town's trees)
         k = (what, region)
         if k not in pools:
             fb = CROPS.get(crop_cult) or CROPS['Imperial'] if what == 'fields' else ()
@@ -1115,7 +1120,7 @@ def yards(db, plan, seed=1, blocked=(), also=(), amount=1.0, trees_k=1.0):
     # in the green patch by the road")
     if amount > 0:
         try:
-            pk = pockets(db, plan, space, memo, rng, cult, pool, add, amount, trees_k)
+            pk = pockets(db, plan, space, memo, rng, cult, pool, add, amount, trees_k, own_trees=bool(tree_ids))
             n.update(pk)
         except Exception as e_:
             WHY['pockets: %s' % e_] = 1
@@ -1177,7 +1182,7 @@ def _max_rect(grid, W, H):
     return out
 
 
-def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0, trees_k=1.0):
+def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0, trees_k=1.0, own_trees=False):
     """The town's open ground (inside its wall or outline, gentle, clear of everything `space` holds: the plots,
     door ways, streets, the dressing, the rocks, the yards) read on a POCKET_STEP lattice and joined into pockets; a
     pocket that holds a GARDEN_MIN box gets a fenced kitchen garden of the region's crop (farm()), its gate toward the
@@ -1397,7 +1402,7 @@ def pockets(db, plan, space, memo, rng, cult, pool, add, amount=1.0, trees_k=1.0
             continue
         region = _region_at(db, x, y, region_memo)
         tp = pool('house_trees', region)
-        shade = _shade_trees(db, region, x, y, memo)
+        shade = {} if own_trees else _shade_trees(db, region, x, y, memo)
         rid, big = None, False
         if shade and (not tp or rng.random() < SHADE_SHARE):
             rid, big = _draw(rng, shade), True

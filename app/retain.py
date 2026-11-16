@@ -291,7 +291,7 @@ def _fit_rock(K, rng, depth, top, drop, fam=None):
     return rid, K.box(rid), s
 
 
-def revet(db, plan, W, new_refs, cells, culture, seed=1, outline=None):
+def revet(db, plan, W, new_refs, cells, culture, seed=1, outline=None, rock_from=''):
     """The sheer sides of the town's streets regraded and held by rock (see the module's head). The rocks join the
     town's own (new_refs, cells); their boxes are kept in plan['_retain'] for the bank pass. {'runs', 'rocks',
     'ground': points moved, 'refused': {why: n}, 'bare': runs left with a gap, 'placed': [...]}."""
@@ -308,7 +308,7 @@ def revet(db, plan, W, new_refs, cells, culture, seed=1, outline=None):
             region = landrange._region_of(db, gx, gy) or ''
     except Exception:
         region = ''
-    F = rockblend.figures(db, P, culture, region)
+    F = rockblend.figures(db, P, culture, region, rock_from)
     if not F['ids']:
         return {'runs': 0, 'rocks': 0, 'ground': 0, 'refused': {'no rocks of the culture': 1}, 'bare': 0, 'placed': []}
     K = rockblend._Picker(db, F, P)

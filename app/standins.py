@@ -145,7 +145,7 @@ def _nearest(db, region, n=8):
         return []
 
 
-def clear(db, cells, scope='standins', seed=1, say=None, rocks=True, trees_k=1.0):
+def clear(db, cells, scope='standins', seed=1, say=None, rocks=True, trees_k=1.0, trees_from=None):
     """The scope's objects in the cells marked removed; for stand-in trees and rocks, the region's own set in their
     place. {'removed', 'replaced'}; no commit."""
     import editing
@@ -168,6 +168,10 @@ def clear(db, cells, scope='standins', seed=1, say=None, rocks=True, trees_k=1.0
         c, raw = editing._cell(db, key)
         region = landrange._region_of(db, gx, gy) or ''
         P = palette(db, region) if any(STANDIN.search(r['id']) for r in refs) else {'tree': [], 'rock': [], 'per': {}}
+        if trees_from and P['tree']:
+            # (one of your brushes for the trees: its things, each as often as the brush has it; foot at the ground)
+            P = dict(P, tree=[(it['id'], max(it['size'][0], it['size'][1]) or 256.0, -((it.get('sink') or 0.0) + (it.get('zmin') or 0.0)))
+                              for it in trees_from for _n in range(max(1, min(10, int(it.get('n') or 1))))])
         spots = {'tree': [], 'rock': []}
         for r in refs:
             ref = raw.get(r['k'])
