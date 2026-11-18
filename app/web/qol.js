@@ -42,7 +42,7 @@ const QOL_KIND = {new: 'new', changed: 'changed', gone: 'removed'};
 // My changes in sections by kind, as Browse names them (Containers, Statics, Weapons…), each folding away on a click
 // and A to Z inside (a tester on Discord, 2026-11-16: "objects such as statics and containers are mixed within the
 // same long list"). [label, indexes into the list], the sections A to Z.
-let QOL_SHUT = new Set();
+let QOL_SHUT = new Set(), QOL_FILTER = '';
 try { QOL_SHUT = new Set(JSON.parse(localStorage.getItem('ws-changes-shut') || '[]')); } catch (e) {}
 function qolSections(all){
   const by = new Map();
@@ -62,27 +62,40 @@ function qolRenderChanges(it){
   it.el.innerHTML = `<div class="msg" style="margin-bottom:8px">${all.length ? `Here your mod has <b>${n('new')}</b> new, <b>${n('changed')}</b> changed and <b>${n('gone')}</b> removed object${all.length === 1 ? '' : 's'}.` : 'Your mod hasn\'t changed anything here yet.'}</div>
     <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="qol-only" ${W.onlyMine ? 'checked' : ''}> Show only what your mod changed</label>
     ${n('gone') ? '<button class="btn sm" data-q="backall" style="margin-top:6px">↶ Bring back everything removed</button>' : ''}
-    <div class="qol-list" style="margin-top:8px">${qolSections(all).map(([lab, list]) => {
+    ${all.length ? `<input class="inp qol-filter" placeholder="Filter… (e.g. chair, removed)" value="${esc(QOL_FILTER)}" style="margin-top:8px">` : ''}
+    <div class="qol-list" style="margin-top:8px"></div>`;
+  // (the filter as the Objects list's: a name, an ID, a kind, or new / changed / removed; the list alone redrawn as you
+  // type, so the box keeps the keys. A tester on Discord, 2026-11-17)
+  const box = it.el.querySelector('.qol-list');
+  const draw = () => {
+    const f = QOL_FILTER.trim().toLowerCase();
+    const shown = !f ? all : all.filter(x => (x.r.id + ' ' + (x.r.name || '') + ' ' + ((S.typeLabels && S.typeLabels[x.r.type]) || '') + ' ' + QOL_KIND[x.kind]).toLowerCase().includes(f));
+    box.innerHTML = qolSections(shown).map(([lab, list]) => {
       const shut = QOL_SHUT.has(lab);
       return `<div class="qol-sec" data-qsec="${esc(lab)}" title="${shut ? 'Show them' : 'Fold them away'}"><span>${shut ? '▸' : '▾'} ${esc(lab)}</span><small>${list.length}</small></div>`
-        + (shut ? '' : list.slice(0, 300).map(i => { const x = all[i]; return `<div data-qi="${i}"><span class="qol-tag ${x.kind}">${QOL_KIND[x.kind]}</span><span>${esc(x.r.name || x.r.id)} <small>${esc(x.r.name ? x.r.id : '')}</small></span>
-      <button class="btn sm" data-qr="${i}" title="${x.kind === 'gone' ? 'Bring it back' : x.kind === 'new' ? 'Take it out again' : 'Put it back as it was'}">↶</button></div>`; }).join('')
+        + (shut ? '' : list.slice(0, 300).map(i => { const x = shown[i], ai = all.indexOf(x); return `<div data-qi="${ai}"><span class="qol-tag ${x.kind}">${QOL_KIND[x.kind]}</span><span>${esc(x.r.name || x.r.id)} <small>${esc(x.r.name ? x.r.id : '')}</small></span>
+      <button class="btn sm" data-qr="${ai}" title="${x.kind === 'gone' ? 'Bring it back' : x.kind === 'new' ? 'Take it out again' : 'Put it back as it was'}">↶</button></div>`; }).join('')
         + (list.length > 300 ? `<div class="msg">…and ${list.length - 300} more</div>` : ''));
-    }).join('')}</div>`;
-  it.el.querySelectorAll('[data-qsec]').forEach(d => d.onclick = () => {
-    const lab = d.dataset.qsec; QOL_SHUT.has(lab) ? QOL_SHUT.delete(lab) : QOL_SHUT.add(lab);
-    try { localStorage.setItem('ws-changes-shut', JSON.stringify([...QOL_SHUT])); } catch (e) {}
-    qolRenderChanges(it);
-  });
-  it.el.querySelector('.qol-only').onchange = e => { W.onlyMine = e.target.checked; drawMap(); renderWside(); };
-  const ba = it.el.querySelector('[data-q=backall]');
-  if (ba) ba.onclick = () => qolRestore(all.filter(x => x.kind === 'gone'));
-  it.el.querySelectorAll('[data-qi]').forEach(d => d.onclick = e => {
+    }).join('') || (all.length ? '<div class="msg">Nothing matches.</div>' : '');
+  };
+  draw();
+  const fi = it.el.querySelector('.qol-filter'); if (fi) fi.oninput = () => { QOL_FILTER = fi.value; draw(); };
+  box.onclick = e => {
+    const s = e.target.closest('[data-qsec]');
+    if (s){
+      const lab = s.dataset.qsec; QOL_SHUT.has(lab) ? QOL_SHUT.delete(lab) : QOL_SHUT.add(lab);
+      try { localStorage.setItem('ws-changes-shut', JSON.stringify([...QOL_SHUT])); } catch (e2) {}
+      draw(); return;
+    }
+    const d = e.target.closest('[data-qi]'); if (!d) return;
     const x = all[+d.dataset.qi];
     const rb = e.target.closest('[data-qr]'); if (rb){ e.stopPropagation(); qolRestore([x]); return; }
     if (x.kind === 'gone'){ qolLookAt(x.r.p); toast('It stood where the red cross is. ↶ brings it back.'); }
     else { selectRef(x.ck, x.r.k); centerOn(x.r); }
-  });
+  };
+  it.el.querySelector('.qol-only').onchange = e => { W.onlyMine = e.target.checked; drawMap(); renderWside(); };
+  const ba = it.el.querySelector('[data-q=backall]');
+  if (ba) ba.onclick = () => qolRestore(all.filter(x => x.kind === 'gone'));
 }
 async function qolRestore(list){
   if (!list.length || !await needProject()) return;
@@ -189,7 +202,31 @@ function qolUsesKey(){
   }
   return false;
 }
-async function qolUses(id){
+// Open a place on the World map with what stands there by this ID picked and the view on it (a character's "Stands in",
+// Find on the map in Browse; a tester on Discord, 2026-11-17: "it should focus the camera on the NPC too")
+async function qolFindIn(key, id, from){
+  // (asked from a window over the map, Characters or Browse: it closes, nothing lost, so the view is clear)
+  const win = from && from.closest && from.closest('.vwin');
+  if (win && typeof vwClose === 'function') vwClose(win.dataset.vw);
+  showView('world'); await worldOpen(key);
+  if (W.key !== key) return;
+  if (V3.on) await qolWaitFor3D(key);
+  const all = visibleRefs().filter(([, r]) => r.id.toLowerCase() === id.toLowerCase());
+  const here = all.filter(([ck]) => ck === key), like = here.length ? here : all;   // (outdoors: that cell's, not a neighbour's guard)
+  if (!like.length){ toast('Not standing here any more'); return; }
+  cfPickMany(like); centerOn(like[0][1]);
+}
+// Find on the map from a character's or creature's record: straight there when they stand in one place, else the
+// places to pick from (Where it's used)
+async function qolFindChar(id, from){
+  let d;
+  try { d = await api('/api/npc?id=' + encodeURIComponent(id)); } catch (e){ toast(e.message, true); return; }
+  const pl = d.placed || [];
+  if (!pl.length){ toast('Not placed anywhere yet'); return; }
+  if (pl.length === 1) return qolFindIn(pl[0].key, d.id, from);
+  qolUses(d.id, from);
+}
+async function qolUses(id, from){
   qolCss();
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal qol-uses" style="width:min(640px,94vw);max-height:88vh;overflow:auto"><h2>Where it's used</h2><div class="msg"><span class="spin"></span> Looking everywhere for ${esc(id)}…</div></div>`;
@@ -215,12 +252,7 @@ async function qolUses(id){
   bg.querySelector('#qu-close').onclick = close;
   const ed = bg.querySelector('#qu-edit'); if (ed) ed.onclick = () => { close(); openTool(u.i); };
   const rec = bg.querySelector('#qu-rec'); if (rec) rec.onclick = () => { close(); showView('browse'); openRecord(u.i, true); };
-  bg.querySelectorAll('[data-up]').forEach(d => d.onclick = async () => {
-    const p = u.places[+d.dataset.up]; close();
-    showView('world'); await worldOpen(p.key);
-    const like = visibleRefs().filter(([, r]) => r.id.toLowerCase() === u.id.toLowerCase());
-    if (like.length){ cfPickMany(like); centerOn(like[0][1]); }
-  });
+  bg.querySelectorAll('[data-up]').forEach(d => d.onclick = () => { const p = u.places[+d.dataset.up]; close(); qolFindIn(p.key, u.id, from); });
   // (each opens where it is worked on: a person in Characters, a list in Lists, a script in Scripts, a line in its topic)
   bg.querySelectorAll('[data-uh]').forEach(d => d.onclick = () => { const h = u.holders[+d.dataset.uh]; close(); openTool(h.i, h.type, h.id); });
   bg.querySelectorAll('[data-ut]').forEach(d => d.onclick = () => { const t = u.texts[+d.dataset.ut]; close(); openTool(t.i); });

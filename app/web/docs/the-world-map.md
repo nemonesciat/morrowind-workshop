@@ -116,7 +116,7 @@ group anywhere later.
 |---|---|
 | Place | Go to a place, Play here, Create, Style palette, Second window; indoors **Auto-furnish**, **Find gaps**, **Check place**; placing. |
 | Selected | The thing selected (above). **📌 Pin** keeps one in its own panel, to compare or tweak several. |
-| Objects | Every object in the place, with a filter. Open more Objects lists, each with its own filter. |
+| Objects | Every object in the place in sections by kind, A to Z, with a filter (a name, an ID, a kind, or *your mod*). Click a section's name to fold it away. Open more Objects lists, each with its own filter. |
 | ☑ Show | A window, opened by **☑ Show** on the bar (tick it in **▤ Panels** to have it as a tab instead): what's shown (buildings, doors, containers, lights, people, creatures, items), your changes, hidden things; indoors, **Floors** hides everything above a height to see lower storeys. |
 | Sky | Region, weather and time of day outdoors; an interior's lighting. See *Sky, regions and weather*. |
 | Land | Land shaping and height maps. See *Shaping the land*. |
@@ -129,7 +129,9 @@ group anywhere later.
   out (right-click it to bring it back). Turn the marks on in **☑ Show**.
 - **Show only what your mod changed** hides the rest.
 - **My changes** lists them all, each with **Open on map** and **Undo**, in sections by kind (Containers, Statics…),
-  A to Z. Click a section's name to fold it away.
+  A to Z, with a filter (a name, an ID, a kind, or *new*, *changed*, *removed*). Click a section's name to fold it away.
+- A character's **Stands in** (Characters), and **🔎 Find on the map** on a character's or creature's record in Browse,
+  open the place with them picked and the view on them.
 
 ## The 3D view
 

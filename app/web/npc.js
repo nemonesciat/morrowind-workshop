@@ -162,7 +162,7 @@ function cWho(box){
   ddSearch('c-script', 'SCPT', r => { d.script = r.id; cRender(); });
   $('#c-script').addEventListener('change', e => { if (!e.target.value.trim()){ d.script = ''; cChanged(); } });
   const os = $('#c-openscript'); if (os) os.onclick = e => { e.preventDefault(); if (typeof sOpen === 'function') sOpen(d.script); };
-  box.querySelectorAll('[data-cplace]').forEach(a => a.onclick = e => { e.preventDefault(); showView('world'); worldOpen(a.dataset.cplace); });
+  box.querySelectorAll('[data-cplace]').forEach(a => a.onclick = e => { e.preventDefault(); qolFindIn(a.dataset.cplace, d.id, a); });
   cLooks();
 }
 // "b_n_dark elf_m_head_05" -> "05"; heads from other mods keep a short tag of where they're from
@@ -225,7 +225,7 @@ function cWhoCrea(box){
     catch (e){ toast(e.message, true); }
   });
   const os = $('#c-openscript'); if (os) os.onclick = e => { e.preventDefault(); sOpen(d.script); };
-  box.querySelectorAll('[data-cplace]').forEach(a => a.onclick = e => { e.preventDefault(); showView('world'); worldOpen(a.dataset.cplace); });
+  box.querySelectorAll('[data-cplace]').forEach(a => a.onclick = e => { e.preventDefault(); qolFindIn(a.dataset.cplace, d.id, a); });
   v3ThumbScan(box);
 }
 function cStatsCrea(box){

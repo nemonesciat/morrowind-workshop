@@ -475,6 +475,7 @@ input,textarea,select,[contenteditable="true"],pre,code{-webkit-user-select:text
 .olist div > span{display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .olist div:hover{background:var(--hover)}
 .olist div.sel{background:var(--sel);color:var(--gold2)}
+.olist div.osec{font-weight:600;color:var(--gold2);padding-top:7px;user-select:none}
 .olist small{color:var(--faint);white-space:nowrap}
 /* (the theme's own green over its own panel: a fixed dark green box hid its dark text in the light themes) */
 /* (the button fills itself as the learning goes, behind its text: the accent at 35% into the button's colour keeps
@@ -1487,7 +1488,8 @@ function renderDetail(d){
       if (PLACEABLE.includes(d.type)) acts.push(`<button class="btn sm" data-act="place" title="Place it in the place open on the World map: point and click, as from the Place panel">📍 Place on the map</button>`,
         `<button class="btn sm" data-act="bench" title="Put it on the prefab workbench, in the middle of its view, ready to move">🔨 Add to the workbench</button>`,
         `<button class="btn sm" data-act="addstyle" title="Put it in a style's palette yourself (Style palette), for one the Workshop didn't learn it in">🎨 Add to a style…</button>`);
-      if (d.type === 'NPC_' || d.type === 'CREA') acts.push(`<button class="btn sm primary" data-act="char">${d.type === 'CREA' ? '🐾 Creature editor' : '👤 Character editor'}</button>`);
+      if (d.type === 'NPC_' || d.type === 'CREA') acts.push(`<button class="btn sm primary" data-act="char">${d.type === 'CREA' ? '🐾 Creature editor' : '👤 Character editor'}</button>`,
+        `<button class="btn sm" data-act="findmap" title="Open where ${d.type === 'CREA' ? 'it stands' : 'they stand'} on the World map, picked, with the view on ${d.type === 'CREA' ? 'it' : 'them'}">🔎 Find on the map</button>`);
       if (['FACT', 'CLAS', 'RACE', 'BSGN', 'GLOB', 'GMST'].includes(d.type)) acts.push(`<button class="btn sm primary" data-act="rule">✎ Open in its editor</button>`);
       if (IE_TYPES.split(',').includes(d.type)) acts.push(`<button class="btn sm primary" data-act="itemed">✎ ${d.type === 'SPEL' ? 'Spell' : d.type === 'ENCH' ? 'Enchantment' : 'Item'} editor</button>`);
       if (d.type === 'LEVI' || d.type === 'LEVC') acts.push(`<button class="btn sm primary" data-act="lev">🎲 List editor</button>`);
@@ -1609,6 +1611,7 @@ async function detailAction(act){
   if (act === 'bench'){ if (typeof benchOpen === 'function'){ await benchOpen(); await benchAddAt(d.id, d.type, null); } return; }
   if (act === 'addstyle'){ if (typeof spAddMenu === 'function') spAddMenu(d.id, document.querySelector('[data-act="addstyle"]')); return; }
   if (act === 'char'){ cOpen(d.id); return; }
+  if (act === 'findmap'){ qolFindChar(d.id, $('#detail')); return; }
   if (act === 'script'){ sOpen(d.id); return; }
   if (act === 'lev'){ lvOpen(d.id); return; }
   if (act === 'itemed'){ ieShow(d.id); return; }
@@ -3508,7 +3511,7 @@ function renderWside_(){
   h += `</div>`;
   cut.push(h.length);
   // --- Objects
-  h += `<div class="wpane on" data-pane="objs"><input class="inp" id="w-filter" placeholder="Filter…" value="${esc(W.filter)}" style="margin-bottom:6px"><div class="olist" id="w-olist"></div></div>`;
+  h += `<div class="wpane on" data-pane="objs"><input class="inp" id="w-filter" placeholder="Filter… (e.g. chair, light, your mod)" value="${esc(W.filter)}" style="margin-bottom:6px"><div class="olist" id="w-olist"></div></div>`;
   cut.push(h.length);
   // --- View
   h += `<div class="wpane on" data-pane="view"><h3 style="margin-top:4px">Show${typeof guideLink === 'function' ? guideLink('the-world-map.md', 'The panels') : ''}</h3><div class="legend">${LAYERS.map((L, n) => `<label><input type="checkbox" data-layer="${n}" ${W.hidden.has(n) ? '' : 'checked'}><i style="background:${L[2]}"></i>${L[0]}</label>`).join('')}</div>
@@ -3615,10 +3618,46 @@ function wsTab(t){
   W.tab = W.tabShown = t;
   if (PNL.spaces.world && PNL.isOpen('world', t) && !PNL.isShown('world', t)) PNL.show('world', t);
 }
+// The Objects lists in sections by kind (Statics, Containers, NPCs…), A to Z inside, each folding away on a click, as
+// My changes has them (a tester on Discord, 2026-11-17: "the same treatment that My changes already received"). The
+// filter matches a name, an ID or a kind; "your mod" (or "mine") shows only what your mod changed.
+let OBJ_SHUT = new Set();
+try { OBJ_SHUT = new Set(JSON.parse(localStorage.getItem('ws-objs-shut') || '[]')); } catch (e) {}
+function objMatch(r, f){
+  if (!f) return true;
+  if (f === 'your mod' || f === 'mine') return !!r.mine;
+  return (r.id + ' ' + (r.name || '') + ' ' + (S.typeLabels[r.type] || '')).toLowerCase().includes(f);
+}
+function objListHtml(refs, filter){
+  const f = (filter || '').trim().toLowerCase(), by = new Map();
+  let n = 0;
+  for (const r of refs){
+    if (!objMatch(r, f)) continue;
+    const lab = S.typeLabels[r.type] || r.type || 'Other';
+    if (!by.has(lab)) by.set(lab, []);
+    by.get(lab).push(r); n++;
+  }
+  const nm = r => String(r.name || r.id).toLowerCase();
+  const html = [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([lab, list]) => {
+    const shut = OBJ_SHUT.has(lab);
+    list.sort((a, b) => nm(a) < nm(b) ? -1 : nm(a) > nm(b) ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    return `<div class="osec" data-osec="${esc(lab)}" title="${shut ? 'Show them' : 'Fold them away'}"><span>${shut ? '▸' : '▾'} ${esc(lab)}</span><small>${list.length}</small></div>`
+      + (shut ? '' : list.slice(0, 300).map(r => `<div data-ok="${esc(r.k)}" data-hid="${esc(r.id)}" class="${W.sel && W.sel.k === r.k ? 'sel' : ''}"><span>${thumbImg(r.id, r.type, 48, 'sm')}${r.mine ? '✎ ' : ''}${esc(r.name || r.id)}</span><small>${esc(r.name && r.name !== r.id ? r.id : '')}</small></div>`).join('')
+        + (list.length > 300 ? `<div class="msg">…and ${list.length - 300} more (the filter finds them)</div>` : ''));
+  }).join('');
+  return {html: html || '<div class="msg">Nothing matches.</div>', n};
+}
+// a section's head clicked: fold it or open it (true when it was one)
+function objFold(e, redraw){
+  const s = e.target.closest('[data-osec]'); if (!s) return false;
+  const lab = s.dataset.osec; OBJ_SHUT.has(lab) ? OBJ_SHUT.delete(lab) : OBJ_SHUT.add(lab);
+  try { localStorage.setItem('ws-objs-shut', JSON.stringify([...OBJ_SHUT])); } catch (e2) {}
+  redraw(); return true;
+}
 function renderOList(refs){
-  const f = W.filter.toLowerCase(), box = $('#w-olist'); if (!box) return;
-  const list = refs.filter(r => !f || (r.id + ' ' + r.name).toLowerCase().includes(f)).slice(0, 400);
-  box.innerHTML = list.map(r => `<div data-ok="${esc(r.k)}" data-hid="${esc(r.id)}" class="${W.sel && W.sel.k === r.k ? 'sel' : ''}"><span>${thumbImg(r.id, r.type, 48, 'sm')}${r.mine ? '✎ ' : ''}${esc(r.name || r.id)}</span><small>${esc(S.typeLabels[r.type] || '')}</small></div>`).join('') || '<div class="msg">Nothing matches.</div>';
+  const box = $('#w-olist'); if (!box) return;
+  box.innerHTML = objListHtml(refs, W.filter).html;
+  box.onclick = e => objFold(e, () => renderOList(W.cells[W.key].refs));
   if (box.closest('.wpane.on')) v3ThumbScan(box);
 }
 // recently placed things, for quick reuse

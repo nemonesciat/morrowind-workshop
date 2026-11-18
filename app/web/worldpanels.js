@@ -190,13 +190,12 @@ function wpRenderObjList(it){
     const inp = b.querySelector('.wp-of');
     inp.value = it.state.filter || '';
     inp.oninput = () => { it.state.filter = inp.value; PNL.retitle('world', it.id); draw(); };
-    b.querySelector('.wp-ol').onclick = e => { const ok = e.target.closest('[data-ok]'); if (!ok) return; const r = findRef(W.key, ok.dataset.ok); if (r){ selectRef(W.key, r.k); centerOn(r); } };
+    b.querySelector('.wp-ol').onclick = e => { if (objFold(e, () => wpRenderObjList(it))) return; const ok = e.target.closest('[data-ok]'); if (!ok) return; const r = findRef(W.key, ok.dataset.ok); if (r){ selectRef(W.key, r.k); centerOn(r); } };
   }
   const draw = () => {
-    const f = (it.state.filter || '').toLowerCase(), mine = f === 'your mod' || f === 'mine';
-    const list = refs.filter(r => !f || (mine ? r.mine : (r.id + ' ' + (r.name || '') + ' ' + (S.typeLabels[r.type] || '')).toLowerCase().includes(f))).slice(0, 400);
-    b.querySelector('.wp-ol').innerHTML = list.map(r => `<div data-ok="${esc(r.k)}" data-hid="${esc(r.id)}" class="${W.sel && W.sel.k === r.k ? 'sel' : ''}"><span>${thumbImg(r.id, r.type, 48, 'sm')}${r.mine ? '✎ ' : ''}${esc(r.name || r.id)}</span><small>${esc(S.typeLabels[r.type] || '')}</small></div>`).join('') || '<div class="msg">Nothing matches.</div>';
-    PNL.badge('world', it.id, fmtN(list.length));
+    const o = objListHtml(refs, it.state.filter);
+    b.querySelector('.wp-ol').innerHTML = o.html;
+    PNL.badge('world', it.id, fmtN(o.n));
     if (typeof v3ThumbScan === 'function') v3ThumbScan(b);
   };
   draw();
