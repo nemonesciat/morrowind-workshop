@@ -895,6 +895,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
 </main>
 </div>
 <script src="/web/world3d.js"></script>
+<script src="/web/particles3d.js"></script>
 <script src="/web/dialogue.js"></script>
 <script src="/web/npc.js"></script>
 <script src="/web/scripts.js"></script>
@@ -4344,8 +4345,17 @@ async function showModel(box, query, scope){
     }
     group.add(new T.Mesh(g, mat));
   }
+  // its flames, smoke and sparks (particles3d.js), run by this viewer
+  const fx = m.fx && m.fx.length && typeof fxAttach === 'function' ? fxAttach(group, m.fx, true) : [];
+  box._fx = fx;                                          // (Model & textures' particle sliders change them live)
   scene.add(group);
   box3.setFromObject(group);
+  if (fx.length){
+    group.updateMatrixWorld(true);
+    if (!m.shapes.length) box3.makeEmpty();
+    for (const s of fx){ const c = new T.Vector3(...s.e.at).applyMatrix4(group.matrixWorld), r = fxReach(s.e);
+      box3.union(new T.Box3(c.clone().subScalar(r), c.clone().addScalar(r))); }
+  }
   const size = box3.getSize(new T.Vector3()), centre = box3.getCenter(new T.Vector3());
   const radius = Math.max(size.x, size.y, size.z, 1) * 0.75;
   const camera = new T.PerspectiveCamera(35, w / h, radius / 100, radius * 50);
@@ -4360,7 +4370,10 @@ async function showModel(box, query, scope){
   window.addEventListener('mouseup', () => drag = null);
   el.addEventListener('mousemove', e => { if (!drag) return; yaw = drag[2] - (e.clientX - drag[0]) * 0.01; pitch = Math.max(-1.4, Math.min(1.4, drag[3] + (e.clientY - drag[1]) * 0.01)); });
   el.addEventListener('wheel', e => { e.preventDefault(); dist *= e.deltaY > 0 ? 1.12 : 0.89; }, {passive: false});
-  const loop = () => { if (!el.isConnected){ view.dispose(); return; } if (spin) yaw += 0.006; place(); renderer.render(scene, camera); raf = requestAnimationFrame(loop); };
+  let last = performance.now();
+  const loop = () => { if (!el.isConnected){ view.dispose(); return; } if (spin) yaw += 0.006; place();
+    const now = performance.now(); if (fx.length) fxRun(fx, (now - last) / 1000, renderer, camera); last = now;
+    renderer.render(scene, camera); raf = requestAnimationFrame(loop); };
   const view = {scope, dispose(){ cancelAnimationFrame(raf); scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); renderer.dispose(); renderer.forceContextLoss && renderer.forceContextLoss(); }};
   activeViews.push(view);
   loop();

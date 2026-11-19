@@ -474,7 +474,7 @@ def read_gltf(path):
                 if det < 0:
                     tris = [(a, c, b) for a, b, c in tris]
                 m = mats[prim['material']] if prim.get('material') is not None and prim['material'] < len(mats) else {}
-                parts.append({'name': m.get('name') or 'part', 'verts': verts, 'normals': normals, 'uvs': uvs, 'tris': tris,
+                parts.append({'name': m.get('name') or 'part', 'node': nd.get('name') or '', 'verts': verts, 'normals': normals, 'uvs': uvs, 'tris': tris,
                               'color': m.get('color', (1, 1, 1)), 'opacity': m.get('opacity', 1.0),
                               'alpha': m.get('alpha', False), 'double': m.get('double', False),
                               'image': m.get('image')})
@@ -878,9 +878,10 @@ def read_fbx(path):
 
 
 # ------------------------------------------------------------------ bringing things in
-def _to_game(parts, up='y', size=None):
+def _to_game(parts, up='y', size=None, moved=None):
     """From the program's axes and units to the game's: Z up, about 70 units to a metre. Size: how tall
-    (in game units) the model should be, or None for "it was made in metres"."""
+    (in game units) the model should be, or None for "it was made in metres". moved (a dict) is given what was
+    done: 'k' (units a metre) and 'shift' (what was taken off each axis before scaling)."""
     def conv(v):
         if up == 'y':
             return (v[0], -v[2], v[1])                # Y up (Blender's export, glTF) -> Z up
@@ -903,6 +904,8 @@ def _to_game(parts, up='y', size=None):
     cx, cy = (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2
     for p in parts:
         p['verts'] = [((v[0] - cx) * k, (v[1] - cy) * k, (v[2] - lo[2]) * k) for v in p['verts']]
+    if moved is not None:
+        moved.update({'k': k, 'shift': (cx, cy, lo[2])})
     return [round((hi[i] - lo[i]) * k, 1) for i in range(3)]
 
 
@@ -921,7 +924,10 @@ def inspect(path):
         pics = [p['picture'] if isinstance(p.get('picture'), str) else 'packed picture' for p in parts if p.get('picture')]
     else:
         return {'kind': ext[1:], 'size': None, 'parts': 0, 'pictures': []}
+    fx = _particle_words(path) if ext == '.blend' else []
     allv = [v for p in parts for v in p['verts']]
+    if not allv and fx:
+        return {'kind': ext[1:], 'size': None, 'parts': 0, 'triangles': 0, 'pictures': [], 'particles': fx}
     if not allv:
         raise EditError('There is nothing to draw in this model (no triangles).')
     size = [round(max(v[k] for v in allv) - min(v[k] for v in allv), 3) for k in range(3)]
@@ -936,7 +942,70 @@ def inspect(path):
             objs.append({'name': n, 'size': [round(max(v[k] for v in vs) - min(v[k] for v in vs), 3) for k in range(3)],
                          'triangles': sum(len(p['tris']) for p in parts if p.get('object') == n)})
         out['objects'] = objs
+    if fx:
+        out['particles'] = fx
     return out
+
+
+def blend_systems(path):
+    """A .blend's particle effects: Blender's own (blendread) and those made with the UnitParticles add-on (unitread,
+    read through Blender). (systems, note): the note says why UnitParticles effects couldn't be read, if so."""
+    import blendread
+    systems = blendread.particles(path)
+    with open(path, 'rb') as f:
+        raw = f.read()
+    if raw[:4] == b'\x28\xb5\x2f\xfd' or raw[:2] == b'\x1f\x8b':
+        raw = blendread.Blend(raw).raw              # (compressed: the mark is looked for in what it holds)
+    note = None
+    import unitread
+    if unitread.uses(raw):
+        more, _outs, note = unitread.systems(path)
+        systems += more
+    return systems, note
+
+
+def _particle_words(path):
+    """A .blend's particle systems as the import window shows them: [{'name', 'words', 'left'}]."""
+    import partmake
+    out = []
+    systems, note = blend_systems(path)
+    for sy in systems:
+        p = partmake.plan(sy, UNITS_PER_METRE)
+        out.append({'name': sy['object'], 'words': partmake.say(sy, p), 'left': sy['left']})
+    if note and not systems:
+        out.append({'name': 'UnitParticles', 'words': note, 'left': []})
+    return out
+
+
+def _particle_dot(db):
+    """A soft round dot (textures\\wslib\\ws_particle_dot.png), for particles whose material has no picture."""
+    import zlib
+    folder = os.path.join(data_dir(db), 'textures', SUB)
+    dest = os.path.join(folder, 'ws_particle_dot.png')
+    if not os.path.isfile(dest):
+        os.makedirs(folder, exist_ok=True)
+        n, rows = 64, b''
+        for y in range(n):
+            rows += b'\0'
+            for x in range(n):
+                d = math.hypot((x + 0.5) / n - 0.5, (y + 0.5) / n - 0.5) * 2
+                rows += bytes((255, 255, 255, int(255 * max(0.0, 1.0 - d) ** 1.5)))
+        chunk = lambda t, d: struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+        png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', n, n, 8, 6, 0, 0, 0)) + \
+            chunk(b'IDAT', zlib.compress(rows, 9)) + chunk(b'IEND', b'')
+        with open(dest, 'wb') as f:
+            f.write(png)
+        _register(db, 'textures/%s/ws_particle_dot.png' % SUB, dest)
+    return '%s\\ws_particle_dot.png' % SUB
+
+
+def _turn_systems(systems):
+    """Particle systems into the axes the model's parts were taken in as made (Z up, not turned): (x, z, -y)."""
+    C = ((1, 0, 0), (0, 0, 1), (0, -1, 0))
+    mv = lambda v: [sum(C[r][k] * v[k] for k in range(3)) for r in range(3)]
+    for sy in systems:
+        sy['at'], sy['accel'] = mv(sy['at']), mv(sy['accel'])
+        sy['R'] = [[sum(C[r][k] * sy['R'][k][c] for k in range(3)) for c in range(3)] for r in range(3)]
 
 
 def _read_other(path):
@@ -1018,7 +1087,8 @@ def import_files(db, paths, name=None, up='y', size=None, kind='static', collisi
     door_sound = extra.get('door_sound') if extra.get('door_sound') in DOOR_SOUNDS else 'wood'
 
     def one(mp, nm, sz, parts=None):
-        e = _import_model(db, mp, nm, up, sz, used_pics, collision, parts=parts, kind=kind, light=light)
+        e = _import_model(db, mp, nm, up, sz, used_pics, collision, parts=parts, kind=kind, light=light,
+                          particles=extra.get('particles', True) is not False)
         e['kind'] = kind
         if light:
             e['light'] = light
@@ -1065,13 +1135,14 @@ def _nice(path):
     return re.sub(r'[_\-]+', ' ', os.path.splitext(os.path.basename(path))[0]).strip().capitalize() or 'Item'
 
 
-def _import_model(db, path, name, up, size, used_pics, collision='shape', parts=None, kind='static', light=None):
+def _import_model(db, path, name, up, size, used_pics, collision='shape', parts=None, kind='static', light=None,
+                  particles=True):
     ext = os.path.splitext(path)[1].lower()
     folder = os.path.join(data_dir(db), 'meshes', SUB)
     os.makedirs(folder, exist_ok=True)
     stem = _free_name(folder, _slug(name or path), '.nif')
     dest = os.path.join(folder, stem + '.nif')
-    note = ''
+    note, systems = '', []
     if ext == '.nif':
         raw = open(path, 'rb').read()
         import nif
@@ -1091,16 +1162,26 @@ def _import_model(db, path, name, up, size, used_pics, collision='shape', parts=
             f.write(raw)
         dims = None
     else:
-        images = []
+        images, systems = [], []
         if ext in ('.obj', '.dae', '.fbx', '.blend'):
             if parts is None:
                 parts = _read_other(path)
+                if ext == '.blend' and particles:
+                    # (the file's particle systems come along when the whole file is brought in)
+                    systems, fx_note = blend_systems(path)
+                    if fx_note and not systems:
+                        note = fx_note
+                    if up != 'y':
+                        _turn_systems(systems)
             for p in parts:
                 if isinstance(p.get('picture'), str):
                     used_pics.add(p['picture'])
         else:
             parts, images = read_gltf(path)
-        dims = _to_game(parts, up, size)
+        if not parts and not systems:
+            raise EditError('There are no meshes in this Blender file to bring in.')
+        moved = {'k': UNITS_PER_METRE, 'shift': (0.0, 0.0, 0.0)}
+        dims = _to_game(parts, up, size, moved) if parts else None
         if kind == 'door':
             _door_pivot(parts)
         if light:
@@ -1138,14 +1219,40 @@ def _import_model(db, path, name, up, size, used_pics, collision='shape', parts=
                     p['alpha'] = p.get('alpha') or _picture_alpha(saved[img][1])
             if p.get('opacity', 1.0) < 0.99:
                 p['alpha'] = True
+        raw = nifwrite.write_nif(parts, stem, collision if collision in ('shape', 'box', 'none') else 'shape') if parts else None
+        if systems:
+            # the particle effects go into the same model, as the game's own particle models hold them
+            import partmake
+            import partnif
+            fx = partnif.read(raw) if raw else partmake.root(stem)
+            fx_left = []
+            for sy in systems:
+                pic = sy.get('picture')
+                if isinstance(pic, dict):
+                    tex = _copy_picture(db, raw=pic['raw'], name=(name or _slug(path)) + '_fx', ext=pic['ext'])[0]
+                elif pic:
+                    if pic not in saved:
+                        saved[pic] = _copy_picture(db, src_path=pic)
+                        used_pics.add(pic)
+                    tex = saved[pic][0]
+                else:
+                    tex = _particle_dot(db)
+                partmake.add(fx, sy, moved['k'], moved['shift'], tex)
+                fx_left += [x for x in sy['left'] if x not in fx_left]
+            raw = partnif.write(fx)
+            one = len(systems) == 1
+            said = ('With its particles.' if one else 'With %d particle effects.' % len(systems)) if parts else \
+                ('A particle effect.' if one else '%d particle effects.' % len(systems))
+            note = ' '.join(x for x in (note, said,
+                                        ('Not used from Blender: %s.' % ', '.join(fx_left)) if fx_left else '') if x)
         with open(dest, 'wb') as f:
-            f.write(nifwrite.write_nif(parts, stem, collision if collision in ('shape', 'box', 'none') else 'shape'))
+            f.write(raw)
     rel = 'meshes/%s/%s.nif' % (SUB, stem)
     _register(db, rel, dest)
     b = db.meshes.bounds('%s/%s.nif' % (SUB, stem))
     return {'id': stem, 'name': name or _nice(path), 'type': 'model', 'file': rel, 'model': '%s\\%s.nif' % (SUB, stem),
             'size': dims or ([round(b[3] - b[0]), round(b[4] - b[1]), round(b[5] - b[2])] if b else None),
-            'added': time.time(), 'from': os.path.basename(path), 'note': note}
+            'added': time.time(), 'from': os.path.basename(path), 'note': note, 'fx': len(systems)}
 
 
 # ------------------------------------------------------------------ a drop of files from the page

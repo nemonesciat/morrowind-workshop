@@ -497,10 +497,12 @@ def export_glb(db, model, out=None):
     if not raw:
         raise EditError("The model's file is missing (%s)." % model)
     shapes = nif.mesh_from_nif(raw, max_verts=400000) or []
-    if not shapes:
+    fx = _fx_out(db, raw)
+    if not shapes and not fx:
         raise EditError('This model has nothing to draw that can be taken out (no triangle shapes).')
     have = model_info(db, model).get('has', {})
-    lost = [k for k in ('animation', 'skin', 'particles', 'morphs', 'flipbook', 'scrolling texture', 'light', 'switch', 'billboard') if have.get(k)]
+    lost = [k for k in ('animation', 'skin', 'particles', 'morphs', 'flipbook', 'scrolling texture', 'light', 'switch', 'billboard')
+            if have.get(k) and not (k == 'particles' and fx)]
     bin_ = bytearray()
     doc = {'asset': {'version': '2.0', 'generator': 'Morrowind Workshop'}, 'scene': 0, 'scenes': [{'nodes': [0]}],
            'nodes': [{'name': os.path.splitext(os.path.basename(model))[0], 'children': []}],
@@ -570,9 +572,12 @@ def export_glb(db, model, out=None):
         doc['nodes'].append({'name': 'shape %d' % (n + 1), 'mesh': len(doc['meshes']) - 1})
         doc['nodes'][0]['children'].append(len(doc['nodes']) - 1)
     doc['buffers'].append({'byteLength': len(bin_)})
-    for k in ('textures', 'images'):
+    for k in ('textures', 'images', 'meshes', 'materials', 'accessors', 'bufferViews'):
         if not doc[k]:
             del doc[k]
+    if not bin_:
+        del doc['buffers']                       # (an effect alone: no shapes, nothing in the file but its root)
+        doc.pop('samplers', None)
     # (on the file, the scene and the root object: Blender keeps a scene's and an object's custom properties
     # through its import and export, and not always the file's own)
     ws = {'model': model, 'units_per_metre': library.UNITS_PER_METRE, 'pictures': {t: h for t, (_i, h) in pics.items() if h}}
@@ -584,8 +589,56 @@ def export_glb(db, model, out=None):
         out = os.path.join(EXPORTS, re.sub(r'[^A-Za-z0-9_.-]+', '_', os.path.splitext(os.path.basename(model))[0]) + '.glb')
     with open(out, 'wb') as f:
         f.write(_glb(doc, bytes(bin_)))
+    _fx_write(db, fx, out)
     return {'file': out, 'shapes': len(shapes), 'pictures': sum(1 for v in pics.values() if v[0] is not None), 'lost': lost,
-            'stamp': stamp(out)}
+            'stamp': stamp(out), 'particles': len(fx)}
+
+
+# ----- particles to Blender and back (particles from Blender, stage 3) -------------------------------------------
+# A model's particle effects go out beside its .glb: <glb>.fx.json holds, for each, the classic particle settings the
+# Blender script sets up (partmake.to_blender) and the game's own numbers. The script builds them and keeps a copy
+# of the file as built (<glb>.start.blend). Coming back, the saved .blend is read as any .blend is (blendread,
+# stage 2), and each group of settings left as it was keeps the game's exact numbers (partmake.unchanged).
+def _fx_out(db, raw):
+    import partnif
+    if not any(struct.pack('<I', len(k)) + k in raw for k in partnif.EMITTERS):
+        return []
+    try:
+        fx = partnif.effects(raw)
+    except partnif.PartError:
+        return []
+    for n, e in enumerate(fx):
+        e['tex_game'] = e['tex']
+        e['tex'] = db.meshes.texture_path(e['tex']) if e['tex'] else ''
+        e['name'] = 'Particles %d' % (n + 1)
+    return fx
+
+
+def _fx_write(db, fx, glb):
+    import json
+    import partmake
+    side = glb + '.fx.json'
+    for p in (side, glb + '.start.blend'):
+        if os.path.exists(p):
+            os.remove(p)
+    if not fx:
+        return
+    out = []
+    stem = os.path.splitext(glb)[0]
+    for n, e in enumerate(fx):
+        b = partmake.to_blender(e, library.UNITS_PER_METRE)
+        b['picture'] = ''
+        if e['tex']:
+            data = db.meshes.read(e['tex']) or b''
+            d = _decode(data, want=1 << 16)
+            png = _png(*d) if d else data if data[:8] == b'\x89PNG\r\n\x1a\n' else None
+            if png:
+                b['picture'] = '%s_fx%d.png' % (stem, n + 1)
+                with open(b['picture'], 'wb') as f:
+                    f.write(png)
+        out.append(b)
+    with open(side, 'w', encoding='utf-8') as f:
+        json.dump({'version': 1, 'units_per_metre': library.UNITS_PER_METRE, 'systems': out}, f)
 
 
 def blender():
@@ -601,14 +654,142 @@ def blender():
 # (what Blender runs on opening: the export brought in, and each Ctrl+S of the .blend sends a .glb back over
 # the export, so the Workshop sees the change; the scene is cleared first so the default cube doesn't come too)
 BLENDER_SCRIPT = r'''
-import bpy
+import bpy, json, math, os
 glb = r"%s"
 for ob in list(bpy.data.objects):
     bpy.data.objects.remove(ob, do_unlink=True)
-bpy.ops.import_scene.gltf(filepath=glb)
+if os.path.getsize(glb) > 64:
+    try:
+        bpy.ops.import_scene.gltf(filepath=glb)
+    except RuntimeError:
+        pass                                # (an effect alone has no shapes to bring in)
+%s
 def _back(*_a):
+    # (where the .blend is, so its particle systems can be read back as Blender keeps them)
+    bpy.context.scene['ws_blend'] = bpy.data.filepath
     bpy.ops.export_scene.gltf(filepath=glb, export_format='GLB', export_extras=True, export_image_format='AUTO')
 bpy.app.handlers.save_post.append(_back)
+'''
+
+# (the game's particle effects as Blender's classic particle systems: an emitter the size of the game's box, turned
+# as it is, a count over frames, a push along the cone's middle with a random speed for its spread, a sprite as the
+# particle, a wind of its own for its pulls, and a material: the picture, a Color Ramp over the particle's life,
+# Emission for a glow. A copy of the file as built is kept beside the export, to tell later what was changed)
+PARTICLE_SCRIPT = r'''
+from mathutils import Matrix, Vector
+fx = json.load(open(glb + '.fx.json', encoding='utf-8'))
+scene = bpy.context.scene
+scene.render.fps, scene.render.fps_base = 24, 1.0
+for sy in fx['systems']:
+    nm = sy['name']
+    bx = sy['box']
+    if all(b > 1e-6 for b in bx) or sum(1 for b in bx if b > 1e-6) == 2:
+        h = [b / 2 for b in bx]
+        vs = [(sx * h[0], sy_ * h[1], sz * h[2]) for sx in (-1, 1) for sy_ in (-1, 1) for sz in (-1, 1)]
+        fs = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+        how = 'VOLUME' if all(b > 1e-6 for b in bx) else 'FACE'
+    else:
+        vs, fs, how = [(0.0, 0.0, 0.0)], [], 'VERT'
+    me = bpy.data.meshes.new(nm)
+    me.from_pydata(vs, [], fs)
+    ob = bpy.data.objects.new(nm, me)
+    scene.collection.objects.link(ob)
+    R = sy['R']
+    ob.matrix_world = Matrix(((R[0][0], R[0][1], R[0][2], sy['at'][0]), (R[1][0], R[1][1], R[1][2], sy['at'][1]),
+                              (R[2][0], R[2][1], R[2][2], sy['at'][2]), (0, 0, 0, 1)))
+    ob.show_instancer_for_render = False
+    # the look
+    m = bpy.data.materials.new(nm)
+    m.use_nodes = True
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    col = sy['color']
+    m.diffuse_color = (col[0], col[1], col[2], col[3])
+    if sy['glow']:
+        sh = nt.nodes.new('ShaderNodeEmission'); colour_in = sh.inputs['Color']
+        tr = nt.nodes.new('ShaderNodeBsdfTransparent'); add = nt.nodes.new('ShaderNodeAddShader')
+        nt.links.new(sh.outputs[0], add.inputs[0]); nt.links.new(tr.outputs[0], add.inputs[1])
+        nt.links.new(add.outputs[0], out.inputs['Surface'])
+    else:
+        sh = nt.nodes.new('ShaderNodeBsdfPrincipled'); colour_in = sh.inputs['Base Color']
+        nt.links.new(sh.outputs[0], out.inputs['Surface'])
+    colour = None
+    if sy['picture'] and os.path.isfile(sy['picture']):
+        tex = nt.nodes.new('ShaderNodeTexImage')
+        tex.image = bpy.data.images.load(sy['picture'])
+        tex.image.pack()
+        colour = tex.outputs['Color']
+        if not sy['glow']:
+            nt.links.new(tex.outputs['Alpha'], sh.inputs['Alpha'])
+    if sy['ramp']:
+        info = nt.nodes.new('ShaderNodeParticleInfo')
+        div = nt.nodes.new('ShaderNodeMath'); div.operation = 'DIVIDE'
+        nt.links.new(info.outputs['Age'], div.inputs[0]); nt.links.new(info.outputs['Lifetime'], div.inputs[1])
+        cr = nt.nodes.new('ShaderNodeValToRGB')
+        nt.links.new(div.outputs[0], cr.inputs['Fac'])
+        els = cr.color_ramp.elements
+        while len(els) < len(sy['ramp']):
+            els.new(0.5)
+        while len(els) > len(sy['ramp']):
+            els.remove(els[-1])
+        for el, k in zip(els, sy['ramp']):
+            el.position = k[0]; el.color = (k[1], k[2], k[3], k[4])
+        if colour is not None:
+            mix = nt.nodes.new('ShaderNodeMixRGB'); mix.blend_type = 'MULTIPLY'; mix.inputs[0].default_value = 1
+            nt.links.new(colour, mix.inputs[1]); nt.links.new(cr.outputs['Color'], mix.inputs[2])
+            colour = mix.outputs[0]
+        else:
+            colour = cr.outputs['Color']
+    if colour is not None:
+        nt.links.new(colour, colour_in)
+    else:
+        colour_in.default_value = (col[0], col[1], col[2], 1.0)
+    if hasattr(m, 'surface_render_method'):
+        m.surface_render_method = 'BLENDED'
+    ob.data.materials.append(m)
+    # the particle: a sprite, kept out of the render (it is drawn where the particles are)
+    sp_me = bpy.data.meshes.new(nm + ' sprite')
+    sp_me.from_pydata([(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)], [], [(0, 1, 2, 3)])
+    sp_me.materials.append(m)
+    sprite = bpy.data.objects.new(nm + ' sprite', sp_me)
+    scene.collection.objects.link(sprite)
+    sprite.location = (0, 0, -50)
+    sprite.hide_render = True
+    # the system
+    ob.modifiers.new(nm, 'PARTICLE_SYSTEM')
+    ps = ob.particle_systems[0].settings
+    ps.name = nm
+    ps.count = sy['count']
+    ps.frame_start, ps.frame_end = sy['frame_start'], sy['frame_end']
+    ps.lifetime, ps.lifetime_random = sy['lifetime'], sy['lifetime_random']
+    ps.emit_from = how
+    ps.normal_factor = 0.0
+    ps.object_align_factor = sy['object_align']
+    ps.factor_random = sy['factor_random']
+    ps.particle_size, ps.size_random = sy['size'], 0.0
+    ps.render_type, ps.instance_object = 'OBJECT', sprite
+    ps.material_slot = m.name
+    ps.effector_weights.gravity = 0.0
+    # (its pulls: a wind of its own, which only this system feels)
+    coll = bpy.data.collections.new(nm + ' forces')
+    scene.collection.children.link(coll)
+    ps.effector_weights.collection = coll
+    if sy['wind']:
+        bpy.ops.object.effector_add(type='WIND')
+        wind = bpy.context.object
+        wind.name = nm + ' wind'
+        for c in list(wind.users_collection):
+            c.objects.unlink(wind)
+        coll.objects.link(wind)
+        z = Vector(sy['wind']['dir']).normalized()
+        wind.rotation_euler = Vector((0, 0, 1)).rotation_difference(z).to_euler()
+        wind.location = Vector(sy['at'])
+        wind.field.strength = sy['wind']['strength']
+        wind.field.flow = 0.0
+bpy.context.view_layer.update()
+bpy.ops.wm.save_as_mainfile(filepath=glb + '.start.blend', copy=True, compress=False)
 '''
 
 
@@ -618,9 +799,15 @@ def open_in_blender(file):
         raise EditError('Blender was not found on this PC. Open the exported file in your 3D program: File ▸ Import ▸ glTF.')
     script = os.path.join(EXPORTS, '_open_%s.py' % re.sub(r'[^A-Za-z0-9_]+', '_', os.path.splitext(os.path.basename(file))[0]))
     with open(script, 'w', encoding='utf-8') as f:
-        f.write(BLENDER_SCRIPT % file)
+        f.write(blender_script(file))
     subprocess.Popen([exe, '--python', script])
     return exe
+
+
+def blender_script(file):
+    """What Blender runs on opening an export: the model, its particle effects if it has any, and the way back."""
+    parts = PARTICLE_SCRIPT if os.path.isfile(file + '.fx.json') else ''
+    return BLENDER_SCRIPT % (file, parts)
 
 
 def _gl_extras(path):
@@ -630,11 +817,34 @@ def _gl_extras(path):
         return {}
     clen, ctype = struct.unpack_from('<II', raw, 12)
     doc = json.loads(raw[20:20 + clen].decode('utf-8')) if ctype == 0x4E4F534A else {}
-    for holder in [doc] + doc.get('scenes', []) + doc.get('nodes', []):
+    holders = [doc] + doc.get('scenes', []) + doc.get('nodes', [])
+    # (the .blend it was saved from, set by the Blender script on each save: its particle systems come back from it)
+    blend = next((h['extras']['ws_blend'] for h in holders if isinstance(h.get('extras'), dict) and h['extras'].get('ws_blend')), None)
+    for holder in holders:
         ws = (holder.get('extras') or {}).get('workshop')
         if isinstance(ws, dict) and ws.get('model'):
-            return ws
+            return dict(ws, ws_blend=blend) if blend else ws
     return {}
+
+
+def _fx_back(glb, ex):
+    """The particle systems of the .blend a save came from (blendread, as stage 2 reads any .blend), each matched with
+    the game effect it was sent as: s['keep'] is what keeps the game's own numbers."""
+    import json
+    import blendread
+    import partmake
+    blend = ex.get('ws_blend')
+    if not blend or not os.path.isfile(blend):
+        return []
+    systems = library.blend_systems(blend)[0]
+    side, start = glb + '.fx.json', glb + '.start.blend'
+    if systems and os.path.isfile(side) and os.path.isfile(start):
+        game = {g['name']: g['game'] for g in json.load(open(side, encoding='utf-8')).get('systems', [])}
+        first = {s['object']: s for s in blendread.particles(start)}
+        for s in systems:
+            if s['object'] in game and s['object'] in first:
+                s['keep'] = partmake.unchanged(s, first[s['object']], game[s['object']])
+    return systems
 
 
 def import_back(db, glb, how='everywhere', rec_i=None, model=None, collision='shape', into=None):
@@ -650,8 +860,13 @@ def import_back(db, glb, how='everywhere', rec_i=None, model=None, collision='sh
     if not model:
         raise EditError("This file didn't come from the Workshop's export, so it can't go back over a model. Bring it in on the Library page instead.")
     k = float(ex.get('units_per_metre') or library.UNITS_PER_METRE)
-    parts, images = library.read_gltf(glb)
-    if not parts:
+    parts, images = library.read_gltf(glb) if os.path.getsize(glb) > 64 else ([], [])
+    systems = _fx_back(glb, ex)
+    if systems:
+        import blendread
+        helpers = blendread.helper_names(ex['ws_blend'])
+        parts = [p for p in parts if p.get('node') not in helpers]       # (the emitters and sprites are not the model)
+    if not parts and not systems:
         raise EditError('There is nothing to draw in it (no triangles).')
     hashes = ex.get('pictures') or {}
     saved, new_pics = {}, 0
@@ -676,8 +891,78 @@ def import_back(db, glb, how='everywhere', rec_i=None, model=None, collision='sh
                 else:
                     saved[img] = name or None
             p['texture'] = saved[img]
-    raw = nifwrite.write_nif(parts, os.path.splitext(os.path.basename(model))[0], collision)
+    stem = os.path.splitext(os.path.basename(model))[0]
+    raw = nifwrite.write_nif(parts, stem, collision) if parts else None
     out = {'pictures_new': new_pics, 'shapes': len(parts)}
+    if systems:
+        import partmake
+        import partnif
+        f = partnif.read(raw) if raw else partmake.root(stem)
+        out['particles'], out['particles_changed'] = len(systems), {}
+        for s in systems:
+            keep = s.get('keep') or {}
+            if 'picture' in keep:
+                tex = keep['picture']['texture']        # (not repainted: the game's own texture still)
+            elif isinstance(s.get('picture'), dict):
+                tex = library._copy_picture(db, raw=s['picture']['raw'], name=stem + '_fx', ext=s['picture']['ext'])[0]
+                new_pics += 1
+            elif s.get('picture'):
+                tex = library._copy_picture(db, src_path=s['picture'])[0]
+                new_pics += 1
+            else:
+                tex = library._particle_dot(db)
+            partmake.add(f, s, k, (0.0, 0.0, 0.0), tex)
+            out['particles_changed'][s['object']] = partmake.changed(keep) if s.get('keep') else ['all']
+        raw = partnif.write(f)
+        out['pictures_new'] = new_pics
+    return _put_model(db, raw, model, how, rec_i, into, out)
+
+
+def fx_edit(db, rec_i, edits, how='everywhere', into=None):
+    """The sliders in Model & textures: a model's particle effects changed in place (fxedit), written where it goes
+    as a round trip's return is. Returns {'path', 'ids', 'changed'} and, for 'own', the new record."""
+    import fxedit
+    editing._require_project(db)
+    model = db.recs[int(rec_i)][5] if rec_i is not None else None
+    into_rel = (into or '').lower().replace('\\', '/')
+    rel = into_rel if how == 'own' and into_rel else 'meshes/' + (model or '').lower().replace('\\', '/')
+    raw = db.meshes.read(rel)
+    if not raw:
+        raise EditError("The model's file is missing.")
+    greys = {}
+
+    def grey(name):
+        # (a grey copy of the texture: the colour picked is then the colour seen)
+        if name in greys:
+            return greys[name]
+        path = db.meshes.texture_path(name)
+        data = db.meshes.read(path) or b'' if path else b''
+        d = _decode(data, want=1 << 16) or _png_pixels(data)
+        if not d:
+            greys[name] = None
+            return None
+        w, h, px = d
+        out = bytearray(px)
+        for i in range(0, len(out), 4):
+            v = int(round(0.299 * out[i] + 0.587 * out[i + 1] + 0.114 * out[i + 2]))
+            out[i] = out[i + 1] = out[i + 2] = v
+        stem = os.path.splitext(os.path.basename(name.replace('\\', '/')))[0]
+        greys[name] = library._copy_picture(db, raw=_png(w, h, bytes(out)), name=stem + '_grey', ext='.png')[0]
+        return greys[name]
+    try:
+        new, changed = fxedit.apply(raw, edits, grey)
+    except Exception as e:
+        import partnif
+        if isinstance(e, partnif.PartError):
+            raise EditError("This model's particles can't be changed here: %s" % e)
+        raise
+    out = {'changed': changed}
+    return _put_model(db, new, model, how, rec_i, into, out)
+
+
+def _put_model(db, raw, model, how, rec_i, into, out):
+    """A changed model written where it goes: 'everywhere' over the model in your mod's folder, 'own' as a new
+    model and a new record of rec_i, or into the own model an earlier change made. out is filled and returned."""
     into = (into or '').lower().replace('\\', '/')
     if how == 'own' and into:
         where, _l, full = _source(db, into)

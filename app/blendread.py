@@ -1,11 +1,20 @@
 """Reading Blender's own files (.blend) without Blender: the meshes of its objects, placed as in the
 scene, with their UV maps and the pictures their materials use. Blender 2.80 and newer, compressed or
 not. Modifiers are not applied, except Mirror (so half-modelled bodies come out whole)."""
+import bisect
 import math
 import os
 import struct
 
 from editing import EditError
+
+
+class _Ptr(int):
+    """A pointer read from the file, with where it was read (to look it up among its own ID's blocks)."""
+    def __new__(cls, v, near):
+        o = int.__new__(cls, v)
+        o.near = near
+        return o
 
 
 class Blend:
@@ -30,24 +39,31 @@ class Blend:
         else:                                               # BLENDER17-01v0500 (Blender 5)
             self.psize, self.e = 8, '<'
             pos, self.new_head = int(raw[7:9]), True
-        self.blocks, self.by_ptr = [], {}
+        self.blocks, self.by_ptr, self.local, owner = [], {}, {}, -1
         while pos + 8 <= len(raw):
             code = raw[pos:pos + 4]
             if self.new_head:
+                # (code, SDNA index, old pointer, length, count: 32 bytes)
                 sdna, old, ln, cnt = struct.unpack_from(self.e + 'iQqq', raw, pos + 4)
-                hs = 36
+                hs = 32
             else:
                 ln, = struct.unpack_from(self.e + 'i', raw, pos + 4)
                 old, = struct.unpack_from(self.e + ('Q' if self.psize == 8 else 'I'), raw, pos + 8)
                 sdna, cnt = struct.unpack_from(self.e + 'ii', raw, pos + 8 + self.psize)
                 hs = 16 + self.psize
             b = {'code': code, 'at': pos + hs, 'len': ln, 'sdna': sdna, 'count': cnt}
+            if code[2:] == b'\0\0':
+                owner = len(self.blocks)             # an ID (object, mesh...): its data follows it
             self.blocks.append(b)
             if old:
                 self.by_ptr[old] = b
+                # (Blender 5 numbers each ID's blocks on their own, so an address is first looked for there)
+                self.local[(owner, old)] = b
+            b['owner'] = owner
             pos += hs + ln
             if code == b'ENDB':
                 break
+        self.starts = [b['at'] for b in self.blocks]
         self._dna()
 
     def _dna(self):
@@ -56,6 +72,8 @@ class Blend:
         if not dna:
             raise EditError('This Blender file has no description of its contents.')
         p = dna['at'] + 8
+        a0 = dna['at']          # (padding counts from the block's start: Blender 5's header is 17 bytes)
+        al = lambda q: a0 + ((q - a0 + 3) & ~3)
 
         def strings(p, n):
             out = []
@@ -63,13 +81,13 @@ class Blend:
                 q = raw.index(b'\0', p)
                 out.append(raw[p:q].decode('latin-1'))
                 p = q + 1
-            return out, (p + 3) & ~3
+            return out, al(p)
         n, = struct.unpack_from(e + 'i', raw, p)
         names, p = strings(p + 4, n)
         n, = struct.unpack_from(e + 'i', raw, p + 4)
         types, p = strings(p + 8, n)
         tlen = struct.unpack_from(e + '%dh' % n, raw, p + 4)
-        p = (p + 4 + 2 * n + 3) & ~3
+        p = al(p + 4 + 2 * n)
         n, = struct.unpack_from(e + 'i', raw, p + 4)
         p += 8
         self.structs, self.struct_of = [], {}
@@ -109,8 +127,8 @@ class Blend:
         if ptr:
             fmt = 'Q' if self.psize == 8 else 'I'
             if count == 1:
-                return struct.unpack_from(e + fmt, raw, p)[0]
-            return list(struct.unpack_from(e + '%d%s' % (count, fmt), raw, p))
+                return _Ptr(struct.unpack_from(e + fmt, raw, p)[0], at)
+            return [_Ptr(v, at) for v in struct.unpack_from(e + '%d%s' % (count, fmt), raw, p)]
         if t == 'char':
             s = raw[p:p + count]
             return s.split(b'\0', 1)[0].decode('utf-8', 'replace') if count > 1 else s[0]
@@ -122,7 +140,16 @@ class Blend:
         return vals[0] if count == 1 else list(vals)
 
     def block(self, ptr):
-        return self.by_ptr.get(ptr) if ptr else None
+        if not ptr:
+            return None
+        near = getattr(ptr, 'near', None)
+        if near is not None:
+            k = bisect.bisect_right(self.starts, near) - 1
+            if k >= 0:
+                b = self.local.get((self.blocks[k]['owner'], int(ptr)))
+                if b:
+                    return b
+        return self.by_ptr.get(ptr)
 
     def name_of(self, at):
         return self.get('ID', at, 'name', '')[2:]
@@ -166,6 +193,31 @@ CD_MVERT, CD_MLOOPUV, CD_MPOLY, CD_MLOOP = 0, 16, 25, 26
 CD_PROP_INT32, CD_PROP_FLOAT2, CD_PROP_FLOAT3 = 11, 49, 48
 
 
+# Blender 5's attribute kinds, as the CustomData kinds the reading below knows
+_ATTR_KIND = {3: CD_PROP_INT32, 6: CD_PROP_FLOAT2, 7: CD_PROP_FLOAT3}
+
+
+def _stored(bl, st):
+    """The attributes in a Blender 5 AttributeStorage, as layers: {'type', 'name', 'data', 'active', 'domain'}.
+    Only those kept as whole arrays (one value for every item)."""
+    out = []
+    b = bl.block(bl.get('AttributeStorage', st, 'dna_attributes'))
+    if not b:
+        return out
+    sz = bl.size_of('Attribute')
+    for i in range(bl.get('AttributeStorage', st, 'dna_attributes_num') or 0):
+        a = b['at'] + i * sz
+        nb = bl.block(bl.get('Attribute', a, 'name'))
+        db = bl.block(bl.get('Attribute', a, 'data'))
+        kind = _ATTR_KIND.get(bl.get('Attribute', a, 'data_type'))
+        if not nb or not db or kind is None or bl.get('Attribute', a, 'storage_type') != 0:
+            continue
+        name = bl.raw[nb['at']:nb['at'] + nb['len']].split(bytes(1), 1)[0].decode('utf-8', 'replace')
+        out.append({'type': kind, 'name': name, 'data': bl.get('AttributeArray', db['at'], 'data'), 'active': 0,
+                    'domain': bl.get('Attribute', a, 'domain')})
+    return out
+
+
 def _mesh(bl, me_at):
     """Vertices, faces (lists of corner indices), each corner's vertex and UV, each face's material slot."""
     nv = bl.get('Mesh', me_at, 'totvert') or 0
@@ -179,6 +231,10 @@ def _mesh(bl, me_at):
     pd = bl.get('Mesh', me_at, 'pdata') or bl.get('Mesh', me_at, 'face_data')
     ld = bl.get('Mesh', me_at, 'ldata') or bl.get('Mesh', me_at, 'corner_data')
     vl, pl, ll = bl.layers(vd), bl.layers(pd), bl.layers(ld)
+    if 'attribute_storage' in bl.fields('Mesh'):
+        # Blender 5 keeps the attributes in a list of their own, by domain (point, edge, face, corner)
+        for a in _stored(bl, bl.get('Mesh', me_at, 'attribute_storage')):
+            [vl, None, pl, ll][a['domain']].append(a) if a['domain'] in (0, 2, 3) else None
     pos = None
     for L in vl:
         if L['name'] == 'position':
@@ -369,14 +425,18 @@ def objects(path):
 
 def read_blend(path):
     """Parts of a Blender file: each mesh object's faces as the scene places them, in metres with Y up
-    (like the other readers), with the object's name on each part."""
+    (like the other readers), with the object's name on each part. A particle system's helpers (an emitter
+    that isn't shown in a render, the object each particle is drawn as) are not parts: see particles()."""
     bl = Blend(open(path, 'rb').read())
     folder = os.path.dirname(os.path.abspath(path))
     parts, cache = [], {}
+    helpers = _particle_helpers(bl)
     for b in bl.blocks:
         if b['code'][:2] != b'OB' or bl.get('Object', b['at'], 'type') != 1:
             continue
         ob = b['at']
+        if ob in helpers:
+            continue
         meb = bl.block(bl.get('Object', ob, 'data'))
         if not meb or meb['code'][:2] != b'ME':
             continue
@@ -431,6 +491,263 @@ def read_blend(path):
                     parts.append({'name': name, 'object': name, 'verts': verts, 'uvs': uvs if m['uvs'] else None,
                                   'normals': None, 'tris': tris, 'color': _colour(bl, mat) if mat else (1, 1, 1),
                                   'picture': _picture(bl, mat, folder) if mat else None})
-    if not parts:
+    if not parts and not helpers:
         raise EditError('There are no meshes in this Blender file to bring in.')
     return parts
+
+
+# ------------------------------------------------------------------ particle systems (Blender's classic ones)
+PART_FROM_VERT, PART_FROM_FACE, PART_FROM_VOLU = 0, 1, 2
+PART_DRAW_OB = 7
+PFIELD_WIND = 4
+OB_DUPLI_FLAG_RENDER = 2
+
+
+def _systems(bl):
+    """(object position, ParticleSystem position, ParticleSettings position) for each emitter particle system."""
+    out = []
+    if 'particlesystem' not in bl.fields('Object'):
+        return out
+    for b in bl.blocks:
+        if b['code'][:2] != b'OB':
+            continue
+        for psy in bl.listbase(bl.get('Object', b['at'], 'particlesystem'), 'ParticleSystem'):
+            pa = bl.block(bl.get('ParticleSystem', psy, 'part'))
+            if pa and (bl.get('ParticleSettings', pa['at'], 'type') or 0) == 0:     # an emitter (not hair)
+                out.append((b['at'], psy, pa['at']))
+    return out
+
+
+def id_props(bl, id_at):
+    """The names of an ID's own custom properties (its top-level ID property group)."""
+    f = bl.fields('ID')
+    if 'properties' not in f:
+        return []
+    g = bl.block(bl.get('ID', id_at, 'properties'))
+    if not g:
+        return []
+    names = []
+    for c in bl.listbase(bl.get('IDPropertyData', bl.get('IDProperty', g['at'], 'data'), 'group'), 'IDProperty'):
+        names.append(bl.get('IDProperty', c, 'name', ''))
+    return names
+
+
+def _particle_helpers(bl):
+    """Objects that only serve particles: emitters not drawn in a render, what particles are drawn as, and the meshes
+    the UnitParticles add-on makes of its particles (marked unitparticles_output_of)."""
+    out = set()
+    for b in bl.blocks:
+        if b['code'][:2] == b'OB' and 'unitparticles_output_of' in id_props(bl, bl.get('Object', b['at'], 'id')):
+            out.add(b['at'])
+    for ob, _psy, pa in _systems(bl):
+        if not (bl.get('Object', ob, 'duplicator_visibility_flag') or 0) & OB_DUPLI_FLAG_RENDER:
+            out.add(ob)
+        inst = bl.block(bl.get('ParticleSettings', pa, 'dup_ob'))
+        if inst and (bl.get('ParticleSettings', pa, 'ren_as') or 0) == PART_DRAW_OB:
+            out.add(inst['at'])
+    return out
+
+
+def _srgb(c):
+    c = max(0.0, min(1.0, float(c)))
+    return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+
+
+def _nodes(bl, mat_at):
+    tree = bl.block(bl.get('Material', mat_at, 'nodetree')) if mat_at else None
+    return [(bl.get('bNode', n, 'idname', ''), n) for n in bl.listbase(bl.get('bNodeTree', tree['at'], 'nodes'), 'bNode')] if tree else []
+
+
+def _ramp(bl, mat_at):
+    """A Color Ramp in the material (its colours over a particle's life): [(pos, r, g, b, a)], sRGB."""
+    for idname, n in _nodes(bl, mat_at):
+        if idname != 'ShaderNodeValToRGB':
+            continue
+        cb = bl.block(bl.get('bNode', n, 'storage'))
+        if not cb:
+            continue
+        tot = max(0, min(32, bl.get('ColorBand', cb['at'], 'tot') or 0))
+        at0, sz = bl.get('ColorBand', cb['at'], 'data'), bl.size_of('CBData')
+        keys = []
+        for i in range(tot):
+            d = at0 + i * sz
+            keys.append((max(0.0, min(1.0, bl.get('CBData', d, 'pos'))), _srgb(bl.get('CBData', d, 'r')),
+                         _srgb(bl.get('CBData', d, 'g')), _srgb(bl.get('CBData', d, 'b')),
+                         max(0.0, min(1.0, bl.get('CBData', d, 'a')))))
+        keys.sort()
+        if keys:
+            if keys[0][0] > 0:
+                keys.insert(0, (0.0,) + keys[0][1:])
+            if keys[-1][0] < 1:
+                keys.append((1.0,) + keys[-1][1:])
+            return keys
+    return []
+
+
+def _axes(M):
+    """A 4x4 matrix's rotation (columns made unit length) and its scale on each axis."""
+    sc = [math.sqrt(sum(M[r][c] ** 2 for r in range(3))) or 1.0 for c in range(3)]
+    return [[M[r][c] / sc[c] for c in range(3)] for r in range(3)], sc
+
+
+def particles(path):
+    """The file's emitter particle systems, in Blender's own space (metres, Z up), each as the game's single
+    cone emitter: {'name', 'object', 'at' (the emitter's middle), 'R' (its turn), 'box' (its size on its own
+    axes), 'speed', 'speed_random', 'v_dir', 'v_angle', 'h_dir', 'h_angle' (radians, on the emitter's axes),
+    'rate' (a second), 'duration', 'life', 'life_random' (seconds), 'size' (a particle's radius), 'accel'
+    (gravity and winds together, metres a second a second), 'colors' [(t, r, g, b, a)], 'color', 'glow',
+    'picture', 'left' [what did not come along]}."""
+    bl = Blend(open(path, 'rb').read())
+    folder = os.path.dirname(os.path.abspath(path))
+    out = []
+    systems = _systems(bl)
+    if not systems:
+        return out
+    sc = next((b['at'] for b in bl.blocks if b['code'][:2] == b'SC'), None)
+    fps, gravity = 24.0, [0.0, 0.0, -9.81]
+    if sc is not None:
+        r = bl.get('Scene', sc, 'r')
+        fps = (bl.get('RenderData', r, 'frs_sec') or 24) / (bl.get('RenderData', r, 'frs_sec_base') or 1.0)
+        ph = bl.get('Scene', sc, 'physics_settings')
+        gravity = bl.get('PhysicsSettings', ph, 'gravity') if (bl.get('PhysicsSettings', ph, 'flag') or 0) & 1 else [0.0, 0.0, 0.0]
+    winds = []
+    for b in bl.blocks:
+        if b['code'][:2] != b'OB':
+            continue
+        pd = bl.block(bl.get('Object', b['at'], 'pd'))
+        if pd and bl.get('PartDeflect', pd['at'], 'forcefield') == PFIELD_WIND and bl.get('PartDeflect', pd['at'], 'f_strength'):
+            R, _s = _axes(_world(bl, b['at']))
+            winds.append(([R[0][2], R[1][2], R[2][2]], bl.get('PartDeflect', pd['at'], 'f_strength'), b['at']))
+    for ob, psy, pa in systems:
+        g = lambda k, d=0.0: bl.get('ParticleSettings', pa, k, d)
+        left = []
+        M = _world(bl, ob)
+        R, scale = _axes(M)
+        meb = bl.block(bl.get('Object', ob, 'data'))
+        m = _mesh(bl, meb['at']) if meb and meb['code'][:2] == b'ME' else None
+        verts = m['verts'] if m else [(0.0, 0.0, 0.0)]
+        lo = [min(v[k] for v in verts) for k in range(3)]
+        hi = [max(v[k] for v in verts) for k in range(3)]
+        mid = [(lo[k] + hi[k]) / 2 for k in range(3)]
+        at = [sum(M[r][k] * (mid + [1.0])[k] for k in range(4)) for r in range(3)]
+        box = [(hi[k] - lo[k]) * scale[k] for k in range(3)]
+        # the way they leave: the faces' mean normal (or the object's Z), plus the object-aligned push
+        normal, spread_n = [0.0, 0.0, 1.0], 0.0
+        if m and m['faces'] and g('from', 1) in (PART_FROM_FACE, PART_FROM_VOLU, PART_FROM_VERT):
+            ns = []
+            for start, count in m['faces']:
+                pts = [verts[m['corner_vert'][c]] for c in range(start, start + count) if c < len(m['corner_vert'])]
+                if len(pts) < 3:
+                    continue
+                nx = ny = nz = 0.0
+                for i in range(len(pts)):            # Newell's way: works for any polygon
+                    a, b2 = pts[i], pts[(i + 1) % len(pts)]
+                    nx += (a[1] - b2[1]) * (a[2] + b2[2])
+                    ny += (a[2] - b2[2]) * (a[0] + b2[0])
+                    nz += (a[0] - b2[0]) * (a[1] + b2[1])
+                ns.append((nx, ny, nz))
+            tot = [sum(n[k] for n in ns) for k in range(3)]
+            area = sum(math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2) for n in ns)
+            L = math.sqrt(sum(t * t for t in tot))
+            if area > 0 and L / area > 0.3:
+                normal = [t / L for t in tot]
+                cos = [sum(n[k] * normal[k] for k in range(3)) / (math.sqrt(sum(x * x for x in n)) or 1) for n in ns if any(n)]
+                spread_n = math.acos(max(-1.0, min(1.0, min(cos)))) if cos else 0.0
+            elif area > 0:
+                spread_n = math.pi                  # (a ball or a closed shape: every way)
+        nf, ov = g('normfac'), g('ob_vel') or [0.0, 0.0, 0.0]
+        vel = [normal[k] * nf + ov[k] for k in range(3)]
+        speed = math.sqrt(sum(v * v for v in vel))
+        rnd = abs(g('randfac'))
+        if speed > 1e-6:
+            d = [v / speed for v in vel]
+            spread = spread_n * abs(nf) / (abs(nf) + math.sqrt(sum(v * v for v in ov)) or 1)
+            spread = min(math.pi, spread + math.atan2(rnd * 0.6, speed))
+        else:
+            d, spread, speed = [0.0, 0.0, 1.0], math.pi, rnd / 2
+        v_dir = math.acos(max(-1.0, min(1.0, d[2])))
+        h_dir = math.atan2(d[1], d[0]) if v_dir > 1e-3 else 0.0
+        h_angle = math.pi if v_dir < 1e-3 or spread >= v_dir else min(math.pi, spread / max(math.sin(v_dir), 1e-3))
+        if g('tanfac'):
+            left.append('tangent speed')
+        if g('obfac'):
+            left.append('speed from the moving object')
+        # when and how long
+        sta, end = g('sta', 1.0), g('end', 200.0)
+        duration = max(1.0, end - sta) / fps
+        total = max(1, bl.get('ParticleSettings', pa, 'totpart') or 1)
+        life_f, rl = max(1.0, g('lifetime', 50.0)), max(0.0, min(1.0, g('randlife')))
+        size = g('size', 0.05)
+        inst = bl.block(bl.get('ParticleSettings', pa, 'dup_ob'))
+        if inst and (g('ren_as', 0) or 0) == PART_DRAW_OB:
+            ib = bl.block(bl.get('Object', inst['at'], 'data'))
+            im = _mesh(bl, ib['at']) if ib and ib['code'][:2] == b'ME' else None
+            if im:
+                _R, isc = _axes(_world(bl, inst['at']))
+                size *= max((max(v[k] for v in im['verts']) - min(v[k] for v in im['verts'])) * isc[k] for k in range(3)) / 2
+        if g('randsize'):
+            size *= 1 - g('randsize') / 2          # (the game has one size: the middle one)
+        if g('avefac'):
+            left.append('spin')
+        # pulls: the scene's gravity by the system's gravity weight, and each wind by its weight
+        ew = bl.block(bl.get('ParticleSettings', pa, 'effector_weights'))
+        gw = bl.get('EffectorWeights', ew['at'], 'global_gravity', 1.0) if ew else 1.0
+        ww = bl.get('EffectorWeights', ew['at'], 'weight') if ew else None
+        wind_w = ww[PFIELD_WIND] if isinstance(ww, list) and len(ww) > PFIELD_WIND else 1.0
+        mass = max(1e-3, g('mass', 1.0))
+        # (a system given a collection of its own forces feels only those: a game effect sent to Blender has one)
+        mine = winds
+        grp = bl.block(bl.get('EffectorWeights', ew['at'], 'group')) if ew else None
+        if grp:
+            obs = {bl.block(bl.get('CollectionObject', co, 'ob'))['at'] for co in
+                   bl.listbase(bl.get('Collection', grp['at'], 'gobject'), 'CollectionObject')
+                   if bl.block(bl.get('CollectionObject', co, 'ob'))}
+            mine = [w for w in winds if w[2] in obs]
+        accel = [gravity[k] * gw + sum(w[0][k] * w[1] for w in mine) * wind_w / mass for k in range(3)]
+        # the look: the material on the particles' slot
+        slots = []
+        n_ob = bl.get('Object', ob, 'totcol') or 0
+        ob_slots = bl.array(bl.get('Object', ob, 'mat'), 'Q' if bl.psize == 8 else 'I', n_ob) or []
+        n_me = bl.get('Mesh', meb['at'], 'totcol') or 0 if meb and meb['code'][:2] == b'ME' else 0
+        me_slots = bl.array(bl.get('Mesh', meb['at'], 'mat'), 'Q' if bl.psize == 8 else 'I', n_me) or [] if n_me else []
+        matbits = bl.array(bl.get('Object', ob, 'matbits'), 'b', n_ob) or []
+        for i in range(max(len(ob_slots), len(me_slots))):
+            ptr = ob_slots[i] if i < len(matbits) and matbits[i] and i < len(ob_slots) else (me_slots[i] if i < len(me_slots) else 0)
+            mb = bl.block(ptr)
+            slots.append(mb['at'] if mb else None)
+        omat = (g('omat', 1) or 1) - 1
+        mat = slots[omat] if 0 <= omat < len(slots) else None
+        if mat is None and inst:
+            ib = bl.block(bl.get('Object', inst['at'], 'data'))
+            n = bl.get('Mesh', ib['at'], 'totcol') or 0 if ib and ib['code'][:2] == b'ME' else 0
+            ims = bl.array(bl.get('Mesh', ib['at'], 'mat'), 'Q' if bl.psize == 8 else 'I', n) or [] if n else []
+            mb = bl.block(ims[0]) if ims else None
+            mat = mb['at'] if mb else None
+        kinds = {k for k, _n in _nodes(bl, mat)}
+        col = [1.0, 1.0, 1.0, 1.0]
+        if mat is not None:
+            c = _colour(bl, mat)
+            a = bl.get('Material', mat, 'a', 1.0)
+            col = [_srgb(c[0]), _srgb(c[1]), _srgb(c[2]), max(0.0, min(1.0, a if a is not None else 1.0))]
+        out.append({'name': bl.get('ParticleSystem', psy, 'name', '') or 'Particles', 'object': bl.name_of(ob),
+                    'at': at, 'R': R, 'box': box, 'speed': speed, 'speed_random': rnd,
+                    'v_dir': v_dir, 'v_angle': spread, 'h_dir': h_dir, 'h_angle': h_angle,
+                    'rate': total / duration, 'duration': duration,
+                    'life': life_f * (1 - rl) / fps, 'life_random': life_f * rl / fps, 'size': size, 'accel': accel,
+                    'colors': _ramp(bl, mat), 'color': col,
+                    'glow': bool(kinds & {'ShaderNodeEmission', 'ShaderNodeAddShader'}),
+                    'picture': _picture(bl, mat, folder) if mat is not None else None, 'left': left})
+        pic = out[-1]['picture']
+        out[-1]['picture_key'] = _key(pic['raw'] if isinstance(pic, dict) else open(pic, 'rb').read() if pic else b'')
+    return out
+
+
+def _key(raw):
+    import hashlib
+    return hashlib.sha1(raw).hexdigest() if raw else ''
+
+
+def helper_names(path):
+    """The names of a file's particle helpers (blendread.read_blend leaves them out; so does the way back)."""
+    bl = Blend(open(path, 'rb').read())
+    return {bl.name_of(ob) for ob in _particle_helpers(bl)}

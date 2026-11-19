@@ -645,8 +645,9 @@ function v3Place(g, r){
 const V3_COLORS = {NPC_: 0x7fb0e0, CREA: 0xd08a5a, LEVC: 0xd08a5a, LIGH: 0xffd27a, DOOR: 0xb08bd6};
 function v3Build(r){
   const T = THREE, g = new T.Group(), m = V3.models[r.id.toLowerCase()];
-  if (m && m.parts.length){
+  if (m && (m.parts.length || (m.fx && m.fx.length))){
     for (const pt of m.parts) g.add(new T.Mesh(pt.geo, pt.mat));
+    if (m.fx && typeof fxAttach === 'function') fxAttach(g, m.fx, false, r.type === 'LIGH');
     return g;
   }
   const col = V3_COLORS[r.type] || 0xb0a090;
@@ -679,7 +680,7 @@ function v3Fetch(ids){
     const job = (async () => {
       let res;
       try { res = await post('/api/models', {ids: part}); } catch (e){ part.forEach(i => V3.asked.delete(i.toLowerCase())); return; }
-      const T = THREE;
+      const T = THREE, fx = res['$fx'] || {};
       for (const id of part){
         const shapes = res[id], parts = [];
         for (const s of shapes || []){
@@ -689,7 +690,8 @@ function v3Fetch(ids){
           geo.setIndex(s.i); geo.computeVertexNormals(); geo.computeBoundingBox(); geo.computeBoundingSphere();
           parts.push({geo, mat: v3Material(s.tex, s.alpha, s.double)});
         }
-        V3.models[id.toLowerCase()] = {parts};
+        // (its flames, smoke and sparks: particles3d.js)
+        V3.models[id.toLowerCase()] = {parts, fx: fx[id] || null};
       }
       v3Refresh();
     })();
@@ -3234,6 +3236,7 @@ function v3Loop(){
     V3.camera.position.copy(V3.pos);
     V3.camera.lookAt(V3.pos.clone().add(d));
     if (typeof phTick === 'function') phTick(dt);          // (physics on: a step of the world; physics.js)
+    if (typeof fxTick === 'function') fxTick(dt);          // (flames, smoke and sparks; particles3d.js)
     // (outdoors the sea at 0; an interior with water at its own height, the one being edited in the Sky panel as
     // you type: interiors drew no water at all, and a flooded cave's level was set blind, the user 2026-10-30)
     v3WaterSync();

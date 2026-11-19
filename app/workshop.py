@@ -1795,10 +1795,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'error': 'Still loading, try again in a moment.'}, 503)
             if u.path == '/api/models':
                 # many models at once for the 3D world view: id -> shapes (or None)
-                out = {}
+                out, fx = {}, {}
                 for rid in body.get('ids', [])[:200]:
                     m = model_for({'id': rid})
                     out[rid] = m.get('shapes')
+                    # (its flames, smoke and sparks, for the view to run: partnif; people and creatures not yet)
+                    if m.get('model') and m['model'] != 'body':
+                        ri = db.resolve_id(rid)
+                        if ri is not None and db.recs[ri][0] not in ('NPC_', 'CREA'):
+                            e = fx_for(m['model'])
+                            if e:
+                                fx[rid] = e
+                if fx:
+                    out['$fx'] = fx
                 return self._json(out)
             if u.path == '/api/ai/key':
                 s = load_settings()
@@ -2028,6 +2037,7 @@ class Handler(BaseHTTPRequestHandler):
                     import assets
                     r = assets.give_back(db, body.get('path'))
                     _model_cache.pop((body.get('path') or '').lower().replace('\\', '/'), None)
+                    _fx_cache.pop((body.get('path') or '').lower().replace('\\', '/'), None)
                     return self._json(r)
                 if u.path == '/api/assets/export':
                     # a model out to Blender as a .glb (with blender: true, opened there too)
@@ -2047,10 +2057,18 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({'blender': assets.open_in_blender(f)})
                     osplat.show_in_folder(f)
                     return self._json({'ok': True})
+                if u.path == '/api/assets/fx':
+                    # the particle sliders in Model & textures (fxedit)
+                    import assets
+                    r = assets.fx_edit(db, body.get('i'), body.get('edits') or [], body.get('how') or 'everywhere', body.get('into'))
+                    _model_cache.pop(r['path'], None)
+                    _fx_cache.pop(r['path'], None)
+                    return self._json(r)
                 if u.path == '/api/assets/import':
                     import assets
                     r = assets.import_back(db, body.get('file'), body.get('how') or 'everywhere', body.get('i'), into=body.get('into'))
                     _model_cache.pop(r['path'], None)
+                    _fx_cache.pop(r['path'], None)
                     return self._json(r)
                 if u.path in ('/api/anim/retime', '/api/anim/adopt', '/api/anim/personadopt', '/api/anim/bringkf'):
                     import nifanim
@@ -2095,6 +2113,7 @@ class Handler(BaseHTTPRequestHandler):
                     import assets
                     r = assets.fix_texture(db, body.get('i'), body.get('name') or '', body.get('to') or '', body.get('how') or 'everywhere')
                     _model_cache.pop(r.get('path') or '', None)
+                    _fx_cache.pop(r.get('path') or '', None)
                     return self._json(r)
                 if u.path == '/api/region/save':
                     import regions
@@ -2465,7 +2484,7 @@ class Handler(BaseHTTPRequestHandler):
                                                      body.get('up') or 'y', body.get('size'), body.get('kind') or 'static',
                                                      body.get('collision') or 'shape', body.get('object'),
                                                      {'light': body.get('light'), 'door_sound': body.get('door_sound'),
-                                                      'reach': body.get('reach')})
+                                                      'reach': body.get('reach'), 'particles': body.get('particles')})
                         # (sorted as it comes in: "Armour › Helmet", or a group of your own)
                         if body.get('cat') or body.get('sub'):
                             library.set_group([a['id'] for a in added], body.get('cat'), body.get('sub'))
@@ -3113,7 +3132,9 @@ def model_for(q):
         shapes = mesh_from_nif(raw) if raw else None
         for s in shapes or []:
             s['tex'] = db.meshes.texture_path(s['tex'])
-        return {'model': model, 'shapes': shapes} if shapes else {'error': 'This model could not be read.', 'model': model}
+        fx = fx_for(model) if raw else None
+        # (an effect alone, made from Blender's particles, has no shapes: its particles are what is drawn)
+        return {'model': model, 'shapes': shapes or [], 'fx': fx} if shapes or fx else {'error': 'This model could not be read.', 'model': model}
     ri = int(q['i']) if q.get('i') else db.resolve_id(q.get('id', ''))
     if ri is None:
         return {'error': 'Unknown object'}
@@ -3162,9 +3183,47 @@ def model_for(q):
         if len(_model_cache) > 3000:
             _model_cache.pop(next(iter(_model_cache)))
     shapes = _model_cache[path]
-    if not shapes:
+    fx = fx_for(model)
+    if not shapes and not fx:
         return {'error': 'This model could not be read.', 'model': model}
-    return {'model': model, 'shapes': shapes}
+    return {'model': model, 'shapes': shapes or [], 'fx': fx}
+
+
+_fx_cache = {}
+
+
+def _fx_round(v):
+    if isinstance(v, float):
+        return round(v, 4)
+    if isinstance(v, (list, tuple)):
+        return [_fx_round(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _fx_round(x) for k, x in v.items()}
+    return v
+
+
+def fx_for(model):
+    """A model's particle emitters for the 3D view (partnif.effects), their textures found; [] for none."""
+    path = 'meshes/' + model.lower().replace('\\', '/')
+    if path not in _fx_cache:
+        import struct
+        import partnif
+        raw = db.meshes.read(path)
+        got = []
+        if raw and any(struct.pack('<I', len(k)) + k in raw for k in partnif.EMITTERS):
+            try:
+                got = partnif.effects(raw)
+            except partnif.PartError as e:
+                print('particles: %s: %s' % (model, e))
+                got = []
+            for e in got:
+                e['tex'] = db.meshes.texture_path(e['tex']) if e['tex'] else ''
+                e['words'] = partnif.say(e)
+            got = _fx_round(got)
+        _fx_cache[path] = got
+        if len(_fx_cache) > 3000:
+            _fx_cache.pop(next(iter(_fx_cache)))
+    return _fx_cache[path]
 
 
 def changes_list():

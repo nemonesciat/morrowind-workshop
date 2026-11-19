@@ -9,7 +9,7 @@ it**, or **Choose files…** / **Choose a folder…**:
 
 | Kind | What it takes |
 |---|---|
-| 📦 Models | From Blender and the like (.blend, .obj, .fbx, .dae, .gltf, .glb), turned into game models; .nif as they are. Drop a model together with its pictures, or the folder they're in. |
+| 📦 Models | From Blender and the like (.blend, .obj, .fbx, .dae, .gltf, .glb), turned into game models; .nif as they are. Drop a model together with its pictures, or the folder they're in. A .blend's particle effects come along (see below). |
 | 🎨 Pictures | .png, .jpg, .tga, .dds, .bmp: on your models, or to retexture anything. |
 | 🔊 Sounds | .wav, .mp3, .ogg, .flac. |
 
@@ -23,6 +23,24 @@ along when shared.
 - A sound can be **put in the world** (it plays over and over where it stands, unseen) or made **a sound your
   scripts can play**.
 - Taking something off the list leaves its file, since mods may use it.
+
+### Particle effects from Blender
+
+Flames, smoke, sparks or a fountain made in Blender come in as the game's own kind of particle effect, ready to put
+on a light, a static or anything placed.
+
+- **Blender's own particles** (Properties › Particles): the emitter's size and turn, the count over its frames, the
+  lifetime, the push and its randomness, the size, gravity and winds, and the material's picture. A **Color Ramp**
+  driven by the particle's age gives the colours over its life; an **Emission** shader makes it glow.
+- **UnitParticles** (a free add-on that copies Unity's particle system): the cone or other shape, rate, lifetime,
+  speed, size, gravity and force, colour and size over lifetime, and an additive or alpha material. The Workshop
+  reads these through Blender, with the add-on installed there, so opening the file takes a little while.
+- **Add a model** shows **✦ With its particles**: untick it to leave them out. A model and its particles become one
+  model; particles alone become an effect of their own (**✦ Particles** on the card).
+- What the game has no place for (noise, trails, collisions, sub-emitters, spin…) is left behind, and the window
+  says which.
+
+The effects are drawn in the 3D view and in the Library's 3D look, as the game draws them.
 
 ## Packs
 
@@ -40,10 +58,15 @@ textures with pictures.
 | ✎ Change everywhere | A copy of the game's texture goes into your mod's own folder under the same name, so the game draws your copy wherever that texture is used, on other objects too. |
 | ✎ For this one only… | A copy under a new name, and a new record of the object drawn with it. |
 | ↺ The game's own again | Takes your copy back out. |
-| ⬡ Open in Blender | The model out to Blender; when you save it there, it comes back. |
+| ⬡ Open in Blender | The model out to Blender; when you save it there, it comes back. Its particle effects go too, as Blender particle systems, and whatever you leave alone in them comes back exactly as the game had it. |
 
 The texture opens in your picture editor, and while the window is open the 3D view draws it again each time you
 save.
+
+**✨ Particles** (in the same window, for a model with particle effects): **Amount**, **Life**, **Speed**, **Size**
+and **Pull** sliders, and a **Colour**, for all of its effects or one, seen at once in a preview of its own. A colour
+keeps each effect as bright as it was, in the colour picked: an orange flame can turn blue. Save it **everywhere**
+(every object drawn with that model) or **for this one only** (a new model and object).
 
 **🎨 Retexture** (Selected panel, or right-click) makes a new object like the one selected, with your own pictures.
 

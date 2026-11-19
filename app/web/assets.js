@@ -29,7 +29,7 @@ async function asShow(ri, label){
   try {
     const [d, ed, bl] = await Promise.all([api('/api/assets/record?i=' + ri), api('/api/assets/editors').catch(() => ({found: [], chosen: ''})),
       api('/api/assets/blenderhere').catch(() => ({blender: null}))]);
-    AS.data = d; AS.editors = ed; AS.blender = bl.blender; AS.glb = null; AS.found = {};
+    AS.data = d; AS.editors = ed; AS.blender = bl.blender; AS.glb = null; AS.found = {}; AS.fxe = {}; AS.fxInto = null;
     asDraw();
   } catch (e){ const b = $('#as-body'); if (b) b.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
 }
@@ -83,6 +83,7 @@ function asDraw(){
       ${ed.chosen && !ed.found.some(f => f.exe === ed.chosen) ? `<option value="${esc(ed.chosen)}" selected>${esc(ed.chosen)}</option>` : ''}
       <option value="?">Another program…</option></select></div>
     <div class="as-sub" style="margin-top:4px">Each save shows in the 3D view while this window is open. GIMP, Paint.NET and Photoshop (DDS plug-in) open .dds files.</div>`;
+  asFxBind();
   const sel = $('#as-editor');
   if (sel) sel.onchange = async () => {
     let exe = sel.value;
@@ -113,8 +114,87 @@ function asModelHtml(d){
       <button class="btn sm" data-as="back" data-how="own" title="As a new model and a new record of this object: nothing else changes">For this one only</button>
       <button class="btn sm" data-as="backno">Not now</button></div>`;
   }
+  state += asFxHtml(d);
   const anim = d.animated && typeof anShow === 'function' ? `<button class="btn sm" data-as="anim" title="Its animations played here, and its text keys (the groups and their sounds) to change">🎞 Animation & text keys…</button>` : '';
   return `<div class="as-btns" style="margin-top:10px">${out}${anim}${mine ? `<button class="btn sm" data-as="giveback-model" title="Take your copy of the model out of the mod (to the ${osw('bin')}); the game draws its own again">↺ The game's own model again</button>` : ''}</div>${state}`;
+}
+
+// ----- the particles' sliders: small changes without Blender (fxedit.py), seen at once in a preview of their own
+const AS_FX = [['rate', 'Amount', 'How many a second'], ['life', 'Life', 'How long each one lasts'], ['speed', 'Speed', 'How fast they leave'],
+  ['size', 'Size', 'How big each one is'], ['pull', 'Pull', 'How hard gravity or wind pulls them']];
+const asFxNone = () => ({rate: 1, life: 1, speed: 1, size: 1, pull: 1, colour: null});
+function asFxHtml(d){
+  if (!(d.has || {}).particles) return '';
+  return `<div class="as-fx" style="margin-top:10px;border-top:1px solid var(--line, #333);padding-top:8px">
+    <div style="display:flex;gap:8px;align-items:center"><b>✨ Particles</b><select class="inp" id="as-fxn" style="width:auto;max-width:60%" title="Which effect the sliders change"><option value="-1">All</option></select></div>
+    <div style="display:flex;gap:10px;margin-top:6px;align-items:flex-start">
+      <div class="mv" id="as-fxview" style="width:200px;height:200px;flex:none"></div>
+      <div style="display:flex;flex-direction:column;gap:4px;flex:1">
+        ${AS_FX.map(([k, l, t]) => `<label class="msg" title="${t}" style="display:flex;gap:6px;align-items:center"><span style="width:56px">${l}</span>
+          <input type="range" min="-2" max="2" step="0.05" value="0" data-fx="${k}" style="flex:1"><span data-fxv="${k}" style="width:40px">×1</span></label>`).join('')}
+        <label class="msg" title="Each colour keeps its brightness in the colour picked; the texture turns grey under it" style="display:flex;gap:6px;align-items:center">
+          <input type="checkbox" id="as-fxc"><span style="width:42px">Colour</span><input type="color" id="as-fxcol" value="#3f7fff"></label>
+      </div></div>
+    <div class="as-btns" style="margin-top:6px"><button class="btn sm primary" data-as="fxsave" data-how="everywhere" title="Over the model, in your mod's folder: every object drawn with it changes">Save everywhere</button>
+      <button class="btn sm" data-as="fxsave" data-how="own" title="As a new model and a new record of this object: nothing else changes">For this one only</button>
+      <button class="btn sm" data-as="fxreset" title="The sliders back to how the model is">↺</button></div></div>`;
+}
+
+// (an effect's own changes over the ones for all of them)
+function asFxFor(i){
+  const a = (AS.fxe || {})[-1] || asFxNone(), b = (AS.fxe || {})[i] || asFxNone();
+  return {rate: a.rate * b.rate, life: a.life * b.life, speed: a.speed * b.speed, size: a.size * b.size, pull: a.pull * b.pull,
+          colour: b.colour || a.colour};
+}
+
+async function asFxBind(){
+  const view = $('#as-fxview'); if (!view) return;
+  AS.fxe = AS.fxe || {};
+  await showModel(view, {i: AS.ri}, 'asfx');
+  const list = view._fx || [], sel = $('#as-fxn'); if (!sel) return;
+  sel.innerHTML = `<option value="-1">All ${list.length}</option>` + list.map((s, i) => `<option value="${i}">${i + 1}: ${esc(s.e.words || 'an effect')}</option>`).join('');
+  if (list.length === 1) sel.value = '0';
+  const key = () => +sel.value;
+  const show = () => {
+    const t = AS.fxe[key()] || asFxNone();
+    document.querySelectorAll('[data-fx]').forEach(r => { r.value = Math.log2(t[r.dataset.fx]); });
+    document.querySelectorAll('[data-fxv]').forEach(v => { v.textContent = '×' + (+t[v.dataset.fxv].toFixed(2)); });
+    $('#as-fxc').checked = !!t.colour;
+    if (t.colour) $('#as-fxcol').value = '#' + t.colour.map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+  };
+  const apply = () => list.forEach((s, i) => fxTweak(s, asFxFor(i)));
+  const change = () => {
+    const t = AS.fxe[key()] = AS.fxe[key()] || asFxNone();
+    document.querySelectorAll('[data-fx]').forEach(r => { t[r.dataset.fx] = Math.pow(2, +r.value); });
+    const hex = $('#as-fxcol').value;
+    t.colour = $('#as-fxc').checked ? [1, 3, 5].map(j => parseInt(hex.slice(j, j + 2), 16) / 255) : null;
+    show(); apply();
+  };
+  document.querySelectorAll('[data-fx]').forEach(r => r.oninput = change);
+  $('#as-fxc').onchange = change;
+  $('#as-fxcol').oninput = () => { $('#as-fxc').checked = true; change(); };
+  sel.onchange = show;
+  show(); apply();
+  AS.fxList = list;
+}
+
+async function asFxSave(how){
+  const list = AS.fxList || [];
+  const one = t => t.rate !== 1 || t.life !== 1 || t.speed !== 1 || t.size !== 1 || t.pull !== 1 || t.colour;
+  const edits = list.map((_s, i) => Object.assign({n: i}, asFxFor(i))).filter(one);
+  if (!edits.length) return asMsg('Move a slider first.');
+  try {
+    asMsg('Saving the particles…');
+    const into = how === 'own' ? AS.fxInto : null;
+    const r = await post('/api/assets/fx', {i: AS.ri, edits, how, into});
+    if (how === 'own' && !AS.fxInto) AS.fxInto = r.path;
+    if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []);
+    if (typeof afterChange === 'function') afterChange();
+    asMsg(how === 'own' && r.id ? `Saved as ${r.id}: place it to see it.` : 'Saved: the 3D view draws it again.');
+    if (how === 'own' && r.i != null) AS.ri = r.i;
+    AS.fxe = {};
+    AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw();
+  } catch (e){ asMsg(e.message, true); }
 }
 
 async function asBack(how){
@@ -126,11 +206,12 @@ async function asBack(how){
     const first = !G.how;
     G.how = G.how || how; G.pending = false;
     if (how === 'own' && !G.into) G.into = r.path;
-    if (how === 'own' && !first){ if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []); asMsg('Saved in Blender: drawn again.'); AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw(); return; }
+    const fx = r.particles ? `, with ${r.particles === 1 ? 'its particles' : r.particles + ' particle effects'}` : '';
+    if (how === 'own' && !first){ if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []); asMsg(`Saved in Blender: drawn again${fx}.`); AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw(); return; }
     if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []);
     if (typeof afterChange === 'function') afterChange();
-    asMsg(how === 'own' ? `Back as ${r.id}: place it to see it${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`
-      : `Back: the 3D view draws it again${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`);
+    asMsg(how === 'own' ? `Back as ${r.id}: place it to see it${fx}${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`
+      : `Back: the 3D view draws it again${fx}${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`);
     if (how === 'own'){ AS.ri = r.i != null ? r.i : AS.ri; }
     AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw();
   } catch (e){ asMsg(e.message, true); }
@@ -141,13 +222,17 @@ function asMsg(t, err){ const m = $('#as-msg'); if (m){ m.className = 'msg' + (e
 async function asClick(e){
   const b = e.target.closest('[data-as]'); if (!b) return;
   const d = AS.data, t = d.textures[+b.dataset.n], how = b.dataset.as;
+  if (how === 'fxsave') return asFxSave(b.dataset.how);
+  if (how === 'fxreset'){ AS.fxe = {}; asFxBind(); return; }
   if (how === 'blender' || how === 'export'){
     try {
       asMsg(how === 'blender' ? 'Opening in Blender…' : 'Exporting…');
       const r = await post('/api/assets/export', {i: AS.ri, blender: how === 'blender'});
-      AS.glb = {file: r.file, stamp: r.stamp, lost: r.lost, blender: !!r.blender, how: null, pending: false};
+      // (particles go to Blender and back only through Blender itself: the Workshop's script builds them there)
+      const lost = (r.lost || []).concat(r.particles && !r.blender ? ['particles'] : []);
+      AS.glb = {file: r.file, stamp: r.stamp, lost, blender: !!r.blender, how: null, pending: false};
       asWatch(); asDraw();
-      asMsg(how === 'blender' ? 'Opened in Blender.' : `Exported with ${r.pictures} texture${r.pictures === 1 ? '' : 's'}: open it in your 3D program (File ▸ Import ▸ glTF).`);
+      asMsg(how === 'blender' ? `Opened in Blender${r.particles ? `, with ${r.particles === 1 ? 'its particles' : r.particles + ' particle effects'}` : ''}.` : `Exported with ${r.pictures} texture${r.pictures === 1 ? '' : 's'}: open it in your 3D program (File ▸ Import ▸ glTF).`);
     } catch (er){ asMsg(er.message, true); }
     return;
   }

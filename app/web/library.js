@@ -166,7 +166,9 @@ async function libUpload(files){
       const r = await fetch('/api/library/upload?' + new URLSearchParams({batch, name: f.path}), {method: 'POST', body: f.file});
       if (!r.ok) throw new Error((await r.json()).error || 'Upload failed');
     }
-    const info = await post('/api/library/inspect', {batch});
+    // (a .blend may hold UnitParticles effects, which are read through Blender: that takes a while)
+    const slow = files.some(f => /\.blend$/i.test(f.path)) && setTimeout(() => toast('Reading its particle effects through Blender…'), 4000);
+    const info = await post('/api/library/inspect', {batch}).finally(() => clearTimeout(slow));
     libImportModal(batch, info);
   } catch (e){ toast(e.message, true); }
 }
@@ -195,6 +197,7 @@ function libImportModal(batch, info){
       : many ? `${info.models.length} models: ${esc(info.models.join(', '))}. They come in with the same settings.`
       : `${esc(info.models[0])}${m && m.triangles ? ` · ${m.triangles} triangles` : ''}${m && m.pictures && m.pictures.length ? ` · pictures: ${esc(m.pictures.join(', '))}` : ''}`}
       ${info.other.length ? `<br>Left out (not something the Workshop can use): ${esc(info.other.slice(0, 5).join(', '))}` : ''}</div>
+    ${m && m.particles && m.particles.length ? `<label class="msg" style="display:block;margin-top:8px" title="${esc(m.particles.map(f => f.name + ': ' + f.words + (f.left.length ? ' (not used: ' + f.left.join(', ') + ')' : '')).join(' · '))}"><input type="checkbox" id="li-fx" checked> ✦ With its particles (${m.particles.length === 1 ? esc(m.particles[0].name) : m.particles.length + ' effects'})</label>` : ''}
     ${m && m.objects ? `<label>Which part</label><select class="inp" id="li-obj">
       <option value="">All ${m.objects.length} objects together, as one model</option>
       <option value="*each*">Each object as its own model (${m.objects.length} models)</option>
@@ -234,7 +237,7 @@ function libImportModal(batch, info){
     const size = sz === 'u' ? info.height_as_is : sz === 'h' ? +$('#li-h').value : null;
     const body = {batch, name: $('#li-name').value, up: (document.querySelector('[name=li-up]:checked') || {}).value || 'y',
       kind: ($('#li-kind') || {}).value || 'static', size, collision: (document.querySelector('[name=li-col]:checked') || {}).value || 'shape',
-      object: lo ? lo.value : ''};
+      object: lo ? lo.value : '', particles: $('#li-fx') ? $('#li-fx').checked : true};
     Object.assign(body, libGroupVal('li-g'));
     if (body.kind === 'door') body.door_sound = $('#li-dsnd').value;
     if ($('#li-reach')) body.reach = $('#li-reach').value;
@@ -287,7 +290,7 @@ async function libLoad(){
           <audio controls preload="none" src="/api/file?path=${encodeURIComponent(it.file)}" style="width:100%;height:32px"></audio></div>` : '🧊 Click for a 3D look'}</div>
     <div class="bd"><span class="nm" title="${esc(it.name)}">${esc(it.name)}</span>
       <span class="lnk lib-grpl" data-lg="${esc(it.id)}" title="Sort it into a group">${it.cat ? esc(it.cat) + (it.sub ? ' › ' + esc(it.sub) : '') : '＋ Group'}</span>
-      <span class="sub">${it.type === 'model' ? (it.size ? `${it.size.map(Math.round).join(' × ')} units` : 'Model') : it.type === 'sound' ? `Sound${it.records && it.records.SOUN ? ` · for scripts: <code>PlaySound "${esc(it.records.SOUN)}"</code>` : ''}` : 'Picture'}${{door: ' · 🚪 door', light: ' · 💡 light', container: ' · container', activator: ' · activator', item: ' · item'}[it.kind] || ''} · from ${esc(it.from || '?')}${it.ok ? '' : ' · <span style="color:#ff8a6a">file missing</span>'}</span>
+      <span class="sub">${it.type === 'model' ? (it.size ? `${it.size.map(Math.round).join(' × ')} units` : it.fx ? '✦ Particles' : 'Model') : it.type === 'sound' ? `Sound${it.records && it.records.SOUN ? ` · for scripts: <code>PlaySound "${esc(it.records.SOUN)}"</code>` : ''}` : 'Picture'}${{door: ' · 🚪 door', light: ' · 💡 light', container: ' · container', activator: ' · activator', item: ' · item'}[it.kind] || ''} · from ${esc(it.from || '?')}${it.ok ? '' : ' · <span style="color:#ff8a6a">file missing</span>'}</span>
       <div class="acts">${it.type === 'sound' ? `<button class="btn sm primary" data-lplace="${esc(it.id)}" title="Put it in the world: it plays over and over where it stands, unseen">Place</button>
         <select class="inp" data-lreach="${esc(it.id)}" title="How far it carries" style="width:auto;padding:2px 4px">${[['near', 'Close by'], ['room', 'A room'], ['far', 'Far']].map(([v, l]) => `<option value="${v}" ${(it.reach || 'room') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <input type="range" min="0" max="100" value="${Math.round((it.volume ?? 0.8) * 100)}" data-lvol="${esc(it.id)}" title="How loud" style="width:70px">
