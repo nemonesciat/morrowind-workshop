@@ -1005,6 +1005,8 @@ def _turn_systems(systems):
     mv = lambda v: [sum(C[r][k] * v[k] for k in range(3)) for r in range(3)]
     for sy in systems:
         sy['at'], sy['accel'] = mv(sy['at']), mv(sy['accel'])
+        if sy.get('point'):
+            sy['point'] = dict(sy['point'], at=mv(sy['point']['at']))
         sy['R'] = [[sum(C[r][k] * sy['R'][k][c] for k in range(3)) for c in range(3)] for r in range(3)]
 
 

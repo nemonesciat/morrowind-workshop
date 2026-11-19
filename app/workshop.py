@@ -806,8 +806,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'error': 'still loading'}, 503)
             elif u.path == '/api/search':
                 types = [t for t in q.get('types', '').split(',') if t]
+                # (FX: Browse's Particle effects, everything drawn with a model that has them)
+                only = fx_records() if 'FX' in types else None
+                types = [t for t in types if t != 'FX']
                 self._json(db.search(q.get('q', ''), types, q.get('plugin'), int(q.get('offset', 0)),
-                                     min(int(q.get('limit', 200)), 1000), sort=q.get('sort', '')))
+                                     min(int(q.get('limit', 200)), 1000), sort=q.get('sort', ''), only=only))
+            elif u.path == '/api/search/fxdone':
+                self._json({'done': _fx_recs['done'], 'of': _fx_recs['of']})
             elif u.path == '/api/record':
                 self._json(db.record(int(q['i'])))
             elif u.path == '/api/uses':
@@ -3224,6 +3229,88 @@ def fx_for(model):
         if len(_fx_cache) > 3000:
             _fx_cache.pop(next(iter(_fx_cache)))
     return _fx_cache[path]
+
+
+_fx_has = {}                     # model path -> [its file's size and time, whether it holds particle emitters]
+_fx_recs = {'key': None, 'set': frozenset(), 'done': 0, 'of': 0}
+_fx_lock = threading.Lock()
+_fx_seen = set()                 # (models looked at since the Workshop started: not looked at again)
+FX_HAS_FILE = 'particle_models_v1.json'     # (in the cache folder updates keep: read once per model and install)
+
+
+def _fx_sig(rel):
+    """What a model file is, to know it unchanged: its size and time (in an archive: the archive's, and its place)."""
+    m = db.meshes
+    try:
+        if rel in m.loose:
+            st = os.stat(m.loose[rel])
+            return 'l%d|%d' % (st.st_size, st.st_mtime_ns)
+        if rel in m.packed:
+            path, off, size = m.packed[rel]
+            return 'p%s|%d|%d|%d' % (os.path.basename(path).lower(), off, size, os.stat(path).st_mtime_ns)
+    except OSError:
+        pass
+    return ''
+
+
+def fx_records():
+    """The records drawn with a model that holds particle effects (Browse's Particle effects). Each model is read
+    once (on a few threads: the first time is the disk's), kept in the cache folder by its size and time; the list
+    is worked out again only when the records change."""
+    import struct
+    from concurrent.futures import ThreadPoolExecutor
+    import partnif
+    with _fx_lock:
+        recs = db.recs
+        key = (id(recs), len(recs), len(db.winner), editing.CHANGES['n'])
+        if _fx_recs['key'] == key:
+            return _fx_recs['set']
+        cache = os.path.join(APP_DIR, 'cache', FX_HAS_FILE)
+        if not _fx_has:
+            try:
+                with open(cache, encoding='utf-8') as f:
+                    _fx_has.update(json.load(f))
+            except (OSError, ValueError):
+                pass
+        of = {}
+        for i in range(len(recs)):
+            r = recs[i]
+            m = r[5] if r else None
+            if isinstance(m, str) and m.lower().endswith('.nif'):
+                of.setdefault('meshes/' + m.lower().replace('\\', '/'), []).append(i)
+        marks = [struct.pack('<I', len(k)) + k for k in partnif.EMITTERS]
+        paths = list(of)
+        _fx_recs['done'], _fx_recs['of'] = 0, len(paths)
+
+        def look(rel):
+            if rel in _fx_seen and rel in _fx_has:
+                return rel, _fx_has[rel]
+            sig = _fx_sig(rel)
+            had = _fx_has.get(rel)
+            if not had or had[0] != sig:
+                try:
+                    raw = db.meshes.read(rel) if sig else None
+                except Exception:
+                    raw = None
+                had = [sig, bool(raw) and any(k in raw for k in marks)]
+            _fx_recs['done'] += 1
+            return rel, had
+        before = dict(_fx_has)
+        with ThreadPoolExecutor(8) as pool:
+            for rel, had in pool.map(look, paths):
+                _fx_has[rel] = had
+                _fx_seen.add(rel)
+        if _fx_has != before:
+            try:
+                os.makedirs(os.path.dirname(cache), exist_ok=True)
+                with open(cache + '.tmp', 'w', encoding='utf-8') as f:
+                    json.dump(_fx_has, f, separators=(',', ':'))
+                os.replace(cache + '.tmp', cache)
+            except OSError:
+                pass
+        got = frozenset(i for rel in paths if _fx_has[rel][1] for i in of[rel])
+        _fx_recs['key'], _fx_recs['set'] = key, got
+        return got
 
 
 def changes_list():

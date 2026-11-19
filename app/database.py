@@ -1032,7 +1032,8 @@ class Database:
         return None
 
     # ---------- queries ----------
-    def search(self, q='', types=None, plugin=None, offset=0, limit=200, only_new=False, sort=''):
+    def search(self, q='', types=None, plugin=None, offset=0, limit=200, only_new=False, sort='', only=None):
+        # (only: a set of record numbers to keep to, as Browse's Particle effects)
         terms = [t for t in q.lower().split() if t]
         recs, st = self.recs, self.search_text
         types = set(types) if types else None
@@ -1047,6 +1048,8 @@ class Database:
         for i in range(min(len(recs), len(winner))):
             r = recs[i]
             if types and r[0] not in types:
+                continue
+            if only is not None and i not in only:
                 continue
             if pidx is None:
                 if not winner[i]:

@@ -76,6 +76,12 @@ try:
              'render_mode': str(S.renderer.render_mode), 'material': S.renderer.material,
              'material_params': mat_mod.get_params(bpy.data.materials.get(S.renderer.material)) if S.renderer.material else None,
              'others': [k for k, v in mods.items() if v]}
+        vol = S.velocity_over_lifetime
+        if vol.enabled:
+            T2 = [i / 20.0 for i in range(21)]
+            d['vol'] = {'radial': [ev(vol.radial, t)[0] for t in T2], 'speed_mod': [ev(vol.speed_modifier, t)[0] for t in T2],
+                        'linear': [ev(vol.linear, t)[:3] for t in T2], 'orbital': [ev(vol.orbital, t)[:3] for t in T2],
+                        'offset': ev(vol.offset, 0.5)[:3], 'space': str(vol.space)}
         res['systems'].append(d)
     for coll in bpy.data.collections:
         if coll.name.startswith('UnitParticles Output'):
@@ -171,6 +177,101 @@ def _norm(v):
 def _unity(v):
     """A vector in Unity's axes (Y up, Z forward) in Blender's (Z up, Y forward), as the add-on swaps them."""
     return [v[0], v[2], v[1]]
+
+
+def _curve(c, a):
+    """A curve sampled at 21 even steps of a particle's life, at age a (0 to 1)."""
+    i = max(0.0, min(1.0, a)) * (len(c) - 1)
+    lo = min(len(c) - 2, int(i))
+    return c[lo] + (c[lo + 1] - c[lo]) * (i - lo)
+
+
+def _vol_fit(vol, life, r, ang, speed, g, lin, centre):
+    """Velocity over Lifetime's radial pull and speed modifier (the add-on's sim.py: each step a particle moves by its
+    velocity times the speed modifier, plus its linear velocity, then toward the centre by the radial amount) as what
+    the game has: its start speed times k, its starting place b times as wide, and a steady pull of F (metres a
+    second, each second) toward the centre. (The game's pull speeds a particle up, where the add-on's moves it at a
+    set pace and stops: a burst that gathers in the middle is best started near it.) Both are run from the same starts
+    on the cone's base (in the emitter's frame, its axis z) and compared by the particles' mean height and spread
+    over their life. (k, F, b) when that comes clearly closer than nothing; else None.
+    g, lin: gravity and the linear velocity curve in the emitter's frame; centre: the radial's centre there."""
+    rad, sm = vol['radial'], vol['speed_mod']
+    steps, n = 48, 16
+    dt = life / steps
+    starts = []
+    for i in range(n):
+        f, az = math.sqrt((i + 0.5) / n), i * 2.39996323
+        th = ang * f
+        starts.append(((r * f * math.cos(az), r * f * math.sin(az), 0.0),
+                       (math.sin(th) * math.cos(az), math.sin(th) * math.sin(az), math.cos(th))))
+    cx, cy, cz = centre
+
+    def means(run):
+        H, P = [0.0] * 12, [0.0] * 12
+        for p0, d0 in starts:
+            for j, (x, y, z) in enumerate(run(p0, d0)):
+                H[j] += z / n
+                P[j] += math.hypot(x, y) / n
+        return H, P
+
+    def unity(p0, d0):
+        x, y, z = p0
+        vx, vy, vz = (speed * c for c in d0)
+        out = []
+        for st in range(steps):
+            a = (st + 0.5) / steps
+            vx, vy, vz = vx + g[0] * dt, vy + g[1] * dt, vz + g[2] * dt
+            m = _curve(sm, a)
+            lx, ly, lz = (_curve([v[k] for v in lin], a) for k in range(3))
+            x, y, z = x + (vx + lx) * m * dt, y + (vy + ly) * m * dt, z + (vz + lz) * m * dt
+            rx, ry, rz = x - cx, y - cy, z - cz
+            L = math.sqrt(rx * rx + ry * ry + rz * rz)
+            if L > 1e-9:
+                q = _curve(rad, a) * dt / L
+                x, y, z = x + rx * q, y + ry * q, z + rz * q
+            if (st + 1) % 4 == 0:
+                out.append((x, y, z))
+        return out
+
+    def game(k, F, b):
+        def run(p0, d0):
+            x, y, z = (c * b for c in p0)
+            vx, vy, vz = (speed * k * c for c in d0)
+            out = []
+            for st in range(steps):
+                rx, ry, rz = cx - x, cy - y, cz - z
+                L = math.sqrt(rx * rx + ry * ry + rz * rz) or 1.0
+                q = F * dt / L
+                vx, vy, vz = vx + g[0] * dt + rx * q, vy + g[1] * dt + ry * q, vz + g[2] * dt + rz * q
+                x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
+                if (st + 1) % 4 == 0:
+                    out.append((x, y, z))
+            return out
+        return run
+
+    Hu, Pu = means(unity)
+
+    def err(k, F, b):
+        Hg, Pg = means(game(k, F, b))
+        return sum((Hg[j] - Hu[j]) ** 2 + (Pg[j] - Pu[j]) ** 2 for j in range(12))
+    e0 = err(1.0, 0.0, 1.0)
+    if e0 < 1e-9:
+        return 1.0, 0.0, 1.0       # (nothing the game lacks)
+    unit = max(0.05, speed) / max(0.05, life)
+    # (the starting place is narrowed only for a pull toward the middle: a jet slowed by its speed modifier keeps its
+    # width)
+    bs = (1.0, 0.5, 0.25, 0.1) if any(abs(x) > 1e-6 for x in rad) else (1.0,)
+    best = min((err(k, f * unit, b), k, f * unit, b) for b in bs for k in (0.1, 0.25, 0.5, 0.75, 1.0, 1.25)
+               for f in range(-2, 13))
+    _e, k, F, b = best
+    for _ in range(3):             # (then finer, round the best)
+        dk, dF, db = k * 0.25, unit * 0.25, b * 0.25
+        best = min((err(k + i * dk, F + j * dF, b + m * db), k + i * dk, F + j * dF, b + m * db)
+                   for i in (-1, 0, 1) for j in (-1, 0, 1) for m in ((-1, 0, 1) if len(bs) > 1 else (0,)) if b + m * db <= 1.0)
+        _e, k, F, b = best
+    if _e > 0.6 * e0:
+        return None
+    return k, F, b
 
 
 def systems(path, bl=None):
@@ -279,5 +380,34 @@ def systems(path, bl=None):
              'size': size, 'accel': accel, 'colors': colors, 'color': base,
              'glow': glow, 'picture': pic, 'left': left, 'grow': grow, 'fade': fade, 'unit': True}
         s['picture_key'] = blendread._key(pic['raw'] if isinstance(pic, dict) else open(pic, 'rb').read() if pic else b'')
+        # Velocity over Lifetime: its pull toward the middle (radial) and its speed modifier as the game's pull toward a
+        # point, with the start speed fitted to it (the user's florum.blend: a burst that folds back in)
+        vol = d.get('vol')
+        if vol:
+            def loc(w):                      # (Blender's world axes in the emitter's own: Re turned back)
+                return [sum(Re[i][j] * w[i] for i in range(3)) for j in range(3)]
+
+            def turned(v):                   # (a Unity vector in Blender's world, by the module's space)
+                u = _unity(v)
+                return [sum(R[i][k] * u[k] for k in range(3)) for i in range(3)] if vol.get('space', 'LOCAL') == 'LOCAL' else u
+            obj = [M[i][3] for i in range(3)]
+            off = turned(vol.get('offset') or [0, 0, 0])
+            cw = [obj[i] + off[i] * s_mean for i in range(3)]
+            fit = _vol_fit({'radial': [x * s_mean for x in vol['radial']], 'speed_mod': vol['speed_mod']}, life_mid,
+                           box[0] / 2, v_angle, s['speed'], loc(accel), [loc([x * s_mean for x in turned(v)]) for v in vol['linear']],
+                           loc([cw[i] - at[i] for i in range(3)]))
+            if fit:
+                kk, F, b = fit
+                s['speed'] *= kk
+                s['speed_random'] *= kk
+                s['box'] = [x * b for x in s['box']]
+                if abs(F) > 1e-6:
+                    s['point'] = {'at': cw, 'force': F}
+                if 'velocity over lifetime' in left:
+                    left.remove('velocity over lifetime')
+                if any(abs(x) > 1e-6 for v in vol['orbital'] for x in v):
+                    left.append('velocity over lifetime\'s orbit')
+                if any(abs(x) > 1e-6 for v in vol['linear'] for x in v):
+                    left.append('velocity over lifetime\'s straight part (roughly)')
         out.append(s)
     return out, set(res.get('outputs') or []), res.get('note')

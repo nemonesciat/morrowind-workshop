@@ -101,13 +101,16 @@ def sig(db):
     nothing they would learn and must not make them run again (every survey ran again on every change
     of load order before, four minutes); a changed or added interior plugin still does. The mod being
     made is left out: the surveys skip its own places, and it changes with every edit."""
-    if _sig.get('recs') is db.recs:
-        return _sig['sig']
     plugins = db.plugins or []
     proj = getattr(db, 'proj_pidx', None)
+    # (kept for these records, this mod and these plugins only: worked out in the middle of a reload, say by the
+    # style list's warm-up while a new mod was being made, the mod still counted as a plugin, and the wrong
+    # signature, kept, had Auto-furnish wait for a survey that was already done, for ever)
+    if _sig.get('recs') is db.recs and _sig.get('proj') == proj and _sig.get('n') == len(plugins):
+        return _sig['sig']
     holders = set()
     for r in db.recs:
-        if r[0] == 'CELL' and r[5] == 'interior':
+        if r and r[0] == 'CELL' and r[5] == 'interior':
             holders.add(r[3])
     parts = sorted('%s:%s' % (plugins[i]['name'].lower(), plugins[i].get('size') or 0)
                    for i in holders if i != proj and i < len(plugins))
@@ -115,9 +118,11 @@ def sig(db):
     # (the caches this load order had under the old key, every plugin's name: renamed once, so the
     # user's learning survives the change of key)
     old = hashlib.md5('|'.join(sorted(p['name'].lower() for p in plugins)).encode('utf-8')).hexdigest()[:12]
+    if getattr(db, 'state', '') == 'loading':
+        return new                    # (not kept, nor the caches renamed, while the load order is still being read)
     if old != new:
         _rekey(old, new)
-    _sig.update({'recs': db.recs, 'sig': new})
+    _sig.update({'recs': db.recs, 'sig': new, 'proj': proj, 'n': len(plugins)})
     return new
 
 

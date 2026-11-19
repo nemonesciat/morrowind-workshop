@@ -1287,6 +1287,9 @@ function buildSide(){
     for (const t of g.types){
       h += `<button class="tbtn ${S.types[0]===t.tag?'on':''} ${t.count?'':'zero'}" data-t="${t.tag}"><span>${esc(t.label)}</span><span>${fmtN(t.count)}</span></button>`;
     }
+    // (everything drawn with particles, of any kind: a tester looked for the game's effects here to copy one)
+    S.typeLabels.FX = 'Particle effects';
+    if (g.group === 'World') h += `<button class="tbtn ${S.types[0]==='FX'?'on':''}" data-t="FX" title="Lights, statics and the rest whose model has flames, smoke, sparks or other particles"><span>✦ Particle effects</span><span>${S.fxCount != null ? fmtN(S.fxCount) : ''}</span></button>`;
   }
   h += `<h4>Only from plugin</h4><select id="plugsel"><option value="">All plugins (what you see in game)</option>` +
        s.plugins.filter(p => !p.lua_only).map(p => `<option value="${p.index}" ${String(p.index)===S.plugin?'selected':''}>${esc(p.name)} (${fmtN(p.records)})</option>`).join('') + `</select>`;
@@ -1321,8 +1324,17 @@ async function runSearch(){
   S.offset = 0;
   if ($('#q2') && document.activeElement !== $('#q2')) $('#q2').value = S.q || '';     // (however the search was set: a link, history)
   const p = new URLSearchParams({q:S.q, types:S.types.join(','), plugin:S.plugin, offset:0, limit:200, sort:S.sort || ''});
-  const r = await api('/api/search?' + p);
+  const fx = S.types[0] === 'FX';
+  // (the first time, every model is read: a while on a big load order, so it counts them)
+  let tick = 0;
+  if (fx && S.fxCount == null){
+    $('#rows').innerHTML = '<div class="msg" style="padding:12px"><span class="spin"></span>Looking through the models… <span id="fxdone"></span></div>';
+    tick = setInterval(async () => { try { const d = await api('/api/search/fxdone'); const el = $('#fxdone'); if (el && d.of) el.textContent = fmtN(d.done) + ' of ' + fmtN(d.of); } catch (e){} }, 1000);
+  }
+  let r;
+  try { r = await api('/api/search?' + p); } finally { clearInterval(tick); }
   if (seq !== searchSeq) return;
+  if (fx && !S.q && S.plugin === ''){ S.fxCount = r.total; const c = $('#side [data-t="FX"] span:last-child'); if (c) c.textContent = fmtN(r.total); }
   S.rows = r.rows; S.total = r.total;
   S.msel.clear(); mselShow();
   renderRows(); $('#rows').scrollTop = 0;
@@ -1495,6 +1507,8 @@ function renderDetail(d){
       if (IE_TYPES.split(',').includes(d.type)) acts.push(`<button class="btn sm primary" data-act="itemed">✎ ${d.type === 'SPEL' ? 'Spell' : d.type === 'ENCH' ? 'Enchantment' : 'Item'} editor</button>`);
       if (d.type === 'LEVI' || d.type === 'LEVC') acts.push(`<button class="btn sm primary" data-act="lev">🎲 List editor</button>`);
       if (d.type === 'SCPT') acts.push(`<button class="btn sm primary" data-act="script">📝 Script editor</button>`);
+      if (!['NPC_', 'LEVC', 'LEVI'].includes(d.type) && d.fields.some(f => f.label === 'Model' && f.value) && typeof asShow === 'function')
+        acts.push(`<button class="btn sm" data-act="assets" title="Its model and textures, and the sliders for its particles">🧩 Model & textures…</button>`);
       if (d.mine) acts.push(`<button class="btn sm danger" data-act="revert">${d.created ? 'Delete from my mod' : 'Undo my changes'}</button>`);
     }
     if (acts.length) h += `<div class="actions">${acts.join('')}</div>`;
@@ -1611,6 +1625,7 @@ async function detailAction(act){
   // (any prop onto the prefab workbench, PIN2: "a button to add a prop from browse into the prefab")
   if (act === 'bench'){ if (typeof benchOpen === 'function'){ await benchOpen(); await benchAddAt(d.id, d.type, null); } return; }
   if (act === 'addstyle'){ if (typeof spAddMenu === 'function') spAddMenu(d.id, document.querySelector('[data-act="addstyle"]')); return; }
+  if (act === 'assets'){ asShow(d.i, (d.name || d.id) + ': model & textures'); return; }
   if (act === 'char'){ cOpen(d.id); return; }
   if (act === 'findmap'){ qolFindChar(d.id, $('#detail')); return; }
   if (act === 'script'){ sOpen(d.id); return; }

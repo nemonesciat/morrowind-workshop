@@ -84,11 +84,16 @@ def spec(s, k, shift, texture):
            'h_dir': s['h_dir'], 'h_angle': s['h_angle'],
            'at': at, 'R': s['R'], 'box': tuple(p['box']), 'size': p['size'],
            'gravity': [{'type': 0, 'force': p['force'], 'decay': 0.0, 'pos': at, 'dir': tuple(p['dir'])}] if p['dir'] else [],
+           # (a pull toward a point: UnitParticles' Velocity over Lifetime, fitted by unitread)
+           'gravity_point': [{'type': 1, 'force': s['point']['force'] * k / GRAVITY_MAGIC, 'decay': 0.0,
+                              'pos': tuple((s['point']['at'][i] - shift[i]) * k for i in range(3)), 'dir': (0.0, 0.0, 1.0)}]
+           if s.get('point') else [],
            'colors': [tuple(float(x) for x in kk[:5]) for kk in keys], 'color': tuple(float(x) for x in keys[0][1:5]),
            'texture': texture or '',
            'alpha_flags': ADD if s['glow'] else MIX, 'alpha_threshold': 0, 'emissive': (0.0, 0.0, 0.0),
            'diffuse': (1.0, 1.0, 1.0), 'alpha': 1.0, 'vc': (0, 1, 0) if s['glow'] else None, 'zwrite': False,
            'grow': float(s.get('grow') or 0.0), 'fade': float(s.get('fade') or 0.0), 'spin': None}
+    out['gravity'] = out['gravity'] + out.pop('gravity_point')
     for group, vals in (s.get('keep') or {}).items():
         for name in GROUPS.get(group, ()):
             if name in vals:
@@ -287,6 +292,9 @@ def say(s, p):
         words.append('glowing')
     if s['colors']:
         words.append('changing colour')
+    pt = s.get('point')
+    if pt and abs(pt['force']) > 1e-6:
+        words.append('pulled to the middle' if pt['force'] > 0 else 'pushed from the middle')
     return ', '.join(words)
 
 

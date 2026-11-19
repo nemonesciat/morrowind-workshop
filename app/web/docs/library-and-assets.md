@@ -33,7 +33,8 @@ on a light, a static or anything placed.
   lifetime, the push and its randomness, the size, gravity and winds, and the material's picture. A **Color Ramp**
   driven by the particle's age gives the colours over its life; an **Emission** shader makes it glow.
 - **UnitParticles** (a free add-on that copies Unity's particle system): the cone or other shape, rate, lifetime,
-  speed, size, gravity and force, colour and size over lifetime, and an additive or alpha material. The Workshop
+  speed, size, gravity and force, colour and size over lifetime, and an additive or alpha material. Velocity over
+  Lifetime's pull to the middle (Radial) and its Speed Modifier become the game's pull toward a point. The Workshop
   reads these through Blender, with the add-on installed there, so opening the file takes a little while.
 - **Add a model** shows **✦ With its particles**: untick it to leave them out. A model and its particles become one
   model; particles alone become an effect of their own (**✦ Particles** on the card).
@@ -51,7 +52,7 @@ The effects are drawn in the 3D view and in the Library's 3D look, as the game d
 
 ## What an object is drawn with
 
-Right-click an object → **🧩 Model & textures…** (or from its window) shows its model (where its file comes from,
+Right-click an object → **🧩 Model & textures…** (or from its window, or from its page in **Browse**) shows its model (where its file comes from,
 its shapes, triangles and size, whether it has collision, animation, particles, a light…), what else uses it, and its
 textures with pictures.
 
@@ -70,6 +71,10 @@ and **Pull** sliders, and a **Colour**, for all of its effects or one, seen at o
 keeps each effect as bright as it was, in the colour picked: an orange flame can turn blue. Save it **everywhere**
 (every object drawn with that model) or **for this one only** (only the one you opened it from). The same goes for
 a model brought back from Blender.
+
+To start from one of the game's effects: **Browse** → **✦ Particle effects** (under World) lists everything drawn with
+particles, the game's and your mods'. Pick one, press **🧩 Model & textures…**, and save it **for this one only**: a
+new object of your own, ready to place. (The first time, every model is looked through, which can take a while.)
 
 **🎨 Retexture** (Selected panel, or right-click) makes a new object like the one selected, with your own pictures.
 
