@@ -14,9 +14,10 @@ const AS_HAS = {collision: ['🧱', 'Collision', 'It has its own collision shape
   flipbook: ['🎞', 'Flipbook', 'Its texture changes frame by frame'], 'scrolling texture': ['〰', 'Scrolling texture', 'Its texture slides (water, lava)'],
   morphs: ['🫧', 'Morphs', 'Shape changes'], billboard: ['🪧', 'Billboard', 'Always turns to face you'], switch: ['⇄', 'Switch', 'Shows one of several parts']};
 
-async function asShow(ri, label){
+// placed: {cell, k} when opened from something placed: "For this one only" then puts the new object in its place
+async function asShow(ri, label, placed){
   if (ri == null) return toast('That has no record to look at.', true);
-  AS.ri = ri;
+  AS.ri = ri; AS.placed = placed || null;
   if (AS.bg) AS.bg.remove();
   const bg = document.createElement('div'); bg.className = 'modal-bg'; AS.bg = bg;
   bg.innerHTML = `<div class="modal as-win"><h2>🧩 ${esc(label || 'Model & textures')}</h2><div id="as-body"><div class="msg"><span class="spin"></span>Reading the model…</div></div>
@@ -187,10 +188,12 @@ async function asFxSave(how){
     asMsg('Saving the particles…');
     const into = how === 'own' ? AS.fxInto : null;
     const r = await post('/api/assets/fx', {i: AS.ri, edits, how, into});
+    const made = how === 'own' && !AS.fxInto && r.id;
     if (how === 'own' && !AS.fxInto) AS.fxInto = r.path;
     if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []);
     if (typeof afterChange === 'function') afterChange();
-    asMsg(how === 'own' && r.id ? `Saved as ${r.id}: place it to see it.` : 'Saved: the 3D view draws it again.');
+    const swapped = made && await asSwapPlaced(r.id, `Changed the particles of this one only (${r.id})`);
+    asMsg(swapped ? 'Saved: this one is changed, and nothing else.' : made ? `Saved as ${r.id}: place it to see it.` : 'Saved: the 3D view draws it again.');
     if (how === 'own' && r.i != null) AS.ri = r.i;
     AS.fxe = {};
     AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw();
@@ -210,11 +213,29 @@ async function asBack(how){
     if (how === 'own' && !first){ if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []); asMsg(`Saved in Blender: drawn again${fx}.`); AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw(); return; }
     if (typeof v3ModelReload === 'function') v3ModelReload(r.ids || []);
     if (typeof afterChange === 'function') afterChange();
-    asMsg(how === 'own' ? `Back as ${r.id}: place it to see it${fx}${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`
+    const swapped = how === 'own' && await asSwapPlaced(r.id, `Brought back from Blender for this one only (${r.id})`);
+    asMsg(swapped ? `Back: this one is changed, and nothing else${fx}.` : how === 'own' ? `Back as ${r.id}: place it to see it${fx}${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`
       : `Back: the 3D view draws it again${fx}${r.pictures_new ? `, with ${r.pictures_new} repainted texture${r.pictures_new === 1 ? '' : 's'}` : ''}.`);
     if (how === 'own'){ AS.ri = r.i != null ? r.i : AS.ri; }
     AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw();
   } catch (e){ asMsg(e.message, true); }
+}
+
+// "For this one only", opened from something placed: that one becomes the new object, one Undo with its making
+// (before, it said "place it to see it" and the one picked stayed as it was; the user: "why would you not make the
+// 'for this one only' button do what it sounds like it should")
+async function asSwapPlaced(id, note){
+  const P = AS.placed;
+  if (!P || !id) return false;
+  try {
+    await post('/api/ref/swap', {cell: P.cell, ref: P.k, id});
+    try { await post('/api/fold', {n: 2, note}); } catch (e){}
+    AS.placed = null;
+    if (typeof worldReloadCell === 'function' && W.cells && W.cells[P.cell]) await worldReloadCell(P.cell);
+    if (typeof afterChange === 'function') afterChange();
+    if (typeof V3 !== 'undefined' && V3.on && typeof v3Refresh === 'function') v3Refresh();
+    return true;
+  } catch (e){ asMsg(`Made ${id}, but it couldn't take this one's place: ${e.message}`, true); return false; }
 }
 
 function asMsg(t, err){ const m = $('#as-msg'); if (m){ m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; } }
@@ -275,8 +296,11 @@ async function asClick(e){
       AS.watch[r.path] = {file: r.file, stamp: r.stamp, path: r.path, shown: t.path};
       asWatch();
       if (how === 'own'){
-        asMsg(`Made ${r.id}, drawn with its own copy of the texture. It opened in your picture editor; place ${r.id} to see it.`);
+        const swapped = await asSwapPlaced(r.id, `Gave this one its own copy of ${t.name} (${r.id})`);
+        asMsg(swapped ? 'This one has its own copy of the texture now, open in your picture editor; nothing else changes.'
+          : `Made ${r.id}, drawn with its own copy of the texture. It opened in your picture editor; place ${r.id} to see it.`);
         if (typeof afterChange === 'function') afterChange();
+        if (swapped && r.i != null){ AS.ri = r.i; AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw(); }
       } else {
         asMsg(`Your copy opened in ${r.editor ? r.editor.split(/[\\/]/).pop() : 'your picture editor'}. Save it there, and the 3D view draws it again.`);
         AS.data = await api('/api/assets/record?i=' + AS.ri); asDraw();

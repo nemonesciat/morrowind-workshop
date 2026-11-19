@@ -403,7 +403,7 @@ function cfMenuAt(e, hit, at, locked, opt){
     if (r.arch && !(typeof FB_NOT_BUILDING !== 'undefined' && FB_NOT_BUILDING.test(r.id))) items.push({label: '↻ Other pieces that fit here', act: () => selAction('variants')});
     // (how a person or a creature moves, straight from here: it was three clicks down, the user: "should be easier to find")
     if (r.ri != null && ['NPC_', 'CREA'].includes(r.type) && typeof anShow === 'function') items.push({label: '🎞 Animations and text keys…', act: () => anShow(r.ri, (r.name || r.id) + ': animation & text keys')});
-    if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(r.type) && typeof asShow === 'function') items.push({label: '🧩 Model & textures…', act: () => asShow(r.ri, (r.name || r.id) + ': model & textures')});
+    if (r.ri != null && !['NPC_', 'LEVC', 'LEVI'].includes(r.type) && typeof asShow === 'function') items.push({label: '🧩 Model & textures…', act: () => asShow(r.ri, (r.name || r.id) + ': model & textures', {cell: ck, k: r.k})});
     if (['STAT', 'ACTI', 'CONT', 'MISC', 'DOOR', 'LIGH', 'WEAP', 'ARMO', 'CLOT'].includes(r.type)) items.push({label: '🎨 Retexture…', act: () => selAction('retex')});
     // (a new piece of this kind with the game's numbers for its material; forge.js)
     if ((r.type === 'WEAP' || r.type === 'ARMO') && typeof forgeShow === 'function'){

@@ -387,7 +387,7 @@ async function owAction(a){
     return selAction(a);
   }
   if (a === 'dupnew') return owOwnRecord();
-  if (a === 'assets') return asShow(r.ri, (r.name || r.id) + ': model & textures');
+  if (a === 'assets') return asShow(r.ri, (r.name || r.id) + ': model & textures', OW.cell ? {cell: OW.cell, k: OW.k} : null);
   if (a === 'anim') return anShow(r.ri, (r.name || r.id) + ': animation & text keys');
   if (a === 'unlink'){ OW.door = {target: null, label: '', at: null, changed: true}; owDrawRef(); return; }
   if (a === 'arrive'){

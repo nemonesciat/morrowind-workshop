@@ -58,7 +58,7 @@ textures with pictures.
 | Button | What it does |
 |---|---|
 | ✎ Change everywhere | A copy of the game's texture goes into your mod's own folder under the same name, so the game draws your copy wherever that texture is used, on other objects too. |
-| ✎ For this one only… | A copy under a new name, and a new record of the object drawn with it. |
+| ✎ For this one only… | A copy under a new name, and a new record of the object drawn with it. Opened from something placed, that one changes and nothing else does. |
 | ↺ The game's own again | Takes your copy back out. |
 | ⬡ Open in Blender | The model out to Blender; when you save it there, it comes back. Its particle effects go too, as Blender particle systems, and whatever you leave alone in them comes back exactly as the game had it. |
 
@@ -68,7 +68,8 @@ save.
 **✨ Particles** (in the same window, for a model with particle effects): **Amount**, **Life**, **Speed**, **Size**
 and **Pull** sliders, and a **Colour**, for all of its effects or one, seen at once in a preview of its own. A colour
 keeps each effect as bright as it was, in the colour picked: an orange flame can turn blue. Save it **everywhere**
-(every object drawn with that model) or **for this one only** (a new model and object).
+(every object drawn with that model) or **for this one only** (only the one you opened it from). The same goes for
+a model brought back from Blender.
 
 **🎨 Retexture** (Selected panel, or right-click) makes a new object like the one selected, with your own pictures.
 
