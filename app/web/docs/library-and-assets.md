@@ -39,6 +39,8 @@ on a light, a static or anything placed.
   model; particles alone become an effect of their own (**✦ Particles** on the card).
 - What the game has no place for (noise, trails, collisions, sub-emitters, spin…) is left behind, and the window
   says which.
+- Effects of their own are kept in the **Particles** group on the Library page (Fire, Smoke, Sparks, Water, Magic,
+  Dust and ash, guessed from the name). In the 3D view, click an effect at the spot it comes from.
 
 The effects are drawn in the 3D view and in the Library's 3D look, as the game draws them.
 

@@ -648,6 +648,12 @@ function v3Build(r){
   if (m && (m.parts.length || (m.fx && m.fx.length))){
     for (const pt of m.parts) g.add(new T.Mesh(pt.geo, pt.mat));
     if (m.fx && typeof fxAttach === 'function') fxAttach(g, m.fx, false, r.type === 'LIGH');
+    // (an effect with no model of its own: an unseen ball at each emitter to click, for its particles can't be
+    // picked; "impossible to right click this particle since it's so small", the user 2026-11-18)
+    if (!m.parts.length && m.fx){
+      if (!V3.fxHandle){ V3.fxHandle = new T.SphereGeometry(18, 10, 8); V3.fxHandleMat = new T.MeshBasicMaterial({transparent: true, opacity: 0, depthWrite: false}); }
+      for (const e of m.fx){ const h = new T.Mesh(V3.fxHandle, V3.fxHandleMat); h.position.set(...e.at); g.add(h); }
+    }
     return g;
   }
   const col = V3_COLORS[r.type] || 0xb0a090;
@@ -799,13 +805,18 @@ function v3GhostSet(id, type){
     let src;
     if (m && m.parts.length) src = m.parts.map(p => new T.Mesh(p.geo, p.mat));
     else src = v3Build({id, type: type || 'NPC_', b: null}).children;
+    // (an effect with no model of its own: its particles aren't shapes to copy; its click balls stand for it,
+    // seen, and it goes where it was made to, by its own origin, not lifted by the balls)
+    const fxOnly = !!(m && !m.parts.length && m.fx && m.fx.length);
     for (const mesh of src){
+      if (mesh.isPoints) continue;
       const mat = mesh.material.clone(); mat.transparent = true; mat.opacity = 0.55; mat.depthWrite = false;
       if (mesh.material.map) mat.map = mesh.material.map;
+      if (fxOnly) mat.color = new T.Color(0xffd27a);
       ghost.g.add(new T.Mesh(mesh.geometry, mat));
     }
     const b = new T.Box3().setFromObject(ghost.g);
-    ghost.minZ = b.isEmpty() ? 0 : b.min.z;
+    ghost.minZ = fxOnly || b.isEmpty() ? 0 : b.min.z;
     ghost.ready = true;
   });
 }

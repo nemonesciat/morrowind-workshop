@@ -21,6 +21,7 @@ const LIB_CATS = {
   'Clutter': ['Tableware', 'Food', 'Book and paper', 'Tool', 'Ingredient'],
   'Building': ['Wall', 'Floor', 'Roof', 'Door', 'Window', 'Stairs', 'Pillar', 'Fence'],
   'Nature': ['Rock', 'Tree', 'Bush', 'Mushroom', 'Water'],
+  'Particles': ['Fire', 'Smoke', 'Sparks', 'Water', 'Magic', 'Dust and ash'],
 };
 // (a first guess from the file name: "imperial_helm_02" → Armour › Helmet)
 const LIB_GUESS = [[/helm|hood|mask/, 'Armour', 'Helmet'], [/cuirass|breastplate/, 'Armour', 'Cuirass'], [/pauldron|shoulder/, 'Armour', 'Pauldron'],
@@ -34,6 +35,15 @@ const LIB_GUESS = [[/helm|hood|mask/, 'Armour', 'Helmet'], [/cuirass|breastplate
   [/chest/, 'Furniture', 'Chest'], [/barrel|crate|sack/, 'Furniture', 'Barrel and crate'], [/lamp/, 'Lights', 'Lamp'], [/candle/, 'Lights', 'Candle'], [/lantern/, 'Lights', 'Lantern'],
   [/wall/, 'Building', 'Wall'], [/roof/, 'Building', 'Roof'], [/door/, 'Building', 'Door'], [/window/, 'Building', 'Window'], [/stair/, 'Building', 'Stairs'], [/pillar|column/, 'Building', 'Pillar'],
   [/rock|stone|boulder/, 'Nature', 'Rock'], [/tree/, 'Nature', 'Tree'], [/bush|shrub/, 'Nature', 'Bush']];
+// an effect with no model of its own goes to Particles, its kind guessed from its name
+function libFxKind(name){
+  const s = String(name || '').toLowerCase();
+  const k = [[/fire|flame|torch|candle|ember|lava/, 'Fire'], [/smoke|steam|mist|fog|vapou?r/, 'Smoke'], [/spark|glitter|sparkle|star/, 'Sparks'],
+    [/water|fountain|splash|drip|rain|spray/, 'Water'], [/magic|spell|glow|aura|portal|rune/, 'Magic'], [/ash|dust|snow|leaf|leaves|petal/, 'Dust and ash']].find(([re]) => re.test(s));
+  return k ? k[1] : '';
+}
+// (an effect alone brought in before Particles was a group, and put in none: shown there)
+const libCat = i => i.cat || (i.type === 'model' && i.fx && !i.size ? 'Particles' : '');
 function libGuess(name){
   const s = String(name || '').toLowerCase();
   const g = LIB_GUESS.find(([re]) => re.test(s));
@@ -204,7 +214,7 @@ function libImportModal(batch, info){
       ${m.objects.map(o => `<option value="${esc(o.name)}">${esc(o.name)} · ${o.triangles} triangles</option>`).join('')}</select>
       <div class="msg">This file holds several objects (a kit or a bundle). Pick one, or bring them all in.</div>` : ''}
     <label>Name</label><input class="inp" id="li-name" value="${esc(many || snds.length > 1 ? '' : (only_snd ? snds[0].replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ') : base).replace(/^./, c => c.toUpperCase()))}" placeholder="${many || snds.length > 1 ? 'Each gets its file name' : ''}">
-    <label title="Find it again later; the Forge offers Armour › Helmet models first for a helmet">Group</label>${(() => { const g = libGuess((info.models[0] || info.pictures[0] || snds[0] || '')); return libGroupHtml('li-g', g.cat, g.sub); })()}
+    <label title="Find it again later; the Forge offers Armour › Helmet models first for a helmet">Group</label>${(() => { const fxOnly = m && m.particles && m.particles.length && !m.triangles, nm = info.models[0] || info.pictures[0] || snds[0] || ''; const g = fxOnly ? {cat: 'Particles', sub: libFxKind(nm)} : libGuess(nm); return libGroupHtml('li-g', g.cat, g.sub); })()}
     ${only_snd ? `<label>How far it carries</label>${sel('li-reach', [['near', 'Close by only (a ticking clock, a small fire)'], ['room', 'Across a room (a fireplace, chimes)'], ['far', 'Far (a waterfall, a forge, a crowd)']], 'room')}
       <div class="msg">Place a sound like a model (it plays over and over where it stands, unseen), or select something on the map and choose 🔊 Add a sound. Scripts can play it too.</div>` : ''}
     ${only_pics ? '' : `<label>It is</label>${sel('li-kind', [['static', 'Scenery (stays where it is put)'], ['container', 'A container (holds things)'], ['activator', 'An activator (can be clicked, e.g. for a script)'], ['item', 'A small item (can be picked up)'], ['door', 'A door (opens, or leads to another place)'], ['light', 'A lamp or light (lights up what is round it)']], 'static')}
@@ -263,6 +273,7 @@ function libImportModal(batch, info){
 async function libLoad(){
   const grid = $('#lib-grid'); if (!grid) return;
   try { LIB.items = (await api('/api/library')).items; } catch (e){ grid.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+  for (const i of LIB.items) if (!i.cat && libCat(i)){ i.cat = libCat(i); i.sub = i.sub || libFxKind(i.name + ' ' + (i.from || '')); }
   const n = t => LIB.items.filter(i => t === 'all' || i.type === t).length;
   const ofType = LIB.items.filter(i => LIB.filter === 'all' || i.type === LIB.filter);
   // (the groups the things of this type are sorted into, with how many in each; then the kinds of the chosen one)

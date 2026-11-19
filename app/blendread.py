@@ -537,7 +537,9 @@ def _particle_helpers(bl):
     the UnitParticles add-on makes of its particles (marked unitparticles_output_of)."""
     out = set()
     for b in bl.blocks:
-        if b['code'][:2] == b'OB' and 'unitparticles_output_of' in id_props(bl, bl.get('Object', b['at'], 'id')):
+        # (its particle meshes, and the store it keeps its materials on, _MaterialsContainer)
+        if b['code'][:2] == b'OB' and {'unitparticles_output_of', 'unitparticles_material_library'} & set(
+                id_props(bl, bl.get('Object', b['at'], 'id'))):
             out.add(b['at'])
     for ob, _psy, pa in _systems(bl):
         if not (bl.get('Object', ob, 'duplicator_visibility_flag') or 0) & OB_DUPLI_FLAG_RENDER:
