@@ -611,22 +611,9 @@ def _write(db, lst):
             '        if not ok then print(\'[Workshop] magic effect \' .. e.id .. \': \' .. tostring(err)) end\n'
             '      end\n    end,\n  },\n}\n') % (ACTOR, BEGIN, json.dumps(lst, indent=1).replace(']]', ']\\u005d'), END, '\n'.join(defs))
     _put(db, SCRIPT, 'LOAD', load, first=True)
-    # what each effect does, by its id (OpenMW gives effects' ids in lower case)
-    rows, fns, msgs = [], [], False
-    for e in lst:
-        steps = []
-        for n, d in enumerate(e['does']):
-            fn = None
-            if d['kind'] == 'lua':
-                fn = 'user_%s_%d' % (re.sub(r'[^a-z0-9]', '_', e['id'].lower()), n)
-                fns.append('-- %s: %s\nlocal function %s(ctx)\n%s\nend\n' % (e['name'], d.get('brief') or 'Lua of your own', fn, d['code']))
-            # (a summon knows its step, so two summons in one effect each call their own)
-            steps.append('    ' + _row(dict(d, n=n) if d['kind'] == 'summon' else d, fn) + ',')
-            if d['kind'] == 'message':
-                msgs = True
-        if steps:
-            rows.append('  [%s] = {\n%s\n  },' % (_lua(e['id'].lower()), '\n'.join(steps)))
-    _put(db, ACTOR, 'NPC, CREATURE, PLAYER', (ACTOR_LUA % ('\n'.join(fns), '\n'.join(rows))) if rows else None)
+    rows = actor_text(lst)
+    msgs = any(d['kind'] == 'message' for e in lst for d in e['does'])
+    _put(db, ACTOR, 'NPC, CREATURE, PLAYER', rows)
     quake = any(d['kind'] == 'quake' for e in lst for d in e['does'])
     # (what each effect does in the world as it lands, for where its bolt strikes in OpenMW 0.52)
     hits = []
@@ -641,6 +628,45 @@ def _write(db, lst):
     g = g.replace("local RAISE_SCRIPT = ''", ('local RAISE_SCRIPT = %s' % _lua(raise_id.lower())) if raise_id else "local RAISE_SCRIPT = ''")
     _put(db, GLOBAL, 'GLOBAL', g if rows else None)
     _put(db, PLAYER, 'PLAYER', PLAYER_LUA if (rows and (msgs or quake or any(d['kind'] in ('lua', 'transmute', 'resurrect') for e in lst for d in e['does']))) else None)
+
+
+def actor_text(lst):
+    """The actor script for these effects (None when none does anything): what each does, by its id (OpenMW gives
+    effects' ids in lower case)."""
+    rows, fns = [], []
+    for e in lst:
+        steps = []
+        for n, d in enumerate(e['does']):
+            fn = None
+            if d['kind'] == 'lua':
+                fn = 'user_%s_%d' % (re.sub(r'[^a-z0-9]', '_', e['id'].lower()), n)
+                fns.append('-- %s: %s\nlocal function %s(ctx)\n%s\nend\n' % (e['name'], d.get('brief') or 'Lua of your own', fn, d['code']))
+            # (a summon knows its step, so two summons in one effect each call their own)
+            steps.append('    ' + _row(dict(d, n=n) if d['kind'] == 'summon' else d, fn) + ',')
+        if steps:
+            rows.append('  [%s] = {\n%s\n  },' % (_lua(e['id'].lower()), '\n'.join(steps)))
+    if not rows:
+        return None
+    text = ACTOR_LUA % ('\n'.join(fns), '\n'.join(rows))
+    if any(not e.get('duration', True) for e in lst if e['does']):
+        text = text.replace('local INSTANT = false', 'local INSTANT = true', 1)
+    return text
+
+
+def actor_now(scripts):
+    """The actor script as this Workshop writes it, from the effects kept in the mod's own my_effects script, for a
+    mod made by an older one (Project.lua_outputs): its people then cost what they cost now, without the maker having
+    to change an effect first. None when the mod keeps no effects."""
+    s = next((x for x in scripts if x.get('name') == SCRIPT), None)
+    text = (s or {}).get('text') or ''
+    a, b = text.find(BEGIN), text.find(END)
+    if a < 0 or b < 0:
+        return None
+    try:
+        lst = json.loads(text[a + len(BEGIN):b]) or []
+        return actor_text(lst)
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _raise_script(db, wanted):
@@ -677,7 +703,9 @@ def _hung(db):
 # Data's actor_magic.lua does), runs the steps as an effect lands, each second while it lasts and as it ends,
 # and asks the global script for what only the world can do.
 ACTOR_LUA = '''-- Made by Morrowind Workshop: what your own magic effects do (Create > New magic effect).
--- Runs on every actor near the player: reads the spells working on it, as Tamriel Data's own effects do.
+-- Runs on every actor near the player: reads the spells working on it, as Tamriel Data's own effects do, but
+-- only now and then while nothing of yours is on them.
+local async = require('openmw.async')
 local core = require('openmw.core')
 local nearby = require('openmw.nearby')
 local self = require('openmw.self')
@@ -699,6 +727,25 @@ local active = {}          -- spell:index -> { d = steps, mag, caster, tick, fig
 -- (what was going on when the game was saved: without it, loading a save re-ran every "as it lands" step of an
 -- effect still on them, a second summon, spawn or cast, and Calm or Frenzy kept the 0 or 100 it had set for good)
 local restored = nil       -- old key -> saved state, until the first frame after a load has matched them
+-- (no work each frame for someone with nothing of yours on them: read every frame on everyone, a crowded town's
+-- people cost a mod 12-15 fps, a tester's Narsis, and only calling each of them every frame cost a frame a
+-- millisecond. They are looked at four times a second, and at once when a spell lands on them where OpenMW 0.52 says
+-- so (not for a spell a script puts on them: seen in the game). A mod with an effect that has no duration looks ten
+-- times a second: such an effect stays on them about a second (seen in the game, OpenMW 0.52), so it is seen several
+-- times over. Once something of yours is on them, and always on the player: every frame, on a timer, so only they
+-- cost anything)
+local INSTANT = false
+local POLL = INSTANT and 0.1 or 0.25
+local isPlayer = types.Player.objectIsInstance(self)
+local gen, lastT, busy = 0, nil, false
+local tick
+-- (the next look: each new one stands in for the one waiting, so there is only ever one)
+local function arm(delay)
+  gen = gen + 1
+  local g = gen
+  async:newUnsavableSimulationTimer(math.max(delay, 0.001), function() if g == gen then tick() end end)
+end
+local function wake() if not busy then arm(0) end end
 
 local function change(stat, amount)
   local s = Actor.stats.dynamic[stat](self)
@@ -919,6 +966,7 @@ end
 -- as a bolt striking the corpse is (the hit handler in my_effects_global). Bolts aren't taken: their hits are.
 if okI and I.SpellCasting and I.SpellCasting.addApplyMagicEffectsHandler then
   I.SpellCasting.addApplyMagicEffectsHandler(function(options)
+    wake()
     if not (options and options.id and Actor.isDead(self)) then return end
     local ok, err = pcall(function()
       world('hitdead', { id = options.id, item = options.item, caster = options.caster, effects = options.effects })
@@ -927,77 +975,93 @@ if okI and I.SpellCasting and I.SpellCasting.addApplyMagicEffectsHandler then
   end)
 end
 
-return {
-  engineHandlers = {
-    onUpdate = function(dt)
-      if dt <= 0 then return end
-      for i = #later, 1, -1 do
-        later[i].t = later[i].t - dt
-        if later[i].t <= 0 then reel(later[i].how); table.remove(later, i) end
-      end
-      local now = {}
-      for _, spell in pairs(Actor.activeSpells(self)) do
-        for _, effect in pairs(spell.effects) do
-          local d = DOES[effect.id]
-          if d then
-            local key = tostring(spell.activeSpellId) .. ':' .. tostring(effect.index)
-            now[key] = true
-            local st = active[key]
-            local mag = effect.magnitudeThisFrame or effect.magnitude or 0
-            if not st and restored then
-              -- (after a load: the same spell carries on, by its key or else by the spell and the effect's place in it)
-              local old = restored[key]
-              if not old then
-                for k2, o in pairs(restored) do
-                  if o.spell == tostring(spell.id) and o.index == effect.index and o.id == effect.id then old = o; key = k2; break end
-                end
-              end
-              if old then
-                restored[key] = nil
-                key = tostring(spell.activeSpellId) .. ':' .. tostring(effect.index)
-                st = { d = d, mag = mag, caster = spell.caster, tick = old.tick or 0, id = effect.id, key = old.key,
-                       user = {}, left = effect.durationLeft, fight = old.fight, scaled = old.scaled, summoned = old.summoned,
-                       spell = old.spell, index = old.index }
-                active[key] = st
-              end
+local function update(dt)
+  for i = #later, 1, -1 do
+    later[i].t = later[i].t - dt
+    if later[i].t <= 0 then reel(later[i].how); table.remove(later, i) end
+  end
+  local now = {}
+  for _, spell in pairs(Actor.activeSpells(self)) do
+    for _, effect in pairs(spell.effects) do
+      local d = DOES[effect.id]
+      if d then
+        local key = tostring(spell.activeSpellId) .. ':' .. tostring(effect.index)
+        now[key] = true
+        local st = active[key]
+        local mag = effect.magnitudeThisFrame or effect.magnitude or 0
+        if not st and restored then
+          -- (after a load: the same spell carries on, by its key or else by the spell and the effect's place in it)
+          local old = restored[key]
+          if not old then
+            for k2, o in pairs(restored) do
+              if o.spell == tostring(spell.id) and o.index == effect.index and o.id == effect.id then old = o; key = k2; break end
             end
-            if not st then
-              st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {}, left = effect.durationLeft,
-                     spell = tostring(spell.id), index = effect.index }
-              active[key] = st
-              each(st, 'land', dt)
-            end
-            st.mag = mag
-            -- each second while it lasts: the stats smoothly, the rest once a second
-            for _, s in ipairs(d) do
-              if (s.when == 'second') and (s.kind == 'health' or s.kind == 'magicka' or s.kind == 'fatigue') then run(s, st, dt, 'second') end
-            end
-            st.tick = st.tick + dt
-            if st.tick >= 1 then
-              st.tick = st.tick - 1
-              for _, s in ipairs(d) do
-                if s.when == 'second' and not (s.kind == 'health' or s.kind == 'magicka' or s.kind == 'fatigue') then run(s, st, 1, 'second') end
-              end
-            end
+          end
+          if old then
+            restored[key] = nil
+            key = tostring(spell.activeSpellId) .. ':' .. tostring(effect.index)
+            st = { d = d, mag = mag, caster = spell.caster, tick = old.tick or 0, id = effect.id, key = old.key,
+                   user = {}, left = effect.durationLeft, fight = old.fight, scaled = old.scaled, summoned = old.summoned,
+                   spell = old.spell, index = old.index }
+            active[key] = st
+          end
+        end
+        if not st then
+          st = { d = d, mag = mag, caster = spell.caster, tick = 0, id = effect.id, key = key, user = {}, left = effect.durationLeft,
+                 spell = tostring(spell.id), index = effect.index }
+          active[key] = st
+          each(st, 'land', dt)
+        end
+        st.mag = mag
+        -- each second while it lasts: the stats smoothly, the rest once a second
+        for _, s in ipairs(d) do
+          if (s.when == 'second') and (s.kind == 'health' or s.kind == 'magicka' or s.kind == 'fatigue') then run(s, st, dt, 'second') end
+        end
+        st.tick = st.tick + dt
+        if st.tick >= 1 then
+          st.tick = st.tick - 1
+          for _, s in ipairs(d) do
+            if s.when == 'second' and not (s.kind == 'health' or s.kind == 'magicka' or s.kind == 'fatigue') then run(s, st, 1, 'second') end
           end
         end
       end
-      for key, st in pairs(active) do
-        if not now[key] then
-          finish(st)
-          active[key] = nil
-        end
-      end
-      if restored then
-        -- (ended while the game was not running: only put right what it had changed, no "as it ends" steps)
-        for _, o in pairs(restored) do
-          if o.fight ~= nil then Actor.stats.ai.fight(self).base = o.fight end
-          if o.scaled then world('unscale', {}) end
-          if o.summoned then world('unsummon', { spell = tostring(self.id) .. ':' .. o.key }) end
-        end
-        restored = nil
-      end
-    end,
+    end
+  end
+  for key, st in pairs(active) do
+    if not now[key] then
+      finish(st)
+      active[key] = nil
+    end
+  end
+  if restored then
+    -- (ended while the game was not running: only put right what it had changed, no "as it ends" steps)
+    for _, o in pairs(restored) do
+      if o.fight ~= nil then Actor.stats.ai.fight(self).base = o.fight end
+      if o.scaled then world('unscale', {}) end
+      if o.summoned then world('unsummon', { spell = tostring(self.id) .. ':' .. o.key }) end
+    end
+    restored = nil
+  end
+end
+
+tick = function()
+  local now = core.getSimulationTime()
+  local dt = lastT and (now - lastT) or 0
+  lastT = now
+  -- (the first look after a quiet spell: a frame's worth, not the whole wait, for the stats that change smoothly)
+  if not busy or dt <= 0 then dt = math.min(math.max(dt, 0.001), 1 / 30) end
+  update(dt)
+  busy = isPlayer or POLL == 0 or restored ~= nil or #later > 0 or next(active) ~= nil
+  arm(busy and 0 or POLL)
+end
+
+local function start() lastT = nil; busy = false; arm(0) end
+
+return {
+  engineHandlers = {
+    onInit = start,
+    onActive = start,
+    onInactive = function() gen = gen + 1; busy = false end,
     onSave = function()
       local out = {}
       for key, st in pairs(active) do
@@ -1008,6 +1072,7 @@ return {
     end,
     onLoad = function(data)
       if data and data.active and next(data.active) then restored = data.active end
+      start()
     end,
   },
   eventHandlers = {

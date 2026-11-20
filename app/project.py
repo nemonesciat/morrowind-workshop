@@ -658,9 +658,14 @@ class Project:
         if not self.lua or not self.lua_allowed():
             return {}
         out, lines, attach = {}, [], {}
+        import myeffects
         for s in self.lua:
             path = self.lua_path(s)
-            import myeffects
+            if s.get('name') == myeffects.ACTOR:
+                # (a mod made by an older Workshop: its effects' actor script as this one writes it, kept the same)
+                now = myeffects.actor_now(self.lua)
+                if now and now != s.get('text'):
+                    s['text'] = now
             out[path] = myeffects.own_events(s.get('text') or '', self.lua_slug())
             ids = [i.strip().lower() for i in s.get('attach') or [] if i.strip()]
             if ids:
