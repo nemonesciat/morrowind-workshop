@@ -5323,7 +5323,7 @@ const AI_EXAMPLES = [
   'Add a couple of guards near the entrance.',
   'Create a new silver dagger called "Moon-Kissed Fang", worth 400 gold, and put it on a table here.',
 ];
-async function aiStatus(){ try { const s = await api('/api/ai/status'); AI.configured = s.configured; return s; } catch(e){ return null; } }
+async function aiStatus(){ try { const s = await api('/api/ai/status'); AI.configured = s.configured; AI.writer = s.writer; AI.localModel = s.local_model; return s; } catch(e){ return null; } }
 $('#aibtn').onclick = async () => {
   AI.open = !AI.open; $('#aipanel').classList.toggle('open', AI.open);
   if (AI.open){
@@ -5350,7 +5350,9 @@ function renderAI(){
   $('#ai-in').disabled = !AI.ack;
   if (!AI.ack){ box.innerHTML = aiNoticeHtml(); bindAiNotice(); return; }       // (once: what it costs, what it sends)
   if (!AI.configured || AI.editingKey){
-    box.innerHTML = `<div class="ai-msg bot"><b>Connect the assistant</b>
+    box.innerHTML = `<div class="ai-msg bot"><b>Connect the assistant</b>${AI.writer === 'local' ? `
+<span class="msg">Your model on this PC${AI.localModel ? ` (${esc(AI.localModel)})` : ''} already writes Lua and dialogue lines without a key: Scripts › a Lua script › ✦ Write with AI. This chat needs Claude.</span>
+` : ''}
 The assistant uses Claude, Anthropic's AI, through your own Anthropic API account.
 
 1. Sign in at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> and create an API key.

@@ -34,6 +34,7 @@ const GUIDES = [
   {file: 'openmw-052.md', title: 'What OpenMW 0.52 adds', what: 'Your own skills, attributes, weathers, traps, loot rules and list additions; magic effects that burst, strike, glow and act where the bolt strikes.'},
   {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
   {file: 'scripts-and-game-rules.md', title: 'Scripts and game rules', what: 'MWScript and Lua, global variables, game settings, factions, classes, races and the rest.'},
+  {file: 'coding-with-ai.md', title: 'Coding with AI', what: 'Lua, effects and dialogue written by Claude or a model on your PC (Ollama, LM Studio…): setting up, asking, fixing.'},
   {file: 'playing-and-testing.md', title: 'Playing and testing', what: 'Play here, playing as your own character, test setups, the live link, the OpenMW menu.'},
   {file: 'sharing-your-mod.md', title: 'Sharing your mod', what: 'My mod, Get ready to share, Health check, Load order, merging, .esp files, building together, backups.'},
   {file: 'how-the-workshop-learns.md', title: 'How the Workshop learns', what: 'Where its building and decorating know-how comes from: your own game, on your PC.'},
@@ -323,7 +324,7 @@ async function renderSettings(){
       ${st.openmw_chosen ? '<button class="btn sm" id="st-auto" title="Forget the chosen folder and look for OpenMW by itself">Find it automatically</button>' : ''}
       <button class="btn sm" data-open="openmw">Open OpenMW's settings folder</button></div></section>
 
-  <section class="card setsec"><h3>AI assistant</h3>
+  <section class="card setsec"><h3>AI assistant${typeof guideLink === 'function' ? guideLink('coding-with-ai.md', 'Setting up a model on your PC') : ''}</h3>
     <p class="msg" title="Usually a few cents a request, up to about half a dollar for a big job. What you ask and the place and records it works with are sent to Anthropic.">Optional. Claude, with your own Anthropic API key, billed to your account.</p>
     <div class="setrow"><span>API key</span><b>${st.ai_configured ? `saved, ends in …${esc(st.ai_key_end)}${st.ai_from_env ? ' (from the ANTHROPIC_API_KEY setting on this PC)' : ''}` : 'none'}</b></div>
     <div class="actions"><input class="inp" id="st-key" type="password" placeholder="Paste a new key: sk-ant-…" style="max-width:320px" autocomplete="off">
@@ -492,7 +493,8 @@ The assistant is optional: everything else in the Workshop works without it.
 
 • <b>It costs money.</b> It uses Claude, Anthropic's AI, through <b>your own Anthropic API account</b>. Each request is billed to that account: usually a few cents, a big job like furnishing a whole house up to about half a dollar. You set up the account and its spending limits on console.anthropic.com.
 • <b>What is sent.</b> What you ask, plus details about the place, records and objects it works with, go to Anthropic to be answered. Nothing is sent until you ask something.
-• <b>Check its work.</b> It can make mistakes. Everything it does goes into your mod like your own edits, and <b>Undo</b> takes it back.</div>
+• <b>Check its work.</b> It can make mistakes. Everything it does goes into your mod like your own edits, and <b>Undo</b> takes it back.
+• <b>Your own model.</b> Lua scripts, your own effects' Lua and dialogue lines can be written by a model on your PC instead, free: Settings › AI assistant. This chat always uses Claude.</div>
     <div class="actions"><button class="btn primary" id="ai-ack">Got it</button></div>`;
 }
 function bindAiNotice(){

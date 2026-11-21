@@ -49,7 +49,7 @@ async function luOpen(name){
 function luRender(){
   const d = LU.data, kinds = LU.list ? LU.list.kinds : [];
   const kindInfo = kinds.find(k => k[0] === d.kind) || ['', '', ''];
-  $('#smain').innerHTML = `<div class="wrap cwrap" style="max-width:1100px"><div class="chead"><div><h1 style="margin:0">🌙 ${esc(d.name)}</h1>
+  $('#smain').innerHTML = `<div class="wrap cwrap" style="max-width:1100px"><div class="chead"><div><h1 style="margin:0">🌙 ${esc(d.name)}${typeof guideLink === 'function' ? guideLink('coding-with-ai.md', 'Writing a Lua script', 'Writing Lua with AI') : ''}</h1>
       <div class="msg">Lua · goes into your mod as ${esc(d.path)}</div></div>
       <div class="chbtns"><button class="btn sm" id="lu-ren">Rename</button><button class="btn sm danger" id="lu-del">Remove</button>
         <button class="btn sm" id="lu-fix" title="Send what the checker and the game's log found in this script to the AI to put right">✦ Fix</button>
@@ -96,6 +96,11 @@ async function luAI(){
   const d = LU.data; if (!d) return;
   const brief = await askText('What should the script do? Put names of places and things in quotes, e.g. when the player uses this stone, take them to "Balmora, Guild of Mages"', LU.aiBrief || '');
   if (!brief || !brief.trim()) return;
+  // (a script can't see a spell being cast: "when the player casts a spell, teleport…" is a magic effect of your own,
+  // whose steps (Teleport, Summon, Lua of your own…) run as it lands. A tester's script for it teleported at the start)
+  if (/\bcast(s|ing)?\b[\s\S]*\bspell|\bspell\b[\s\S]*\bcast/i.test(brief)
+      && !confirm('Something that happens when a spell is cast is best made as a magic effect of your own: Create › New magic effect, '
+        + 'with steps such as Teleport, Summon or Lua of your own, then a spell with that effect. A script can\'t easily tell when a spell is cast.\n\nWrite a script anyway?')) return;
   LU.aiBrief = brief;
   const b = $('#lu-ai'), old = b.innerHTML, box = $('#lu-probs');
   b.disabled = true; b.innerHTML = '<span class="spin"></span> Writing…';
