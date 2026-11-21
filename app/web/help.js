@@ -229,7 +229,7 @@ function renderGuide(){
     <tr><td><b>Scripts</b></td><td>Morrowind scripts and OpenMW Lua scripts, checked as you type.</td></tr>
     <tr><td><b>Rules</b></td><td>Factions, classes, races, birthsigns, skills, regions and weather, sounds (and the sounds creatures make), magic effects, global variables and game settings.</td></tr>
     <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip.</td></tr>
-    <tr><td><b>📁 File</b> (at the top)</td><td><b>Open…</b> opens any .esp or .omwaddon, or one of your mods, from your computer's file picker. As in the Construction Set the file is the <b>active file</b>, saved straight back into; its placed objects keep their numbers, so saved games still work. <b>Save a version</b> and <b>Earlier versions</b> keep and bring back the mod as it was. <b>Save as…</b> puts everything into a new .esp or .omwaddon, which is the active file from then on. <b>Merge a mod into this one</b> folds another of your mods into this one as one change. <b>Manage mods</b> lists them all, to switch or delete.</td></tr>
+    <tr><td><b>📁 File</b> (at the top)</td><td><b>Open…</b> opens any .esp or .omwaddon, or one of your mods, from your computer's file picker. As in the Construction Set the file is the <b>active file</b>, saved straight back into; its placed objects keep their numbers, so saved games still work. <b>Save a version</b> and <b>Earlier versions</b> keep and bring back the mod as it was. <b>Save as…</b> puts everything into a new .esp or .omwaddon, which is the active file from then on. <b>Merge a mod into this one</b> folds another of your mods into this one as one change; <b>Merge a plugin file</b> does the same for any .esp or .omwaddon. <b>Manage mods</b> lists them all, to switch or delete.</td></tr>
     <tr><td><b>Health check</b></td><td>Problems in your load order, like missing masters, models or textures, and <b>Check my mod</b>: every record of your mod checked the way the game's editor checks them.</td></tr>
     <tr><td><b>Load order</b></td><td>Switch plugins on or off and change their order (saved to OpenMW's settings, with a backup).</td></tr>
   </table>
@@ -330,7 +330,13 @@ async function renderSettings(){
       <button class="btn sm" id="st-savekey">Save key</button>${st.ai_configured && !st.ai_from_env ? '<button class="btn sm danger" id="st-delkey">Remove key</button>' : ''}
       <a class="btn sm" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key</a></div>
     <p class="msg" style="font-size:12px">The key is stored only on this PC, in the Workshop's folder.</p>
-    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="st-aibtn" ${aiBtnShown() ? 'checked' : ''}> Show the ✦ AI button at the top</label></section>
+    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="st-aibtn" ${aiBtnShown() ? 'checked' : ''}> Show the ✦ AI button at the top</label>
+    <div class="setrow" style="margin-top:10px" title="Lua scripts, your own effects' Lua and dialogue lines. The chat assistant stays on Claude."><span>Lua and lines written by</span>
+      <select class="inp" id="st-writer" style="max-width:220px"><option value="claude"${st.ai_writer !== 'local' ? ' selected' : ''}>Claude</option><option value="local"${st.ai_writer === 'local' ? ' selected' : ''}>A model on this PC</option></select></div>
+    <div class="actions" id="st-local"${st.ai_writer === 'local' ? '' : ' style="display:none"'}>
+      <input class="inp" id="st-lurl" value="${esc(st.ai_local_url || 'http://127.0.0.1:11434/v1')}" style="max-width:240px" title="Any app with the usual chat address. Ollama: http://127.0.0.1:11434/v1 · LM Studio: http://127.0.0.1:1234/v1 (its server switched on) · llama.cpp's llama-server: http://127.0.0.1:8080/v1 · KoboldCpp: http://127.0.0.1:5001/v1">
+      <select class="inp" id="st-lmodel" style="max-width:240px">${st.ai_local_model ? `<option selected>${esc(st.ai_local_model)}</option>` : '<option value="">(no model chosen)</option>'}</select>
+      <button class="btn sm" id="st-lfind" title="Ask the app at that address which models it has">Find models</button></div></section>
 
   <section class="card setsec"><h3>Backups of your mod</h3>
     <p class="msg">The Workshop copies your mod's project file when you open it and then regularly while you work, and keeps the newest ones.</p>
@@ -357,6 +363,22 @@ async function renderSettings(){
   $('#st-pick').onclick = async () => { try { toast('Choose OpenMW\'s folder in the window that opens…'); const r = await post('/api/openmw/pick', {}); if (r.ok){ toast('Using OpenMW in ' + r.install + '. Reading your game again…'); setTimeout(poll, 300); } } catch (e){ toast(e.message, true); } };
   const auto = $('#st-auto'); if (auto) auto.onclick = async () => { await post('/api/settings', {openmw_reset: true}); toast('Looking for OpenMW by itself. Reading your game again…'); setTimeout(poll, 300); };
   $('#st-aibtn').onchange = e => { try { localStorage.setItem('ws-aibtn', e.target.checked ? '1' : '0'); } catch (x) {} aiBtnApply(); };
+  // (a model on this PC: Ollama or LM Studio, for the writers of Lua and dialogue lines; ai.Assistant._write)
+  $('#st-writer').onchange = e => { $('#st-local').style.display = e.target.value === 'local' ? '' : 'none'; save({ai_writer: e.target.value}); };
+  $('#st-lurl').onchange = e => save({ai_local_url: e.target.value.trim()});
+  $('#st-lmodel').onchange = e => save({ai_local_model: e.target.value});
+  $('#st-lfind').onclick = async () => {
+    const b = $('#st-lfind'), sel = $('#st-lmodel'), url = $('#st-lurl').value.trim();
+    b.disabled = true;
+    try {
+      const r = await post('/api/ai/local/models', {url});
+      if (!r.models.length){ toast('The app at ' + url + ' has no models yet.', true); return; }
+      const cur = sel.value;
+      sel.innerHTML = r.models.map(m => `<option${m === cur ? ' selected' : ''}>${esc(m)}</option>`).join('');
+      await save({ai_local_url: url, ai_local_model: sel.value});
+    } catch (e){ toast(e.message, true); }
+    finally { b.disabled = false; }
+  };
   $('#st-savekey').onclick = async () => { const k = $('#st-key').value.trim(); if (!k) return; await post('/api/ai/key', {key: k}); AI.configured = true; aiBtnApply(); toast('Key saved.'); renderSettings(); };
   const dk = $('#st-delkey'); if (dk) dk.onclick = async () => { if (!confirm('Remove the saved API key?')) return; await post('/api/ai/key', {key: ''}); AI.configured = false; aiBtnApply(); renderSettings(); };
   $('#st-bmin').onchange = e => save({backup_minutes: +e.target.value});

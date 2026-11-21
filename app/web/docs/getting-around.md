@@ -83,7 +83,7 @@ Every page's tools are **panels**.
 |---|---|
 | Appearance | Themes, and colours of your own. |
 | OpenMW | Where OpenMW is installed, and its settings folder. **Choose OpenMW's folder…** if it wasn't found. |
-| AI assistant | Optional. Your own Anthropic API key, stored only on this PC; each request is billed to your Anthropic account. Everything else works without it. |
+| AI assistant | Optional. Your own Anthropic API key, stored only on this PC; each request is billed to your Anthropic account. Everything else works without it. **Lua and lines written by**: Claude, or a model on this PC (Ollama, LM Studio) for Lua scripts, your own effects' Lua and dialogue lines; the chat assistant stays on Claude. |
 | Backups of your mod | How often, how many to keep, how much space, compressed or not, **Clear old ones** and **Restore**. |
 | Starting up | Open on Home or on Browse. |
 | Folders | Your projects and the Workshop's own folder. |

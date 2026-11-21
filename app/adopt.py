@@ -395,13 +395,14 @@ def candidates(db):
     return {'plugins': out, 'data_dirs': (db.config or {}).get('data', [])}
 
 
-def pick_file(db):
-    """Ask for a plugin file with the computer's own file picker (nothing is opened yet). {path} or {cancelled}."""
+def pick_file(db, purpose='open'):
+    """Ask for a plugin file with the computer's own file picker (nothing is opened yet). {path} or {cancelled}.
+    purpose 'merge': a plugin to merge into the open mod (only the picker's title differs)."""
     import osplat
     cfg = db.config or {}
     start = cfg.get('data_local') or os.path.join(cfg.get('userdata') or cfg.get('userdir', ''), 'data')
     try:
-        path = osplat.pick_file('Open a plugin as your mod', start, ('Morrowind plugins', ['*.esp', '*.omwaddon']))
+        path = osplat.pick_file('Merge a plugin into this mod' if purpose == 'merge' else 'Open a plugin as your mod', start, ('Morrowind plugins', ['*.esp', '*.omwaddon']))
     except osplat.PickerOpen as e:
         raise EditError(str(e))
     if path is None:

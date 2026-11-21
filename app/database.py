@@ -405,6 +405,8 @@ class Database:
         t0 = time.time()
         from project import load_settings
         self.config = read_openmw_config(load_settings().get('openmw_install'))
+        import luaapi
+        luaapi.INSTALL[0] = self.config.get('install')       # (OpenMW's own list of its Lua, for the Lua checker)
         self._scan_assets()
         proj_plugin = self.project.plugin.lower() if self.project else None
         self.cfg_content_all = list(self.config['content'])
@@ -832,6 +834,9 @@ class Database:
                             if ri is not None and self.recs[ri][3] != self.proj_pidx:
                                 need.add(self.recs[ri][3])
                             break
+        # (a plugin merged into the mod is never its master: merge.py, release._own_pidx)
+        merged = set(getattr(p, 'merged_in', None) or [])
+        need = {i for i in need if self.plugins[i]['name'].lower() not in merged}
         stack = list(need)
         while stack:
             pi = stack.pop()

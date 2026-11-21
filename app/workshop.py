@@ -100,7 +100,13 @@ def api_key():
     return load_settings().get('anthropic_api_key')
 
 
-assistant = ai.Assistant(db, api_key)
+def ai_writer():
+    """Who writes Lua and dialogue lines (Settings > AI assistant): Claude, or a model on this PC (ai.LOCAL_URL)."""
+    s = load_settings()
+    return {'writer': s.get('ai_writer') or 'claude', 'url': s.get('ai_local_url') or ai.LOCAL_URL, 'model': s.get('ai_local_model') or ''}
+
+
+assistant = ai.Assistant(db, api_key, ai_writer)
 link = LiveLink(db, edit_lock)
 editing.WRITE_LOCK = edit_lock         # (the project file and the plugin are written a moment after each change, under this lock)
 db.on_project_change = link.write_state
@@ -1333,6 +1339,10 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/lua/script':
                 import luascripts
                 self._json(luascripts.read(db, q.get('name', '')))
+            elif u.path == '/api/lua/gameerrors':
+                # this script's Lua errors in the game's own log (read only), for the Lua editor's Fix with AI
+                import luascripts
+                self._json(luascripts.game_errors(db, q.get('name', '')))
             elif u.path == '/api/fixit/scan':
                 # (?all=1: every see-through spot, not only what's worse than the game's own places)
                 import fixit
@@ -1576,7 +1586,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'characters': dialogue.my_characters(db) if db.project else [],
                             'topics': dialogue.index(db, mine=True) if db.project else []})
             elif u.path == '/api/ai/status':
+                w = ai_writer()
                 self._json({'configured': bool(api_key() or os.environ.get('ANTHROPIC_API_KEY')),
+                            'writer': w['writer'], 'local_model': w['model'],
                             'model': ai.MODEL, 'busy': assistant.lock.locked(), 'status': assistant.status,
                             'steps': assistant.steps, 'turns': sum(1 for m in assistant.messages if m['role'] == 'user'
                                                                    and isinstance(m['content'], str))})
@@ -1740,7 +1752,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(pick_openmw())
             if u.path == '/api/adopt/pick':
                 import adopt
-                return self._json(adopt.pick_file(db))
+                return self._json(adopt.pick_file(db, body.get('purpose') or 'open'))
             # help menu and settings (these work while the game data loads, too)
             if u.path == '/api/settings':
                 r = helpinfo.set_settings(body)
@@ -1945,6 +1957,18 @@ class Handler(BaseHTTPRequestHandler):
                 # the tester: what a character says in a given state of the game (convo.py; nothing saved)
                 import convo
                 return self._json(convo.say(db, body['id'], body.get('state') or {}, body.get('topic'), body.get('cell')))
+            if u.path == '/api/ai/lua':
+                # a whole Lua script from a description, for the Lua editor (nothing saved)
+                try:
+                    return self._json(assistant.lua_script(body))
+                except ai.ToolError as e:
+                    return self._json({'error': str(e)}, 400)
+            if u.path == '/api/ai/local/models':
+                # the models a model app on this PC offers (Settings > AI assistant)
+                try:
+                    return self._json({'models': ai.Assistant.local_models(body.get('url') or ai.LOCAL_URL)})
+                except ai.ToolError as e:
+                    return self._json({'error': str(e)}, 400)
             if u.path == '/api/ai/effectlua':
                 # the Lua for a step of one of your own magic effects, from a description (nothing saved)
                 try:
@@ -2867,9 +2891,10 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/project/merge':
                     # another mod of yours folded into this one, as one change (merge.py)
                     import merge
+                    # (or a plugin file, by its path: File > Merge a plugin file, read only, no mod made of it)
                     if body.get('preview'):
-                        return self._json(merge.preview(db, body.get('name') or ''))
-                    r = merge.merge(db, body.get('name') or '', body.get('resolve') or {})
+                        return self._json(merge.preview(db, body.get('name') or '', body.get('path')))
+                    r = merge.merge(db, body.get('name') or '', body.get('resolve') or {}, body.get('path'))
                     r['disabled'] = None
                     if body.get('disable_other') and r.get('in_load_order'):
                         # the merged-in mod comes off the game's load order, or the game shows its places twice;

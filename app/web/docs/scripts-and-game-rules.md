@@ -22,6 +22,29 @@ Attach a script to an object, a person or a creature from its editor (the **Scri
 keys, timers, changing the world as you play. Pick what the script is for (attached to objects, the player, or the
 whole game); the editor checks it as you type.
 
+**✦ Write with AI** in the editor: say what the script should do, and the AI writes it (or changes the one you have),
+for you to read over and Save. It uses Claude with your API key, or **a model on this PC**: in Settings → AI
+assistant, pick *A model on this PC*, give the address of the app that runs it and press **Find models**. Ollama,
+LM Studio (its server on), llama.cpp's llama-server, KoboldCpp and most others work; their addresses are in the
+box's tip.
+
+- The AI is given OpenMW's own list of its Lua, read from your OpenMW install, so it picks functions that exist.
+- Put names of places and things in quotes ("Balmora, Guild of Mages", "Caius Cosades"): the Workshop looks them up in
+  your game and gives the AI their real IDs, and for a place a spot to arrive at. An ID your game doesn't have is
+  pointed out.
+- What it writes is checked: its shape, OpenMW's rules for that kind of script, and every function and field against
+  that same list (a name OpenMW doesn't have, or one only a whole-game script may use). Anything found goes back to
+  the AI to put right, twice at most; what is left shows under the editor.
+- A script on objects that needs the whole game to do something (moving the player, giving items) asks for it; the
+  AI writes that part too, and offers to add it as its own script.
+- Each script it writes starts with a line saying which model wrote it. Try it in the game before sharing the mod:
+  the checks catch scripts that can't work, not ones that run but do the wrong thing, and a small model on a PC
+  writes weaker scripts than Claude.
+
+The editor itself also marks names that aren't in OpenMW's list, as warnings (the list now and then trails the game),
+and shows the Lua errors the game wrote about the script in its log (openmw.log) the last time it ran. **✦ Fix** sends
+both to the AI to put right, the script unsaved after, as with Write.
+
 Lua only works in an **OpenMW .omwaddon**. If your mod is a plain .esp, Lua scripts you write are kept in the
 project but not saved into the mod.
 

@@ -1893,15 +1893,29 @@ function projectModal(newOnly){
 // Merge another mod into this one: pick one of your other mods, see what would come over and settle
 // each clash (a record, a placed game object or a script both mods changed differently), then merge
 // as one change. POST /api/project/merge {name, preview} / {name, resolve} (merge.py).
-function mergeModal(){
+// File > Merge a plugin file...: the computer's file picker, then the same window for that file (merge.py reads it,
+// no mod is made of it). A tester asked for merging .esp files, 2026-11-21.
+async function mergeFile(){
+  if (FILE_PICKING){ toast(PICK_NOTE); return; }
+  FILE_PICKING = true;
+  try {
+    const r = await post('/api/adopt/pick', {purpose: 'merge'});
+    if (r.cancelled) return;
+    if (r.current){ toast(r.name + ' is the file of the mod open now.', true); return; }
+    mergeModal(r.mod ? null : r);
+    if (r.mod) setTimeout(() => { const s = document.querySelector('#mg-pick'); if (s){ s.value = r.mod; s.onchange(); } }, 0);
+  } catch (e){ toast(e.message, true); }
+  finally { FILE_PICKING = false; }
+}
+function mergeModal(file){
   const p = S.summary && S.summary.project;
   if (!p){ projectModal(); return; }
   const projects = ((S.summary && S.summary.projects) || []).filter(n => n !== p.name);
   const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>Merge another mod into this one</h2>
-    <p class="msg">Everything the other mod holds is added to <b>${esc(p.name)}</b>: its places and the objects in them, its records, scripts and grass. The other mod's own file is left as it is. Where both mods changed the same thing differently, you choose which to keep.</p>
+  bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>Merge ${file ? esc(file.name) : 'another mod'} into this one</h2>
+    <p class="msg">Everything the other ${file ? 'file' : 'mod'} holds is added to <b>${esc(p.name)}</b>: its places and the objects in them, its records${file ? '' : ', scripts and grass'}. The other ${file ? 'file' : 'mod’s own file'} is left as it is. Where both changed the same thing differently, you choose which to keep.</p>
     <p class="msg sev-warning"><b>Merging clears the Undo history of this mod.</b> A backup is kept under Backups first, so the mod as it was before the merge can be brought back from there.</p>
-    ${projects.length ? `<label>Which mod</label><select class="inp" id="mg-pick"><option value="">(choose)</option>${projects.map(n => `<option>${esc(n)}</option>`).join('')}</select>`
+    ${file ? '' : projects.length ? `<label>Which mod</label><select class="inp" id="mg-pick"><option value="">(choose)</option>${projects.map(n => `<option>${esc(n)}</option>`).join('')}</select>`
                       : '<div class="msg">You have no other mod to merge: this is the only one.</div>'}
     <div id="mg-preview" style="margin-top:12px"></div>
     <div class="msg err" id="mg-err" style="margin-top:8px"></div>
@@ -1912,16 +1926,17 @@ function mergeModal(){
   q('#mg-cancel').onclick = () => bg.remove();
   bg.onclick = e => { if (e.target === bg) bg.remove(); };
   let pv = null;
+  const which = () => file ? {path: file.path} : {name: pick.value};
   const n = (k, one, many) => `${fmtN(k)} ${k === 1 ? one : many || one + 's'}`;
   const radios = (list, what) => list.map((c, i) => `<div class="arow" style="padding:4px 8px;gap:10px;align-items:center">
       <span class="atext">${what(c)}</span>
       <label class="msg" style="white-space:nowrap"><input type="radio" name="mg-${esc(c.key)}" value="mine" checked> keep mine</label>
       <label class="msg" style="white-space:nowrap"><input type="radio" name="mg-${esc(c.key)}" value="theirs"> take theirs</label></div>`).join('');
-  if (pick) pick.onchange = async () => {
+  const look = async () => {
     pv = null; ok.disabled = true; err.textContent = ''; box.innerHTML = '';
-    if (!pick.value) return;
+    if (!file && !pick.value) return;
     box.innerHTML = '<span class="spin"></span> Looking at what it holds…';
-    try { pv = await post('/api/project/merge', {name: pick.value, preview: true}); }
+    try { pv = await post('/api/project/merge', Object.assign(which(), {preview: true})); }
     catch (e){ box.innerHTML = ''; err.textContent = e.message; return; }
     const cells = pv.cells, r = pv.records;
     let h = '';
@@ -1948,21 +1963,25 @@ function mergeModal(){
         radios(cells.conflicts, c => `<b>${esc(c.id)}</b> in ${esc(c.cell)} <span class="msg">(${esc(c.mine)} here, ${esc(c.theirs)} there)</span>`) +
         radios(pv.lua.conflicts, c => `Lua script <b>${esc(c.name)}</b>`) + '</div>';
     } else if (!pv.missing_masters.length) h += '<p class="msg" style="margin:8px 0 0">Nothing clashes: the two mods never changed the same thing differently.</p>';
+    if (pv.scripts_beside) h += `<div class="msg sev-warning" style="margin-top:10px">Its Lua scripts (the .omwscripts beside it) don't come over.</div>`;
+    if (pv.problems && pv.problems.length) h += `<div class="msg sev-warning" style="margin-top:10px">In the file: ${pv.problems.map(esc).join('; ')}</div>`;
     if (pv.in_load_order){
-      h += `<div class="msg sev-warning" style="margin-top:10px"><b>"${esc(pv.name)}" is on in the load order.</b> Left on, the game would show its places twice.
+      h += `<div class="msg sev-warning" style="margin-top:10px"><b>"${esc(pv.name)}" is on in the load order.</b> Left on, the game would show its places twice.${pv.file ? ' Saved games made with it forget what happened to its things (moved, taken, killed).' : ''}
         <label style="display:block;margin-top:6px" title="The game then reads your game data again; a save made with it on warns once that it is missing"><input type="checkbox" id="mg-off" checked> Switch ${esc(pv.plugin)} off when merging</label></div>`;
     }
     box.innerHTML = h;
     ok.disabled = !!pv.missing_masters.length;
   };
+  if (pick) pick.onchange = look;
+  if (file) look();
   ok.onclick = async () => {
-    if (!pv || !pick) return;
+    if (!pv || !(file || pick)) return;
     const resolve = {};
     bg.querySelectorAll('input[type=radio]:checked').forEach(i => { resolve[i.name.slice(3)] = i.value; });
     ok.disabled = true; err.textContent = '';
     try {
       const off = bg.querySelector('#mg-off');
-      const r = await post('/api/project/merge', {name: pick.value, resolve, disable_other: !!(off && off.checked)});
+      const r = await post('/api/project/merge', Object.assign(which(), {resolve, disable_other: !!(off && off.checked)}));
       bg.remove();
       toast(r.note + (r.missing_files.length ? ` (${r.missing_files.length} Library file${r.missing_files.length === 1 ? '' : 's'} it uses could not be found)` : '')
             + (r.disabled ? `. ${r.disabled} is switched off in the load order; reading your game data again…${r.game_running ? ' The game running now keeps the old order until it restarts.' : ''}` : '')
@@ -5164,6 +5183,7 @@ $('#filebtn').onclick = e => {
     <button data-op="versions"${off} title="Put the mod back to a saved version or a backup">Earlier versions…</button>
     <hr>
     <button data-op="merge"${off} title="Add everything another of your mods holds to this one">Merge a mod into this one…</button>
+    <button data-op="mergefile"${off} title="Add everything an .esp or .omwaddon holds to this one; the file itself is only read">Merge a plugin file…</button>
     <button data-op="folder"${off}>Show in folder</button>
     <button data-op="mods" title="Every mod you made or opened here: switch, show its folder, delete">Manage mods…</button>
     <button data-op="share"${off} title="Check the mod, write a readme and pack a zip">Get ready to share…</button>`;
@@ -5192,7 +5212,7 @@ $('#filemenu').addEventListener('click', e => {
   const b = e.target.closest('button[data-op]'); if (!b || b.disabled) return;
   if (b.dataset.op === 'recent'){ $('#filerecent').classList.toggle('on'); return; }
   $('#filemenu').style.display = 'none';
-  ({new: () => projectModal(true), open: fileOpen, save: () => saveVersion(), saveas: saveAsModal, versions: versionsModal, merge: mergeModal,
+  ({new: () => projectModal(true), open: fileOpen, save: () => saveVersion(), saveas: saveAsModal, versions: versionsModal, merge: () => mergeModal(), mergefile: mergeFile,
     folder: async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } },
     mods: modsModal, share: () => showView('release')})[b.dataset.op]();
 });

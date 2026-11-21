@@ -41,6 +41,7 @@ a town or a big shape out of reach:
 | Save as… | Everything into a new .esp or .omwaddon, which is the active file from then on. |
 | Earlier versions… | The versions you saved and the Workshop's own backups, each with Restore. |
 | Merge a mod into this one… | Adds everything another of your mods holds to this one, as one change. It clears this mod's Undo history; a backup is kept. |
+| Merge a plugin file… | The same for any .esp or .omwaddon, picked with your computer's file picker: that file is only read. Its places, objects, records and dialogue come over; where both changed the same thing, you choose. Switch it off in the load order when merging (the window offers it): saved games made with it forget what happened to its things. An .omwaddon's Lua scripts don't come over. |
 | Show in folder | The folder with your mod file in it. |
 | Manage mods… | Every mod you made or opened: switch, show its folder, or delete the ones you no longer want. |
 | Get ready to share… | The same as the button on My mod. |

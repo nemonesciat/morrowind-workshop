@@ -41,7 +41,10 @@ async function luOpen(name){
   LU.name = LU.data.name;
   delete LU.data.problems;
   LU.orig = JSON.stringify(LU.data);
+  LU.gameErr = [];
   luRender(); luMine();
+  // (this script's Lua errors in the game's own log: shown with the checker's, and sent by Fix)
+  try { const g = await api('/api/lua/gameerrors?name=' + encodeURIComponent(name)); if (LU.name === name){ LU.gameErr = g.errors || []; luProbs(LU.lastProbs || null); } } catch (e){}
 }
 function luRender(){
   const d = LU.data, kinds = LU.list ? LU.list.kinds : [];
@@ -49,6 +52,8 @@ function luRender(){
   $('#smain').innerHTML = `<div class="wrap cwrap" style="max-width:1100px"><div class="chead"><div><h1 style="margin:0">🌙 ${esc(d.name)}</h1>
       <div class="msg">Lua · goes into your mod as ${esc(d.path)}</div></div>
       <div class="chbtns"><button class="btn sm" id="lu-ren">Rename</button><button class="btn sm danger" id="lu-del">Remove</button>
+        <button class="btn sm" id="lu-fix" title="Send what the checker and the game's log found in this script to the AI to put right">✦ Fix</button>
+        <button class="btn sm" id="lu-ai" title="Describe what it should do: the AI writes the script (Claude, or a model on this PC: Settings). Nothing is saved until you press Save">✦ Write with AI</button>
         <button class="btn sm" id="lu-revert" style="visibility:hidden">↺ Undo edits</button><button class="btn primary" id="lu-save" disabled>Saved</button></div></div>
     <div class="card" style="margin-bottom:12px"><div class="crow">
       ${cField('Runs', `<select class="inp" id="lu-kind">${kinds.map(k => `<option value="${k[0]}" ${k[0] === d.kind ? 'selected' : ''}>${esc(k[1])}</option>`).join('')}</select>`, esc(kindInfo[2]))}
@@ -70,6 +75,8 @@ function luRender(){
   if ($('#lu-addatt')) ddSearch('lu-addatt', LU_ATTACH_TYPES, r => { if (!d.attach.some(a => a.toLowerCase() === r.id.toLowerCase())) d.attach.push(r.id); luRender(); luDirty(); });
   document.querySelectorAll('[data-ludrop]').forEach(a => a.onclick = e => { e.preventDefault(); d.attach.splice(+a.dataset.ludrop, 1); luRender(); luDirty(); });
   $('#lu-revert').onclick = () => { LU.data = JSON.parse(LU.orig); luRender(); };
+  $('#lu-ai').onclick = () => luAI();
+  $('#lu-fix').onclick = () => luAIFix();
   $('#lu-save').onclick = luSave;
   $('#lu-ren').onclick = async () => {
     const nn = await askText('New name for the script:', d.name); if (!nn || nn === d.name) return;
@@ -83,6 +90,53 @@ function luRender(){
   };
   luDirty(); luCheck();
 }
+// ✦ Write with AI: a whole script from a description (POST /api/ai/lua, ai.Assistant.lua_script). A script with real
+// code in it is sent along, to be changed as asked; the editor shows the result, unsaved (↺ Undo edits takes it back).
+async function luAI(){
+  const d = LU.data; if (!d) return;
+  const brief = await askText('What should the script do? Put names of places and things in quotes, e.g. when the player uses this stone, take them to "Balmora, Guild of Mages"', LU.aiBrief || '');
+  if (!brief || !brief.trim()) return;
+  LU.aiBrief = brief;
+  const b = $('#lu-ai'), old = b.innerHTML, box = $('#lu-probs');
+  b.disabled = true; b.innerHTML = '<span class="spin"></span> Writing…';
+  if (box) box.innerHTML = '<span class="msg">Writing… (a model on this PC can take a minute or two)</span>';
+  const blank = !/\S/.test(d.text.replace(/return\s*\{\s*engineHandlers\s*=\s*\{\s*\}\s*,?\s*\}/, ''));
+  try {
+    const r = await post('/api/ai/lua', {kind: d.kind, brief, current: blank ? '' : d.text});
+    if (!LU.data || LU.data !== d) return;
+    d.text = r.code; luRender(); luDirty();
+    toast(`Written by ${r.by}${r.tries > 1 ? ` (put right ${r.tries - 1} time${r.tries > 2 ? 's' : ''})` : ''}. Read it over, then Save.`, !!r.problems.length);
+    // (a script on objects that asks the whole-game script for something: that one was written too, added on a yes)
+    const c = r.companion;
+    if (c && confirm(`This script asks a script that runs for the whole game to do ${c.events.join(', ')}. ${r.by} wrote that one too`
+        + `${c.missing.length ? ` (it doesn't seem to do ${c.missing.join(', ')}: read it over)` : ''}. Add it to your mod as the Lua script "${d.name} world"?`)){
+      try {
+        const made = await post('/api/lua/new', {name: d.name + ' world', template: 'blank'});
+        await post('/api/lua/save', {name: made.name, data: Object.assign({}, made, {kind: 'GLOBAL', attach: [], text: c.code})});
+        afterChange(); luMine();
+        toast(`Added "${made.name}", which runs for the whole game. Save this one too.`);
+      } catch (e){ toast(e.message, true); }
+    }
+  } catch (e){ toast(e.message, true); luProbs(null); luCheck(); }
+  finally { const b2 = $('#lu-ai'); if (b2){ b2.disabled = false; b2.innerHTML = old; } }
+}
+// ✦ Fix: what the checker found and the game's log says about this script, to the AI to put right (unsaved after)
+async function luAIFix(){
+  const d = LU.data; if (!d) return;
+  const probs = (LU.lastProbs || []).filter(p => p.level === 'error' || p.api).map(p => `line ${p.line}: ${p.text}`);
+  const game = (LU.gameErr || []).map(t => 'in the game: ' + t);
+  if (!probs.length && !game.length){ toast('Nothing to fix: the checker finds nothing, and the game\'s log has no errors from this script.'); return; }
+  LU.aiBrief = 'Put right these problems and keep what the script does: ' + probs.concat(game).join('; ');
+  const b = $('#lu-fix'), old = b.innerHTML;
+  b.disabled = true; b.innerHTML = '<span class="spin"></span> Fixing…';
+  try {
+    const r = await post('/api/ai/lua', {kind: d.kind, brief: LU.aiBrief, current: d.text});
+    if (!LU.data || LU.data !== d) return;
+    d.text = r.code; luRender(); luDirty();
+    toast(`Put right by ${r.by}. Read it over, then Save, and try it in the game again.`, !!r.problems.length);
+  } catch (e){ toast(e.message, true); }
+  finally { const b2 = $('#lu-fix'); if (b2){ b2.disabled = false; b2.innerHTML = old; } }
+}
 function luGutter(){
   const n = (LU.data.text.match(/\n/g) || []).length + 1, g = $('#lu-gut'); if (!g) return;
   g.textContent = Array.from({length: n}, (_, i) => i + 1).join('\n');
@@ -94,8 +148,10 @@ async function luCheck(){
 function luProbs(list){
   const box = $('#lu-probs'); if (!box) return;
   if (!list){ box.innerHTML = '<span class="msg">Checking…</span>'; return; }
-  box.innerHTML = list.length ? list.map(p => `<div class="luprob ${p.level}" data-line="${p.line}"><b>Line ${p.line}</b> ${p.level === 'error' ? '✖' : '⚠'} ${esc(p.text)}</div>`).join('')
-    : '<div class="luprob ok">✔ No problems found. (The checker looks at the shape of the script and OpenMW\'s rules; the game finds the rest when it runs.)</div>';
+  LU.lastProbs = list;
+  const game = (LU.gameErr || []).map(t => `<div class="luprob error" title="From the game's openmw.log, the last time it ran this script">✖ In the game: ${esc(t)}</div>`).join('');
+  box.innerHTML = game + (list.length ? list.map(p => `<div class="luprob ${p.level}" data-line="${p.line}"><b>Line ${p.line}</b> ${p.level === 'error' ? '✖' : '⚠'} ${esc(p.text)}</div>`).join('')
+    : '<div class="luprob ok">✔ No problems found. (The checker looks at the shape of the script and OpenMW\'s rules; the game finds the rest when it runs.)</div>');
   box.querySelectorAll('[data-line]').forEach(el => el.onclick = () => luGoto(+el.dataset.line));
 }
 function luGoto(line){

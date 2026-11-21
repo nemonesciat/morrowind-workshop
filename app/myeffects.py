@@ -1194,11 +1194,9 @@ local function everyAt(cell, pos, d)
     if ok and list then for _, o in ipairs(list) do take(o) end end
   end
   if #found == 0 then
-    -- (a word, a thing hidden before, or before 0.52: the place's own lists; outside, every cell loaded now)
+    -- (a word, a thing hidden before, or before 0.52: the place's own lists. There is no world.activeCells, which
+    -- this once tried for the cells loaded around: OpenMW's own list of its Lua says so, luaapi.py)
     local cells = { cell }
-    if cell.isExterior then
-      pcall(function() local all = {}; for _, c in ipairs(world.activeCells) do all[#all + 1] = c end; if #all > 0 then cells = all end end)
-    end
     for _, c in ipairs(cells) do
       for _, o in ipairs(c:getAll()) do take(o) end
     end

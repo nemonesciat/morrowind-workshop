@@ -1,6 +1,7 @@
 """Lua scripts for OpenMW: written in the Workshop, kept in the project, put into the game as files
 next to the mod with a .omwscripts list (see Project.lua_outputs). Each script runs as one kind
 (global, on the player, on every NPC, ...) or on the particular objects you choose."""
+import os
 import re
 
 import lua_check
@@ -119,6 +120,31 @@ return {
 }
 '''},
 ]
+
+
+def game_errors(db, name):
+    """The Lua errors the game wrote about this script in openmw.log (the newest game's), newest last, a few at most:
+    for the Lua editor and its Fix with AI. The log is only read."""
+    p = db.project
+    s = _find(p, name)
+    path = p.lua_path(s)
+    log = os.environ.get('WORKSHOP_GAME_LOG') or os.path.join((db.config or {}).get('userdir') or '', 'openmw.log')
+    try:
+        with open(log, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 600000))
+            text = f.read().decode('utf-8', 'replace')
+    except OSError:
+        return {'errors': [], 'log': log}
+    out = []
+    for line in text.splitlines():
+        if path not in line or not re.search(r'\bE\]|error|failed', line, re.I):
+            continue
+        line = re.sub(r'^\[[\d:. ]+\w?\]\s*', '', line).strip()
+        if line not in out:
+            out.append(line)
+    return {'errors': [x[:400] for x in out[-6:]], 'log': log}
 
 
 def _check_name(name):

@@ -13,6 +13,9 @@ from database import TYPE_NAMES
 
 MODEL = 'claude-opus-5-5'
 MAX_STEPS = 30
+# a model on this PC for the writers of Lua and dialogue lines (Settings > AI assistant): any app with the common chat
+# address, Ollama's here by default (LM Studio's is http://127.0.0.1:1234/v1). A tester asked for it, 2026-11-21.
+LOCAL_URL = 'http://127.0.0.1:11434/v1'
 
 SYSTEM = """You are the building assistant inside Morrowind Workshop, an editor for OpenMW mods. \
 The user is a Morrowind modder working on their own mod. They talk to you in plain language and \
@@ -293,10 +296,51 @@ class ToolError(Exception):
     pass
 
 
+def _code_of(text):
+    """The code from a model's answer: inside ``` fences when it used them, else all of it."""
+    m = re.search(r'```[\w]*\n(.*?)```', text or '', re.S)
+    return (m.group(1) if m else (text or '')).strip()
+
+
+# what OpenMW hands each engine handler (lua_check.HANDLERS names them), for the Lua writer
+HANDLER_ARGS = {'onUpdate': 'dt', 'onFrame': 'dt', 'onInit': 'initData', 'onSave': '', 'onLoad': 'savedData, initData',
+                'onActive': '', 'onInactive': '', 'onActivated': 'actor', 'onActivate': 'object, actor', 'onTeleported': '',
+                'onConsume': 'item', 'onKeyPress': 'key: key.symbol, key.code', 'onKeyRelease': 'key',
+                'onQuestUpdate': 'questId, stage', 'onNewGame': '', 'onPlayerAdded': 'player', 'onObjectActive': 'object',
+                'onActorActive': 'actor', 'onItemActive': 'item', 'onInputAction': 'id',
+                'onConsoleCommand': 'mode, command, selectedObject', 'onContentFilesLoaded': ''}
+
+# the names scripts give OpenMW's modules, as the Workshop's own scripts and examples do
+MODULE_NAMES = {'core': 'openmw.core', 'types': 'openmw.types', 'util': 'openmw.util', 'async': 'openmw.async',
+                'storage': 'openmw.storage', 'I': 'openmw.interfaces', 'world': 'openmw.world', 'self': 'openmw.self',
+                'nearby': 'openmw.nearby', 'ui': 'openmw.ui', 'input': 'openmw.input', 'ambient': 'openmw.ambient',
+                'animation': 'openmw.animation', 'content': 'openmw.content', 'camera': 'openmw.camera'}
+
+
+def add_requires(code):
+    """The require() lines a written script forgot, put at the top: small models use world. or types. without them,
+    which only fails in the game. openmw.x written out in full (openmw.ui.showMessage) becomes require('openmw.x').
+    A module the kind of script may not use then shows in the checker (lua_check), and goes back to be put right."""
+    known = {v.split('.', 1)[1] for v in MODULE_NAMES.values()}
+    code = re.sub(r'(?<![\'"\w.])openmw\.(\w+)\b(?!\s*[\'"])',
+                  lambda m: "require('openmw.%s')" % m.group(1) if m.group(1) in known else m.group(0), code)
+    have = set()
+    for names in re.findall(r'\blocal\s+([\w\s,]+?)\s*=', code):          # local a, b = ...
+        have |= set(re.findall(r'\w+', names))
+    for names in re.findall(r'\bfunction\s*[\w.:]*\s*\(([^)]*)\)', code):  # function(a, b)
+        have |= set(re.findall(r'\w+', names))
+    bare =re.sub(r'--\[(=*)\[.*?\]\1\]|--[^\n]*|"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'', '', code, flags=re.S)
+    need = [n for n in MODULE_NAMES if n not in have and re.search(r'(?<![\w.:])%s\s*[.:\[]' % re.escape(n), bare)]
+    if not need:
+        return code
+    return '\n'.join("local %s = require('%s')" % (n, MODULE_NAMES[n]) for n in need) + '\n' + code
+
+
 class Assistant:
-    def __init__(self, db, get_key):
+    def __init__(self, db, get_key, get_writer=None):
         self.db = db
         self.get_key = get_key
+        self.get_writer = get_writer or (lambda: {})     # {'writer': 'claude' | 'local', 'url', 'model'}
         self.messages = []
         self.lock = threading.Lock()
         self.ctx = {}
@@ -619,10 +663,65 @@ class Assistant:
                                   'services', 'gold', 'script', 'ai', 'travel') if k in r} | {
             'items': [i['id'] + ' x' + str(i['count']) for i in r['items']], 'spells': [s['id'] for s in r['spells']]}
 
+    def _write(self, prompt, max_tokens=1500):
+        """One request and its text back, from Claude or from a model on this PC, as Settings say: what the writers of
+        Lua and dialogue lines use (the chat assistant stays on Claude). (text, usage, who wrote it)"""
+        w = self.get_writer() or {}
+        if w.get('writer') == 'local':
+            return self._write_local(prompt, w, max_tokens)
+        client = self._client()
+        import anthropic
+        try:
+            resp = client.messages.create(model=MODEL, max_tokens=max_tokens, messages=[{'role': 'user', 'content': prompt}])
+        except anthropic.AnthropicError as e:
+            raise ToolError(self._api_error(e))
+        self.usage_add(resp)
+        u = resp.usage
+        return ('\n'.join(b.text for b in resp.content if b.type == 'text'),
+                {'requests': 1, 'input': u.input_tokens, 'output': u.output_tokens, 'cache_read': 0, 'cache_write': 0}, 'Claude')
+
+    @staticmethod
+    def _local(url, path, body=None, timeout=600):
+        import urllib.error
+        import urllib.request
+        url = (url or LOCAL_URL).strip().rstrip('/')
+        if not re.match(r'^https?://', url):
+            raise ToolError('The address of the model on this PC starts with http://, e.g. ' + LOCAL_URL)
+        req = urllib.request.Request(url + path, data=json.dumps(body).encode() if body is not None else None,
+                                     headers={'Content-Type': 'application/json'}, method='POST' if body is not None else 'GET')
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise ToolError('The model on this PC said no (%s): %s' % (e.code, e.read()[:300].decode('utf-8', 'replace')))
+        except (urllib.error.URLError, OSError, ValueError):
+            raise ToolError('Nothing answered at %s. Start Ollama, or LM Studio\'s server, or pick Claude in Settings > AI '
+                            'assistant.' % url)
+
+    @classmethod
+    def local_models(cls, url):
+        """The models the app at this address offers (its /models list)."""
+        d = cls._local(url, '/models', timeout=10)
+        return sorted({m.get('id') for m in d.get('data') or [] if m.get('id')}, key=str.lower)
+
+    def _write_local(self, prompt, w, max_tokens):
+        model = (w.get('model') or '').strip()
+        if not model:
+            raise ToolError('Pick the model to use in Settings > AI assistant.')
+        d = self._local(w.get('url'), '/chat/completions', {'model': model, 'messages': [{'role': 'user', 'content': prompt}],
+                                                            'temperature': 0.2, 'max_tokens': max_tokens, 'stream': False})
+        try:
+            text = d['choices'][0]['message']['content'] or ''
+        except (KeyError, IndexError, TypeError):
+            raise ToolError('The model on this PC gave no answer.')
+        text = re.sub(r'(?s)<think>.*?</think>', '', text).strip()      # (thinking models put their working first)
+        u = d.get('usage') or {}
+        return text, {'requests': 1, 'input': u.get('prompt_tokens', 0), 'output': u.get('completion_tokens', 0),
+                      'cache_read': 0, 'cache_write': 0, 'local': True}, model
+
     def draft(self, req):
         """A few suggestions for one line of dialogue or journal text (nothing is saved)."""
         import dialogue
-        client = self._client()
         parts = ['Write %s for a Morrowind mod.' % {
             'journal': 'a journal entry (first person, past tense, one or two sentences, like the base game)',
             'greeting': 'a greeting (what the character says when the player starts talking to them)',
@@ -650,23 +749,17 @@ class Assistant:
             parts.append('Current draft to improve: ' + req['current'])
         parts.append('Keep it in Morrowind\'s voice and lore. You may use %PCName, %PCRace, %PCClass. '
                      'Give exactly three different versions, each on its own line starting with "- ". No other text.')
-        import anthropic
-        try:
-            resp = client.messages.create(model=MODEL, max_tokens=1500, messages=[{'role': 'user', 'content': '\n'.join(parts)}])
-        except anthropic.AnthropicError as e:
-            raise ToolError(self._api_error(e))
-        self.usage_add(resp)
-        text = '\n'.join(b.text for b in resp.content if b.type == 'text')
+        text, usage, by = self._write('\n'.join(parts))
+        # (Morrowind's placeholders are %PCName, never %PCName%: a model on this PC writes the second)
+        text = re.sub(r'(%(?:PCName|PCRace|PCClass|PCRank|PCNextRank|PCCrimeLevel|Name|Race|Class|Faction|Rank|NextRank|Cell))%',
+                      r'\1', text)
         opts = [l.strip()[2:].strip() for l in text.splitlines() if l.strip().startswith('- ')]
-        u = resp.usage
-        return {'options': opts[:3] or [text.strip()],
-                'usage': {'requests': 1, 'input': u.input_tokens, 'output': u.output_tokens, 'cache_read': 0, 'cache_write': 0}}
+        return {'options': opts[:3] or [text.strip()], 'usage': usage, 'by': by}
 
     def effect_lua(self, req):
         """The Lua for one step of one of the user's own magic effects (Create > New magic effect), from a plain
         description: the body of a function(ctx), run as the effect lands, each second or as it ends, with the
         helpers myeffects.ACTOR_LUA gives it. Nothing is saved; the maker shows it for the user to keep."""
-        client = self._client()
         phase = {'land': 'once, as the effect lands on them', 'second': 'once a second while the effect lasts',
                  'end': 'once, as the effect ends'}.get(req.get('when'), 'once, as the effect lands on them')
         prompt = '\n'.join([
@@ -675,6 +768,7 @@ class Assistant:
             'Effect: %s. %s' % (req.get('name') or 'a custom effect', req.get('description') or ''),
             'What this step should do: ' + (req.get('brief') or ''),
             'ctx has: ctx.self (openmw.self, the actor it is on), ctx.caster (GameObject or nil), ctx.magnitude (number),',
+            'to read a stat: ctx.types.Actor.stats.dynamic.health(ctx.self).current (.base is its most; magicka, fatigue the same),',
             'ctx.dt (seconds since last call), ctx.phase ("land"|"second"|"end"), ctx.state (a table kept for this cast),',
             'the modules ctx.core, ctx.types, ctx.util, ctx.nearby (openmw.nearby: nearby.actors, nearby.castRay),',
             'and helpers: ctx.change(stat, amount) with stat "health"|"magicka"|"fatigue" (on the actor itself);',
@@ -686,19 +780,263 @@ class Assistant:
             'A local script may only change ITSELF; it can read others. Use only these and standard OpenMW Lua APIs; no require().',
             'One foot is about 22 game units. Keep it short and safe (check ctx.caster for nil and :isValid()).',
             'Answer with the code only, no explanation, no ``` fences.'])
-        import anthropic
-        try:
-            resp = client.messages.create(model=MODEL, max_tokens=1500, messages=[{'role': 'user', 'content': prompt}])
-        except anthropic.AnthropicError as e:
-            raise ToolError(self._api_error(e))
-        self.usage_add(resp)
-        code = '\n'.join(b.text for b in resp.content if b.type == 'text').strip()
-        code = re.sub(r'^```\w*\n|\n?```$', '', code).strip()
+        text, usage, by = self._write(prompt)
+        code = re.sub(r'^-- Written by [^\n]*\n', '', _code_of(text) + '\n').strip()
         import lua_check
-        probs = [p for p in lua_check.check('local function f(ctx)\n%s\nend\nreturn {}' % code, 'NPC') if p['level'] == 'error']
-        u = resp.usage
-        return {'code': code, 'problems': [{'line': max(1, p['line'] - 1), 'text': p['text']} for p in probs],
-                'usage': {'requests': 1, 'input': u.input_tokens, 'output': u.output_tokens, 'cache_read': 0, 'cache_write': 0}}
+        import luaapi
+
+        def faults(c):
+            # (the checker's errors, and names OpenMW doesn't have: ctx.types, ctx.core... are the modules themselves)
+            body = 'local function f(ctx)\n%s\nend\nreturn {}' % c
+            out = [dict(p, line=max(1, p['line'] - 1)) for p in lua_check.check(body, 'NPC') if p['level'] == 'error']
+            plain = re.sub(r'\bctx\.(types|core|util|nearby|self)\b', r'\1', c)
+            out += [{'line': l, 'text': t, 'api': True} for l, t in luaapi.check(plain, {
+                'types': 'openmw.types', 'core': 'openmw.core', 'util': 'openmw.util', 'nearby': 'openmw.nearby', 'self': 'openmw.self'})]
+            return out
+        probs = faults(code)
+        tries = 1
+        while probs and tries < 3:
+            text2, usage2, by = self._write('\n'.join(x for x in [
+                prompt, 'Your code:\n' + code,
+                'Problems found: ' + '; '.join('line %d: %s' % (p['line'], p['text']) for p in probs[:8]),
+                self._api_detail(re.sub(r'\bctx\.', '', code), [dict(p, text=re.sub(r'^ctx\.', '', p['text'])) for p in probs]),
+                'Answer with the corrected code only.'] if x))
+            tries += 1
+            for k in ('requests', 'input', 'output'):
+                usage[k] = usage.get(k, 0) + usage2.get(k, 0)
+            usage['largest'] = max(usage.get('largest', usage.get('input', 0)), usage2.get('largest', usage2.get('input', 0)))
+            code2 = re.sub(r'^-- Written by [^\n]*\n', '', _code_of(text2) + '\n').strip()
+            p2 = faults(code2)
+            if len(p2) <= len(probs):
+                code, probs = code2, p2
+        mark = '-- Written by %s from: "%s". Try it in the game.\n' % (
+            by if by == 'Claude' else by + ' (a model on this PC)', re.sub(r'\s+', ' ', req.get('brief') or '')[:120])
+        return {'code': mark + code, 'problems': [{'line': p['line'] + 1, 'text': p['text']} for p in probs], 'usage': usage,
+                'by': by, 'tries': tries}
+
+    def lua_script(self, req):
+        """A whole OpenMW Lua script for the Lua editor (Scripts > a Lua script > Write with AI), from a plain description.
+        The model is given the kind of script, what OpenMW lets that kind use, a short guide, one of the Workshop's own
+        working examples and the names in OpenMW's own list of its Lua (luaapi, from the install: what a small model on
+        this PC needs not to make functions up). What it writes is checked, names OpenMW doesn't have among it, and
+        anything found goes back twice to be put right, with the real API of what it got wrong. A script on objects that
+        asks the global script for something nobody does gets that global script written too. Nothing is saved: the
+        editor shows it, to keep or not, marked with who wrote it."""
+        import lua_check
+        import luascripts
+        kind = (req.get('kind') or 'GLOBAL').upper()
+        brief = (req.get('brief') or '').strip()
+        if not brief:
+            raise ToolError('Say what the script should do.')
+        group = lua_check.KIND_GROUP.get(kind, 'LOCAL')
+        common = ('openmw.core', 'openmw.types', 'openmw.util', 'openmw.async', 'openmw.storage', 'openmw.interfaces',
+                  'openmw.world', 'openmw.self', 'openmw.nearby', 'openmw.ui', 'openmw.input', 'openmw.ambient', 'openmw.animation',
+                  'openmw.content')
+        mods = [m for m in common if lua_check.MODULES.get(m, ()) is None or group in (lua_check.MODULES.get(m) or ())]
+        handlers = sorted(lua_check.HANDLERS['any'] | lua_check.HANDLERS.get(group, set()))
+        runs = {'GLOBAL': 'the GLOBAL script: one copy for the whole game. It may change the world: create, move (teleport) '
+                          'and remove objects, give items.',
+                'PLAYER': 'a PLAYER script: it runs on the player. It may show messages and read keys; it changes only the player.',
+                'LOAD': 'a LOAD script: it runs once as the game loads its content (openmw.content), to make or change records.',
+                'MENU': 'a MENU script: it runs in the main menu.'}.get(group) or (
+            'a local script on %s near the player. It changes only the object it runs on (openmw.self); it may read '
+            'others and send them events. Many copies run at once, one per object, so it must not do work every frame: no '
+            'onUpdate; use onActive, onActivated, events or a timer (async:newUnsavableSimulationTimer).' % {
+                'NPC': 'every NPC', 'CREATURE': 'every creature', 'CUSTOM': 'each object the user chose'}.get(kind, 'each object'))
+        ex = next((t for t in luascripts.TEMPLATES if t['kind'] == kind and t['id'] != 'blank'), None) or \
+            next((t for t in luascripts.TEMPLATES if t['kind'] == {'PLAYER': 'PLAYER', 'LOCAL': 'CUSTOM'}.get(group, 'GLOBAL')
+                  and t['id'] != 'blank'))
+        cur = (req.get('current') or '').strip()
+        cur = re.sub(r'^-- Written by [^\n]*\n', '', cur + '\n').strip()     # (its own mark, not passed on)
+        rules = '\n'.join([
+            'It is ' + runs,
+            'It may require() only these modules: ' + ', '.join(mods) + '.',
+            'Its engineHandlers may be: ' + ', '.join(handlers) + '. Misspelt names never run.',
+            'Start with a local line for every module it uses, e.g. local types = require(\'openmw.types\').',
+            'The file returns { engineHandlers = { ... }, eventHandlers = { EventName = function(data) ... end } }.',
+            'In a PLAYER or local script, self = require(\'openmw.self\') IS the object it runs on: self.recordId, self.position, '
+            'self.cell, types.Actor.isDead(self), and self.object where a function wants the object itself. Fields can\'t be '
+            'added to self: keep your own values in local variables.',
+            'Only a GLOBAL script may change the world (teleport anyone, create objects, give items); a PLAYER or local script asks '
+            'one with core.sendGlobalEvent(\'SomeName\', data), and its eventHandlers.SomeName does it. ui only works in a PLAYER script; '
+            'others send the player an event to show a message.',
+            'Keep what must last in local tables: onSave() returns a table and onLoad(data) gets it back.',
+            'Handlers get: ' + ', '.join('%s(%s)' % (h, HANDLER_ARGS[h]) for h in handlers if h in HANDLER_ARGS) + '.',
+            'To show the player a message from a script that is not a PLAYER script: player:sendEvent(\'ShowMessage\', '
+            '{ message = text }) (the game\'s own player script shows it); near an object the player is nearby.players[1].',
+            'Reading: types.Actor.stats.dynamic.health(actor).current (.base is its most; magicka, fatigue the same); '
+            'types.Actor.isDead(actor); types.NPC.record(npc).name; types.Actor.inventory(actor):countOf(recordId); '
+            'is it the player: types.Player.objectIsInstance(obj); '
+            'when an NPC or creature dies, its own scripts get the event Died: eventHandlers = { Died = function() ... end }; '
+            'core.getGameTime() and core.getSimulationTime() in seconds; util.vector3(x, y, z).',
+            'In GLOBAL: world.players[1], world.activeActors, world.createObject(recordId, count), '
+            'obj:teleport(cellName or \'\', util.vector3(x, y, z)), obj:moveInto(types.Actor.inventory(actor)), obj:remove().',
+            'A teleport always needs the position: use the spot given below for the place.',
+            '"Every N seconds" means real seconds (a timer: async:newUnsavableSimulationTimer(N, fn), or core.getRealTime()) unless '
+            'game time is asked for; game time runs 30 times faster.'])
+        api_map = self._api_map(mods)
+        facts = self._facts(brief)
+        prompt = '\n'.join(x for x in [
+            'Write an OpenMW Lua script (OpenMW 0.50 or newer, Lua 5.1 / LuaJIT) for a Morrowind mod.',
+            'What it should do: ' + brief,
+            facts,
+            ('The script as it is now (change it as asked, keep the rest):\n' + cur) if cur else '',
+            rules,
+            ('OpenMW\'s Lua has only these (from its own list; anything else does not exist):\n' + api_map) if api_map else '',
+            'An example of a correct script (%s):\n%s' % (ex['label'], ex['text'].strip()),
+            'Short comments in plain words. Answer with the whole script only, no explanation, no ``` fences.'] if x)
+        text, usage, by = self._write(prompt, max_tokens=2500)
+        usage['largest'] = usage.get('input', 0)      # (the biggest single request: a small model's room)
+        code = add_requires(_code_of(text))
+        faults = lambda c: [p for p in lua_check.check(c, kind) if p['level'] == 'error' or p.get('api')]    # noqa: E731
+        probs = faults(code)
+        tries = 1
+        while probs and tries < 3:
+            # (again, with the checker's words and the real API of what it got wrong: small models slip on an end, a
+            # bracket, or a function they made up; the request kept short, a model on this PC has little room)
+            fix = '\n'.join(x for x in [
+                'Put right this OpenMW Lua script (OpenMW 0.50 or newer) for a Morrowind mod.',
+                'What it should do: ' + brief, facts, rules, 'The script:\n' + code,
+                'Problems found: ' + '; '.join('line %d: %s' % (p['line'], p['text']) for p in probs[:8]),
+                self._api_detail(code, probs),
+                'Answer with the corrected whole script only, no explanation, no ``` fences.'] if x)
+            text2, usage2, by = self._write(fix, max_tokens=2500)
+            code2 = add_requires(_code_of(text2))
+            tries += 1
+            for k in ('requests', 'input', 'output'):
+                usage[k] = usage.get(k, 0) + usage2.get(k, 0)
+            usage['largest'] = max(usage.get('largest', usage.get('input', 0)), usage2.get('largest', usage2.get('input', 0)))
+            p2 = faults(code2)
+            if len(p2) <= len(probs):
+                code, probs = code2, p2
+        # what it asks the global script to do that none of the mod's Lua scripts listens for (a script on an object
+        # may not change the world itself: the writer sends the job on, and someone has to take it): written too
+        sent = sorted(set(re.findall(r'sendGlobalEvent\(\s*[\'"](\w+)[\'"]', code))) if group != 'GLOBAL' else []
+        heard = set()
+        for sc in (getattr(self.db.project, 'lua', None) or []) if self.db.project else []:
+            if (sc.get('kind') or '').upper() == 'GLOBAL':
+                heard |= set(re.findall(r'\b(\w+)\s*=\s*function', sc.get('text') or ''))
+        unheard = [e for e in sent if e not in heard]
+        companion = None
+        if unheard and not req.get('_inner'):
+            r2 = self.lua_script({'kind': 'GLOBAL', '_inner': True, 'brief': (
+                'Handle the event%s %s, sent by the script below with core.sendGlobalEvent, in eventHandlers: do what it asks '
+                '(the whole task: %s). The script that sends %s:\n%s' % (
+                    '' if len(unheard) == 1 else 's', ', '.join(unheard), brief, 'it' if len(unheard) == 1 else 'them', code))})
+            for k in ('requests', 'input', 'output'):
+                usage[k] = usage.get(k, 0) + r2['usage'].get(k, 0)
+            usage['largest'] = max(usage.get('largest', 0), r2['usage'].get('largest', 0))
+            handled = set(re.findall(r'\b(\w+)\s*=\s*function', r2['code']))
+            companion = {'code': r2['code'], 'problems': r2['problems'], 'events': unheard,
+                         'missing': [e for e in unheard if e not in handled]}
+        mark = '-- Written by %s from: "%s". Read it over and try it in the game.\n' % (
+            by if by == 'Claude' else by + ' (a model on this PC)', re.sub(r'\s+', ' ', brief)[:160])
+        if companion:
+            companion['code'] = re.sub(r'^-- Written by [^\n]*\n', '', companion['code'])
+            companion['code'] = mark.replace(' from: "', ' (the whole-game part) from: "', 1) + companion['code']
+            companion['problems'] = [dict(p, line=p['line'] + 1) for p in companion['problems']]
+        return {'code': (mark if not req.get('_inner') else '') + code + '\n',
+                'problems': [{'line': p['line'] + (0 if req.get('_inner') else 1), 'text': p['text']} for p in probs],
+                'usage': usage, 'by': by, 'tries': tries, 'unheard': unheard, 'companion': companion}
+
+    THING_TYPES = ('NPC_', 'CREA', 'MISC', 'ALCH', 'WEAP', 'ARMO', 'CLOT', 'BOOK', 'INGR', 'LIGH', 'ACTI', 'CONT', 'DOOR',
+                   'SPEL', 'APPA', 'LOCK', 'PROB', 'REPA', 'LEVI', 'LEVC')
+
+    def _facts(self, brief):
+        """What the request names, as the player's own game has it: the Workshop knows every record and place, a model
+        doesn't. A place in quotes gets a spot to arrive at inside it (doors.arrival: in front of a door), a thing or
+        person in quotes its real ID, and an ID the game doesn't have is said to be missing. (The game test: a teleport
+        with no spot failed, one with a door's spot worked.) A few lines at most."""
+        db = self.db
+        if not getattr(db, 'recs', None) or getattr(db, 'state', '') != 'ready':
+            return ''
+        out = []
+        phrases = [a or b for a, b in re.findall(r'"([^"\n]{2,60})"|\u201c([^\u201d\n]{2,60})\u201d', brief)]
+        for ph in phrases[:6]:
+            ph = ph.strip()
+            try:
+                import doors
+                if ('CELL', ph.lower()) not in db.by_key:          # (places are kept by their name in lower case)
+                    raise KeyError(ph)
+                pos, _door = doors.arrival(db, ph.lower())
+                out.append('The place "%s": a spot inside it to arrive at is util.vector3(%.0f, %.0f, %.0f).' % (ph, pos[0], pos[1], pos[2]))
+                continue
+            except Exception:
+                pass
+            try:
+                # (a named stretch of the outdoors, Seyda Neen: a spot in one of its cells; outdoors a teleport takes '')
+                cells = [r for r in db.search(ph, types=('CELL',), limit=40)['rows']
+                         if (r.get('name') or r['id'] or '').lower().split(' (')[0] == ph.lower() and db.key_of(r['i'])[1].startswith('#')]
+                if cells:
+                    import doors
+                    pos, _door = doors.arrival(db, db.key_of(cells[len(cells) // 2]['i'])[1])
+                    out.append('The place "%s" is outdoors: teleport there with obj:teleport(\'\', util.vector3(%.0f, %.0f, %.0f)).' % (
+                        ph, pos[0], pos[1], pos[2]))
+                    continue
+            except Exception:
+                pass
+            try:
+                rows = db.search(ph, types=self.THING_TYPES, limit=12)['rows']
+            except Exception:
+                rows = []
+            same = [r for r in rows if (r.get('name') or '').lower() == ph.lower() or r['id'].lower() == ph.lower()]
+            pick = (same or rows)[:3]
+            if pick:
+                out.append('"%s" in this game: %s.' % (ph, '; '.join('ID %s (%s: "%s")' % (
+                    r['id'], TYPE_NAMES.get(r['type'], r['type']), r.get('name') or r['id']) for r in pick)))
+        for rid in dict.fromkeys(re.findall(r'\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\b', brief)):
+            if rid.startswith(('openmw', 'ctx')) or any(rid in o for o in out):
+                continue
+            if db.resolve_id(rid) is None:
+                out.append('There is nothing called %s in this game: don\'t use that ID.' % rid)
+        return ('In this player\'s game:\n' + '\n'.join(out[:8])) if out else ''
+
+    @staticmethod
+    def _api_map(mods):
+        """The names in OpenMW's own list of its Lua for these modules, a line each, with objects' and actors' own:
+        enough for a model to pick real ones, short enough for a small one (luaapi; '' when the install has none)."""
+        import luaapi
+        api = luaapi.load(None)
+        if not api:
+            return ''
+        out = []
+
+        def names(key, owner):
+            ms = luaapi.members(api, key)
+            if ms:
+                out.append('%s: %s' % (owner, ', '.join(
+                    ('%s(%s)' % (n, ', '.join(ms[n].get('params') or [])) if ms[n]['kind'] == 'function' else n)
+                    for n in sorted(ms) if not n.startswith('ESM4'))))       # (other games' records: no use here)
+        for m in mods:
+            if m in ('openmw.interfaces', 'openmw.content'):
+                continue
+            names(api['modules'].get(m), m.split('.', 1)[1])
+        names('core#GameObject', 'any object (obj.x, obj:x())')
+        names('types#Actor', 'types.Actor')
+        return '\n'.join(out)
+
+    @staticmethod
+    def _api_detail(code, probs):
+        """The real functions and fields, with what they do, of what the script got wrong (luaapi)."""
+        import luaapi
+        api = luaapi.load(None)
+        if not api:
+            return ''
+        keys = []
+        for p in probs:
+            m = re.match(r'^(\S+?)[.:](\w+) is not in', p['text']) if p.get('api') else None
+            if not m:
+                continue
+            parts = [x.replace('(…)', '').replace('[…]', '') for x in re.split(r'[.:]', m.group(1))]
+            key = api['modules'].get('openmw.' + parts[0])
+            for part in parts[1:]:
+                info = luaapi.members(api, key).get(part) if key else None
+                key = info['type'] if info and isinstance(info.get('type'), str) else None
+            if key and key not in keys:
+                keys.append(key)
+        text = luaapi.excerpt(None, keys[:3], most=40)
+        # (kept short: a small model on this PC has room for about 4,000 tokens a request, all told)
+        return ('What those have, from OpenMW\'s own list:\n' + text[:1500]) if text else ''
 
     def _cellmap(self):
         key = self.ctx.get('cell')

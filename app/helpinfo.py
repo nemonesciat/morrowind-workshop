@@ -255,6 +255,8 @@ def get_settings(db):
             'ai_configured': bool(key), 'ai_key_end': key[-4:] if key else '', 'ai_from_env': bool(
                 os.environ.get('ANTHROPIC_API_KEY') and not s.get('anthropic_api_key')),
             'ai_ack': bool(s.get('ai_ack')),
+            # who writes Lua and dialogue lines: Claude, or a model on this PC (ai.Assistant._write)
+            'ai_writer': s.get('ai_writer') or 'claude', 'ai_local_url': s.get('ai_local_url') or '', 'ai_local_model': s.get('ai_local_model') or '',
             'backup_keep': keep, 'backup_minutes': minutes, 'backups_folder': backups.BACKUP_DIR,
             'backup_mb': b_mb, 'backup_zip': b_zip,
             'guide_on_start': s.get('guide_on_start', False), 'guide_seen': bool(s.get('guide_seen')),
@@ -275,6 +277,11 @@ def set_settings(body):
     for k in ('guide_on_start', 'guide_seen', 'ai_ack'):
         if k in body:
             s[k] = bool(body[k])
+    if body.get('ai_writer') in ('claude', 'local'):
+        s['ai_writer'] = body['ai_writer']
+    for k in ('ai_local_url', 'ai_local_model'):
+        if k in body:
+            s[k] = str(body.get(k) or '').strip()[:300]
     if body.get('openmw_reset'):
         s.pop('openmw_install', None)
     # the picture editor textures open in (assets.py): a program on this PC, or '' for Windows' own choice

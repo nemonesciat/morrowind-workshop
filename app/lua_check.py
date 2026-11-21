@@ -202,6 +202,14 @@ def check(text, kind='GLOBAL'):
                 close = [h for h in every if h.lower() == nm.lower() or _near(h, nm)]
                 out.append({'line': line, 'level': 'error', 'text': 'The engine has no handler called %s%s.' % (
                     nm, (' (did you mean %s?)' % close[0]) if close else '')})
+    # names OpenMW doesn't have, by its own list of its Lua in the install (luaapi.py): a warning, since the list
+    # now and then trails the engine a little
+    try:
+        import luaapi
+        for line, msg in luaapi.check(text, luaapi.aliases_of(text), group=group):
+            out.append({'line': line, 'level': 'warning', 'text': msg, 'api': True})
+    except Exception as e:
+        print('Lua API check skipped:', e)
     if toks and not any(k == 'name' and v == 'return' for k, v, _l in toks):
         out.append({'line': toks[-1][2], 'level': 'warning', 'text': 'The script never returns a table, so OpenMW has nothing to run '
                                                                      '(end it with: return { engineHandlers = { ... } }).'})

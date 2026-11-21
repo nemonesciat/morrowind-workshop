@@ -415,6 +415,8 @@ class Project:
         self.town_parts = d.get('town_parts') or {}       # ref key -> its building's id, for the buildings a town built
         self.places = d.get('places') or {}               # the places ledger (ledger.py): id -> what was made and its pieces
         self.quests = d.get('quests', {})       # the quest Board's plans: quest key -> {'cast': [ids picked before any move uses them]}
+        # plugins merged into this mod (merge.py): never its masters, though one may still be on in the load order
+        self.merged_in = [str(x).lower() for x in d.get('merged_in') or []]
         self.rolls = d.get('rolls', {})         # interiors in limbo (rollinside.py): door 'cell|ref' -> {'old', 'name', 'rolls', ...}
         self.forged = d.get('forged', {})       # the Forge: piece id (lower) -> {'mat'} or {'between': [a, b, f]}, what it was
                                                 # forged as ("Duskglass" isn't glass); outside Undo, read only while the record is there
@@ -544,6 +546,8 @@ class Project:
             d['forged'] = self.forged
         if self.quests:
             d['quests'] = self.quests
+        if getattr(self, 'merged_in', None):
+            d['merged_in'] = self.merged_in
         if getattr(self, 'rolls', None):
             d['rolls'] = self.rolls
         if self.scattered:

@@ -22,11 +22,40 @@ def _other_path(name):
     return os.path.join(PROJECTS_DIR, os.path.basename(name) + '.json')
 
 
-def load_other(db, name):
-    """The other project's JSON (read only), checked to be another mod of this install."""
+def _from_file(db, path):
+    """Any plugin file (.esp or .omwaddon) as a mod would hold it, for merging (File > Merge a plugin file): the file
+    is only read, no mod of the Workshop is made of it. A tester asked for merging .esp files, 2026-11-21."""
+    import adopt
+    path = os.path.abspath((path or '').strip())
+    if not os.path.isfile(path):
+        raise EditError('There is no file at %s.' % (path or '(nothing chosen)'))
+    fn = os.path.basename(path)
+    ext = os.path.splitext(fn)[1].lower()
+    if ext in adopt.MASTER_EXTS:
+        raise EditError('%s is a master file: the Workshop merges plugins (.esp and .omwaddon).' % fn)
+    if ext not in adopt.PLUGIN_EXTS:
+        raise EditError('%s is not a Morrowind plugin: pick a .esp or .omwaddon file.' % fn)
+    p = db.project
+    src = getattr(p, 'source', None)
+    if fn.lower() == p.plugin.lower() or (src and os.path.normcase(os.path.abspath(src)) == os.path.normcase(path)):
+        raise EditError('%s is the file of the mod that is open: pick another one.' % fn)
+    read = adopt.read_plugin(db, path)
+    if read['head']['kind'] & 1:
+        raise EditError('%s is marked as a master file inside, whatever its name: the Workshop merges plugins.' % fn)
+    return {'name': fn, 'plugin': fn, 'records': read['records'], 'cells': read['cells'], 'lua': [], 'grass': {},
+            'file': path, 'file_masters_missing': read['missing_masters'], 'problems': read['problems'],
+            # (an .omwaddon's Lua scripts are listed in its .omwscripts, which is not merged)
+            'scripts_beside': os.path.isfile(os.path.splitext(path)[0] + '.omwscripts')}
+
+
+def load_other(db, name, path=None):
+    """The other project's JSON (read only), checked to be another mod of this install; or, given a path, a plugin
+    file read as one."""
     import json
     if not db.project:
         raise EditError('Open a mod first: the other mod is merged into it.')
+    if path:
+        return _from_file(db, path)
     path = _other_path(name)
     if not os.path.isfile(path):
         raise EditError('There is no mod called "%s".' % name)
@@ -189,7 +218,12 @@ def plan(db, other):
             out['cells']['objects'] += len(add)
         if not mc and not any(v not in db.dead for v in db.by_key.get(('CELL', ck), [])) and not oc.get('header'):
             out['orphans'].append('the place "%s"' % ck)
-    out['missing_masters'] = sorted(missing)
+    # (a plugin file's own masters, from its header: the open mod's file among them is no lack)
+    missing |= {m for m in other.get('file_masters_missing') or [] if m.lower() != mine_pl}
+    out['missing_masters'] = sorted(missing, key=str.lower)
+    out['file'] = bool(other.get('file'))
+    out['scripts_beside'] = bool(other.get('scripts_beside'))
+    out['problems'] = list(other.get('problems') or [])[:6]
     # the other mod switched on in the game's load order too: the game would then show its places twice
     # (its own copy and the merged one), so the merge offers to switch it off
     content = getattr(db, 'cfg_content_all', None) or (db.config or {}).get('content', [])
@@ -222,7 +256,7 @@ def plan(db, other):
         (out['files']['present'] if os.path.isfile(os.path.join(data_dir, *rel.split('/'))) else out['files']['missing']).append(rel)
     ex_other = os.path.join(PROJECTS_DIR, other['name'] + ' files')
     ex_mine = os.path.join(PROJECTS_DIR, p.name + ' files')
-    if os.path.isdir(ex_other):
+    if os.path.isdir(ex_other) and not other.get('file'):
         for root, _d, files in os.walk(ex_other):
             for fn in files:
                 rel = os.path.relpath(os.path.join(root, fn), ex_other).replace('\\', '/')
@@ -234,16 +268,17 @@ def plan(db, other):
     return out
 
 
-def preview(db, name):
-    pl = plan(db, load_other(db, name))
+def preview(db, name, path=None):
+    pl = plan(db, load_other(db, name, path))
     pl.pop('_ops')
     pl.pop('_next_ref')
     return pl
 
 
-def merge(db, name, resolve=None):
-    """Do it: one change, one Undo. resolve: {conflict key: 'mine' | 'theirs'} (mine where not said)."""
-    other = load_other(db, name)
+def merge(db, name, resolve=None, path=None):
+    """Do it: one change, one Undo. resolve: {conflict key: 'mine' | 'theirs'} (mine where not said). path: a plugin
+    file to merge instead of one of your mods."""
+    other = load_other(db, name, path)
     pl = plan(db, other)
     if pl['missing_masters']:
         raise EditError('"%s" needs %s, which is not in your load order. Add it under Load order first.' %
@@ -336,6 +371,8 @@ def merge(db, name, resolve=None):
     if n_grass:
         bits.append('grass in %d place%s' % (len(ops['grass']), '' if len(ops['grass']) == 1 else 's'))
     note = 'Merged %s into %s: %s' % (other['name'], p.name, ', '.join(bits))
+    # (the merged plugin is never a master of this one, even while it is still on: release._own_pidx)
+    p.merged_in = sorted(set(getattr(p, 'merged_in', None) or []) | {other['plugin'].lower()})
     commit(db, note)
     p.undo_stack = []                      # (Undo starts afresh after a merge; the backup holds the state before)
     p.redo_stack = []

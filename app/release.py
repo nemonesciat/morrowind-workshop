@@ -29,8 +29,11 @@ ID_FIELDS = {'NPCO': '*', 'NPCS': '*', 'SCRI': '*', 'XSOL': '*', 'ONAM': ('INFO'
 
 
 def _own_pidx(db):
+    """The mod's own plugin, and any merged into it (merge.py): a merged plugin still on in the load order has the same
+    records, which made it a master of the mod it was merged into."""
     p = db.project
-    return {i for i, pl in enumerate(db.plugins) if pl.get('project') or pl['name'].lower() == p.plugin.lower()}
+    merged = set(getattr(p, 'merged_in', None) or [])
+    return {i for i, pl in enumerate(db.plugins) if pl.get('project') or pl['name'].lower() == p.plugin.lower() or pl['name'].lower() in merged}
 
 
 def _versions(db, tag, key, own):
