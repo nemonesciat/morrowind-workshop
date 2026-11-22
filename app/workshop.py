@@ -101,7 +101,7 @@ def api_key():
 
 
 def ai_writer():
-    """Who writes Lua and dialogue lines (Settings > AI assistant): Claude, or a model on this PC (ai.LOCAL_URL)."""
+    """Who writes Lua and dialogue lines (Settings > AI): Claude, or a model on this PC (ai.LOCAL_URL)."""
     s = load_settings()
     return {'writer': s.get('ai_writer') or 'claude', 'url': s.get('ai_local_url') or ai.LOCAL_URL, 'model': s.get('ai_local_model') or ''}
 
@@ -693,9 +693,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_DELETE(self):
+        # (an MCP agent ending its session: mcpserver.py)
+        if urlparse(self.path).path == '/mcp':
+            import mcpserver
+            return mcpserver.http(self, db, edit_lock, 'DELETE')
+        self.send_response(405)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
     def do_GET(self):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        if u.path == '/mcp':
+            import mcpserver
+            return mcpserver.http(self, db, edit_lock, 'GET')
         try:
             if u.path in ('/', '/index.html'):
                 with open(os.path.join(WEB, 'index.html'), 'rb') as f:
@@ -1585,6 +1597,14 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/dlg/mine':
                 self._json({'characters': dialogue.my_characters(db) if db.project else [],
                             'topics': dialogue.index(db, mine=True) if db.project else []})
+            elif u.path == '/api/mcp/status':
+                # coding agents (mcpserver.py): on or off, the address to give them, who has been using it
+                import mcpserver
+                port = self.server.server_address[1]
+                r = mcpserver.status()
+                r.update(address=mcpserver.address(port), port=port, python=sys.executable,
+                         bridge=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mcp_stdio.py'))
+                self._json(r)
             elif u.path == '/api/ai/status':
                 w = ai_writer()
                 self._json({'configured': bool(api_key() or os.environ.get('ANTHROPIC_API_KEY')),
@@ -1627,6 +1647,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path == '/mcp':
+            # a coding agent's request (the Model Context Protocol, mcpserver.py): its own key, never a web page
+            import mcpserver
+            return mcpserver.http(self, db, edit_lock, 'POST')
         n = int(self.headers.get('Content-Length') or 0)
         editing.ORIGIN.window = self.headers.get('X-Workshop-Window')       # (whose change this is: editing.CHANGES)
         editing.request_started()
@@ -1957,6 +1981,9 @@ class Handler(BaseHTTPRequestHandler):
                 # the tester: what a character says in a given state of the game (convo.py; nothing saved)
                 import convo
                 return self._json(convo.say(db, body['id'], body.get('state') or {}, body.get('topic'), body.get('cell')))
+            if u.path in ('/api/mcp/turn', '/api/mcp/newkey'):
+                import mcpserver
+                return self._json(mcpserver.turn(body.get('on')) if u.path == '/api/mcp/turn' else mcpserver.new_key())
             if u.path == '/api/ai/lua':
                 # a whole Lua script from a description, for the Lua editor (nothing saved)
                 try:
@@ -1964,7 +1991,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ai.ToolError as e:
                     return self._json({'error': str(e)}, 400)
             if u.path == '/api/ai/local/models':
-                # the models a model app on this PC offers (Settings > AI assistant)
+                # the models a model app on this PC offers (Settings > AI)
                 try:
                     return self._json({'models': ai.Assistant.local_models(body.get('url') or ai.LOCAL_URL)})
                 except ai.ToolError as e:

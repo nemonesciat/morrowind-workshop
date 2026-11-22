@@ -260,6 +260,9 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .glist li{margin:4px 0}
 .setsec{margin:0 0 14px;padding:14px 16px}
 .setsec h3{margin:0 0 8px;color:var(--gold2)}
+.setsec h4.aisub{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--line);color:var(--text);font-size:14px}
+.setsec h4.aisub .msg{font-weight:400;font-size:12px;margin-left:6px}
+.mcpsnip{margin:6px 0 0;padding:8px 10px;background:var(--bg2, rgba(0,0,0,.25));border:1px solid var(--line);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all;user-select:all;max-height:180px;overflow:auto}
 .setrow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
 .setrow > span:first-child{color:var(--muted)}
 .bklist{max-height:260px;overflow:auto}
@@ -821,7 +824,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
   </div>
   <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><div class="omwwrap" id="learnwrap" style="display:none"><button class="btn" id="learnbtn" title="The Workshop is learning from your game's own places, once: click for what and why">📚<span class="tl"> Learning</span> <span id="learnn"></span><i class="learnbar"><i id="learnfill"></i></i></button><div class="omwmenu" id="learnmenu"></div></div><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
         <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
-        <button data-help="settings"><b>Settings</b><small>OpenMW's folder, the AI assistant, backups.</small></button>
+        <button data-help="settings"><b>Settings</b><small>OpenMW's folder, AI, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>

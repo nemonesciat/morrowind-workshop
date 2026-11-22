@@ -72,7 +72,7 @@ def load(install):
             doc = next((l.lstrip('-').strip() for l in lines if l.lstrip('-').strip() and not l.lstrip('-').strip().startswith('@')), '')
             cur = None
             fn_name = fn_parent = None
-            params, ret, method = [], None, False
+            params, ret, method, ptypes = [], None, False, []
             for l in lines:
                 l = l.lstrip('-').strip()
                 m = re.match(r'^@module\s+(\w+)', l)
@@ -108,19 +108,20 @@ def load(install):
                 if m:
                     fn_parent, fn_name = '%s#%s' % (here, m.group(1)), m.group(2)
                     continue
-                m = re.match(r'^@param\s+(?:#\S+\s+)?(\w+)', l)
+                m = re.match(r'^@param\s+(?:(\S*#\S+)\s+)?(\w+)', l)      # (#Vector3 or openmw.util#Vector3)
                 if m and fn_name:
-                    if m.group(1) == 'self':
+                    if m.group(2) == 'self':
                         method = True
                     else:
-                        params.append(m.group(1))
+                        params.append(m.group(2))
+                        ptypes.append((m.group(1) or '').split('#')[-1])
                     continue
                 m = re.match(r'^@return\s+(\S+)', l)
                 if m and fn_name and ret is None:
                     ret = _ref(m.group(1), here)
             if fn_name:
                 T(fn_parent)['members'][fn_name] = {'kind': 'function', 'type': ret, 'params': params, 'doc': doc[:140],
-                                                     'method': method, 'only': only}
+                                                     'method': method, 'only': only, 'ptypes': ptypes}
     api = {'types': types, 'modules': modules}
     _cache.update(dir=d, api=api)
     return api
@@ -142,6 +143,8 @@ def members(api, key, _seen=None):
     return out
 
 
+# (methods only game objects have: a name called with one of them is taken for a game object)
+OBJECT_METHODS = {'teleport', 'moveInto', 'activateBy', 'addScript', 'removeScript', 'setScale', 'getBoundingBox', 'setSaveState'}
 # (module tables the files leave open: other scripts' interfaces, and the debug module's switches)
 OPEN = {'openmw.interfaces', 'openmw.debug'}
 
@@ -170,6 +173,10 @@ def check(code, aliases, install=None, group=None):
                 seen.add((line, msg))
                 out.append((toks[i + 2][2], msg))
         start = None if not mod or mod in OPEN else (api['modules'].get(mod) or (mod if mod in api['types'] else None))
+        if not start and kind == 'name' and prev != ':' and i + 2 < len(toks) and toks[i + 1][1] == ':' \
+                and toks[i + 2][1] in OBJECT_METHODS:
+            # (player:teleport(...) on a name the script got from an event: only game objects have these methods)
+            start = 'core#GameObject'
         if not start:
             i += 1
             continue
@@ -202,6 +209,29 @@ def check(code, aliases, install=None, group=None):
                 j += 2
                 if info['kind'] == 'function':
                     if j < len(toks) and toks[j][1] == '(':
+                        # (a plain table or nil where OpenMW wants a Vector3: obj:teleport(cell, {x = ...}) or a
+                        # teleport with no position, both failed in the game, 2026-11-21)
+                        args, depth_, k = [[]], 0, j + 1
+                        while k < len(toks) and not (depth_ == 0 and toks[k][1] == ')'):
+                            if toks[k][1] in '([{':
+                                depth_ += 1
+                            elif toks[k][1] in ')]}':
+                                depth_ -= 1
+                            if depth_ == 0 and toks[k][1] == ',':
+                                args.append([])
+                            else:
+                                args[-1].append(toks[k])
+                            k += 1
+                        for pi, (pname, ptype) in enumerate(zip(info.get('params') or [], info.get('ptypes') or [])):
+                            if ptype != 'Vector3' or pi >= len(args) or not args[pi]:
+                                continue
+                            first = args[pi][0][1]
+                            if first in ('{', 'nil'):
+                                msg = '%s: its %s is a util.vector3(x, y, z), not %s.' % (
+                                    chain, pname, 'a plain table' if first == '{' else 'nil')
+                                if (line, msg) not in seen:
+                                    seen.add((line, msg))
+                                    out.append((args[pi][0][2], msg))
                         depth = 0
                         while j < len(toks):
                             if toks[j][1] == '(':

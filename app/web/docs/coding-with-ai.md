@@ -1,6 +1,7 @@
 # Coding with AI
 
-*Lua scripts, your own effects' Lua and dialogue lines written by an AI: Claude, or a model running on your own PC.*
+*Lua scripts, your own effects' Lua and dialogue lines written by an AI (Claude, or a model running on your own PC), and coding agents
+such as Claude Code working on your mod with the Workshop's own tools.*
 
 ## Which AI does what
 
@@ -10,9 +11,11 @@
 | Create › New magic effect › **✦ Write it for me** | The Lua of one step of your effect | Claude or your own model |
 | Dialogue, quests, Populate, conversations › **✦** | Three versions of a line to pick from | Claude or your own model |
 | The **✦ AI** panel (the chat assistant) | Builds and changes things in your mod: rooms, objects, records, quests | Always Claude |
+| A **coding agent** of your own (Claude Code, Codex, Cursor…) | Anything the Workshop's tools do, Lua, spells and records included | The agent's own model |
 
-Which one writes Lua and lines is set in **Settings › AI assistant › Lua and lines written by**. The chat assistant
-needs Claude: it works through the Workshop's own tools step by step, which small models don't do reliably.
+All of it is set up in **Settings › AI**. Which one writes Lua and lines is **Lua and dialogue writer › Written by**.
+The chat assistant needs Claude: it works through the Workshop's own tools step by step, which small models don't
+do reliably. A coding agent brings its own model.
 
 ## Setting up a model on your PC
 
@@ -28,8 +31,8 @@ chat address; most do:
 
 1. Install the app and get a model in it (a coding model does Lua best).
 2. Start the app. Ollama runs from the tray by the clock; its icon may be among the hidden ones (the **^**).
-3. In **Settings › AI assistant**, pick **A model on this PC**, check the address, press **Find models** and pick
-   the model.
+3. In **Settings › AI › Lua and dialogue writer**, pick **A model on this PC**, check the address, press **Find
+   models** and pick the model.
 
 The first request after the app starts takes a few minutes while the model loads into your graphics card; after that
 a script takes seconds. An app may unload the model after a few idle minutes, and the next request is slow again.
@@ -102,6 +105,39 @@ The editor checks scripts you write yourself the same way; names OpenMW's list d
   **✦ Write it for me**. The step's Lua is checked the same way, with the effect's helpers (ctx.change, ctx.push…).
 - **Dialogue**: the **✦** beside a line, a greeting, a journal entry or a quest title gives three versions to pick
   from, in Morrowind's voice; %PCName and the like are kept as the game wants them.
+
+## Coding agents
+
+If you already use a coding agent (Claude Code, Codex, Cursor, VS Code's Copilot, opencode and the like), it can work
+on your open mod with the Workshop's own tools. The Workshop is an **MCP server** (the Model Context Protocol most
+agents speak). With Claude Code no API key is needed: it uses your own Claude account.
+
+1. In **Settings › AI › Coding agents**, tick **Let coding agents connect**.
+2. Pick your agent under **Set up**: the line or settings to paste are shown, with a **Copy** button. For Claude Code
+   it is one command in a terminal (`claude mcp add …`); others take a few lines of their settings.
+3. Ask the agent about your mod ("make a Gate Stone that takes the player to "Balmora, Guild of Mages""). It sees
+   the Workshop's tools and the rules of the place, and uses them.
+
+What an agent can do: everything the chat assistant can (look around a place, place, move and remove things, read and
+change records, characters, dialogue and quests, build and furnish interiors, MWScript), and Lua (list, read, write
+and check scripts, read the game's Lua errors), OpenMW's own list of its Lua, real IDs and spots for names, magic
+effects of your own and spells, the list of recent changes, and undoing its own last change. Agents that offer them
+also get ready-made requests: *write a Lua script*, *fix a Lua script*, *make a spell*.
+
+How its work is kept in check:
+- Every change goes through the same steps as the Workshop's buttons, shows in **My changes** marked with 🤖 and the
+  agent's name, and **Undo** takes it back. An agent can undo only its own last change.
+- A Lua script it writes is checked before it is saved: its shape, the rules for its kind, every function and field
+  against OpenMW's own list, and a function only a whole-game script may use. One with errors, or with a name OpenMW
+  doesn't have, is refused with the reason, for the agent to fix. Forgotten `require` lines are put in. Events that
+  nothing sends, or that nothing handles, come back as warnings.
+- Each script starts with a line saying which agent wrote it.
+- Only programs on this PC can reach the Workshop, with the key in the address. **New key** stops agents set up with
+  the old one; unticking **Let coding agents connect** stops them all.
+
+Agents should never edit the mod's files in the data folder directly: the Workshop writes those from your mod and
+would write over the changes. The tools are the way in. A good agent with a strong model writes and fixes scripts
+well; a small model on a PC driving an agent gets more wrong, and the checks catch only part of it.
 
 ## Good to know
 

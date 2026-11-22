@@ -13,7 +13,7 @@ from database import TYPE_NAMES
 
 MODEL = 'claude-opus-5-5'
 MAX_STEPS = 30
-# a model on this PC for the writers of Lua and dialogue lines (Settings > AI assistant): any app with the common chat
+# a model on this PC for the writers of Lua and dialogue lines (Settings > AI): any app with the common chat
 # address, Ollama's here by default (LM Studio's is http://127.0.0.1:1234/v1). A tester asked for it, 2026-11-21.
 LOCAL_URL = 'http://127.0.0.1:11434/v1'
 
@@ -707,7 +707,7 @@ class Assistant:
     def _write_local(self, prompt, w, max_tokens):
         model = (w.get('model') or '').strip()
         if not model:
-            raise ToolError('Pick the model to use in Settings > AI assistant.')
+            raise ToolError('Pick the model to use in Settings > AI.')
         d = self._local(w.get('url'), '/chat/completions', {'model': model, 'messages': [{'role': 'user', 'content': prompt}],
                                                             'temperature': 0.2, 'max_tokens': max_tokens, 'stream': False})
         try:

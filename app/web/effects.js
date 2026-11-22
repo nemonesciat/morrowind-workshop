@@ -177,7 +177,7 @@ function mxDoesRow(d, n){
   } else if (d.kind === 'lua'){
     inner = `<div style="flex:1;width:100%">
         <div style="display:flex;gap:6px;align-items:center"><input class="inp" data-mxd="brief" data-n="${n}" value="${esc(d.brief || '')}" placeholder="Say what it does, e.g. every enemy within 15 feet is thrown back" style="flex:1">
-          <button class="btn sm" data-mxai="${n}" title="AI writes the Lua from what you say (Claude or your own model: Settings › AI assistant)">✦ Write it for me</button></div>
+          <button class="btn sm" data-mxai="${n}" title="AI writes the Lua from what you say (Claude or your own model: Settings › AI)">✦ Write it for me</button></div>
         <textarea class="inp code" data-mxd="code" data-n="${n}" rows="7" spellcheck="false" style="width:100%;margin-top:6px;font-family:monospace" placeholder="-- the body of function(ctx): ctx.self, ctx.caster, ctx.magnitude, ctx.change('health', -5), ctx.push(10), ctx.launch(8), ctx.scale(2), ctx.weather('thunderstorm'), ctx.cast('fireball'), ctx.message('...')">${esc(d.code || '')}</textarea>
         <div class="msg" id="mx-ai-${n}"></div></div>`;
   } else if (d.kind === 'teleport'){
