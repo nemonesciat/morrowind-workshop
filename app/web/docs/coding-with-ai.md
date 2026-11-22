@@ -36,7 +36,9 @@ The first request after the app starts takes a few minutes while the model loads
 a script takes seconds. An app may unload the model after a few idle minutes, and the next request is slow again.
 
 "Nothing answered at …" means the app isn't running, or its server is off. "Stopped partway" means the app running
-the model broke down while writing: its own log says why. Try again, or another model.
+the model broke down while writing: its own log says why. Try again, or another model. "Used all its room thinking"
+means a model that thinks before it answers ran out of room first; the Workshop has already asked once more with its
+thinking off. Give it more room (context length) in the app running it, or try a model that answers straight away.
 
 **Which model.** Bigger writes better. The Workshop keeps each request small (about 2,300 words' worth of the model's
 room at most), so models that fit a 6–8 GB card can be used; a coding model of 30B fits a 12 GB card with the rest

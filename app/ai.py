@@ -492,16 +492,49 @@ class Assistant:
         model = (w.get('model') or '').strip()
         if not model:
             raise ToolError('Pick a model on this PC in Settings > AI first: it writes the Lua and the lines, free.')
-        d = self._local(w.get('url'), '/chat/completions', {'model': model, 'messages': [{'role': 'user', 'content': prompt}],
-                                                            'temperature': 0.2, 'max_tokens': max_tokens, 'stream': False})
-        try:
-            text = d['choices'][0]['message']['content'] or ''
-        except (KeyError, IndexError, TypeError):
-            raise ToolError('The model on this PC gave no answer.')
-        text = re.sub(r'(?s)<think>.*?</think>', '', text).strip()      # (thinking models put their working first)
-        u = d.get('usage') or {}
-        return text, {'requests': 1, 'input': u.get('prompt_tokens', 0), 'output': u.get('completion_tokens', 0),
-                      'cache_read': 0, 'cache_write': 0, 'local': True}, model
+        body = {'model': model, 'messages': [{'role': 'user', 'content': prompt}],
+                'temperature': 0.2, 'max_tokens': max_tokens, 'stream': False}
+        use = {'requests': 0, 'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0, 'local': True}
+        thought = ''
+        for again in (False, True):
+            if again:
+                # (a thinking model, e.g. Gemma 4 under llama.cpp, can spend all its room thinking and answer nothing; a
+                # tester's empty script, 2026-11-22: asked once more with its thinking off, where the app takes that,
+                # and more room; apps that don't know the switch pass it by)
+                body = dict(body, max_tokens=max_tokens * 2, chat_template_kwargs={'enable_thinking': False}, think=False)
+            try:
+                d = self._local(w.get('url'), '/chat/completions', body)
+            except ToolError:
+                if not again:
+                    raise
+                break       # (an app that refuses the switch: what the first answer showed is said below)
+            try:
+                c = d['choices'][0]
+                m = c['message']
+            except (KeyError, IndexError, TypeError):
+                raise ToolError('The model on this PC gave no answer.')
+            u = d.get('usage') or {}
+            use['requests'] += 1
+            use['input'] += u.get('prompt_tokens', 0)
+            use['output'] += u.get('completion_tokens', 0)
+            raw = m.get('content') or ''
+            # (thinking models put their working first: in <think>, cut short when the room ran out, or apart in
+            # reasoning_content (llama.cpp, LM Studio) or reasoning (Ollama))
+            inline = ''.join(re.findall(r'(?s)<think>(.*?)(?:</think>|$)', raw))
+            text = re.sub(r'(?s)<think>.*?(?:</think>|$)', '', raw).strip()
+            thought = (m.get('reasoning_content') or m.get('reasoning') or '') + inline
+            if text:
+                return text, use, model
+            if not thought.strip() and c.get('finish_reason') != 'length':
+                break
+        # (it may have worked the answer out in its thinking: the last fenced block there, which the checks then read)
+        found = re.findall(r'```[\w]*\n(.*?)```', thought, re.S)
+        if found and found[-1].strip():
+            return found[-1].strip(), use, model
+        if thought.strip():
+            raise ToolError('The model on this PC used all its room thinking and wrote nothing. Try again, give it more '
+                            'room (context length) in the app running it, or try a model that answers straight away.')
+        raise ToolError('The model on this PC answered with nothing. Try again, or another model.')
 
     def draft(self, req):
         """A few suggestions for one line of dialogue or journal text (nothing is saved)."""
