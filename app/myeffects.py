@@ -96,7 +96,7 @@ DOES = [
                  'MWScript trick, from your effects (OpenMW 0.52).'),
     ('global', 'Set a global variable', 'Set one of the game\'s global variables, so an MWScript or a dialogue line can react.'),
     ('message', 'Show a message', 'Show a line of text to the player.'),
-    ('lua', 'Lua of your own', 'Your own code, run when you choose, with helpers for the steps above. The Assistant can write it from a description.'),
+    ('lua', 'Lua of your own', 'Your own code, run when you choose, with helpers for the steps above. A model on this PC can write it from a description.'),
 ]
 # (kinds not yet seen working in the game: not offered as a new step, but an effect that has one keeps it)
 UNTRIED = ('quake',)

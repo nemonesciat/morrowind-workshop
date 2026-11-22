@@ -96,17 +96,13 @@ def code_stamp():
 STARTED_CODE = code_stamp()
 
 
-def api_key():
-    return load_settings().get('anthropic_api_key')
-
-
 def ai_writer():
-    """Who writes Lua and dialogue lines (Settings > AI): Claude, or a model on this PC (ai.LOCAL_URL)."""
+    """The model on this PC that writes Lua and dialogue lines (Settings > AI; ai.LOCAL_URL by default)."""
     s = load_settings()
-    return {'writer': s.get('ai_writer') or 'claude', 'url': s.get('ai_local_url') or ai.LOCAL_URL, 'model': s.get('ai_local_model') or ''}
+    return {'url': s.get('ai_local_url') or ai.LOCAL_URL, 'model': s.get('ai_local_model') or ''}
 
 
-assistant = ai.Assistant(db, api_key, ai_writer)
+assistant = ai.Assistant(db, ai_writer)
 link = LiveLink(db, edit_lock)
 editing.WRITE_LOCK = edit_lock         # (the project file and the plugin are written a moment after each change, under this lock)
 db.on_project_change = link.write_state
@@ -1607,11 +1603,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(r)
             elif u.path == '/api/ai/status':
                 w = ai_writer()
-                self._json({'configured': bool(api_key() or os.environ.get('ANTHROPIC_API_KEY')),
-                            'writer': w['writer'], 'local_model': w['model'],
-                            'model': ai.MODEL, 'busy': assistant.lock.locked(), 'status': assistant.status,
-                            'steps': assistant.steps, 'turns': sum(1 for m in assistant.messages if m['role'] == 'user'
-                                                                   and isinstance(m['content'], str))})
+                self._json({'local_model': w['model'], 'local_url': w['url']})
             elif u.path == '/api/changes':
                 # (asked every second or so by each window: what the other windows changed since)
                 self._json(dict(editing.changes_since(int(q.get('since', 0))),
@@ -1850,15 +1842,6 @@ class Handler(BaseHTTPRequestHandler):
                 if fx:
                     out['$fx'] = fx
                 return self._json(out)
-            if u.path == '/api/ai/key':
-                s = load_settings()
-                key = (body.get('key') or '').strip()
-                if key:
-                    s['anthropic_api_key'] = key
-                else:
-                    s.pop('anthropic_api_key', None)
-                save_settings(s)
-                return self._json({'ok': True, 'configured': bool(key or os.environ.get('ANTHROPIC_API_KEY'))})
             if u.path == '/api/clienterror':
                 # a fault in the page, written to the log so "nothing happens" can be traced
                 print('page error (%s, %s): %s' % (str(body.get('view') or '')[:40], str(body.get('where') or '')[:200],
@@ -1923,19 +1906,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'error': 'Not allowed.'}, 403)
                 quit_soon()
                 return self._json({'ok': True})
-            if u.path == '/api/ai/reset':
-                assistant.reset()
-                return self._json({'ok': True})
-            if u.path == '/api/ai/chat':
-                if not db.project:
-                    return self._json({'error': 'Start a mod first, so the assistant has somewhere to save its work.'}, 400)
-                if assistant.lock.locked():
-                    return self._json({'error': 'The assistant is still working on the last request.'}, 409)
-                with edit_lock:
-                    try:
-                        return self._json(assistant.chat(body.get('message', ''), body.get('ctx') or {}))
-                    except ai.ToolError as e:
-                        return self._json({'error': str(e)}, 400)
             if u.path.startswith('/api/lua/'):
                 import luascripts
                 if u.path == '/api/lua/check':
@@ -1990,6 +1960,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(assistant.lua_script(body))
                 except ai.ToolError as e:
                     return self._json({'error': str(e)}, 400)
+            if u.path == '/api/ai/names':
+                # the names a Write with AI request puts in quotes, found in this game or not (nothing saved)
+                return self._json(assistant.names(body.get('brief') or ''))
             if u.path == '/api/ai/local/models':
                 # the models a model app on this PC offers (Settings > AI)
                 try:
@@ -2494,7 +2467,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         return self._json(gearplaces.place(db, body.get('id') or '', body.get('lists') or [], body.get('swaps') or [], body.get('sells') or [],
                                                            body.get('gives') or [], body.get('own_list') or None))
-                    except (ValueError, EditError) as e:
+                    except (ValueError, editing.EditError) as e:
                         return self._json({'error': str(e)}, 400)
                 if u.path == '/api/forge/check':
                     import gearsurvey

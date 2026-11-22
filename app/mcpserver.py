@@ -1,5 +1,5 @@
 """The Workshop as an MCP server: coding agents (Claude Code, Codex, Cursor, opencode, Continue... any that speaks the
-Model Context Protocol) use the Workshop's own tools on the mod that is open, as the built-in assistant does.
+Model Context Protocol) use the Workshop's own tools on the mod that is open (the tools in ai.py).
 
 Streamable HTTP at /mcp on the Workshop's own port (127.0.0.1 only): JSON-RPC 2.0, answered as JSON (no event
 stream). Off until Settings > AI > Coding agents turns it on; every request carries the key shown there
@@ -117,7 +117,7 @@ READ = {'readOnlyHint': True, 'openWorldHint': False}
 WRITE = {'readOnlyHint': False, 'destructiveHint': False, 'openWorldHint': False}
 DESTROY = {'readOnlyHint': False, 'destructiveHint': True, 'openWorldHint': False}
 
-# the built-in assistant's tools (ai.TOOLS), with what an agent needs said differently
+# the Workshop's tools (ai.TOOLS), with what an agent needs said differently
 ASSISTANT = {
     'look_around': ('Look around', READ, 'Describe the place opened with open_place around its focus point: its style, room '
                     'bounds, floor height, and the objects near by with their ref key, id, name, type, position, rotation '
@@ -275,11 +275,11 @@ def _prompt(name, args):
 
 # ------------------------------------------------------------------ doing them
 class Agent:
-    """One connected agent: its name, and the place it has open (the built-in assistant's tools, its own context)."""
+    """One connected agent: its name, and the place it has open (the Workshop's tools, its own context)."""
     def __init__(self, db, name):
         self.db = db
         self.name = name or 'agent'
-        self.helper = ai.Assistant(db, lambda: None)
+        self.helper = ai.Assistant(db)
 
     def call(self, tool, args):
         db = self.db

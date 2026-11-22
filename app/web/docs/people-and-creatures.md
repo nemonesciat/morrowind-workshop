@@ -50,7 +50,7 @@ there as the game's own places of its kind have them (a house, a tavern, a guild
   **✕** leaves them out; **+ One more** adds one.
 - **The household owns the beds and chests**, and **words of their own**: a greeting, their trade, someone in
   particular, a little secret and a rumour each, written from templates (no AI). Change them here or later in
-  Dialogue; **✦** asks the Assistant to write a line better.
+  Dialogue; **✦** asks a model on your PC to write a line better.
 - **Band** (dungeons): the people are one band, as the game's dungeons have them: bandits, smugglers, Daedra
   worshippers, Sixth House cultists, necromancers or rogue mages, led by the strongest of them, all fighting on sight,
   with their kind's **Loot** (crates, chests, sacks) against the walls. **No band** gives the place's usual people.

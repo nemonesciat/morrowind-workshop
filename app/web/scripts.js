@@ -38,7 +38,6 @@ function sWelcome(){
     <div class="cgrid">
       <div class="ccard" data-sw="new"><div style="font-size:26px">➕</div><b>Write a new script</b><div class="msg">Start from a ready-made example: a door that stays barred, an item that moves a quest on, a timer…</div></div>
       <div class="ccard" data-sw="find"><div style="font-size:26px">🔎</div><b>Look at existing scripts</b><div class="msg">See how the base game does things, or change one for your mod (the original stays safe).</div></div>
-      <div class="ccard" data-sw="ai"><div style="font-size:26px">✦</div><b>Ask the assistant</b><div class="msg">"Write a script for a lever that opens the gate when the player has the key." Then check it here.</div></div>
     </div>
     <div class="card msg" style="line-height:1.7"><b style="color:var(--text)">Three kinds of scripts</b><br>
       <b>On an object or character</b>: runs while they're nearby.<br>
@@ -46,7 +45,6 @@ function sWelcome(){
       <b>Start script</b>: a global one that runs from the start of the game.</div></div>`;
   $('#smain').querySelectorAll('[data-sw]').forEach(c => c.onclick = () => {
     if (c.dataset.sw === 'new') sNew(); else if (c.dataset.sw === 'find') $('#s-find').focus();
-    else { AI.open = true; $('#aipanel').classList.add('open'); aiStatus().then(renderAI); }
   });
 }
 

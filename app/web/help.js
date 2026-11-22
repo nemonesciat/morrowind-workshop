@@ -34,7 +34,7 @@ const GUIDES = [
   {file: 'openmw-052.md', title: 'What OpenMW 0.52 adds', what: 'Your own skills, attributes, weathers, traps, loot rules and list additions; magic effects that burst, strike, glow and act where the bolt strikes.'},
   {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
   {file: 'scripts-and-game-rules.md', title: 'Scripts and game rules', what: 'MWScript and Lua, global variables, game settings, factions, classes, races and the rest.'},
-  {file: 'coding-with-ai.md', title: 'Coding with AI', what: 'Lua, effects and dialogue written by Claude or a model on your PC, and coding agents (Claude Code, Codex…) on your mod.'},
+  {file: 'coding-with-ai.md', title: 'Coding with AI', what: 'Lua, effects and dialogue written by a model on your PC, and coding agents (Claude Code, Codex…) on your mod.'},
   {file: 'playing-and-testing.md', title: 'Playing and testing', what: 'Play here, playing as your own character, test setups, the live link, the OpenMW menu.'},
   {file: 'sharing-your-mod.md', title: 'Sharing your mod', what: 'My mod, Get ready to share, Health check, Load order, merging, .esp files, building together, backups.'},
   {file: 'how-the-workshop-learns.md', title: 'How the Workshop learns', what: 'Where its building and decorating know-how comes from: your own game, on your PC.'},
@@ -267,13 +267,12 @@ function renderGuide(){
     for example to Nexus Mods. <b>Start a clean test</b> (step 3 there) starts the game with only the base game and your mod's requirements, to see it as others will.</p>
 
   <h2>AI (optional)</h2>
-  <p>Everything in the Workshop works without AI. Three ways to use it, set up in <b>Settings → AI</b>:</p>
+  <p>Everything in the Workshop works without AI. Two ways to use it, set up in <b>Settings → AI</b>:</p>
   <ul class="glist">
-    <li><b>The chat assistant</b> (the ✦ AI button): ask in plain words ("furnish this room like a poor fisherman's hut") and it builds it. It uses Claude with
-      <b>your own Anthropic API key</b>, billed to your account: usually a few cents, up to about half a dollar for a big job.</li>
-    <li><b>The Lua and dialogue writer</b>: <b>✦ Write with AI</b> and <b>✦ Fix</b> in the Lua editor, and the ✦ beside dialogue lines. Claude, or a model
+    <li><b>The Lua and dialogue writer</b>: <b>✦ Write with AI</b> and <b>✦ Fix</b> in the Lua editor, and the ✦ beside dialogue lines, by a model
       running on your own PC (Ollama, LM Studio…), free.</li>
-    <li><b>Coding agents</b>: Claude Code, Codex, Cursor and others can work on your open mod with the Workshop's own tools (MCP).</li>
+    <li><b>Coding agents</b>: Claude Code, Codex, Cursor and others, on your own plan or model, work on your open mod with the Workshop's own tools
+      (MCP): ask in plain words ("furnish this room like a poor fisherman's hut", "make a short quest for Fenas") and they build it.</li>
   </ul>
   <p>Whatever an AI does goes into your mod like your own edits: it shows in My changes, and <b>Undo</b> takes it back. Try AI-written scripts in the
     game before sharing. <b>? Help → Guides → Coding with AI</b> has the details.</p>
@@ -306,16 +305,6 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-gvie
 document.addEventListener('click', e => { if (e.target.closest && e.target.closest('.brand')) showView('guide'); });
 
 // ----- settings
-// the ✦ AI button at the top: shown once there's an API key, or when ticked in Settings (unticking hides it, kept
-// for next time); nobody who never set the assistant up sees it
-function aiBtnShown(){
-  let v = null; try { v = localStorage.getItem('ws-aibtn'); } catch (e) {}
-  return v === '1' || (v !== '0' && typeof AI !== 'undefined' && AI.configured);
-}
-function aiBtnApply(){ const b = $('#aibtn'); if (b) b.style.display = aiBtnShown() ? '' : 'none'; if (typeof hdrFit === 'function') hdrFit(); }
-aiBtnApply();
-if (typeof aiStatus === 'function') aiStatus().then(aiBtnApply);
-
 // Coding agents (Settings › AI › Coding agents): what to paste into each, from the Workshop's address (Streamable
 // HTTP) or, for agents that only start a command, the stdio bridge (mcp_stdio.py) with the Workshop's own Python.
 const MCP_NAME = 'morrowind-workshop';
@@ -356,19 +345,9 @@ async function renderSettings(){
   <section class="card setsec"><h3>AI${typeof guideLink === 'function' ? guideLink('coding-with-ai.md', 'Which AI does what') : ''}</h3>
     <p class="msg">All optional: everything else in the Workshop works without AI.</p>
 
-    <h4 class="aisub">Chat assistant <span class="msg">Claude</span></h4>
-    <p class="msg" title="Usually a few cents a request, up to about half a dollar for a big job. What you ask and the place and records it works with are sent to Anthropic.">Builds and changes things for you from the ✦ AI panel, with your own Anthropic API key.</p>
-    <div class="setrow"><span>API key</span><b>${st.ai_configured ? `saved, ends in …${esc(st.ai_key_end)}${st.ai_from_env ? ' (from the ANTHROPIC_API_KEY setting on this PC)' : ''}` : 'none'}</b></div>
-    <div class="actions"><input class="inp" id="st-key" type="password" placeholder="Paste a new key: sk-ant-…" style="max-width:320px" autocomplete="off" title="Stored only on this PC, in the Workshop's folder">
-      <button class="btn sm" id="st-savekey">Save key</button>${st.ai_configured && !st.ai_from_env ? '<button class="btn sm danger" id="st-delkey">Remove key</button>' : ''}
-      <a class="btn sm" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key</a></div>
-    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="st-aibtn" ${aiBtnShown() ? 'checked' : ''}> Show the ✦ AI button at the top</label>
-
     <h4 class="aisub">Lua and dialogue writer${typeof guideLink === 'function' ? guideLink('coding-with-ai.md', 'Setting up a model on your PC') : ''}</h4>
-    <p class="msg" title="Scripts › a Lua script › ✦ Write with AI and ✦ Fix; your own magic effects' ✦ Write it for me; the ✦ beside dialogue lines">✦ Write with AI, ✦ Fix and the ✦ suggestions: Claude, or a model running on this PC, free.</p>
-    <div class="setrow"><span>Written by</span>
-      <select class="inp" id="st-writer" style="max-width:220px"><option value="claude"${st.ai_writer !== 'local' ? ' selected' : ''}>Claude (your API key)</option><option value="local"${st.ai_writer === 'local' ? ' selected' : ''}>A model on this PC</option></select></div>
-    <div class="actions" id="st-local"${st.ai_writer === 'local' ? '' : ' style="display:none"'}>
+    <p class="msg" title="Scripts › a Lua script › ✦ Write with AI and ✦ Fix; your own magic effects' ✦ Write it for me; the ✦ beside dialogue lines">✦ Write with AI, ✦ Fix and the ✦ suggestions, by a model running on this PC, free.</p>
+    <div class="actions" id="st-local">
       <input class="inp" id="st-lurl" value="${esc(st.ai_local_url || 'http://127.0.0.1:11434/v1')}" style="max-width:240px" title="Any app with the usual chat address. Ollama: http://127.0.0.1:11434/v1 · LM Studio: http://127.0.0.1:1234/v1 (its server switched on) · llama.cpp's llama-server: http://127.0.0.1:8080/v1 · KoboldCpp: http://127.0.0.1:5001/v1">
       <select class="inp" id="st-lmodel" style="max-width:240px">${st.ai_local_model ? `<option selected>${esc(st.ai_local_model)}</option>` : '<option value="">(no model chosen)</option>'}</select>
       <button class="btn sm" id="st-lfind" title="Ask the app at that address which models it has">Find models</button></div>
@@ -408,7 +387,6 @@ async function renderSettings(){
   const save = body => post('/api/settings', body).then(() => toast('Saved.')).catch(e => toast(e.message, true));
   $('#st-pick').onclick = async () => { try { toast('Choose OpenMW\'s folder in the window that opens…'); const r = await post('/api/openmw/pick', {}); if (r.ok){ toast('Using OpenMW in ' + r.install + '. Reading your game again…'); setTimeout(poll, 300); } } catch (e){ toast(e.message, true); } };
   const auto = $('#st-auto'); if (auto) auto.onclick = async () => { await post('/api/settings', {openmw_reset: true}); toast('Looking for OpenMW by itself. Reading your game again…'); setTimeout(poll, 300); };
-  $('#st-aibtn').onchange = e => { try { localStorage.setItem('ws-aibtn', e.target.checked ? '1' : '0'); } catch (x) {} aiBtnApply(); };
   // (a model on this PC: Ollama or LM Studio, for the writers of Lua and dialogue lines; ai.Assistant._write)
   // (coding agents: mcpserver.py; the line or config to paste for the agent picked)
   const mcpBox = $('#st-mcp');
@@ -426,7 +404,6 @@ async function renderSettings(){
     const t = b.dataset.mcpcopy === 'url' ? $('#st-mcpurl').value : $('#st-mcpsnip').textContent;
     try { await navigator.clipboard.writeText(t); toast('Copied.'); } catch (x){ toast('Select it and copy with Ctrl+C.'); }
   });
-  $('#st-writer').onchange = e => { $('#st-local').style.display = e.target.value === 'local' ? '' : 'none'; save({ai_writer: e.target.value}); };
   $('#st-lurl').onchange = e => save({ai_local_url: e.target.value.trim()});
   $('#st-lmodel').onchange = e => save({ai_local_model: e.target.value});
   $('#st-lfind').onclick = async () => {
@@ -441,8 +418,6 @@ async function renderSettings(){
     } catch (e){ toast(e.message, true); }
     finally { b.disabled = false; }
   };
-  $('#st-savekey').onclick = async () => { const k = $('#st-key').value.trim(); if (!k) return; await post('/api/ai/key', {key: k}); AI.configured = true; aiBtnApply(); toast('Key saved.'); renderSettings(); };
-  const dk = $('#st-delkey'); if (dk) dk.onclick = async () => { if (!confirm('Remove the saved API key?')) return; await post('/api/ai/key', {key: ''}); AI.configured = false; aiBtnApply(); renderSettings(); };
   $('#st-bmin').onchange = e => save({backup_minutes: +e.target.value});
   $('#st-bkeep').onchange = e => save({backup_keep: +e.target.value});
   $('#st-bmb').onchange = e => save({backup_mb: +e.target.value});
@@ -478,7 +453,7 @@ function reportModal(){
   const pg = reportPage(), n = pg.errors.length + pg.problems.length;
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:min(640px,94vw)"><h2>Report a problem</h2>
-    <div class="msg">A report with the versions, your setup, ${n ? `<b>the ${n} problem${n === 1 ? '' : 's'} the page showed</b>, ` : ''}the page you were on and the end of the logs. No user name, never your API key.</div>
+    <div class="msg">A report with the versions, your setup, ${n ? `<b>the ${n} problem${n === 1 ? '' : 's'} the page showed</b>, ` : ''}the page you were on and the end of the logs. No user name.</div>
     <label>What happened? What did you do just before?</label>
     <textarea class="inp" id="rp-what" style="min-height:90px" placeholder="e.g. I pressed Auto-furnish in a Dres house and nothing appeared."></textarea>
     <div id="rp-out"></div>
@@ -547,22 +522,6 @@ document.addEventListener('contextmenu', e => {
   pnlMenu({x: e.clientX, y: e.clientY}, [{label: 'ℹ About Morrowind Workshop…', act: () => aboutModal()}]);
 }, true);
 
-// ----- the assistant, the first time it's opened: what it is, what it costs, what it sends
-function aiNoticeHtml(){
-  return `<div class="ai-msg bot"><b>Before you use the assistant</b>
-The assistant is optional: everything else in the Workshop works without it.
-
-• <b>It costs money.</b> It uses Claude, Anthropic's AI, through <b>your own Anthropic API account</b>. Each request is billed to that account: usually a few cents, a big job like furnishing a whole house up to about half a dollar. You set up the account and its spending limits on console.anthropic.com.
-• <b>What is sent.</b> What you ask, plus details about the place, records and objects it works with, go to Anthropic to be answered. Nothing is sent until you ask something.
-• <b>Check its work.</b> It can make mistakes. Everything it does goes into your mod like your own edits, and <b>Undo</b> takes it back.
-• <b>Other ways.</b> A model on your PC can write Lua and dialogue lines instead, free, and a coding agent of your own (Claude Code, Codex…) can work on your mod: Settings › AI. This chat always uses Claude.</div>
-    <div class="actions"><button class="btn primary" id="ai-ack">Got it</button></div>`;
-}
-function bindAiNotice(){
-  const b = $('#ai-ack'); if (!b) return;
-  b.onclick = async () => { AI.ack = true; try { await post('/api/settings', {ai_ack: true}); } catch (e) {} renderAI(); };
-}
-
 // ----- links into the Workshop: #view=dialog, #cell=balmora&3d=1&cam=x,y,z,yaw,pitch, #quest=..., #search=...
 async function openFromLink(hash){
   const h = new URLSearchParams(hash.replace(/^#/, ''));
@@ -596,7 +555,6 @@ async function openFromLink(hash){
     clearInterval(t);
     try {
       const st = await api('/api/settings');
-      AI.ack = st.ai_ack;
       if (location.hash.length > 1) await openFromLink(location.hash);
       else if (!st.guide_seen || homeStart()) showView('guide');
       setTimeout(() => { if (typeof crPrefetch === 'function') crPrefetch(); }, 4000);

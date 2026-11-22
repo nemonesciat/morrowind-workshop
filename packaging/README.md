@@ -40,12 +40,11 @@ The **Getting started** page opens the first time, and is always under **? Help*
    live link: changes in the Workshop appear in the game within a second.
 4. When it's ready, **My mod → Get ready to share** checks it, writes a readme and packs a zip.
 
-## The AI assistant (optional)
+## AI (optional)
 
-The ✦ Assistant can build and change things from a plain request. It uses Claude, Anthropic's AI,
-with **your own Anthropic API key**, and each request is billed to your Anthropic account (usually a
-few cents, up to about half a dollar for a big job). What you ask and details about what it works
-on are sent to Anthropic. Everything else works without it.
+Everything works without AI. **? Help → Settings → AI** sets up a model running on your own PC (Ollama,
+LM Studio…) to write Lua and dialogue lines, free, and lets a coding agent of your own (Claude Code, Codex…)
+work on your mod with the Workshop's tools.
 
 ## Your work is safe
 
@@ -58,7 +57,7 @@ on are sent to Anthropic. Everything else works without it.
 ## Problems?
 
 **? Help → Report a problem** makes a report with the details needed to look into it (versions,
-setup and the end of the logs; your Windows user name and API key are left out). Copy it into the
+setup and the end of the logs; your Windows user name is left out). Copy it into the
 place you got the Workshop from.
 
 ## Good to know

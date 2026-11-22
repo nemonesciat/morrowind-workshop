@@ -172,7 +172,7 @@ function poDraw(){
         </div><div class="msg" style="margin-top:4px">A change of race or class keeps the outfit: 🎲 makes a new person in full.</div></details>
         ${(p.lines || []).length ? `<details><summary>Their words (${p.lines.length})</summary>${p.lines.map((ln, i) => `<div class="poline">
           <span class="msg">${esc(PO_TOPIC[ln.topic] || ln.topic)}${ln.when ? ' · ' + esc(PO_WHEN[ln.when] || ln.when) : ''}</span>
-          <div class="ai-row"><textarea class="inp" data-pline="${i}" rows="2">${esc(ln.text)}</textarea><button class="btn sm" data-pai="${i}" title="Write it better with AI (asks first; Claude or your own model: Settings › AI)">✦</button></div></div>`).join('')}</details>` : ''}</div>`;
+          <div class="ai-row"><textarea class="inp" data-pline="${i}" rows="2">${esc(ln.text)}</textarea><button class="btn sm" data-pai="${i}" title="Write it better with AI (asks first; a model on this PC: Settings › AI)">✦</button></div></div>`).join('')}</details>` : ''}</div>`;
     }).join('')}</div>`;
   const body = el.querySelector('.pobody'); body.innerHTML = h;
   // (a change of how busy, wealth, races…: a new cast by them, the locked people kept)

@@ -32,18 +32,21 @@ and delete the folder.
 Closing the Workshop's window quits it. When it opened in your usual browser instead, quit it with
 `./morrowind-workshop --quit` (or Ctrl+C in the terminal you started it from).
 
-## The AI assistant (optional)
+## AI (optional)
 
-The ✦ Assistant can build and change things from a plain request. It uses Claude, Anthropic's AI,
-with **your own Anthropic API key**, and each request is billed to your Anthropic account. It needs one
-Python package that isn't part of Python itself. To set it up, run this once in the Workshop's folder
-(it needs the internet, and makes a Python environment of the Workshop's own in `python-env`; your
-system's Python is not changed):
+Everything works without AI. **? Help → Settings → AI** sets up a model running on your own PC (Ollama,
+LM Studio…) to write Lua and dialogue lines, free, and lets a coding agent of your own (Claude Code, Codex…)
+work on your mod with the Workshop's tools.
 
-    ./morrowind-workshop --install-ai
+## Blender's compressed .blend files (optional)
+
+Opening a compressed .blend needs one Python package that isn't part of Python itself. To set it up, run
+this once in the Workshop's folder (it needs the internet, and makes a Python environment of the
+Workshop's own in `python-env`; your system's Python is not changed):
+
+    ./morrowind-workshop --install-extras
 
 On Debian and Ubuntu this needs the `python3-venv` package (`sudo apt install python3-venv`).
-Then add your key in **? Help → Settings**. Everything else works without it.
 
 ## Where things are
 

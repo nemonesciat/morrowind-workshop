@@ -74,15 +74,13 @@ you. Delete the folder and the Workshop simply learns again next time.
 
 None of these are part of the learning, and each is off until you use it:
 
-- **The Assistant** (optional), marked ✦ wherever it appears. It uses Anthropic's Claude, with an API key
-  **you** paste in yourself, billed to your own Anthropic account. It does three things, each only when you
-  ask:
-  - answers you in the ✦ Assistant chat;
-  - drafts a line of dialogue when you press its suggestion button in Dialogue;
-  - writes the Lua for one of your own magic effects when you press "✦ Write it for me".
-
-  Without a key it simply isn't available, and nothing else changes. Auto-furnish, building, dungeons,
-  Populate (whose people and their words are written without AI) and the Style palette never use it.
+- **A model on your PC** (optional), marked ✦ wherever it is used: an app on your own computer, such as
+  Ollama or LM Studio, that you set up in Settings › AI. Only when you press a ✦ button does the Workshop ask
+  it to write a Lua script, the Lua of one of your own magic effects, or a line of dialogue. Nothing leaves
+  your computer. Without one, the ✦ buttons say so, and nothing else changes. Auto-furnish, building,
+  dungeons, Populate (whose people and their words are written without AI) and the Style palette never use it.
+- **Coding agents** (optional, off until you tick it in Settings › AI): programs of your own on this PC, such
+  as Claude Code, that work on your open mod with the Workshop's tools.
 - **Build together.** Working on a mod with friends connects your Workshops to each other, over your network
   or the internet, when you start or join a session.
 - **Packs from a shared folder or link**, when you add one under Library › Pack sources.
@@ -97,4 +95,4 @@ None of these are part of the learning, and each is off until you use it:
 - **Read the source** at <https://github.com/nemonesciat/morrowind-workshop>:
   - the surveys are the `*survey.py` files in `app/`, plus `joints.py`, `adjacency.py` and `catalogue.py`;
   - `background.py` and `surveyworker.py` run them;
-  - the only code that talks to an AI service is `app/ai.py`, used by the Assistant alone.
+  - the only code that talks to an AI model is `app/ai.py`, and only to the one on your PC that you name.

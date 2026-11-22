@@ -60,7 +60,6 @@ header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16p
 #jumpme svg{flex:none;display:block}
 @container (max-width:720px){#togetherbtn .tl{display:none}}
 @container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#filebtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
-@container (max-width:500px){#aibtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
 .lg-a{stroke:var(--gold)}.lg-b{stroke:var(--gold2)}
@@ -508,25 +507,6 @@ details.pal summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:3
 .chips{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 6px}
 .pchip{font-size:12px;border:1px solid var(--line2);background:var(--panel2);border-radius:14px;padding:2px 9px;cursor:grab;user-select:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pchip:hover{border-color:var(--gold);color:var(--gold2)}
-/* assistant */
-#aipanel{position:fixed;top:57px;right:0;bottom:0;width:min(420px,100vw);background:var(--panel);border-left:1px solid var(--line2);z-index:30;display:none;flex-direction:column;box-shadow:-12px 0 40px #0008}
-#aipanel.open{display:flex}
-.ai-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.ai-head h2{font-family:Cinzel,serif;font-size:17px;color:var(--gold2);margin:0;font-weight:600;flex:1}
-.ai-msgs{flex:1;overflow:auto;padding:14px}
-.ai-msg{margin-bottom:14px;line-height:1.5;font-size:13.5px}
-.ai-msg.user{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:8px 11px;margin-left:30px;white-space:pre-wrap}
-.ai-msg.bot{white-space:pre-wrap}
-.ai-msg.err{color:#f3b2a5}
-.ai-steps{margin:6px 0;display:flex;flex-direction:column;gap:3px}
-.ai-step{font-size:12px;color:var(--muted);border-left:2px solid var(--line2);padding-left:8px}
-.ai-step.e{color:#e9a191;border-color:#7a3a2c}
-.ai-foot{border-top:1px solid var(--line);padding:10px 12px}
-.ai-foot textarea{min-height:64px;max-height:180px}
-.ai-ctx{font-size:11.5px;color:var(--faint);margin-bottom:6px}
-.ai-ex{display:flex;flex-direction:column;gap:6px;margin-top:10px}
-.ai-ex button{text-align:left;border:1px solid var(--line2);background:var(--panel2);border-radius:8px;padding:7px 10px;cursor:pointer;color:var(--muted);font-size:12.5px}
-.ai-ex button:hover{border-color:var(--gold);color:var(--text)}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line2);border-top-color:var(--gold);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 /* dialogue */
@@ -829,7 +809,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
         <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="filebtn" title="New, open, save, earlier versions, your mods">📁<span class="tl"> File</span> ▾</button><div class="omwmenu filemenu" id="filemenu"></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn" id="aibtn" style="display:none" title="Assistant: ask the AI to help you build (shown or hidden in Settings)">✦<span class="tl"> AI</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="filebtn" title="New, open, save, earlier versions, your mods">📁<span class="tl"> File</span> ▾</button><div class="omwmenu filemenu" id="filemenu"></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
   </div>
 </header>
 <main>
@@ -886,13 +866,6 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
   <div class="view" id="scripts"><aside class="dside" id="sside"></aside><main class="dmain" id="smain"></main></div>
   <div class="view" id="mymod"><div class="wrap" id="mymodwrap"></div></div>
   <div class="view" id="release"><div class="wrap" id="relwrap" style="max-width:980px"></div></div>
-  <aside id="aipanel">
-    <div class="ai-head"><h2>✦ Assistant</h2><button class="btn sm" id="ai-new" title="Start a new conversation">New chat</button><button class="btn sm" id="ai-keybtn" title="API key settings">⚙</button><button class="btn sm" id="ai-close">✕</button></div>
-    <div class="ai-msgs" id="ai-msgs"></div>
-    <div class="ai-foot"><div class="ai-ctx" id="ai-ctx"></div>
-      <textarea class="inp" id="ai-in" placeholder="Describe what to build or change…  (Enter to send, Shift+Enter for a new line)"></textarea>
-      <div class="actions" style="margin-top:6px"><button class="btn primary" id="ai-send">Send</button><span class="msg" id="ai-status"></span></div></div>
-  </aside>
   <div class="view" id="health"><div class="wrap" id="healthwrap"></div></div>
   <div class="view" id="plugins"><div class="wrap" id="pluginwrap"></div></div>
 </main>
@@ -5318,112 +5291,9 @@ async function refreshAfterEdits(remote){
   }
 }
 
-// ---------- assistant ----------
-const AI = {open: false, configured: false, busy: false, log: [], editingKey: false};
-const AI_EXAMPLES = [
-  'Furnish this room as a cozy study that fits the style of the place.',
-  'Put some clutter on the tables: bottles, plates, a candle or two.',
-  'Add a couple of guards near the entrance.',
-  'Create a new silver dagger called "Moon-Kissed Fang", worth 400 gold, and put it on a table here.',
-];
-async function aiStatus(){ try { const s = await api('/api/ai/status'); AI.configured = s.configured; AI.writer = s.writer; AI.localModel = s.local_model; return s; } catch(e){ return null; } }
-$('#aibtn').onclick = async () => {
-  AI.open = !AI.open; $('#aipanel').classList.toggle('open', AI.open);
-  if (AI.open){
-    if (AI.ack === undefined){ try { AI.ack = (await api('/api/settings')).ai_ack; } catch (e){ AI.ack = true; } }
-    await aiStatus(); renderAI(); $('#ai-in').focus();
-  }
-};
-$('#ai-close').onclick = () => { AI.open = false; $('#aipanel').classList.remove('open'); };
-$('#ai-keybtn').onclick = () => { AI.editingKey = true; renderAI(); };
-$('#ai-new').onclick = async () => { if (AI.busy) return; await post('/api/ai/reset'); AI.log = []; renderAI(); };
-function aiContext(){
-  const ctx = {cell: W.key};
-  if (W.sel) ctx.sel = W.sel.k; else if (W.key) ctx.focus = [W.cam.x, W.cam.y];
-  if (!W.ext && W.cut != null) ctx.cut = W.cut;
-  if (pageOn('dialog') && D.mode){
-    if (D.mode === 'npc') ctx.npc = D.key; else if (D.mode === 'quest') ctx.quest = D.key; else if (D.key) ctx.topic = D.key;
-  }
-  return ctx;
-}
-function fmtBot(t){ return esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
-function renderAI(){
-  const box = $('#ai-msgs');
-  $('#ai-ctx').innerHTML = W.key ? `Working in <b>${esc(W.info ? (W.info.name || W.info.region || W.info.id) : W.key)}</b>${W.sel ? ' · around the selected object' : ' · around the map centre'}` : 'Tip: open a place on the World map first so the assistant knows where to build.';
-  $('#ai-in').disabled = !AI.ack;
-  if (!AI.ack){ box.innerHTML = aiNoticeHtml(); bindAiNotice(); return; }       // (once: what it costs, what it sends)
-  if (!AI.configured || AI.editingKey){
-    box.innerHTML = `<div class="ai-msg bot"><b>Connect the assistant</b>${AI.writer === 'local' ? `
-<span class="msg">Your model on this PC${AI.localModel ? ` (${esc(AI.localModel)})` : ''} already writes Lua and dialogue lines without a key: Scripts › a Lua script › ✦ Write with AI. This chat needs Claude.</span>
-` : ''}
-The assistant uses Claude, Anthropic's AI, through your own Anthropic API account.
-
-1. Sign in at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> and create an API key.
-2. Paste it below. It's stored only on this PC, in the Workshop folder.
-
-Each request is billed to your Anthropic account: small requests cost a few cents, a bigger job like furnishing a whole room usually somewhere up to about half a dollar.</div>
-      <input class="inp" id="ai-key" type="password" placeholder="sk-ant-…" autocomplete="off">
-      <div class="actions"><button class="btn primary" id="ai-savekey">Save key</button>${AI.configured ? '<button class="btn" id="ai-cancelkey">Cancel</button><button class="btn danger" id="ai-delkey">Remove saved key</button>' : ''}</div>`;
-    $('#ai-savekey').onclick = async () => { const k = $('#ai-key').value.trim(); if (!k) return; const r = await post('/api/ai/key', {key: k}); AI.configured = r.configured; AI.editingKey = false; renderAI(); toast('Key saved'); };
-    const c = $('#ai-cancelkey'); if (c) c.onclick = () => { AI.editingKey = false; renderAI(); };
-    const d = $('#ai-delkey'); if (d) d.onclick = async () => { await post('/api/ai/key', {key: ''}); AI.configured = false; AI.editingKey = false; renderAI(); };
-    return;
-  }
-  let h = '';
-  if (!AI.log.length){
-    h += `<div class="ai-msg bot">Tell me what to build or change, in your own words. I can see the place you have open on the World map, find fitting objects, place and arrange them, and create or edit items, NPCs and books.
-Everything goes into your mod, and you can undo it.</div><div class="ai-ex">${AI_EXAMPLES.map((x, n) => `<button data-ex="${n}">${esc(x)}</button>`).join('')}</div>`;
-  }
-  for (const m of AI.log){
-    if (m.role === 'user') h += `<div class="ai-msg user">${esc(m.text)}</div>`;
-    else if (m.role === 'error') h += `<div class="ai-msg err">${esc(m.text)}</div>`;
-    else {
-      h += `<div class="ai-msg bot">`;
-      if (m.steps && m.steps.length) h += `<div class="ai-steps">${m.steps.map(s => `<div class="ai-step ${s.error ? 'e' : ''}">${esc(s.text)}</div>`).join('')}</div>`;
-      h += fmtBot(m.text || '');
-      if (m.changed && !m.undone) h += `<div class="actions"><button class="btn sm" data-aiundo="${m.undo_to}">↶ Undo these changes</button></div>`;
-      if (m.undone) h += `<div class="msg">(undone)</div>`;
-      if (m.usage && m.usage.requests) h += `<div class="msg" style="font-size:11px;margin-top:6px" title="Anthropic bills by tokens (pieces of words). Your exact cost is on console.anthropic.com under Usage.">Used ${m.usage.requests} request${m.usage.requests > 1 ? 's' : ''} · ${fmtN(m.usage.input + m.usage.cache_read + m.usage.cache_write)} tokens read${m.usage.cache_read ? ` (${fmtN(m.usage.cache_read)} of them cheap re-reads)` : ''} · ${fmtN(m.usage.output)} written</div>`;
-      h += `</div>`;
-    }
-  }
-  if (AI.busy) h += `<div class="ai-msg bot"><span class="spin"></span><span id="ai-live">Working…</span><div class="ai-steps" id="ai-livesteps"></div></div>`;
-  box.innerHTML = h;
-  box.scrollTop = box.scrollHeight;
-}
-$('#ai-msgs').addEventListener('click', async e => {
-  const ex = e.target.closest('[data-ex]'); if (ex){ $('#ai-in').value = AI_EXAMPLES[+ex.dataset.ex]; $('#ai-in').focus(); return; }
-  const u = e.target.closest('[data-aiundo]');
-  if (u){
-    const to = +u.dataset.aiundo;
-    await doUndo(to);
-    AI.log.forEach(m => { if (m.undo_to != null && m.undo_to >= to) m.undone = true; });
-    renderAI();
-  }
-});
-$('#ai-in').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
-$('#ai-send').onclick = () => aiSend();
-async function aiSend(){
-  const text = $('#ai-in').value.trim();
-  if (!text || AI.busy) return;
-  if (!await needProject()) return;
-  AI.log.push({role: 'user', text}); $('#ai-in').value = ''; AI.busy = true; renderAI();
-  const poller = setInterval(async () => {
-    const s = await aiStatus(); if (!s || !AI.busy) return;
-    const live = $('#ai-livesteps'); if (live) live.innerHTML = (s.steps || []).map(x => `<div class="ai-step ${x.error ? 'e' : ''}">${esc(x.text)}</div>`).join('');
-    const st = $('#ai-live'); if (st) st.textContent = s.status || 'Working…';
-  }, 1200);
-  try {
-    const r = await post('/api/ai/chat', {message: text, ctx: aiContext()});
-    AI.log.push({role: 'bot', text: r.reply, steps: r.steps, changed: r.changed, undo_to: r.undo_to, usage: r.usage});
-    if (r.changed) await refreshAfterEdits();
-    if (r.open_cell){ showView('world'); await worldOpen(r.open_cell); }
-  } catch (err){
-    AI.log.push({role: 'error', text: err.message});
-  } finally {
-    clearInterval(poller); AI.busy = false; renderAI();
-  }
-}
+// ---------- the model on this PC that writes Lua and dialogue lines (Settings › AI) ----------
+const AI = {};
+async function aiStatus(){ try { const s = await api('/api/ai/status'); AI.localModel = s.local_model; return s; } catch(e){ return null; } }
 
 poll();
 </script>

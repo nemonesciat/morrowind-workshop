@@ -73,7 +73,6 @@ function dWelcome(){
       <div class="ccard" data-dw="npc"><div style="font-size:26px">👤</div><b>Give a character lines</b><div class="msg">Open a character on the left and add a greeting or topics. Lines can depend on quest stages, items and more.</div></div>
       <div class="ccard" data-dw="quest"><div style="font-size:26px">📜</div><b>Make a quest</b><div class="msg">A title and numbered journal stages (10, 20 … 100). Characters' lines move it on.</div></div>
       <div class="ccard" data-dw="quests"><div style="font-size:26px">📋</div><b>Browse quests</b><div class="msg">Every quest in the loaded data, by plugin, with the ones the Board flags; open any on its Board.</div></div>
-      <div class="ccard" data-dw="ai"><div style="font-size:26px">✦</div><b>Ask the assistant</b><div class="msg">"Make a short quest for Fenas: she lost a ring in the cave nearby." It writes the quest and the lines.</div></div>
     </div>
     <div class="card msg" style="line-height:1.7"><b style="color:var(--text)">How Morrowind picks a line</b><br>
       The game says the <b>first</b> line of a topic, from the top, whose conditions all fit. So a line for one character goes above the general ones; drag lines to reorder them.</div></div>`;
@@ -81,7 +80,6 @@ function dWelcome(){
     if (c.dataset.dw === 'npc') $('#d-npc').focus();
     else if (c.dataset.dw === 'quest') dNewQuest();
     else if (c.dataset.dw === 'quests') qlTable();
-    else { AI.open = true; $('#aipanel').classList.add('open'); aiStatus().then(renderAI); }
   });
 }
 
@@ -158,7 +156,7 @@ function dRenderNpc(){
   const all = [];
   let h = `<div class="dhead"><div><div class="dt-type">${c.type === 'CREA' ? 'Creature' : 'Character'}</div><h2>${esc(c.name || c.id)}</h2>
     <div class="msg">${esc([c.race, c.cls, c.faction].filter(Boolean).join(' · '))} · <span class="lnk" data-drec="${c.i}">record</span> · ID ${esc(c.id)}</div></div>
-    <div class="actions" style="margin:0"><button class="btn primary" id="d-addgreet">+ Greeting</button><button class="btn" id="d-addtopic">+ Topic line</button><button class="btn" id="d-aiquest" title="Ask the assistant to write a quest for this character (the chat assistant: Claude, your API key)">✦ Quest idea…</button><button class="btn" data-qgo="${esc(c.id)}" style="display:none" title="Go to them in your running game">🎮 Go to</button></div></div>`;
+    <div class="actions" style="margin:0"><button class="btn primary" id="d-addgreet">+ Greeting</button><button class="btn" id="d-addtopic">+ Topic line</button><button class="btn" data-qgo="${esc(c.id)}" style="display:none" title="Go to them in your running game">🎮 Go to</button></div></div>`;
   h += cvTabs();
   if (CV.tab !== 'lines'){
     $('#dmain').innerHTML = `<div class="dwrap cvwide">${h}<div id="cvbody"></div></div>`;
@@ -182,10 +180,6 @@ function dRenderNpc(){
 function dBindNpcHead(c){
   $('#d-addgreet').onclick = () => dEditLine('greeting 5', {actor: c.id, conds: []}, true);
   $('#d-addtopic').onclick = () => dPickTopic(c.id);
-  $('#d-aiquest').onclick = () => {
-    AI.open = true; $('#aipanel').classList.add('open');
-    aiStatus().then(() => { renderAI(); const i = $('#ai-in'); if (i){ i.value = `Make a short quest for ${c.name || c.id} (${c.id}): `; i.focus(); } });
-  };
   $('#dmain').querySelectorAll('[data-qgo]').forEach(b => b.onclick = () => qtGoto(b.dataset.qgo));
   const rec = $('#dmain [data-drec]'); if (rec) rec.onclick = () => { showView('browse'); openRecord(+rec.dataset.drec, true); };
 }
@@ -263,7 +257,7 @@ function dRenderQuest(){
   let h = `<div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b> (used in conditions and scripts; players never see it)</div></div>
     <div class="actions" style="margin:0"><button class="btn primary" id="q-save">Save quest</button></div></div>
     ${qtabs}<div id="q-test"></div>
-    <label class="dlabel">Title, as shown in the journal</label><div class="ai-row"><input class="inp" id="q-title" value="${esc(q.title)}"><button class="btn sm" data-ai="title" title="Suggest with AI (Claude or your own model: Settings › AI)">✦</button></div>
+    <label class="dlabel">Title, as shown in the journal</label><div class="ai-row"><input class="inp" id="q-title" value="${esc(q.title)}"><button class="btn sm" data-ai="title" title="Suggest with AI (a model on this PC: Settings › AI)">✦</button></div>
     <label class="dlabel">Stages <span class="msg">(the journal entries, by number; the game shows them as the player reaches them)</span></label>
     <div id="q-stages"></div>
     <div class="actions"><button class="btn sm" id="q-add">+ Add stage</button></div>`;
@@ -277,7 +271,7 @@ function dRenderQuest(){
     $('#q-stages').innerHTML = D.qstages.map((s, n) => `<div class="qstage" data-qs="${n}"><input class="inp" type="number" value="${s.index}" data-qf="index" title="Stage number">
       <textarea class="inp" data-qf="text" placeholder="What the player writes in their journal, e.g. 'Fenas asked me to find her ring.'">${esc(s.text)}</textarea>
       <div class="qside"><label title="The quest is complete at this stage"><input type="checkbox" data-qf="finished" ${s.finished ? 'checked' : ''}> Finished</label>
-      <button class="btn sm" data-ai="stage" title="Suggest with AI (Claude or your own model: Settings › AI)">✦</button><button class="btn sm danger" data-qdel title="Remove stage">✕</button></div></div>`).join('')
+      <button class="btn sm" data-ai="stage" title="Suggest with AI (a model on this PC: Settings › AI)">✦</button><button class="btn sm danger" data-qdel title="Remove stage">✕</button></div></div>`).join('')
       || '<div class="msg">No stages yet.</div>';
     $('#q-stages').querySelectorAll('[data-qf]').forEach(el => el.oninput = el.onchange = () => {
       const s = D.qstages[+el.closest('[data-qs]').dataset.qs], f = el.dataset.qf;
@@ -341,7 +335,7 @@ async function dNewTopic(){
 // ----- AI suggestions for a piece of text
 async function aiDraft(req, btn, use){
   const st = await aiStatus();
-  if (!st || !(st.configured || st.writer === 'local')){ toast('Connect the assistant first (✦ Assistant, top right).', true); AI.open = true; $('#aipanel').classList.add('open'); renderAI(); return; }
+  if (!st || !st.local_model){ toast('Pick a model on this PC first: Settings › AI.', true); return; }
   if (req.kind !== 'journal' && req.kind !== 'title'){
     const brief = await askText('What should the line say or do? (optional, e.g. "asks the player to find her ring in the cave")', req.brief || '');
     if (brief === null) return;
@@ -381,7 +375,7 @@ async function dEditLine(topicKey, line, isNew){
         <span>Disposition ≥</span><input class="inp" id="le-disp" type="number" value="${L.disp || 0}"></div></details></div>
     <label>They say</label>
     <div class="lefield"><textarea class="inp" id="le-text" placeholder="What they say. You can use %PCName, %PCRace, %PCClass.">${esc(L.text || '')}</textarea>
-      <div class="actions" style="margin-top:4px"><button class="btn sm" id="le-ai" title="Claude or your own model: Settings › AI">✦ Suggest with AI</button><span class="msg" id="le-count"></span></div></div>
+      <div class="actions" style="margin-top:4px"><button class="btn sm" id="le-ai" title="By a model on this PC: Settings › AI">✦ Suggest with AI</button><span class="msg" id="le-count"></span></div></div>
     <label>Only when <span class="msg">(all of these must be true; leave empty for always)</span></label>
     <div id="le-conds"></div><button class="btn sm" id="le-addc">+ Condition</button>
     <label>Then do <span class="msg">(result script: runs after the line is said)</span></label>

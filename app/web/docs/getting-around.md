@@ -83,7 +83,7 @@ Every page's tools are **panels**.
 |---|---|
 | Appearance | Themes, and colours of your own. |
 | OpenMW | Where OpenMW is installed, and its settings folder. **Choose OpenMW's folder…** if it wasn't found. |
-| AI | All optional. **Chat assistant**: your own Anthropic API key, stored only on this PC, billed to your Anthropic account. **Lua and dialogue writer**: Claude, or a model on this PC (Ollama, LM Studio…) for ✦ Write with AI, ✦ Fix and the ✦ suggestions. **Coding agents**: let Claude Code, Codex, Cursor and others use the Workshop's tools (MCP); the line to paste into each. See *Coding with AI*. |
+| AI | All optional. **Lua and dialogue writer**: a model on this PC (Ollama, LM Studio…) for ✦ Write with AI, ✦ Fix and the ✦ suggestions. **Coding agents**: let Claude Code, Codex, Cursor and others use the Workshop's tools (MCP); the line to paste into each. See *Coding with AI*. |
 | Backups of your mod | How often, how many to keep, how much space, compressed or not, **Clear old ones** and **Restore**. |
 | Starting up | Open on Home or on Browse. |
 | Folders | Your projects and the Workshop's own folder. |

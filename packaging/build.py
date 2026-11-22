@@ -35,9 +35,8 @@ PYVER = 'python%d%d' % sys.version_info[:2]
 LIB_SKIP = {'site-packages', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo', 'ensurepip', 'lib2to3',
             '__pycache__', 'venv', 'pydoc_data', 'distutils', 'turtle.py'}
 DLL_SKIP = re.compile(r'^(_test|xxlimited|_tkinter|_ctypes_test)', re.I)
-# the AI assistant's library, and zstandard (opens Blender's compressed .blend files); everything they
-# need is found from their package metadata
-PACKAGES = ['anthropic', 'zstandard']
+# zstandard (opens Blender's compressed .blend files); everything it needs is found from its package metadata
+PACKAGES = ['zstandard']
 APP_SKIP = {'__pycache__'}
 
 
@@ -208,8 +207,7 @@ def check_python(py_dir):
     env['PATH'] = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'System32')
     mods = sorted(os.path.splitext(f)[0] for f in os.listdir(os.path.join(STAGE, 'app')) if f.endswith('.py'))
     code = ('import sys, ssl, ctypes, sqlite3, zipfile, lzma, bz2, json, http.server, webbrowser, xml.etree.ElementTree\n'
-            'import anthropic, zstandard\n'
-            'c = anthropic.Anthropic(api_key="test")\n'
+            'import zstandard\n'
             'for m in %r: __import__(m)\n'
             'print("ok", sys.version.split()[0], sys.prefix)\n') % mods
     r = subprocess.run([os.path.join(py_dir, 'python.exe'), '-c', code], env=env, capture_output=True, text=True,

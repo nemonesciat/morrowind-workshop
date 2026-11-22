@@ -106,7 +106,7 @@ def components():
             'by': 'The Cinzel Project Authors', 'url': 'https://github.com/NDISCOVER/Cinzel', 'text': 'Cinzel-OFL.txt'},
            {'name': 'Inter (font)', 'version': '', 'license': 'SIL Open Font License 1.1',
             'by': 'The Inter Project Authors', 'url': 'https://github.com/rsms/inter', 'text': 'Inter-OFL.txt'}]
-    seen, todo = set(), ['anthropic', 'zstandard']
+    seen, todo = set(), ['zstandard']
     while todo:
         n = todo.pop()
         key = re.sub(r'[-_.]+', '-', n).lower()
@@ -246,17 +246,13 @@ def report(db, link, what='', page=None):
 def get_settings(db):
     import backups
     s = load_settings()
-    key = s.get('anthropic_api_key') or os.environ.get('ANTHROPIC_API_KEY') or ''
     keep, minutes = backups.settings()
     b_mb, b_zip = backups.more_settings()
     cfg = db.config or {}
     return {'openmw_install': cfg.get('install'), 'openmw_chosen': s.get('openmw_install'),
             'openmw_cfg': cfg.get('user_cfg'), 'openmw_userdir': cfg.get('userdir'),
-            'ai_configured': bool(key), 'ai_key_end': key[-4:] if key else '', 'ai_from_env': bool(
-                os.environ.get('ANTHROPIC_API_KEY') and not s.get('anthropic_api_key')),
-            'ai_ack': bool(s.get('ai_ack')),
-            # who writes Lua and dialogue lines: Claude, or a model on this PC (ai.Assistant._write)
-            'ai_writer': s.get('ai_writer') or 'claude', 'ai_local_url': s.get('ai_local_url') or '', 'ai_local_model': s.get('ai_local_model') or '',
+            # the model on this PC that writes Lua and dialogue lines (ai.Assistant._write)
+            'ai_local_url': s.get('ai_local_url') or '', 'ai_local_model': s.get('ai_local_model') or '',
             'backup_keep': keep, 'backup_minutes': minutes, 'backups_folder': backups.BACKUP_DIR,
             'backup_mb': b_mb, 'backup_zip': b_zip,
             'guide_on_start': s.get('guide_on_start', False), 'guide_seen': bool(s.get('guide_seen')),
@@ -274,11 +270,9 @@ def set_settings(body):
         s['backup_mb'] = max(0, min(100000, int(body['backup_mb'] or 0)))
     if 'backup_zip' in body:
         s['backup_zip'] = bool(body['backup_zip'])
-    for k in ('guide_on_start', 'guide_seen', 'ai_ack'):
+    for k in ('guide_on_start', 'guide_seen'):
         if k in body:
             s[k] = bool(body[k])
-    if body.get('ai_writer') in ('claude', 'local'):
-        s['ai_writer'] = body['ai_writer']
     for k in ('ai_local_url', 'ai_local_model'):
         if k in body:
             s[k] = str(body.get(k) or '').strip()[:300]

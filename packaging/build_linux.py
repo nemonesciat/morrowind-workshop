@@ -5,11 +5,11 @@ Output goes to packaging\\out_linux (packaging\\out is the Windows build's, whic
 build from a snapshot:  py -3 -c "import build_linux as b; b.APP = r'<snapshot>\\app'; b.SUFFIX = 'linux-beta'; b.main()"
 
 Unlike the Windows build there is no Python inside: Linux has its own python3, and the Workshop itself is plain
-Python and web pages. The AI assistant's packages are set up on the person's computer when they ask
-(morrowind-workshop --install-ai). The package:
+Python and web pages. The one extra package (zstandard, for Blender's compressed .blend files) is set up on the
+person's computer when they ask (morrowind-workshop --install-extras). The package:
   Morrowind Workshop/
     morrowind-workshop     starts it (a shell script: finds python3, runs launcher.py)
-    launcher.py            the window, the app menu entry, quitting, --install-ai
+    launcher.py            the window, the app menu entry, quitting, --install-extras
     app/                   the Workshop itself
     README.txt, THIRD_PARTY_NOTICES.txt
 """
@@ -39,7 +39,7 @@ def log(*a):
 
 def notices(version):
     """THIRD_PARTY_NOTICES.txt for Linux: what is bundled is only the page's own libraries and fonts; Python and
-    the AI assistant's packages come from the person's own system (or from PyPI with --install-ai)."""
+    zstandard come from the person's own system (or from PyPI with --install-extras)."""
     sys.path.insert(0, APP)
     import helpinfo
     lines = ['Morrowind Workshop %s for Linux: third-party software' % version, '=' * 60, '',
@@ -55,9 +55,9 @@ def notices(version):
         except OSError:
             pass
         lines.append('')
-    lines.append('Python is not included: the Workshop runs on your system\'s own python3. The AI assistant\'s packages '
-                 '(anthropic and what it needs, and zstandard) are installed from PyPI when you run '
-                 'morrowind-workshop --install-ai, each under its own licence (in python-env/lib/.../site-packages).')
+    lines.append('Python is not included: the Workshop runs on your system\'s own python3. zstandard (for Blender\'s '
+                 'compressed .blend files) is installed from PyPI when you run morrowind-workshop --install-extras, under '
+                 'its own licence (in python-env/lib/.../site-packages).')
     lines.append('Morrowind Workshop is not made by or affiliated with Bethesda Softworks or the OpenMW project.')
     return '\n'.join(lines) + '\n'
 

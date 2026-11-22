@@ -23,8 +23,8 @@ keys, timers, changing the world as you play. Pick what the script is for (attac
 whole game); the editor checks it as you type.
 
 **✦ Write with AI** in the editor: say what the script should do, and the AI writes it (or changes the one you have),
-for you to read over and Save. It uses Claude with your API key, or **a model on this PC**: in Settings → AI
-assistant, pick *A model on this PC*, give the address of the app that runs it and press **Find models**. Ollama,
+for you to read over and Save. It uses **a model on this PC**: in Settings → AI, give the address of the app that
+runs it and press **Find models**. Ollama,
 LM Studio (its server on), llama.cpp's llama-server, KoboldCpp and most others work; their addresses are in the
 box's tip.
 
@@ -39,7 +39,7 @@ box's tip.
   AI writes that part too, and offers to add it as its own script.
 - Each script it writes starts with a line saying which model wrote it. Try it in the game before sharing the mod:
   the checks catch scripts that can't work, not ones that run but do the wrong thing, and a small model on a PC
-  writes weaker scripts than Claude.
+  writes weaker scripts than a big one.
 
 The editor itself also marks names that aren't in OpenMW's list, as warnings (the list now and then trails the game),
 and shows the Lua errors the game wrote about the script in its log (openmw.log) the last time it ran. **✦ Fix** sends

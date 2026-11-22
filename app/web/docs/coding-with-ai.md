@@ -1,21 +1,19 @@
 # Coding with AI
 
-*Lua scripts, your own effects' Lua and dialogue lines written by an AI (Claude, or a model running on your own PC), and coding agents
+*Lua scripts, your own effects' Lua and dialogue lines written by a model running on your own PC, and coding agents
 such as Claude Code working on your mod with the Workshop's own tools.*
 
 ## Which AI does what
 
 | Where | What it writes | Which AI |
 |---|---|---|
-| Scripts › a Lua script › **✦ Write with AI**, **✦ Fix** | Whole OpenMW Lua scripts | Claude or your own model |
-| Create › New magic effect › **✦ Write it for me** | The Lua of one step of your effect | Claude or your own model |
-| Dialogue, quests, Populate, conversations › **✦** | Three versions of a line to pick from | Claude or your own model |
-| The **✦ AI** panel (the chat assistant) | Builds and changes things in your mod: rooms, objects, records, quests | Always Claude |
-| A **coding agent** of your own (Claude Code, Codex, Cursor…) | Anything the Workshop's tools do, Lua, spells and records included | The agent's own model |
+| Scripts › a Lua script › **✦ Write with AI**, **✦ Fix** | Whole OpenMW Lua scripts | Your model on this PC |
+| Create › New magic effect › **✦ Write it for me** | The Lua of one step of your effect | Your model on this PC |
+| Dialogue, quests, Populate, conversations › **✦** | Three versions of a line to pick from | Your model on this PC |
+| A **coding agent** of your own (Claude Code, Codex, Cursor…) | Anything the Workshop's tools do: rooms, objects, records, quests, Lua, spells | The agent's own model |
 
-All of it is set up in **Settings › AI**. Which one writes Lua and lines is **Lua and dialogue writer › Written by**.
-The chat assistant needs Claude: it works through the Workshop's own tools step by step, which small models don't
-do reliably. A coding agent brings its own model.
+All of it is set up in **Settings › AI**. To build and change things by asking in plain words, use a coding agent:
+it works through the Workshop's own tools step by step.
 
 ## Setting up a model on your PC
 
@@ -31,17 +29,18 @@ chat address; most do:
 
 1. Install the app and get a model in it (a coding model does Lua best).
 2. Start the app. Ollama runs from the tray by the clock; its icon may be among the hidden ones (the **^**).
-3. In **Settings › AI › Lua and dialogue writer**, pick **A model on this PC**, check the address, press **Find
+3. In **Settings › AI › Lua and dialogue writer**, check the address, press **Find
    models** and pick the model.
 
 The first request after the app starts takes a few minutes while the model loads into your graphics card; after that
 a script takes seconds. An app may unload the model after a few idle minutes, and the next request is slow again.
 
-"Nothing answered at …" means the app isn't running, or its server is off.
+"Nothing answered at …" means the app isn't running, or its server is off. "Stopped partway" means the app running
+the model broke down while writing: its own log says why. Try again, or another model.
 
 **Which model.** Bigger writes better. The Workshop keeps each request small (about 2,300 words' worth of the model's
 room at most), so models that fit a 6–8 GB card can be used; a coding model of 30B fits a 12 GB card with the rest
-in memory. A small model writes weaker scripts than Claude: see *Good to know*.
+in memory. A small model writes weaker scripts than a big one: see *Good to know*.
 
 ## Writing a Lua script
 
@@ -118,8 +117,8 @@ agents speak). With Claude Code no API key is needed: it uses your own Claude ac
 3. Ask the agent about your mod ("make a Gate Stone that takes the player to "Balmora, Guild of Mages""). It sees
    the Workshop's tools and the rules of the place, and uses them.
 
-What an agent can do: everything the chat assistant can (look around a place, place, move and remove things, read and
-change records, characters, dialogue and quests, build and furnish interiors, MWScript), and Lua (list, read, write
+What an agent can do: look around a place, place, move and remove things, read and change records, characters,
+dialogue and quests, build and furnish interiors, MWScript, and Lua (list, read, write
 and check scripts, read the game's Lua errors), OpenMW's own list of its Lua, real IDs and spots for names, magic
 effects of your own and spells, the list of recent changes, and undoing its own last change. Agents that offer them
 also get ready-made requests: *write a Lua script*, *fix a Lua script*, *make a spell*.
@@ -143,9 +142,10 @@ well; a small model on a PC driving an agent gets more wrong, and the checks cat
 
 - **Try it in the game before sharing your mod.** The checks stop scripts that can't work, not ones that run and do
   the wrong thing.
-- **A small model on a PC writes weaker scripts than Claude**: it makes up functions more often (the checks catch
-  most) and gets the logic wrong more often (they don't). Fine for small jobs; for bigger ones, Claude.
-- **What is sent.** With a model on your PC, nothing leaves your computer. With Claude, your request and the script go
-  to Anthropic, billed to your API key (a script costs about a cent or two).
+- **A small model on a PC writes weaker scripts than a big one**: it makes up functions more often (the checks
+  catch most) and gets the logic wrong more often (they don't). Fine for small jobs; for bigger ones, a bigger model
+  or a coding agent.
+- **What is sent.** With a model on your PC, nothing leaves your computer. A coding agent sends what it works on to
+  wherever its own model runs.
 - On Linux, if OpenMW's list of its Lua isn't where the Workshop looks, the checks against it are skipped; the rest
   works.

@@ -6,7 +6,7 @@ web browser and keeps running until you quit it (--quit, or Ctrl+C in the termin
     ./morrowind-workshop                 start it (or bring it up again if it is running)
     ./morrowind-workshop --quit          quit a running Workshop
     ./morrowind-workshop --browser       open it in your usual web browser instead of its own window
-    ./morrowind-workshop --install-ai    set up the AI assistant's Python packages (needs the internet once)
+    ./morrowind-workshop --install-extras  set up zstandard, for Blender's compressed .blend files (needs the internet once)
     ./morrowind-workshop --menu          put Morrowind Workshop in your desktop's app menu again
     ./morrowind-workshop --no-menu       take it out of the app menu
     ./morrowind-workshop --log           print where the log is
@@ -26,7 +26,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 NAME = 'Morrowind Workshop'
 RUNNING = os.path.join(ROOT, 'workshop_running.json')
 LOG = os.path.join(ROOT, 'workshop.log')
-ENV_DIR = os.path.join(ROOT, 'python-env')            # (made by --install-ai: Python with the AI's packages)
+ENV_DIR = os.path.join(ROOT, 'python-env')            # (made by --install-extras: Python with zstandard)
 PROFILE = os.path.join(ROOT, 'browser')               # (the window's own browser profile: your own browser is left alone)
 MENU_FILE = os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'),
                          'applications', 'morrowind-workshop.desktop')
@@ -196,10 +196,10 @@ def remove_menu():
         print('It was not in the app menu (or that entry belongs to another copy of the Workshop).')
 
 
-# ------------------------------------------------------------------ the AI assistant's packages
-def install_ai():
-    """A Python of the Workshop's own (python-env here) with the AI assistant's library and zstandard (Blender's
-    compressed .blend files). Your system's Python is not changed."""
+# ------------------------------------------------------------------ the extra package
+def install_extras():
+    """A Python of the Workshop's own (python-env here) with zstandard (Blender's compressed .blend files). Your
+    system's Python is not changed. (It also held the AI chat's package until 2.9.4.)"""
     if not os.path.isdir(ENV_DIR):
         print('Making the Workshop\'s own Python environment in %s ...' % ENV_DIR, flush=True)
         r = subprocess.run([sys.executable, '-m', 'venv', ENV_DIR])
@@ -208,12 +208,12 @@ def install_ai():
             print('\nThat did not work. On Debian and Ubuntu, install the "python3-venv" package first:\n'
                   '    sudo apt install python3-venv\nthen run this again.', file=sys.stderr)
             return 1
-    print('Installing the AI assistant\'s packages (anthropic, zstandard) ...', flush=True)
-    r = subprocess.run([os.path.join(ENV_DIR, 'bin', 'python3'), '-m', 'pip', 'install', '--upgrade', 'anthropic', 'zstandard'])
+    print('Installing zstandard ...', flush=True)
+    r = subprocess.run([os.path.join(ENV_DIR, 'bin', 'python3'), '-m', 'pip', 'install', '--upgrade', 'zstandard'])
     if r.returncode != 0:
         print('\nInstalling failed (see above). Is the computer online?', file=sys.stderr)
         return 1
-    print('\nDone. Restart the Workshop, then add your Anthropic API key in Help > Settings.')
+    print('\nDone. Restart the Workshop.')
     return 0
 
 
@@ -237,8 +237,8 @@ def main(argv):
     if '--no-menu' in argv:
         remove_menu()
         return 0
-    if '--install-ai' in argv:
-        return install_ai()
+    if '--install-extras' in argv or '--install-ai' in argv:      # (the old name still works)
+        return install_extras()
     in_browser = '--browser' in argv
 
     url = running_url()

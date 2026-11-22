@@ -105,7 +105,8 @@ To start the game partway through a quest, use a **test setup** with the quest a
 
 ## Getting help writing
 
-- **✦ Ask the assistant** (optional; your own API key): "Make a short quest for Fenas: she lost a ring in the cave
-  nearby." It writes the quest and the lines, for you to change.
+- **✦ beside a line or a stage** (optional; a model on this PC, Settings › AI) suggests three versions to pick from.
+- **A coding agent** of your own (Claude Code, Codex…; *Coding with AI*): "Make a short quest for Fenas: she lost a
+  ring in the cave nearby." It writes the quest and the lines, for you to change.
 - **Populate** gives new people a greeting and a few lines of their own from templates, with no AI (see *People
   and creatures*).

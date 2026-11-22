@@ -666,7 +666,7 @@ try { if (W.unseen === undefined) W.unseen = localStorage.getItem('ws-unseen') =
 // the toolbar at the top fits its row: no button squeezes; when the row is too long, words fold away to their
 // icons one button at a time (Build together's first, the AI button's last) until it fits (the user: "Me" lost
 // its sides and the reload button fell off the screen with the game linked)
-const HDR_FOLD = ['togetherbtn', 'helpbtn', 'omwbtn', 'filebtn', 'undobtn', 'redobtn', 'aibtn'];
+const HDR_FOLD = ['togetherbtn', 'helpbtn', 'omwbtn', 'filebtn', 'undobtn', 'redobtn'];
 function hdrFit(){
   const r = document.querySelector('.hdr-right'); if (!r) return;
   HDR_FOLD.forEach(id => { const b = document.getElementById(id); if (b) b.classList.remove('fold'); });

@@ -1,77 +1,21 @@
-"""The Workshop's AI assistant: Claude, given tools that act on your mod project.
+"""The Workshop's AI parts: the tools a coding agent uses on your mod (mcpserver.py), and the writers of Lua and
+dialogue lines, run by a model on this PC (Settings > AI).
 
 Every change goes through the same editing functions as the buttons in the app,
-so it lands in your plugin, shows up in "My mod", and can be undone."""
+so it lands in your plugin, shows up in "My mod", and can be undone. (The built-in chat on an Anthropic API key was
+taken out 2026-11-22: people would rather use their own model, or their own coding agent.)"""
 import json
 import math
 import re
-import threading
 
 import editing
 import mapdata
 from database import TYPE_NAMES
 
-MODEL = 'claude-opus-5-5'
-MAX_STEPS = 30
 # a model on this PC for the writers of Lua and dialogue lines (Settings > AI): any app with the common chat
 # address, Ollama's here by default (LM Studio's is http://127.0.0.1:1234/v1). A tester asked for it, 2026-11-21.
 LOCAL_URL = 'http://127.0.0.1:11434/v1'
-
-SYSTEM = """You are the building assistant inside Morrowind Workshop, an editor for OpenMW mods. \
-The user is a Morrowind modder working on their own mod. They talk to you in plain language and \
-you make the changes with your tools; everything you do is saved into their mod plugin and can be \
-undone with one click, so act rather than asking for confirmation on ordinary building requests.
-
-How the world works:
-- Positions are in game units (about 1.4 cm each; a person is ~128 tall, a doorway ~150 wide).
-  X is east, Y is north, Z is up. An exterior cell is 8192 x 8192 units.
-- Interiors are separate cells with their own coordinates.
-- "rotation_deg" turns an object around the vertical axis, clockwise seen from above.
-- Each object has a size (width along X, depth along Y, height) from its 3D model, at rotation 0.
-- When you place something with z = null, the Workshop sets it down on the floor/ground, or on top of \
-a table or shelf for small items. Prefer z = null unless you need something specific (e.g. on a wall).
-
-Working style:
-- Start by calling look_around to see the space and what kind of place it is, then search for \
-fitting objects. Prefer objects that match the place's style (Hlaalu, Redoran, Imperial, common...) \
-and the suggestions look_around gives.
-- Lay things out sensibly: furniture against walls or around tables, clear walkways and doors, \
-items on tables and shelves, nothing overlapping walls. Use the room bounds and existing objects.
-- Use only IDs that exist (from search or look_around). Keep to the Morrowind setting.
-- When creating new items/NPCs/books, copy a similar existing record with create_record, then \
-change its fields. Use IDs prefixed with something short and unique to the mod.
-- Finish with a short plain-language summary of what you changed. Don't list raw coordinates.
-
-New interiors:
-- To make a new place, call list_building_styles, pick the style that fits the request (e.g. Hlaalu for a \
-Balmora house, Velothi for a tomb or a poor dwelling, Imperial for a fort, Dwemer for a ruin), plan the rooms \
-on the tile grid and call build_interior. Keep the plan simple and believable: rooms sharing edges, doors \
-between rooms that connect, one way out. Name rooms by use (Bedroom, Kitchen, Storeroom, Study...). Then \
-call auto_furnish for a quick, sensible base, and add the specific touches the user asked for with \
-look_around and place_objects.
-- If the user has an outdoor spot open on the World map and wants the place reachable from there, use \
-entrance_at_focus.
-
-Dialogue and quests:
-- A topic is a word the player clicks in conversation; greetings ("Greeting 0".."Greeting 9") are what \
-people say first. The game uses the FIRST line, top to bottom, whose conditions all match, so new lines \
-for a specific character go at the top (the default) and more specific lines above general ones.
-- Quests are journal topics with numbered stages (10, 20, ... 100). The journal text is written by the \
-player character in first person, past tense, like the base game ("Fenas asked me to find her ring.").
-- Lines check quest progress with journal conditions (e.g. stage < 10 before the quest starts, = 20 after \
-a step) and move it on with result script lines such as: Journal "quest_id" 20, AddTopic "topic", \
-Player->AddItem "gold_001" 100, Player->RemoveItem "item_id" 1, Goodbye, \
-Choice "Yes" 1 "No" 2 (choice answers are lines with the condition Function Choice = n, placed ABOVE \
-the line that offers the choice).
-- Speech uses Morrowind's voice and the game's text variables: %PCName, %PCRace, %PCClass, %Name.
-- Mentioning a topic word in a line makes it appear in the player's list; use AddTopic otherwise.
-- Use read_dialogue first to see what a character already says or what a quest contains.
-
-Characters and scripts:
-- edit_character changes an NPC's looks, stats, behaviour, services, travel, inventory and spells.
-- write_script writes MWScript and checks it; fix any problems it reports and try again. A script does \
-nothing until something runs it: attach_to an object or character, start_with_game, or StartScript from a \
-dialogue result."""
+QUOTED = r'"([^"\n]{2,60})"|\u201c([^\u201d\n]{2,60})\u201d'      # (a name the request puts in quotes)
 
 TOOLS = [
     {
@@ -337,164 +281,11 @@ def add_requires(code):
 
 
 class Assistant:
-    def __init__(self, db, get_key, get_writer=None):
+    def __init__(self, db, get_writer=None):
         self.db = db
-        self.get_key = get_key
-        self.get_writer = get_writer or (lambda: {})     # {'writer': 'claude' | 'local', 'url', 'model'}
-        self.messages = []
-        self.lock = threading.Lock()
+        self.get_writer = get_writer or (lambda: {})     # {'url', 'model'}: the model on this PC
         self.ctx = {}
         self.steps = []
-        self.status = ''
-
-    def reset(self):
-        self.messages = []
-
-    def usage_add(self, resp):
-        """Add up what a request used (tokens are what Anthropic bills by)."""
-        u = getattr(resp, 'usage', None)
-        if u is None:
-            return
-        t = self.__dict__.setdefault('usage', {'requests': 0, 'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0})
-        t['requests'] += 1
-        t['input'] += getattr(u, 'input_tokens', 0) or 0
-        t['output'] += getattr(u, 'output_tokens', 0) or 0
-        t['cache_read'] += getattr(u, 'cache_read_input_tokens', 0) or 0
-        t['cache_write'] += getattr(u, 'cache_creation_input_tokens', 0) or 0
-
-    def _client(self):
-        try:
-            import anthropic
-        except ImportError:
-            import osplat
-            raise ToolError('The "anthropic" Python package is missing. ' + (
-                'Run the Workshop\'s setup again to put it back.' if osplat.WINDOWS else
-                'In the Workshop\'s folder, run  ./morrowind-workshop --install-ai  once, then restart the Workshop.'))
-        key = self.get_key()
-        opts = dict(
-            # Only ask for gzip replies: an old "Brotli" package (e.g. Anaconda's 1.0.9) makes the
-            # client crash while unpacking brotli replies, after the request was already billed.
-            default_headers={'Accept-Encoding': 'gzip, deflate'},
-            # A retry re-sends (and re-bills) the whole request, so allow at most one.
-            max_retries=1,
-        )
-        return anthropic.Anthropic(api_key=key, **opts) if key else anthropic.Anthropic(**opts)
-
-    @staticmethod
-    def _api_error(e):
-        """A plain-language message for a failed request, with the real cause."""
-        import anthropic
-        if isinstance(e, anthropic.AuthenticationError):
-            return 'The API key was not accepted. Check it under AI settings.'
-        if isinstance(e, anthropic.PermissionDeniedError):
-            return 'This API key is not allowed to use the model.'
-        if isinstance(e, anthropic.RateLimitError):
-            return 'Too many requests right now. Wait a minute and try again.'
-        if isinstance(e, anthropic.APITimeoutError):
-            return 'The Claude API took too long to answer. Try again, or ask for a smaller step.'
-        if isinstance(e, anthropic.APIConnectionError):
-            cause = e.__cause__ or e.__context__
-            if cause is None or type(cause).__name__ in ('ConnectError', 'ConnectTimeout', 'gaierror', 'OSError'):
-                return 'Could not reach the Claude API. Check your internet connection.'
-            return ('The answer from the Claude API could not be read on this PC (%s: %s). The request may '
-                    'still have been billed. Please tell Claude Code about this message.' % (type(cause).__name__, cause))
-        if isinstance(e, anthropic.APIStatusError):
-            return 'The Claude API returned an error (%s): %s' % (e.status_code, e.message)
-        return 'Could not use the Claude API: %s' % e
-
-    # ------------------------------------------------------------------ chat
-    def chat(self, text, ctx):
-        """Run one user request to completion. Returns reply text and the list of steps."""
-        import anthropic
-        with self.lock:
-            self.ctx = ctx
-            self.steps = []
-            self.usage = {'requests': 0, 'input': 0, 'output': 0, 'cache_read': 0, 'cache_write': 0}
-            self.opened = None
-            client = self._client()
-            depth_before = editing.undo_depth(self.db)
-            info = self._context_line()
-            self.messages.append({'role': 'user', 'content': '[%s]\n\n%s' % (info, text)})
-            reply = ''
-            try:
-                for _ in range(MAX_STEPS):
-                    self.status = 'Thinking…'
-                    resp = client.beta.messages.create(
-                        model=MODEL,
-                        max_tokens=16000,
-                        system=SYSTEM,
-                        tools=TOOLS,
-                        messages=self.messages,
-                        output_config={'effort': 'medium'},
-                        cache_control={'type': 'ephemeral'},   # each step re-reads the conversation cheaply
-                        betas=['server-side-fallback-2026-07-01'],
-                        fallbacks='default',
-                    )
-                    self.usage_add(resp)
-                    self.messages.append({'role': 'assistant', 'content': resp.content})
-                    texts = [b.text for b in resp.content if b.type == 'text']
-                    if texts:
-                        reply = '\n\n'.join(texts)
-                    if resp.stop_reason == 'refusal':
-                        reply = reply or 'Sorry, I can\'t help with that request.'
-                        break
-                    uses = [b for b in resp.content if b.type == 'tool_use']
-                    if not uses:
-                        break
-                    results = []
-                    for u in uses:
-                        try:
-                            out = self.run_tool(u.name, u.input or {})
-                            results.append({'type': 'tool_result', 'tool_use_id': u.id,
-                                            'content': json.dumps(out, ensure_ascii=False)})
-                        except (ToolError, editing.EditError) as e:
-                            results.append({'type': 'tool_result', 'tool_use_id': u.id,
-                                            'content': 'Error: %s' % e, 'is_error': True})
-                            self.steps.append({'tool': u.name, 'text': 'Problem: %s' % e, 'error': True})
-                    self.messages.append({'role': 'user', 'content': results})
-                else:
-                    reply = (reply + '\n\n' if reply else '') + '(Stopped after %d steps.)' % MAX_STEPS
-            except anthropic.AnthropicError as e:
-                self._drop_unfinished()
-                msg = self._api_error(e)
-                done = [s['text'] for s in self.steps if not s.get('error')]
-                if done:
-                    # earlier steps already changed the mod: say so (they can be undone as usual)
-                    msg += ' Before that, the assistant had already done this (see My mod to undo): ' + '; '.join(done[:8])
-                raise ToolError(msg)
-            finally:
-                self.status = ''
-            changed = editing.undo_depth(self.db) > depth_before
-            return {'reply': reply, 'steps': self.steps, 'changed': changed, 'undo_to': depth_before, 'usage': self.usage,
-                    'open_cell': self.opened}
-
-    def _drop_unfinished(self):
-        # keep history valid: remove the trailing turn that never got an answer
-        while self.messages and self.messages[-1]['role'] == 'user':
-            self.messages.pop()
-            if self.messages and self.messages[-1]['role'] == 'assistant':
-                self.messages.pop()
-
-    def _context_line(self):
-        c = self.ctx
-        talk = []
-        if c.get('npc'):
-            talk.append('the user is editing what the character "%s" says' % c['npc'])
-        if c.get('quest'):
-            talk.append('the user has the quest "%s" open' % c['quest'])
-        if c.get('topic'):
-            talk.append('the user has the topic "%s" open' % c['topic'])
-        info = mapdata.cell_info(self.db, c.get('cell')) if c.get('cell') else None
-        if not info:
-            return '; '.join(talk + ['The user has no cell open on the World map.'])
-        parts = talk + ['Current cell: %s (%s)' % (info['id'], 'interior' if info['interior'] else 'exterior')]
-        if c.get('focus'):
-            parts.append('focus point x=%.0f y=%.0f' % tuple(c['focus'][:2]))
-        if c.get('sel'):
-            parts.append('selected object ref=%s' % c['sel'])
-        if c.get('cut') is not None:
-            parts.append('looking at the floor below height %.0f' % c['cut'])
-        return '; '.join(parts)
 
     # ------------------------------------------------------------------ tools
     def run_tool(self, name, args):
@@ -664,21 +455,9 @@ class Assistant:
             'items': [i['id'] + ' x' + str(i['count']) for i in r['items']], 'spells': [s['id'] for s in r['spells']]}
 
     def _write(self, prompt, max_tokens=1500):
-        """One request and its text back, from Claude or from a model on this PC, as Settings say: what the writers of
-        Lua and dialogue lines use (the chat assistant stays on Claude). (text, usage, who wrote it)"""
-        w = self.get_writer() or {}
-        if w.get('writer') == 'local':
-            return self._write_local(prompt, w, max_tokens)
-        client = self._client()
-        import anthropic
-        try:
-            resp = client.messages.create(model=MODEL, max_tokens=max_tokens, messages=[{'role': 'user', 'content': prompt}])
-        except anthropic.AnthropicError as e:
-            raise ToolError(self._api_error(e))
-        self.usage_add(resp)
-        u = resp.usage
-        return ('\n'.join(b.text for b in resp.content if b.type == 'text'),
-                {'requests': 1, 'input': u.input_tokens, 'output': u.output_tokens, 'cache_read': 0, 'cache_write': 0}, 'Claude')
+        """One request and its text back, from the model on this PC Settings > AI name: what the writers of Lua and
+        dialogue lines use. (text, usage, the model's name)"""
+        return self._write_local(prompt, self.get_writer() or {}, max_tokens)
 
     @staticmethod
     def _local(url, path, body=None, timeout=600):
@@ -693,10 +472,15 @@ class Assistant:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
-            raise ToolError('The model on this PC said no (%s): %s' % (e.code, e.read()[:300].decode('utf-8', 'replace')))
+            said = e.read()[:300].decode('utf-8', 'replace')
+            # (the app running it broke down partway, not a refusal: LM Studio answers {"error":"terminated"} after
+            # its GPU runtime crashed, Ollama 500 "llama runner process has terminated"; a tester's Gemma, 2026-11-22)
+            if e.code >= 500 or re.search(r'terminated|channel error|crash|exit status|cuda|out of memory', said, re.I):
+                raise ToolError('The model on this PC stopped partway: the app running it ran into trouble (its own '
+                                'log says what). Try again, or another model. (%s: %s)' % (e.code, said[:120]))
+            raise ToolError('The model on this PC said no (%s): %s' % (e.code, said))
         except (urllib.error.URLError, OSError, ValueError):
-            raise ToolError('Nothing answered at %s. Start Ollama, or LM Studio\'s server, or pick Claude in Settings > AI '
-                            'assistant.' % url)
+            raise ToolError('Nothing answered at %s. Start Ollama, or LM Studio\'s server (Settings > AI).' % url)
 
     @classmethod
     def local_models(cls, url):
@@ -707,7 +491,7 @@ class Assistant:
     def _write_local(self, prompt, w, max_tokens):
         model = (w.get('model') or '').strip()
         if not model:
-            raise ToolError('Pick the model to use in Settings > AI.')
+            raise ToolError('Pick a model on this PC in Settings > AI first: it writes the Lua and the lines, free.')
         d = self._local(w.get('url'), '/chat/completions', {'model': model, 'messages': [{'role': 'user', 'content': prompt}],
                                                             'temperature': 0.2, 'max_tokens': max_tokens, 'stream': False})
         try:
@@ -810,7 +594,7 @@ class Assistant:
             if len(p2) <= len(probs):
                 code, probs = code2, p2
         mark = '-- Written by %s from: "%s". Try it in the game.\n' % (
-            by if by == 'Claude' else by + ' (a model on this PC)', re.sub(r'\s+', ' ', req.get('brief') or '')[:120])
+            by + ' (a model on this PC)', re.sub(r'\s+', ' ', req.get('brief') or '')[:120])
         return {'code': mark + code, 'problems': [{'line': p['line'] + 1, 'text': p['text']} for p in probs], 'usage': usage,
                 'by': by, 'tries': tries}
 
@@ -930,7 +714,7 @@ class Assistant:
             companion = {'code': r2['code'], 'problems': r2['problems'], 'events': unheard,
                          'missing': [e for e in unheard if e not in handled]}
         mark = '-- Written by %s from: "%s". Read it over and try it in the game.\n' % (
-            by if by == 'Claude' else by + ' (a model on this PC)', re.sub(r'\s+', ' ', brief)[:160])
+            by + ' (a model on this PC)', re.sub(r'\s+', ' ', brief)[:160])
         if companion:
             companion['code'] = re.sub(r'^-- Written by [^\n]*\n', '', companion['code'])
             companion['code'] = mark.replace(' from: "', ' (the whole-game part) from: "', 1) + companion['code']
@@ -939,6 +723,11 @@ class Assistant:
                 'problems': [{'line': p['line'] + (0 if req.get('_inner') else 1), 'text': p['text']} for p in probs],
                 'usage': usage, 'by': by, 'tries': tries, 'unheard': unheard, 'companion': companion}
 
+    ONE = {'NPC_': 'a person', 'CREA': 'a creature', 'MISC': 'an item', 'WEAP': 'a weapon', 'ARMO': 'armour',
+           'CLOT': 'clothing', 'BOOK': 'a book', 'ALCH': 'a potion', 'INGR': 'an ingredient', 'LIGH': 'a light',
+           'ACTI': 'an activator', 'CONT': 'a container', 'DOOR': 'a door', 'SPEL': 'a spell', 'APPA': 'an apparatus',
+           'LOCK': 'a lockpick', 'PROB': 'a probe', 'REPA': 'a repair tool', 'LEVI': 'a levelled list',
+           'LEVC': 'a levelled list'}          # (what the Write with AI window says a name is: names())
     THING_TYPES = ('NPC_', 'CREA', 'MISC', 'ALCH', 'WEAP', 'ARMO', 'CLOT', 'BOOK', 'INGR', 'LIGH', 'ACTI', 'CONT', 'DOOR',
                    'SPEL', 'APPA', 'LOCK', 'PROB', 'REPA', 'LEVI', 'LEVC')
 
@@ -951,45 +740,80 @@ class Assistant:
         if not getattr(db, 'recs', None) or getattr(db, 'state', '') != 'ready':
             return ''
         out = []
-        phrases = [a or b for a, b in re.findall(r'"([^"\n]{2,60})"|\u201c([^\u201d\n]{2,60})\u201d', brief)]
+        phrases = [a or b for a, b in re.findall(QUOTED, brief)]
         for ph in phrases[:6]:
             ph = ph.strip()
-            try:
-                import doors
-                if ('CELL', ph.lower()) not in db.by_key:          # (places are kept by their name in lower case)
-                    raise KeyError(ph)
-                pos, _door = doors.arrival(db, ph.lower())
-                out.append('The place "%s": a spot inside it to arrive at is util.vector3(%.0f, %.0f, %.0f).' % (ph, pos[0], pos[1], pos[2]))
+            f = self._lookup(ph)
+            if not f:
                 continue
-            except Exception:
-                pass
-            try:
-                # (a named stretch of the outdoors, Seyda Neen: a spot in one of its cells; outdoors a teleport takes '')
-                cells = [r for r in db.search(ph, types=('CELL',), limit=40)['rows']
-                         if (r.get('name') or r['id'] or '').lower().split(' (')[0] == ph.lower() and db.key_of(r['i'])[1].startswith('#')]
-                if cells:
-                    import doors
-                    pos, _door = doors.arrival(db, db.key_of(cells[len(cells) // 2]['i'])[1])
-                    out.append('The place "%s" is outdoors: teleport there with obj:teleport(\'\', util.vector3(%.0f, %.0f, %.0f)).' % (
-                        ph, pos[0], pos[1], pos[2]))
-                    continue
-            except Exception:
-                pass
-            try:
-                rows = db.search(ph, types=self.THING_TYPES, limit=12)['rows']
-            except Exception:
-                rows = []
-            same = [r for r in rows if (r.get('name') or '').lower() == ph.lower() or r['id'].lower() == ph.lower()]
-            pick = (same or rows)[:3]
-            if pick:
+            pos = f.get('pos')
+            if f['kind'] == 'place':
+                out.append('The place "%s": a spot inside it to arrive at is util.vector3(%.0f, %.0f, %.0f).' % (ph, pos[0], pos[1], pos[2]))
+            elif f['kind'] == 'outdoors':
+                out.append('The place "%s" is outdoors: teleport there with obj:teleport(\'\', util.vector3(%.0f, %.0f, %.0f)).' % (
+                    ph, pos[0], pos[1], pos[2]))
+            else:
                 out.append('"%s" in this game: %s.' % (ph, '; '.join('ID %s (%s: "%s")' % (
-                    r['id'], TYPE_NAMES.get(r['type'], r['type']), r.get('name') or r['id']) for r in pick)))
+                    r['id'], TYPE_NAMES.get(r['type'], r['type']), r.get('name') or r['id']) for r in f['rows'])))
         for rid in dict.fromkeys(re.findall(r'\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\b', brief)):
             if rid.startswith(('openmw', 'ctx')) or any(rid in o for o in out):
                 continue
             if db.resolve_id(rid) is None:
                 out.append('There is nothing called %s in this game: don\'t use that ID.' % rid)
         return ('In this player\'s game:\n' + '\n'.join(out[:8])) if out else ''
+
+    def _lookup(self, ph):
+        """One name the request puts in quotes, as this game has it: {'kind': 'place', 'pos'} (a spot inside it, in
+        front of a door), {'kind': 'outdoors', 'pos'}, {'kind': 'things', 'rows', 'exact'} (up to three records), or
+        None when the game has nothing like it."""
+        db = self.db
+        try:
+            import doors
+            if ('CELL', ph.lower()) in db.by_key:          # (places are kept by their name in lower case)
+                pos, _door = doors.arrival(db, ph.lower())
+                return {'kind': 'place', 'pos': pos}
+        except Exception:
+            pass
+        try:
+            # (a named stretch of the outdoors, Seyda Neen: a spot in one of its cells; outdoors a teleport takes '')
+            cells = [r for r in db.search(ph, types=('CELL',), limit=40)['rows']
+                     if (r.get('name') or r['id'] or '').lower().split(' (')[0] == ph.lower() and db.key_of(r['i'])[1].startswith('#')]
+            if cells:
+                import doors
+                pos, _door = doors.arrival(db, db.key_of(cells[len(cells) // 2]['i'])[1])
+                return {'kind': 'outdoors', 'pos': pos}
+        except Exception:
+            pass
+        try:
+            rows = db.search(ph, types=self.THING_TYPES, limit=12)['rows']
+        except Exception:
+            rows = []
+        same = [r for r in rows if (r.get('name') or '').lower() == ph.lower() or r['id'].lower() == ph.lower()]
+        pick = (same or rows)[:3]
+        return {'kind': 'things', 'rows': pick, 'exact': bool(same)} if pick else None
+
+    def names(self, brief):
+        """What the Write with AI window shows under the request as it is typed: each name in quotes, found or not
+        (the same look-up the writer is given: _facts)."""
+        db = self.db
+        if not getattr(db, 'recs', None) or getattr(db, 'state', '') != 'ready':
+            return {'names': [], 'ready': False}
+        out = []
+        for a, b in re.findall(QUOTED, brief or '')[:6]:
+            ph = (a or b).strip()
+            f = self._lookup(ph)
+            if not f:
+                out.append({'name': ph, 'found': False, 'what': 'nothing in your game by that name'})
+            elif f['kind'] == 'place':
+                out.append({'name': ph, 'found': True, 'what': 'a place'})
+            elif f['kind'] == 'outdoors':
+                out.append({'name': ph, 'found': True, 'what': 'a place outdoors'})
+            else:
+                r = f['rows'][0]
+                what = '%s, ID %s' % (self.ONE.get(r['type'], r['type']), r['id'])
+                out.append({'name': ph, 'found': f['exact'], 'what': what if f['exact'] else 'not exactly; nearest: %s "%s"' % (
+                    what, r.get('name') or r['id'])})
+        return {'names': out, 'ready': True}
 
     @staticmethod
     def _api_map(mods):
