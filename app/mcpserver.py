@@ -9,6 +9,7 @@ the Workshop's own) is refused. mcp_stdio.py is the same for agents that only st
 Every change goes through the same functions as the buttons: the same checks, a line in My changes marked with the
 agent's name, and Undo. Lua is written with lua_write_script, never into the files in the data folder (the Workshop
 writes those from the mod and would write over them). A tester asked for coding agents beside the API, 2026-11-21."""
+import contextlib
 import json
 import os
 import re
@@ -24,13 +25,18 @@ from project import load_settings, save_settings
 
 PROTOCOLS = ('2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05')
 SERVER_NAME = 'morrowind-workshop'
-STATE = {'sessions': {}, 'clients': {}, 'lock': threading.Lock()}
+STATE = {'sessions': {}, 'clients': {}, 'lock': threading.Lock(),
+         'acts': [], 'act_n': 0, 'busy': None}      # (what agents did, for the Workshop window to show: activity())
 MARK = '\U0001F916 '          # (an agent's change in My changes: "🤖 claude-code: Made the Lua script ...")
 
 INSTRUCTIONS = """Morrowind Workshop is an editor for OpenMW mods (Morrowind). These tools act on the mod the user has \
 open in the Workshop: every change is saved into it straight away, shows in the user's My changes marked as yours, \
 and can be undone. Work the way the Workshop's buttons do; never edit the mod's files on disk (the Workshop writes \
 them from the mod and would write over your changes).
+
+The user watches your work in the Workshop's own window: it goes by itself to the place you open or change and selects what you place or move, with a line saying what you did. Never control the screen, mouse or keyboard to work the Workshop or the game: these tools are the only way in.
+
+Beyond the tools here, workshop_actions finds every action of the Workshop's own buttons (towns, castles, dungeons, land, furnishing, populating, grass, regions, sounds, items, NPCs, quests, the release zip...) and workshop_action runs one; show_user moves the user's window: a place, the map or 3D, the camera on a spot or things.
 
 Start with workshop_status: which mod is open, whether it can hold Lua (an .omwaddon can, a plain .esp can't), \
 where OpenMW is installed.
@@ -233,6 +239,30 @@ TOOLS += [
     {'name': 'undo_last_change', 'title': 'Undo your last change', 'annotations': dict(DESTROY, title='Undo your last change'),
      'description': 'Take back the mod\'s last change, if it was yours (an agent\'s). The user\'s own changes are theirs to undo.',
      'inputSchema': _schema({})},
+    {'name': 'show_user', 'title': 'Show the user', 'annotations': dict(READ, title='Show the user'),
+     'description': 'Move the user\'s own Workshop window: open a place, switch between the map and the 3D view, point the '
+                    'camera at a spot or at things, and select things. The window already follows your changes by itself; '
+                    'use this to show something on purpose ("here is the shrine"). Never control the screen for this.',
+     'inputSchema': _schema({'place': {'type': 'string', 'description': 'A place key (find_places); default: the place you have open'},
+                             'look_at': {'type': 'array', 'items': N, 'description': '[x, y] or [x, y, z]: the spot to centre the camera on'},
+                             'refs': {'type': 'array', 'items': S, 'description': 'Ref keys to select and frame (look_around gives them)'},
+                             'view': {'type': 'string', 'enum': ['map', '3d'], 'description': 'The flat map or the 3D view; default: as it is'}})},
+    {'name': 'workshop_actions', 'title': 'Find Workshop actions', 'annotations': dict(READ, title='Find Workshop actions'),
+     'description': 'Everything the Workshop\'s own buttons can do, as actions to run with workshop_action: building interiors, '
+                    'towns, castles, dungeons and land, furnishing, populating, grass, regions, sounds, items, NPCs, '
+                    'dialogue, quests, scripts, magic, the Library, the release zip and more. Search by a word ("furnish", '
+                    '"town", "grass"); with no word, the areas and how many actions each has. Each action comes with GET or '
+                    'POST, what it does, the arguments the Workshop reads and how it reads them.',
+     'inputSchema': _schema({'search': {'type': 'string'}})},
+    {'name': 'workshop_action', 'title': 'Run a Workshop action', 'annotations': dict(WRITE, title='Run a Workshop action'),
+     'description': 'Run one action from workshop_actions, as the Workshop\'s page does: the same checks, every change in My '
+                    'changes as yours, and Undo. args are the arguments it reads (a JSON object). Read the place or record '
+                    'first (look_around, get_record, or a GET action) so the arguments are right. Some actions are kept from '
+                    'agents: switching or deleting mods, backups and files, starting the game, opening windows on the '
+                    'user\'s screen, the user\'s settings and load order, and undoing the user\'s own changes.',
+     'inputSchema': _schema({'action': {'type': 'string', 'description': 'Its path, e.g. /api/furnish/room'},
+                             'args': {'type': 'object', 'description': 'The arguments it reads'},
+                             'method': {'type': 'string', 'enum': ['GET', 'POST'], 'description': 'Only for an action that is both'}}, ['action'])},
 ]
 
 PROMPTS = [
@@ -492,6 +522,81 @@ class Agent:
         return items.create_spell(self.db, d)
 
     # ----- changes
+    # ----- the user's window, and every action of the Workshop's own
+    def x_show_user(self, place=None, look_at=None, refs=None, view=None):
+        import mapdata
+        db = self.db
+        key = (place or '').strip() or self.helper.ctx.get('cell')
+        if key and ('CELL', key) not in db.by_key and ('CELL', key.lower()) in db.by_key:
+            key = key.lower()
+        if not key or not mapdata.cell_info(db, key):
+            raise EditError('Say which place to show: find_places gives the keys, or open_place first.')
+        look = [float(v) for v in (look_at or [])][:3] or None
+        if look is not None and len(look) < 2:
+            raise EditError('look_at is [x, y] or [x, y, z].')
+        _note({'agent': self.name, 'tool': 'show_user', 'title': 'Show', 'text': 'Showing you %s' % (
+            (mapdata.cell_info(db, key) or {}).get('id') or key), 'cell': key, 'refs': [str(r) for r in refs or []][:60],
+            'look': look, 'view': view if view in ('map', '3d') else None, 'show': True, 'changed': False, 'error': None})
+        return {'shown': key, 'note': 'The user\'s window goes there within a second or two.'}
+
+    def x_workshop_actions(self, search=None):
+        cat = catalogue()
+        if not search:
+            areas = {}
+            for a in cat.values():
+                areas[a['area']] = areas.get(a['area'], 0) + 1
+            return {'actions': len(cat), 'areas': dict(sorted(areas.items())),
+                    'hint': 'Search by a word for the actions themselves, e.g. "furnish" or "town".'}
+        words = [w for w in re.split(r'\W+', search.lower()) if w]
+        hits = [a for a in cat.values() if all(w in (a['path'] + ' ' + a['what'] + ' ' + ' '.join(a['args'])).lower() for w in words)]
+        return {'found': [{k: a[k] for k in ('path', 'method', 'what', 'args', 'reads')} for a in hits[:40]],
+                'more': max(0, len(hits) - 40)}
+
+    def x_workshop_action(self, action, args=None, method=None):
+        import urllib.error
+        import urllib.request
+        path = '/' + (action or '').strip().lstrip('/')
+        if not path.startswith('/api/'):
+            path = '/api/' + path[1:]
+        both = [a for a in catalogue().values() if a['path'] == path]
+        if not both:
+            raise EditError('There is no Workshop action %s: workshop_actions finds them.' % path)
+        m = (method or '').upper()
+        a = next((x for x in both if x['method'] == m), None) if m else (both[0] if len(both) == 1 else None)
+        if a is None:
+            raise EditError('%s is both GET (to read) and POST (to change): say which with method.' % path)
+        if a.get('kept'):
+            raise EditError('%s is kept for the user (%s).' % (path, a['kept']))
+        port = STATE.get('port')
+        if not port:
+            raise EditError('The Workshop\'s address isn\'t known yet: try again.')
+        args = args if isinstance(args, dict) else {}
+        url = 'http://127.0.0.1:%d%s' % (port, path)
+        if a['method'] == 'GET':
+            from urllib.parse import urlencode
+            req = urllib.request.Request(url + ('?' + urlencode({k: v if isinstance(v, str) else json.dumps(v) for k, v in args.items()}) if args else ''))
+        else:
+            req = urllib.request.Request(url, data=json.dumps(args).encode('utf-8'), method='POST',
+                                         headers={'Content-Type': 'application/json', 'X-Workshop-Window': 'agent'})
+        try:
+            with urllib.request.urlopen(req, timeout=3600) as r:
+                raw = r.read()
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read()).get('error')
+            except Exception:
+                msg = None
+            raise EditError('%s: %s' % (path, msg or 'the Workshop answered %s' % e.code))
+        try:
+            out = json.loads(raw)
+        except ValueError:
+            return {'ok': True, 'bytes': len(raw), 'note': 'Not JSON (a picture or a file).'}
+        text = json.dumps(out, ensure_ascii=False, default=str)
+        if len(text) > 60000:
+            return {'cut_short': True, 'size': len(text), 'start': text[:60000],
+                    'note': 'Too long to give whole: ask for less (a smaller place, a narrower search).'}
+        return out
+
     def x_list_changes(self, limit=15):
         p = self._lua()
         n = max(1, min(60, int(limit or 15)))
@@ -628,8 +733,13 @@ def handle(db, lock, msg, session):
             c['calls'] += 1
             c['last'] = time.time()
             c['tool'] = tool
+        with STATE['lock']:
+            STATE['busy'] = {'agent': agent.name, 'tool': tool, 'since': time.time(), 'title': _title(tool) if tool != 'workshop_action'
+                             else 'Running %s' % str((args or {}).get('action') or '').replace('/api/', '')}
+        steps0 = len(agent.helper.steps)
         try:
-            with lock:
+            # (a Workshop action goes through the Workshop's own address, whose handlers take the lock themselves)
+            with (contextlib.nullcontext() if tool == 'workshop_action' else lock):
                 p = db.project
                 before = len(p.log) if p else 0
                 editing.ORIGIN.window = 'agent'
@@ -639,12 +749,133 @@ def handle(db, lock, msg, session):
                     editing.ORIGIN.window = None
                 if db.project is p and p is not None:
                     _mark_new(p, before, agent.name)
+                _act(agent, tool, out, steps0, p.log[before:] if (p is not None and db.project is p) else [], args=args)
             return _result(mid, {'content': [{'type': 'text', 'text': json.dumps(out, ensure_ascii=False, indent=1, default=str)}],
                                  'isError': False})
         except (EditError, ai.ToolError, TypeError, ValueError, KeyError) as e:
             msg_ = str(e) if not isinstance(e, (TypeError, KeyError)) else 'Wrong arguments for %s: %s' % (tool, e)
+            _act(agent, tool, None, steps0, [], error=msg_, args=args)
             return _result(mid, {'content': [{'type': 'text', 'text': msg_}], 'isError': True})
+        finally:
+            with STATE['lock']:
+                STATE['busy'] = None
     return _error(mid, -32601, 'Method not found: %s' % method)
+
+
+# ------------------------------------------------------------------ every action of the Workshop's own, for agents
+# (the user, 2026-11-22: "make sure the Workshop has ALL the tools an agent could need". 440-odd actions behind the
+# page's buttons, read from workshop.py itself: each with its method, its comments, the arguments it reads and how.
+# Run through the Workshop's own address, so each goes through the same checks, My changes and Undo as a click.)
+KEPT = [
+    (r'^/api/(mcp|together|settings$|quit$|clienterror$)', 'the Workshop\'s own settings'),
+    (r'^/api/project/(new|open|adopt|merge|saveas|enable)$|^/api/adopt/pick$', 'switching the user\'s mod'),
+    (r'^/api/(mods/delete|backups/(clear|remove|restore)|revert)$', 'deleting or putting back files'),
+    (r'^/api/(undo|redo|undo_entry|undo_group)$', 'the user\'s own Undo (undo_last_change takes back yours)'),
+    (r'^/api/(launch|play|openmw/start|release/clean_test|test/|link/|saves/use$)', 'starting or driving the game'),
+    (r'^/api/(adopt/pick|openmw/pick|openmw/settings/open|assets/(open|showfile|blender)|anim/blender|release/open)$', 'opening windows on the user\'s screen'),
+    (r'^/api/(loadorder/save|openmw/settings$|grass/enable$|packs/sources$)', 'the user\'s OpenMW set-up and load order'),
+    (r'^/api/(library/(upload|icon)|release/dds|pack/open)$', 'files sent as they are'),
+    (r'^/api/ai/', 'the writer on the user\'s PC'),
+]
+_CAT = {}
+
+
+def catalogue():
+    """{path: {'path', 'method', 'area', 'what', 'args', 'reads', 'kept'}} from workshop.py, read once."""
+    if _CAT:
+        return _CAT
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workshop.py'), encoding='utf-8').read().split('\n')
+    get0 = next(i for i, l in enumerate(src) if l.startswith('    def do_GET'))
+    post0 = next(i for i, l in enumerate(src) if l.startswith('    def do_POST'))
+    end = next((i for i, l in enumerate(src) if i > post0 + 1 and re.match(r'^(    def |def |class |[A-Za-z@])', l)), len(src))
+    starts = [i for i in range(get0, end) if 'u.path' in src[i] and re.search(r"'/api/", src[i])]
+    for n, i in enumerate(starts):
+        method = 'GET' if i < post0 else 'POST'
+        stop = min([j for j in starts if j > i] + [post0 if i < post0 else end])
+        block = src[i:stop]
+        var = 'q' if method == 'GET' else 'body'
+        args = []
+        for m in re.finditer(r"\b%s(?:\.get\(|\[)'(\w+)'" % var, '\n'.join(block)):
+            if m.group(1) not in args:
+                args.append(m.group(1))
+        notes = [l.strip().lstrip('#').strip() for l in block[1:8] if l.strip().startswith('#')]
+        inline = src[i].split('#', 1)[1].strip() if '#' in src[i] and "'#" not in src[i] else ''
+        reads = [l.strip() for l in block if re.search(r'\b%s(\.get\(|\[)' % var, l) and not l.strip().startswith('#')][:3]
+        for path in re.findall(r"'(/api/[^']+)'", src[i]):
+            if path.endswith('/') or (method + ' ' + path) in _CAT:
+                continue
+            kept = next((why for pat, why in KEPT if re.search(pat, path)), None)
+            _CAT[method + ' ' + path] = {'path': path, 'method': method, 'area': path.split('/')[2],
+                          'what': ' '.join(x for x in [inline] + notes if x)[:400] or path,
+                          'args': args, 'reads': [r[:220] for r in reads], 'kept': kept}
+    return _CAT
+
+
+# ------------------------------------------------------------------ what agents did, shown in the Workshop window
+# (the user, 2026-11-22: an agent added daedra to Seyda Neen and nothing in the Workshop said so or showed them; it
+# offered to take over the screen to open the place. Each call is noted here; the page asks with /api/changes and
+# follows: it opens the place, selects what was placed or moved, and says what was done.)
+def _title(tool):
+    t = next((x for x in TOOLS if x['name'] == tool), None)
+    return (t or {}).get('title') or tool
+
+
+def _act(agent, tool, out, steps0, entries, error=None, args=None):
+    refs = []
+    if isinstance(out, dict):
+        pl = out.get('placed')         # (a list of {'ref'} from place_objects; other actions give a count or a key)
+        refs = [d.get('ref') for d in pl if isinstance(d, dict) and d.get('ref')] if isinstance(pl, list) else []
+        if tool == 'move_object' and isinstance(out.get('ref'), str):
+            refs.append(out['ref'])
+    texts = [s.get('text') for s in agent.helper.steps[steps0:] if s.get('text')]
+    if not texts:
+        texts = [_unmarked(e.get('text'), agent.name) for e in entries if e.get('text')]
+    for s in agent.helper.steps[steps0:]:
+        refs += [r for r in s.get('refs') or [] if r not in refs]
+    del agent.helper.steps[:-50]             # (the list a long-running agent keeps: only the last few)
+    cell = agent.helper.ctx.get('cell')
+    if tool == 'show_user':
+        return                                  # (its own note: x_show_user)
+    if tool == 'workshop_action' and isinstance(out, dict) and isinstance(out.get('placed'), str):
+        refs.append(out['placed'])
+    if tool == 'workshop_action' and not texts and entries:
+        texts = [_unmarked(e.get('text'), agent.name) for e in entries]
+    if tool == 'workshop_action':
+        # (the place a Workshop action worked on, from its arguments: the window follows it there)
+        aa = (args or {}).get('args') if isinstance((args or {}).get('args'), dict) else {}
+        c = aa.get('cell') or aa.get('key') or (out.get('key') if isinstance(out, dict) else None)    # (or the place it made)
+        cell = c if isinstance(c, str) and c and (('CELL', c) in agent.db.by_key or c.startswith('#')) else None
+    a = {'agent': agent.name, 'tool': tool, 'title': _title(tool), 'changed': bool(entries),
+         'text': '; '.join(texts)[:300], 'cell': cell, 'refs': refs[:60], 'error': (error or '')[:300] or None,
+         'focus': agent.helper.ctx.get('focus')}
+    if tool == 'workshop_action':
+        a['title'] = str((args or {}).get('action') or 'a Workshop action').replace('/api/', '')
+    _note(a)
+
+
+def _unmarked(t, name):
+    t = str(t or '')
+    return t[len('%s%s: ' % (MARK, name)):] if t.startswith('%s%s: ' % (MARK, name)) else t
+
+
+def _note(a):
+    a['t'] = time.time()
+    with STATE['lock']:
+        STATE['act_n'] += 1
+        a['n'] = STATE['act_n']
+        STATE['acts'] = (STATE['acts'] + [a])[-40:]
+
+
+def activity_head():
+    """For /api/changes: the newest note's number and what an agent is doing now."""
+    with STATE['lock']:
+        b = STATE['busy']
+        return {'n': STATE['act_n'], 'busy': dict(b, secs=round(time.time() - b['since'])) if b else None}
+
+
+def activity(since):
+    with STATE['lock']:
+        return {'n': STATE['act_n'], 'acts': [a for a in STATE['acts'] if a['n'] > since]}
 
 
 # ------------------------------------------------------------------ HTTP (Streamable HTTP, answered as JSON)
@@ -652,6 +883,7 @@ def http(handler, db, lock, method):
     """Answer GET/POST/DELETE /mcp for the Workshop's request handler."""
     from urllib.parse import parse_qs, urlparse
     st = settings()
+    STATE['port'] = handler.server.server_address[1]        # (workshop_action runs through this address)
 
     def send(code, obj=None, extra=None):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8') if obj is not None else b''
@@ -704,3 +936,80 @@ def http(handler, db, lock, method):
 def address(port):
     st = settings()
     return 'http://127.0.0.1:%d/mcp?key=%s' % (port, st['key']) if st['on'] and st['key'] else ''
+
+
+# ------------------------------------------------------------------ Claude Code, connected from Settings
+# (one button instead of a command to paste in a terminal: the user, 2026-11-22, after `claude` wasn't found and
+# npm was blocked by PowerShell's script policy: "IT NEVER WORKS FOR ME". Claude Code keeps the servers it uses for
+# every folder in ~/.claude.json, mcpServers; its own command writes them, and without one (Claude Code only inside
+# the Claude app) the file is written here, whole, and swapped in.)
+def _claude_json():
+    # (CLAUDE_CONFIG_DIR, when set, moves Claude Code's settings there)
+    return os.path.join(os.environ.get('CLAUDE_CONFIG_DIR') or os.path.expanduser('~'), '.claude.json')
+
+
+def claude_cli():
+    """The claude command on this PC, or None."""
+    import shutil
+    found = shutil.which('claude')
+    if found:
+        return found
+    home = os.path.expanduser('~')
+    for p in (os.path.join(os.environ.get('APPDATA') or '', 'npm', 'claude.cmd'), os.path.join(home, '.local', 'bin', 'claude.exe'),
+              os.path.join(home, '.local', 'bin', 'claude'), os.path.join(home, '.npm-global', 'bin', 'claude')):
+        if os.path.isabs(p) and os.path.isfile(p):
+            return p
+    return None
+
+
+def claude_code(addr):
+    """Claude Code on this PC and the Workshop in it: {'here': bool, 'connected': 'yes' | 'old' (another address,
+    an earlier key) | 'no'}."""
+    url = None
+    try:
+        with open(_claude_json(), encoding='utf-8') as f:
+            url = ((json.load(f).get('mcpServers') or {}).get(SERVER_NAME) or {}).get('url')
+    except (OSError, ValueError, AttributeError):
+        pass
+    here = bool(claude_cli() or os.path.isfile(_claude_json()))
+    return {'here': here, 'connected': 'no' if not url else 'yes' if url == addr else 'old'}
+
+
+def connect_claude_code(addr):
+    """Give Claude Code the Workshop's address, for every folder (Settings › AI › Connect Claude Code)."""
+    if not addr:
+        raise EditError('Tick "Let coding agents connect" first.')
+    cli = claude_cli()
+    if cli:
+        import subprocess
+        import osplat
+
+        def run(*a):
+            return subprocess.run([cli] + list(a), capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+                                  creationflags=osplat.NO_WINDOW)
+        run('mcp', 'remove', '--scope', 'user', SERVER_NAME)          # (an earlier address: none is fine)
+        r = run('mcp', 'add', '--scope', 'user', '--transport', 'http', SERVER_NAME, addr)
+        if r.returncode != 0:
+            raise EditError('Claude Code said: ' + ((r.stderr or '') + (r.stdout or '')).strip()[:300])
+    elif os.path.isfile(_claude_json()):
+        p = _claude_json()
+        try:
+            with open(p, encoding='utf-8') as f:
+                d = json.load(f)
+        except (OSError, ValueError) as e:
+            raise EditError('Claude Code\'s settings file couldn\'t be read (%s): nothing was changed.' % e)
+        if not isinstance(d, dict):
+            raise EditError('Claude Code\'s settings file isn\'t as expected: nothing was changed.')
+        servers = d.get('mcpServers') if isinstance(d.get('mcpServers'), dict) else {}
+        servers[SERVER_NAME] = {'type': 'http', 'url': addr}
+        d['mcpServers'] = servers
+        tmp = p + '.workshop-new'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(d, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, p)
+    else:
+        raise EditError('Claude Code isn\'t on this PC yet.')
+    st = claude_code(addr)
+    if st['connected'] != 'yes':
+        raise EditError('Claude Code took it, but its settings don\'t show the Workshop. Nothing else was changed.')
+    return st

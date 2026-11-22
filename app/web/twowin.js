@@ -130,6 +130,7 @@ async function twPoll(){
   try {
     const r = await api('/api/changes?since=' + (TW.n || 0));
     TW.fails = 0;
+    if (r.agent) setTimeout(() => agSee(r.agent), 0);     // (a coding agent at work: said and followed, below)
     if (TW.n == null || TW.project === undefined){ TW.n = r.n; TW.project = r.project; return; }
     // (mid-drag here: wait for the drop, then catch up)
     if ((V3.drag) || W.drag) return;
@@ -154,6 +155,74 @@ async function twPoll(){
   } finally { TW.busy = false; twTitle(); }
 }
 setInterval(twPoll, 1000);
+
+// ----- what a coding agent is doing (mcpserver activity): a line at the foot of the window while it works and after,
+// and the window follows it: the place it opens or changes, what it places or moves selected; show_user moves it on
+// purpose (the place, map or 3D, the camera on a spot or things), whatever the tick says. (The user, 2026-11-22:
+// an agent added daedra to Seyda Neen and nothing said so or showed them; "am I just supposed to know by the Undo
+// button?") Settings › AI › Coding agents › "Show me what agents do" turns the following off.
+const AG = {n: null, busy: false, hideT: 0, q: Promise.resolve()};
+function agFollowOn(){ try { return localStorage.getItem('ws-agfollow') !== '0'; } catch (e){ return true; } }
+function agPill(text, kind, busy){
+  let p = document.getElementById('agpill');
+  if (!p){
+    p = document.createElement('div'); p.id = 'agpill'; p.title = 'What a coding agent is doing in your mod (click to hide)';
+    p.style.cssText = 'position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:45;max-width:min(760px,90vw);background:var(--panel);'
+      + 'border:1px solid var(--gold);border-radius:18px;padding:6px 14px;font-size:13px;box-shadow:0 6px 24px #0008;cursor:pointer;'
+      + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    p.onclick = () => { p.style.display = 'none'; };
+    document.body.appendChild(p);
+  }
+  p.innerHTML = (busy ? '<span class="spin"></span>' : '') + esc(text);
+  p.style.borderColor = kind === 'err' ? 'var(--red)' : 'var(--gold)';
+  p.style.display = '';
+  clearTimeout(AG.hideT);
+  if (!busy) AG.hideT = setTimeout(() => { p.style.display = 'none'; }, 10000);
+}
+function agSee(a){
+  if (a.busy) agPill(`🤖 ${a.busy.agent}: ${a.busy.title}…${a.busy.secs > 2 ? ` (${a.busy.secs} s)` : ''}`, '', true);
+  if (AG.n == null){ AG.n = a.n; return; }          // (what agents did before this window opened: not shown)
+  if (a.n <= AG.n) return;
+  const since = AG.n; AG.n = a.n;
+  AG.q = AG.q.then(async () => {
+    try { const r = await api('/api/mcp/activity?since=' + since); for (const e of r.acts) await agShow(e); }
+    catch (e){ console.warn(e); }
+  });
+}
+function agFind(k){
+  for (const ck of Object.keys(W.cells)){ const r = findRef(ck, k); if (r) return [ck, r]; }
+  return null;
+}
+async function agShow(e){
+  const who = '🤖 ' + e.agent;
+  if (e.error){ agPill(`${who}: ${e.title}: ${e.error}`, 'err'); return; }
+  const said = e.text || e.title;
+  agPill(`${who}: ${said}`);
+  if (!e.cell || !(e.show || (agFollowOn() && (e.changed || e.tool === 'open_place')))) return;
+  if (!pageOn('world')) showView('world');
+  const here = W.key === e.cell || (W.ext && e.cell.startsWith('#') && W.cells[e.cell]);
+  if (!here) await worldOpen(e.cell);
+  if (e.view === '3d' && !V3.on) await v3Enable(true);
+  else if (e.view === 'map' && V3.on) await v3Enable(false);
+  if (e.look && !(e.refs && e.refs.length)){
+    const [x, y] = e.look;
+    const z = e.look.length > 2 ? e.look[2] : ((V3.on && v3GroundAt(x, y)) ?? groundZ(x, y));
+    centerOn({k: null, p: [x, y, z]});
+    return;
+  }
+  if (!e.refs || !e.refs.length){
+    if (e.focus && !V3.on){ W.cam.x = e.focus[0]; W.cam.y = e.focus[1]; drawMap(); }
+    return;
+  }
+  if (!agFind(e.refs[0])) await worldReloadCell(e.cell);
+  const found = e.refs.map(agFind).filter(Boolean);
+  if (!found.length) return;
+  selectRef(found[0][0], found[0][1].k);
+  for (const [ck, r] of found) W.multi.set(mkey(ck, r.k), {cell: ck, k: r.k});
+  if (found.length < 2) W.multi.clear();
+  centerOn(found[0][1]);
+  renderWside(); drawMap();
+}
 addEventListener('hashchange', () => { if (new URLSearchParams(location.hash.replace(/^#/, '')).get('win') === '2') TW.second = true; });
 
 // ----- working across the windows: the windows talk over a BroadcastChannel (the same server, the same

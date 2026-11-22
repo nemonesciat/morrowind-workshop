@@ -1600,14 +1600,21 @@ class Handler(BaseHTTPRequestHandler):
                 r = mcpserver.status()
                 r.update(address=mcpserver.address(port), port=port, python=sys.executable,
                          bridge=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mcp_stdio.py'))
+                r['claude_code'] = mcpserver.claude_code(r['address'])      # (Connect Claude Code: there, and given the address?)
                 self._json(r)
             elif u.path == '/api/ai/status':
                 w = ai_writer()
                 self._json({'local_model': w['model'], 'local_url': w['url']})
             elif u.path == '/api/changes':
-                # (asked every second or so by each window: what the other windows changed since)
+                # (asked every second or so by each window: what the other windows changed since, and what a coding
+                # agent is doing: mcpserver.activity_head)
+                import mcpserver
                 self._json(dict(editing.changes_since(int(q.get('since', 0))),
-                                project=db.project.plugin if db.project else None))
+                                project=db.project.plugin if db.project else None, agent=mcpserver.activity_head()))
+            elif u.path == '/api/mcp/activity':
+                # what coding agents did since a note, for the window to show and follow
+                import mcpserver
+                self._json(mcpserver.activity(int(q.get('since', 0))))
             elif u.path == '/api/project':
                 p = db.project
                 parent, sizes = {}, {}
@@ -1951,6 +1958,10 @@ class Handler(BaseHTTPRequestHandler):
                 # the tester: what a character says in a given state of the game (convo.py; nothing saved)
                 import convo
                 return self._json(convo.say(db, body['id'], body.get('state') or {}, body.get('topic'), body.get('cell')))
+            if u.path == '/api/mcp/claudecode':
+                # Settings › AI › Connect Claude Code: the Workshop's address into Claude Code's settings, for every folder
+                import mcpserver
+                return self._json(mcpserver.connect_claude_code(mcpserver.address(self.server.server_address[1])))
             if u.path in ('/api/mcp/turn', '/api/mcp/newkey'):
                 import mcpserver
                 return self._json(mcpserver.turn(body.get('on')) if u.path == '/api/mcp/turn' else mcpserver.new_key())

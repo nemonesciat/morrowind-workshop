@@ -111,17 +111,35 @@ If you already use a coding agent (Claude Code, Codex, Cursor, VS Code's Copilot
 on your open mod with the Workshop's own tools. The Workshop is an **MCP server** (the Model Context Protocol most
 agents speak). With Claude Code no API key is needed: it uses your own Claude account.
 
-1. In **Settings › AI › Coding agents**, tick **Let coding agents connect**.
-2. Pick your agent under **Set up**: the line or settings to paste are shown, with a **Copy** button. For Claude Code
-   it is one command in a terminal (`claude mcp add …`); others take a few lines of their settings.
-3. Ask the agent about your mod ("make a Gate Stone that takes the player to "Balmora, Guild of Mages""). It sees
-   the Workshop's tools and the rules of the place, and uses them.
+**Claude Code**, in two clicks and no terminal:
 
-What an agent can do: look around a place, place, move and remove things, read and change records, characters,
-dialogue and quests, build and furnish interiors, MWScript, and Lua (list, read, write
-and check scripts, read the game's Lua errors), OpenMW's own list of its Lua, real IDs and spots for names, magic
-effects of your own and spells, the list of recent changes, and undoing its own last change. Agents that offer them
-also get ready-made requests: *write a Lua script*, *fix a Lua script*, *make a spell*.
+1. In **Settings › AI › Coding agents**, tick **Let coding agents connect**.
+2. Press **Connect Claude Code**. When it shows **✓ Connected**, Claude Code has the Workshop for every folder.
+3. Start a **new** Claude Code session (one already open doesn't see it), keep the Workshop open with your mod, and
+   ask about your mod ("make a Gate Stone that takes the player to "Balmora, Guild of Mages""). It sees the
+   Workshop's tools and the rules of the place, and uses them.
+
+If the Workshop says *Claude Code isn't on this PC*, install the Claude app (**Get the Claude app** beside it), open
+its Code tab once, and press **Connect Claude Code** again. After **New key**, the line says *old address*: press
+Connect Claude Code again.
+
+**Other agents**: pick yours under **Set up**. The settings to give it are shown, with a **Copy** button, and where
+they go.
+
+What an agent can do: everything the Workshop's own buttons do. It has tools for the everyday work (look around a
+place, place, move and remove things, records, characters, dialogue and quests, interiors and furnishing, MWScript,
+Lua with OpenMW's own list of its Lua, magic effects and spells, recent changes, undoing its own last change), and it
+can find and run any other action of the Workshop's: towns, castles, dungeons, land, populating, grass, regions,
+sounds, items, the release zip and the rest. Agents that offer them also get ready-made requests: *write a Lua
+script*, *fix a Lua script*, *make a spell*.
+
+Some things stay yours: opening, switching or deleting mods, backups and files, starting the game, your settings and
+load order, windows opening on your screen, and undoing your own changes.
+
+**You see what it does.** While an agent works, a line under the Workshop's header says what it is doing and what it
+did, and the window goes to the place it opens or changes, with what it placed or moved selected. It can also show
+you something on purpose: a place, the map or 3D view, the camera on a spot. It never needs to control your screen;
+tell it so if it offers. To keep your window where it is, untick **Show me what agents do** under Coding agents.
 
 How its work is kept in check:
 - Every change goes through the same steps as the Workshop's buttons, shows in **My changes** marked with 🤖 and the

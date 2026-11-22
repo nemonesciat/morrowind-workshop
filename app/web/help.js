@@ -309,8 +309,8 @@ document.addEventListener('click', e => { if (e.target.closest && e.target.close
 // HTTP) or, for agents that only start a command, the stdio bridge (mcp_stdio.py) with the Workshop's own Python.
 const MCP_NAME = 'morrowind-workshop';
 const MCP_AGENTS = [
-  {id: 'claudecode', label: 'Claude Code', hint: 'Run it once in a terminal; then ask Claude Code about your mod. /mcp shows the connection.',
-   snip: m => `claude mcp add --transport http ${MCP_NAME} "${m.address}"`},
+  {id: 'claudecode', label: 'Claude Code', hint: 'Connect Claude Code above does this for you. Or, where the claude command works, run this once.',
+   snip: m => `claude mcp add --scope user --transport http ${MCP_NAME} "${m.address}"`},
   {id: 'claudedesktop', label: 'Claude Desktop', hint: 'Settings › Developer › Edit Config (claude_desktop_config.json): add this under "mcpServers", then restart Claude.',
    snip: m => JSON.stringify({mcpServers: {[MCP_NAME]: {command: m.python, args: [m.bridge]}}}, null, 2)},
   {id: 'codex', label: 'Codex CLI', hint: 'Add to ~/.codex/config.toml.',
@@ -326,6 +326,16 @@ const MCP_AGENTS = [
   {id: 'stdio', label: 'Another agent (command)', hint: 'Any agent that starts an MCP server as a command (stdio). The Workshop must be running.',
    snip: m => `"${m.python}" "${m.bridge}"`},
 ];
+// Claude Code's line under Set up: whether it is on this PC and has the Workshop's address (mcpserver.claude_code)
+function mcpCcHtml(cc){
+  if (!cc) return '';
+  if (!cc.here) return `<span class="msg" style="flex:1">Claude Code isn't on this PC. Install the Claude app, open its Code tab once, then come back here.</span>
+    <a class="btn sm" href="https://claude.ai/download" target="_blank" rel="noopener">Get the Claude app</a>`;
+  if (cc.connected === 'yes') return `<span class="msg" style="flex:1;color:var(--green)" title="Claude Code has this address for every folder. Its sessions started before connecting don't see it.">✓ Connected: start a new Claude Code session and ask it about your mod.</span>
+    <button class="btn sm" id="st-ccgo" title="Give Claude Code the address again">Connect again</button>`;
+  return `${cc.connected === 'old' ? '<span class="msg" style="color:var(--red)" title="Its address has an earlier key, or another port">Claude Code has an old address.</span>' : ''}
+    <button class="btn primary sm" id="st-ccgo" title="Gives Claude Code the Workshop's address, for every folder: no terminal needed">Connect Claude Code</button>`;
+}
 async function renderSettings(){
   const w = $('#settingswrap');
   let st, bk;
@@ -355,10 +365,12 @@ async function renderSettings(){
     <h4 class="aisub">Coding agents <span class="msg">MCP</span>${typeof guideLink === 'function' ? guideLink('coding-with-ai.md', 'Coding agents', 'Using a coding agent') : ''}</h4>
     <p class="msg" title="The Workshop is an MCP server: agents use its tools on the mod you have open, every change in My changes marked as theirs, and Undo takes it back. Only programs on this PC can reach it, with the key in its address.">Let Claude Code, Codex, Cursor and other agents work on your open mod with the Workshop's own tools.</p>
     <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="st-mcp" ${mcp && mcp.on ? 'checked' : ''}> Let coding agents connect</label>
+    ${mcp && mcp.on ? `<label class="msg" style="display:flex;gap:6px;align-items:center" title="This window goes to the place an agent opens or changes and selects what it places or moves; a line at the foot says what it is doing"><input type="checkbox" id="st-agfollow" ${typeof agFollowOn !== 'function' || agFollowOn() ? 'checked' : ''}> Show me what agents do</label>` : ''}
     ${mcp && mcp.on ? `<div class="setrow" style="margin-top:6px"><span>Address</span>
       <span style="display:flex;gap:6px;flex:1;justify-content:flex-end"><input class="inp" id="st-mcpurl" readonly value="${esc(mcp.address)}" style="max-width:420px;font-family:var(--mono,monospace);font-size:12px">
       <button class="btn sm" data-mcpcopy="url">Copy</button><button class="btn sm" id="st-mcpkey" title="A new key in the address: agents set up with the old one can't connect until given the new one">New key</button></span></div>
     <div class="setrow"><span>Set up</span><select class="inp" id="st-mcpagent" style="max-width:260px">${MCP_AGENTS.map(a => `<option value="${a.id}">${esc(a.label)}</option>`).join('')}</select></div>
+    <div class="actions" id="st-cc" style="margin:6px 0 2px">${mcpCcHtml(mcp.claude_code)}</div>
     <pre class="mcpsnip" id="st-mcpsnip"></pre><div class="actions" style="margin-top:4px"><span class="msg" id="st-mcphint" style="flex:1"></span><button class="btn sm" data-mcpcopy="snip">Copy</button></div>
     ${mcp.clients && mcp.clients.length ? `<div class="msg" style="margin-top:6px">Connected lately: ${mcp.clients.map(c => `<b>${esc(c.name)}</b> ${c.last < 90 ? 'now' : Math.round(c.last / 60) + ' min ago'} (${c.calls} call${c.calls === 1 ? '' : 's'})`).join(' · ')}</div>` : ''}` : ''}
   </section>
@@ -391,11 +403,22 @@ async function renderSettings(){
   // (coding agents: mcpserver.py; the line or config to paste for the agent picked)
   const mcpBox = $('#st-mcp');
   if (mcpBox) mcpBox.onchange = async e => { try { await post('/api/mcp/turn', {on: e.target.checked}); renderSettings(); } catch (x){ toast(x.message, true); } };
+  const agf = $('#st-agfollow');
+  if (agf) agf.onchange = e => { try { localStorage.setItem('ws-agfollow', e.target.checked ? '1' : '0'); } catch (x){} };
   const mk = $('#st-mcpkey');
   if (mk) mk.onclick = async () => { if (!confirm('Make a new key? Agents set up with the old address can\'t connect until you give them the new one.')) return; await post('/api/mcp/newkey', {}); renderSettings(); };
   const ag = $('#st-mcpagent');
   if (ag && mcp){
-    const show = () => { const a = MCP_AGENTS.find(x => x.id === ag.value) || MCP_AGENTS[0]; $('#st-mcpsnip').textContent = a.snip(mcp); $('#st-mcphint').textContent = a.hint; };
+    const show = () => { const a = MCP_AGENTS.find(x => x.id === ag.value) || MCP_AGENTS[0]; $('#st-mcpsnip').textContent = a.snip(mcp); $('#st-mcphint').textContent = a.hint;
+      const cc = $('#st-cc'); if (cc) cc.style.display = a.id === 'claudecode' ? '' : 'none'; };
+    // (Connect Claude Code: one click, no terminal; mcpserver.connect_claude_code)
+    const go = $('#st-ccgo');
+    if (go) go.onclick = async () => {
+      go.disabled = true; go.innerHTML = '<span class="spin"></span> Connecting…';
+      try { mcp.claude_code = await post('/api/mcp/claudecode', {}); toast('Claude Code has the Workshop. Start a new Claude Code session and ask it about your mod.'); }
+      catch (x){ toast(x.message, true); }
+      renderSettings();
+    };
     try { ag.value = localStorage.getItem('ws-mcpagent') || 'claudecode'; } catch (x){}
     ag.onchange = () => { try { localStorage.setItem('ws-mcpagent', ag.value); } catch (x){} show(); };
     show();
