@@ -532,8 +532,9 @@ class Project:
         t.daemon = True
         t.start()
 
-    def save(self, texts=None):
-        """texts: {place key: its JSON text} already made for this write (editing._write_now), put in as they are."""
+    def save(self, texts=None, rtexts=None):
+        """texts: {place key: its JSON text} already made for this write (editing._write_now), put in as they are;
+        rtexts: the same for the records (made for this write too: never the texts kept from an earlier one)."""
         SOON.discard(self)
         tmp = self.path + '.tmp'
         d = {'name': self.name, 'plugin': self.plugin, 'author': self.author,
@@ -562,13 +563,14 @@ class Project:
         # (dumps, then one write: json.dump to a file runs the pure-Python encoder, ten times slower. A 32 MB mod
         # took 2-20 s a save, and every mark, shape and brush stroke saves: "knuckle draggingly slow", 2026-11-02)
         texts = texts or {}
+        rtexts = rtexts or {}
 
-        # (the same text json.dumps(d) makes, the places put in from texts; read without marking any)
+        # (the same text json.dumps(d) makes, the places and records put in from texts; read without marking any)
         def val(k, v):
             if k == 'cells':
                 return '{' + ', '.join('%s: %s' % (json.dumps(ck), texts.get(ck) or json.dumps(c)) for ck, c in list(quiet(v))) + '}'
             if k == 'records':
-                return '{' + ', '.join('%s: %s' % (json.dumps(rk), json.dumps(r)) for rk, r in list(quiet(v))) + '}'
+                return '{' + ', '.join('%s: %s' % (json.dumps(rk), rtexts.get(rk) or json.dumps(r)) for rk, r in list(quiet(v))) + '}'
             return json.dumps(v)
         text = '{' + ', '.join('%s: %s' % (json.dumps(k), val(k, v)) for k, v in d.items()) + '}'
         with open(tmp, 'w', encoding='utf-8') as f:

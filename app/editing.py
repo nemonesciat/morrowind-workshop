@@ -373,7 +373,7 @@ def _hold():
 
 def _write_now(db):
     import json
-    texts = None
+    texts = _rt = None
     try:
         # (each place's text made once, for the project file and to tell which places' bytes are as they were)
         # (every place's text made anew here, whatever the marks say: what goes to disk is the mod as it is. A place
@@ -392,7 +392,7 @@ def _write_now(db):
         print('could not read the places:', e)
     _writer['last'] = time.time()
     try:
-        db.project.save(texts)
+        db.project.save(texts, _rt)         # (the records' texts just made: not encoded a second time)
     except Exception as e:
         print('could not save the project:', e)
     try:

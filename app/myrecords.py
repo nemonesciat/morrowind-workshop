@@ -746,14 +746,22 @@ def save(db, kind, e, old_id=None):
     old = (old_id or '').lower()
     made = None
     if kind == 'ingredients' and e.get('new') and not old:
+        # (its effects checked before its record is made: a refused one made it all the same, left in the mod to be
+        # folded into the next change and its Undo)
+        _clean_ingredient(db, e, made='-')
         made = _make_ingredient(db, e)
         e = dict(e, id=made)
-    clean = _clean_ingredient(db, e, made) if made else _clean(db, kind, e)
+    try:
+        clean = _clean_ingredient(db, e, made) if made else _clean(db, kind, e)
+        taken = {x['id'].lower() for k in KINDS for x in data[k] if not (k == kind and x['id'].lower() == old)}
+        if clean['id'].lower() in taken or (kind == 'attributes' and clean['id'].lower() in ATTRIBUTES) \
+                or (kind == 'weathers' and clean['id'].lower() in WEATHERS):
+            raise EditError('Something already has the ID %s.' % clean['id'])
+    except Exception:
+        if made:
+            db.project.remove_record('INGR', made.lower())     # (refused after all: nothing of it left behind)
+        raise
     rest = [x for x in lst if x['id'].lower() != old]
-    taken = {x['id'].lower() for k in KINDS for x in data[k] if not (k == kind and x['id'].lower() == old)}
-    if clean['id'].lower() in taken or (kind == 'attributes' and clean['id'].lower() in ATTRIBUTES) \
-            or (kind == 'weathers' and clean['id'].lower() in WEATHERS):
-        raise EditError('Something already has the ID %s.' % clean['id'])
     pos = next((n for n, x in enumerate(lst) if x['id'].lower() == old), len(rest))
     rest.insert(min(pos, len(rest)), clean)
     data[kind] = rest
