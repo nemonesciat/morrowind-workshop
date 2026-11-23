@@ -130,6 +130,7 @@ async function twPoll(){
   try {
     const r = await api('/api/changes?since=' + (TW.n || 0));
     TW.fails = 0;
+    if (typeof unsavedNote === 'function') unsavedNote(r.unsaved, r.recovery);      // (the title's *, index.html)
     if (r.agent) setTimeout(() => agSee(r.agent), 0);     // (a coding agent at work: said and followed, below)
     if (TW.n == null || TW.project === undefined){ TW.n = r.n; TW.project = r.project; return; }
     // (mid-drag here: wait for the drop, then catch up)

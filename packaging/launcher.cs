@@ -70,7 +70,7 @@ class Tray : ApplicationContext
     readonly string logPath;
     readonly EventWaitHandle quitEvent;
     readonly SynchronizationContext ui;
-    bool quitting;
+    volatile bool quitting;
 
     public Tray()
     {
@@ -96,7 +96,7 @@ class Tray : ApplicationContext
         });
         menu.Items.Add("Show log", null, (s, e) => ShowLog());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Quit", null, (s, e) => Quit());
+        menu.Items.Add("Quit", null, (s, e) => Quit(true));
         icon.ContextMenuStrip = menu;
         icon.DoubleClick += (s, e) => OpenWorkshop();
         icon.Visible = true;
@@ -130,9 +130,10 @@ class Tray : ApplicationContext
             ExitThread();
             return;
         }
-        // the installer (when updating) asks us to quit through this
+        // the installer (when updating) asks us to quit through this (no question: unsaved changes stay in the
+        // recovery copy and are offered again after the update)
         quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Common.QuitEventName(Launcher.Root));
-        var t = new Thread(() => { quitEvent.WaitOne(); ui.Post(_ => Quit(), null); }) { IsBackground = true };
+        var t = new Thread(() => { quitEvent.WaitOne(); ui.Post(_ => Quit(false), null); }) { IsBackground = true };
         t.Start();
         // starting the Workshop again brings its window to the front through this
         showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Common.ShowEventName(Launcher.Root));
@@ -145,17 +146,39 @@ class Tray : ApplicationContext
             while (!quitting && Common.RunningUrl(Launcher.Root) == null && sw.ElapsedMilliseconds < 120000) Thread.Sleep(400);
             if (quitting) return;
             ui.Post(_ => OpenWorkshop(), null);
-            bool seen = false;
-            int gone = 0;
-            while (!quitting)
-            {
-                Thread.Sleep(1500);
-                if (inBrowser) return;                   // (no Edge: a browser tab we can't watch)
-                bool showing = AppWindow.Windows(true).Count > 0;      // (a second window keeps it running too)
-                if (showing) { seen = true; gone = 0; }
-                else if (seen && ++gone >= 2) { ui.Post(_ => Quit(), null); return; }
-            }
+            Watch();
         }) { IsBackground = true }.Start();
+    }
+
+    // Quit when the Workshop's window is closed (asking first about unsaved changes)
+    void Watch()
+    {
+        bool seen = false;
+        int gone = 0;
+        while (!quitting)
+        {
+            Thread.Sleep(1500);
+            if (inBrowser) return;                   // (no Edge: a browser tab we can't watch)
+            bool showing = AppWindow.Windows(true).Count > 0;      // (a second window keeps it running too)
+            if (showing) { seen = true; gone = 0; }
+            else if (seen && ++gone >= 2) { ui.Post(_ => Quit(true), null); return; }
+        }
+    }
+
+    // A question on top of everything (the launcher has no window of its own to show it over)
+    DialogResult Ask(string text, MessageBoxButtons buttons, MessageBoxIcon kind)
+    {
+        var r = DialogResult.Cancel;
+        ui.Send(_ =>
+        {
+            using (var owner = new Form { TopMost = true, ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.None,
+                                          StartPosition = FormStartPosition.CenterScreen, Size = new Size(1, 1), Opacity = 0 })
+            {
+                owner.Show();
+                r = MessageBox.Show(owner, text, Common.Name, buttons, kind);
+            }
+        }, null);
+        return r;
     }
 
     readonly EventWaitHandle showEvent;
@@ -186,15 +209,37 @@ class Tray : ApplicationContext
         try { Process.Start(new ProcessStartInfo("notepad.exe", "\"" + logPath + "\"")); } catch { }
     }
 
-    void Quit()
+    void Quit(bool ask)
     {
         if (quitting) return;
         quitting = true;
         icon.Text = "Morrowind Workshop: closing…";
         new Thread(() =>
         {
+            bool discard = false;
+            if (ask && Common.HasUnsaved(Launcher.Root))
+            {
+                var r = Ask("Your mod has unsaved changes. Save them before quitting?", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (r == DialogResult.Yes)
+                {
+                    string err = Common.SaveMod(Launcher.Root);
+                    if (err != null)
+                    {
+                        Ask("Could not save: " + err + "\n\nThe Workshop stays open.", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        r = DialogResult.Cancel;
+                    }
+                }
+                else if (r == DialogResult.No) discard = true;
+                if (r == DialogResult.Cancel)
+                {
+                    // (carry on: the window back if it was closed, and watched again)
+                    ui.Post(_ => { quitting = false; icon.Text = "Morrowind Workshop"; OpenWorkshop(); }, null);
+                    new Thread(() => { Thread.Sleep(3000); Watch(); }) { IsBackground = true }.Start();
+                    return;
+                }
+            }
             try { AppWindow.Close(); } catch { }
-            Common.AskToQuit(Launcher.Root, 8000);
+            Common.AskToQuit(Launcher.Root, 8000, discard);
             try { if (!proc.HasExited && !proc.WaitForExit(4000)) proc.Kill(); } catch { }
             ui.Post(_ => ExitThread(), null);
         }) { IsBackground = true }.Start();

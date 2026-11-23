@@ -74,7 +74,7 @@ class _EditLock:
 # (what Undo, Redo or another mod would pull from under a town being made while it lets other clicks in)
 WHOLE_MOD = ('/api/undo', '/api/redo', '/api/undo_group', '/api/undo_entry', '/api/revert', '/api/backups/restore',
              '/api/project/open', '/api/project/new', '/api/project/adopt', '/api/project/merge', '/api/project/saveas',
-             '/api/project/enable', '/api/adopt/pick', '/api/group')
+             '/api/project/enable', '/api/adopt/pick', '/api/group', '/api/unsaved/recover', '/api/unsaved/discard')
 
 
 _stamp = [0.0, 0.0]
@@ -105,6 +105,9 @@ def ai_writer():
 assistant = ai.Assistant(db, ai_writer)
 link = LiveLink(db, edit_lock)
 editing.WRITE_LOCK = edit_lock         # (the project file and the plugin are written a moment after each change, under this lock)
+# Changes are held in memory until the user's Save (Ctrl+S), with a recovery copy kept beside the mod (project.HOLD)
+_projmod.HOLD[0] = True
+_projmod.ON_HELD[0] = lambda p: editing._write_soon(db) if p is db.project else None
 db.on_project_change = link.write_state
 
 
@@ -361,6 +364,35 @@ def _setup_commands(setup, god_already=False):
     return cmds
 
 
+PLAY_COPY = [None]       # (the folder of the test copy the game is started with, or None: editing.play_copy)
+
+
+def _play_copy():
+    """The mod's files for the game being started: its own, saved (written now if anything was pending); or, with
+    changes unsaved, a test copy in the Workshop's own folder that the game loads in their place (the user,
+    2026-11-23: Play here plays the unsaved changes and keeps the original aside). The mod's files stay as saved."""
+    with edit_lock:
+        PLAY_COPY[0] = editing.play_copy(db)
+        if PLAY_COPY[0] is None:
+            editing.build(db)
+            if getattr(db.project, 'pending_write', None):
+                raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
+    return PLAY_COPY[0]
+
+
+def _play_copy_args(given=()):
+    """OpenMW's arguments for the test copy: its folder as the data-local folder (the one that wins over every other),
+    and the real data-local folder, if there is one, as an ordinary data folder so nothing in it is lost."""
+    if not PLAY_COPY[0]:
+        return []
+    args = ['--data-local', PLAY_COPY[0]]
+    real = (db.config or {}).get('data_local')
+    have = {os.path.normcase(os.path.abspath(a)) for a in given if isinstance(a, str) and os.path.isabs(a)}
+    if real and os.path.isdir(real) and os.path.normcase(os.path.abspath(real)) not in have:
+        args += ['--data', real]
+    return args
+
+
 def play(body):
     """Launch OpenMW straight into a cell, with the project plugin loaded."""
     install = db.config.get('install')
@@ -368,11 +400,12 @@ def play(body):
         raise editing.EditError('Could not find %s.' % osplat.program_name())
     if link.game_running():
         raise editing.EditError('The game is still running. Quit it first (or use the map to teleport while linked).')
-    # make sure the game loads your latest changes: finish a plugin write the game was blocking
+    # make sure the game loads your latest changes: finish a plugin write the game was blocking (with changes unsaved,
+    # the test copy: _play_copy)
     if db.project:
-        editing.build(db)
-        if getattr(db.project, 'pending_write', None):
-            raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
+        _play_copy()
+    else:
+        PLAY_COPY[0] = None
     # (or outdoors on land with no cell yet, a sea floor mod's shaped into an island: mapdata._land_only)
     info = mapdata.cell_info(db, body['cell']) or mapdata._land_only(db, body['cell'])
     if not info:
@@ -471,9 +504,9 @@ def start_openmw(mode, launch=None):
     if link.game_running():
         raise editing.EditError('The game is already running.')
     if db.project and db.state == 'ready':
-        editing.build(db)
-        if getattr(db.project, 'pending_write', None):
-            raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
+        _play_copy()
+    elif db.project:
+        PLAY_COPY[0] = None
     link.from_save = False               # (the main menu: whichever save the player loads, the link re-tells doors on request below)
     args = _game_content_args() if db.state == 'ready' else []
     _spawn(args, install, launch)
@@ -518,7 +551,7 @@ def _game_content_args():
     # refuses to start when a content file is named twice)
     ours = (SPARE_NAME.lower(), CONTENT_NAME.lower())
     content = [c for c in db.cfg_content_all if c.lower() not in ours]
-    if db.project and os.path.isfile(editing.plugin_path(db)):
+    if db.project and (PLAY_COPY[0] or os.path.isfile(editing.plugin_path(db))):
         # (last, even when openmw.cfg lists it earlier: there a plugin after it that changes the same cell won in
         # the game while the Workshop shows the mod on top; PIN2's ground in Roth Roryn "broken" in game, 2026-10-28)
         lc = editing.lua_content(db)
@@ -528,6 +561,7 @@ def _game_content_args():
     link.start_session()
     content += [SPARE_NAME, CONTENT_NAME]
     args += ['--data', link.data_dir()]              # (the link's files live in the Workshop's own folder)
+    args += _play_copy_args(args)                    # (changes unsaved: the test copy wins over the saved files)
     # the folder the mod (and the Library's files) is in, when OpenMW's settings don't list it
     mine = os.path.dirname(editing.plugin_path(db)) if db.project else None
     known = {os.path.normcase(os.path.abspath(d)) for d in db.config.get('data', [])}
@@ -551,14 +585,13 @@ def clean_test(body):
     if link.game_running():
         raise editing.EditError('The game is still running. Quit it first.')
     editing._require_project(db)
-    editing.build(db)
-    if getattr(db.project, 'pending_write', None):
-        raise editing.EditError('Your mod file is still in use (is the game closing?). Try again in a moment.')
+    _play_copy()
     start = (body.get('start') or '').strip()
     if not start:
         s = release.summary(db)
         start = s['new_places'][0] if s['new_places'] and '(' not in s['new_places'][0] else 'Seyda Neen'
     args, what = release.clean_launch_args(db, start)
+    args += _play_copy_args(args)                    # (changes unsaved: the test copy wins over the saved files)
     _spawn(args, install, body.get('launch'))
     return dict(what, start=start)
 
@@ -567,6 +600,47 @@ def open_folder(path):
     os.makedirs(path, exist_ok=True)
     osplat.open_path(path)
     return {'ok': True, 'path': path}
+
+
+def recover_unsaved():
+    """"Get them back": the recovery copy a Workshop left when it closed with changes unsaved, put in as the mod is
+    now; one Undo step goes back to the mod as it was saved. The changes are unsaved again, from when they were made."""
+    p = db.project
+    editing._require_project(db)
+    if editing.unsaved(db):
+        raise editing.EditError('Your mod already has unsaved changes here: save them or throw them away first.')
+    try:
+        d = p.read_recovery()
+    except (OSError, ValueError):
+        raise editing.EditError('There are no unsaved changes to get back.')
+    since = d.pop('unsaved_since', None) or time.time()
+    d.pop('recovery_of', None)
+    log = d.get('log') or []
+    for e in log:
+        if e.get('diff_file') and 'diff' not in e:
+            try:
+                with open(os.path.join(p._history_dir(), e['diff_file']), encoding='utf-8') as f:
+                    e['diff'] = json.load(f)
+            except (OSError, ValueError):
+                pass
+    p._take(d)
+    p.unsaved_since = since
+    db.sync_project()
+    e = editing.commit(db, 'Got back unsaved changes from %s' % time.strftime('%H:%M', time.localtime(since)))
+    return {'ok': True, 'text': e['text'] if e else ''}
+
+
+def throw_away_unsaved():
+    """"Throw them away" / "Don't save": the mod read again from its file, as it was saved, and the recovery copy gone.
+    True when the mod is read again (the page reloads), False when only a recovery copy was left to drop."""
+    p = db.project
+    was = bool(editing.unsaved(db))
+    editing.throw_away(db)
+    if was and p is not None:
+        db.project = Project(p.path)
+        db.state = 'loading'
+        db.load_async()
+    return was
 
 
 def open_project_file(path):
@@ -1610,7 +1684,9 @@ class Handler(BaseHTTPRequestHandler):
                 # agent is doing: mcpserver.activity_head)
                 import mcpserver
                 self._json(dict(editing.changes_since(int(q.get('since', 0))),
-                                project=db.project.plugin if db.project else None, agent=mcpserver.activity_head()))
+                                project=db.project.plugin if db.project else None, agent=mcpserver.activity_head(),
+                                unsaved=bool(editing.unsaved(db)),          # (the title's *, in every window)
+                                recovery=db._recovery(db.project) if db.project and db.state == 'ready' else None))
             elif u.path == '/api/mcp/activity':
                 # what coding agents did since a note, for the window to show and follow
                 import mcpserver
@@ -1629,6 +1705,8 @@ class Handler(BaseHTTPRequestHandler):
                             'changes': changes_list() if p else [], 'path': editing.plugin_path(db) if p else None})
             else:
                 self._json({'error': 'not found'}, 404)
+        except editing.Unsaved as e:
+            self._json({'error': str(e), 'unsaved': e.kind}, 409)
         except editing.EditError as e:
             self._json({'error': str(e)}, 400)
         except Exception as e:
@@ -1652,6 +1730,9 @@ class Handler(BaseHTTPRequestHandler):
             return mcpserver.http(self, db, edit_lock, 'POST')
         n = int(self.headers.get('Content-Length') or 0)
         editing.ORIGIN.window = self.headers.get('X-Workshop-Window')       # (whose change this is: editing.CHANGES)
+        # (a coding agent's action, or a script's request with no window of its own: refused while the mod has
+        # unsaved changes, editing.commit; written straight in while it has none)
+        _projmod.EXTERNAL.on = editing.ORIGIN.window in (None, '', 'agent')
         editing.request_started()
         if u.path == '/api/library/upload':
             # a file dropped into the Library, as it is (not JSON): kept with the others of the same drop
@@ -1701,10 +1782,17 @@ class Handler(BaseHTTPRequestHandler):
                                                      bool(body.get('new_code'))))
                 if u.path == '/api/together/stop':
                     return self._json(together.stop(db))
+                if editing.unsaved(db):         # (joining opens their mod in place of this one)
+                    if not body.get('discard'):
+                        raise editing.Unsaved('Joining: your mod has unsaved changes.', 'leave')
+                    with edit_lock:
+                        editing.throw_away(db)          # ("Don't save")
                 saved = load_settings().get('together_joined') or {}
                 code = body.get('code') or saved.get('code', '')
                 name = body.get('name') or saved.get('name', '')
                 return self._json(dict(together.join(db, edit_lock, code, name, open_project_file), reload=True))
+            except editing.Unsaved as e:
+                return self._json({'error': str(e), 'unsaved': e.kind}, 409)
             except editing.EditError as e:
                 return self._json({'error': str(e)}, 400)
         if u.path in ('/api/packs/sources', '/api/packs/look', '/api/packs/add'):
@@ -1768,7 +1856,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'error': str(e)}, 400)
             if u.path == '/api/openmw/start':
                 editing.flush(db)           # (the plugin on disk before the game reads it)
-                return self._json(start_openmw(body.get('mode', 'menu'), body.get('launch')))
+                PLAY_COPY[0] = None
+                r = start_openmw(body.get('mode', 'menu'), body.get('launch'))
+                return self._json(dict(r, test_copy=bool(PLAY_COPY[0])))
             if u.path == '/api/launch':
                 return self._json(save_launch(body))
             if u.path == '/api/openmw/pick':
@@ -1802,6 +1892,7 @@ class Handler(BaseHTTPRequestHandler):
                 # still waiting to be written goes out first)
                 if not db.project:
                     return self._json({'error': 'No mod is open.'}, 400)
+                editing.need_saved(db, 'Saving a version')     # (a version is the mod as saved)
                 with _EditLock():
                     editing.flush(db)
                     f = backups.save_now(db.project, body.get('name') or '', bool(body.get('auto')))
@@ -1822,6 +1913,10 @@ class Handler(BaseHTTPRequestHandler):
                 with _EditLock():
                     if editing.busy_with():
                         return self._json({'error': '%s: putting a backup back waits until it is done.' % editing.busy_with()}, 409)
+                    if editing.unsaved(db):
+                        if not body.get('discard'):
+                            raise editing.Unsaved('Putting back an earlier version: your mod has unsaved changes.', 'leave')
+                        editing.throw_away(db)
                     try:
                         _projmod.SOON.discard(db.project)      # (a mark saved later must not undo the restore)
                         backups.restore(db.project, body.get('file', ''))
@@ -1911,7 +2006,7 @@ class Handler(BaseHTTPRequestHandler):
                 # from the launcher's Quit (the custom header keeps web pages from doing this)
                 if self.headers.get('X-Workshop-Quit') != '1':
                     return self._json({'error': 'Not allowed.'}, 403)
-                quit_soon()
+                quit_soon(discard=self.headers.get('X-Workshop-Discard') == '1')
                 return self._json({'ok': True})
             if u.path.startswith('/api/lua/'):
                 import luascripts
@@ -2043,6 +2138,13 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path in WHOLE_MOD and editing.busy_with():
                     return self._json({'error': '%s: %s waits until it is done. Everything else works meanwhile.' % (
                         editing.busy_with(), 'Undo' if 'undo' in u.path or 'revert' in u.path else 'Redo' if 'redo' in u.path else 'switching mods')}, 409)
+                if u.path == '/api/save':
+                    # File > Save (Ctrl+S): the changes held in memory into the mod and its plugin (editing.save)
+                    return self._json(editing.save(db))
+                if u.path == '/api/unsaved/recover':
+                    return self._json(recover_unsaved())
+                if u.path == '/api/unsaved/discard':
+                    return self._json({'ok': True, 'reload': throw_away_unsaved()})
                 if u.path == '/api/doors/face':
                     # (Health check's "Set them at their doors": every made door's arrival at its partner's face)
                     return self._json({'set': doors.face_arrivals(db), 'summary': db.summary()})
@@ -2212,10 +2314,12 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/release/fix':
                     return self._json(release.fix(db, body.get('action')))
                 if u.path == '/api/release/package':
-                    editing.flush(db)       # (the zip takes the plugin from disk)
+                    editing.need_saved(db, 'Packing the mod')       # (the zip takes the plugin from disk)
+                    editing.flush(db)
                     return self._json(release.package(db, bool(body.get('dds'))))
                 if u.path == '/api/release/clean_test':
-                    return self._json(clean_test(body))
+                    r = clean_test(body)
+                    return self._json(dict(r, test_copy=bool(PLAY_COPY[0])))
                 if u.path == '/api/release/open':
                     editing._require_project(db)
                     return self._json(open_folder(release.releases_dir() if body.get('what') == 'releases' else release.extra_dir(db)))
@@ -2953,12 +3057,21 @@ class Handler(BaseHTTPRequestHandler):
                                        'depth': editing.undo_depth(db), 'redo_depth': editing.redo_depth(db),
                                        'touched': editing.touched(db)})
                 if u.path in ('/api/project/new', '/api/project/open', '/api/project/adopt'):
+                    if editing.unsaved(db):
+                        if not body.get('discard'):
+                            raise editing.Unsaved('Opening another mod: your mod has unsaved changes.', 'leave')
+                        editing.throw_away(db)          # ("Don't save": the mod's files stay as they were saved)
                     _end_together()
                     editing.flush(db)       # (the mod being left is written out first)
                 if u.path == '/api/project/saveas':
                     # the Construction Set's Save As: the changes go into a new .esp or .omwaddon, the active file from now on
                     import adopt
                     r = adopt.save_as(db, body.get('name') or '', body.get('ext') or '.esp', bool(body.get('overwrite')))
+                    s = load_settings()
+                    s['project'] = os.path.relpath(db.project.path, APP_DIR)        # (work carries on in the copy)
+                    save_settings(s)
+                    import background
+                    background.project_path[0] = db.project.path
                     db.state = 'loading'
                     db.load_async()         # (the new file is shown from the project; the old name is gone from the content list)
                     return self._json(r)
@@ -2997,6 +3110,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.load_async()
                     return self._json({'ok': True, 'reload': True})
                 if u.path == '/api/project/enable':
+                    editing.need_saved(db, 'Adding it to the load order')      # (the game loads the file as saved)
                     return self._json(enable_in_cfg())
                 if u.path == '/api/mods/show':
                     # Explorer at a mod's plugin file (My mod > Show folder, and each row of Your mods)
@@ -3008,7 +3122,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(modfiles.delete(db, body.get('name') or '', bool(body.get('plugin_too', True))))
                 if u.path == '/api/play':
                     editing.flush(db)
-                    return self._json(play(body))
+                    r = play(body)
+                    return self._json(dict(r, test_copy=bool(PLAY_COPY[0])) if isinstance(r, dict) else r)
                 if u.path == '/api/edit':
                     return self._json({'i': editing.edit_record(db, int(body['i']), body['changes'])})
                 if u.path == '/api/duplicate':
@@ -3121,6 +3236,8 @@ class Handler(BaseHTTPRequestHandler):
                     import mechanism
                     return self._json(mechanism.api(db, u.path, body))
             self._json({'error': 'not found'}, 404)
+        except editing.Unsaved as e:
+            self._json({'error': str(e), 'unsaved': e.kind}, 409)
         except editing.EditError as e:
             self._json({'error': str(e)}, 400)
         except Exception as e:
@@ -3464,10 +3581,13 @@ def _forget_running():
         pass
 
 
-def quit_soon():
-    """Stop the server cleanly (the launcher's Quit): wait for any edit in progress to finish."""
+def quit_soon(discard=False):
+    """Stop the server cleanly (the launcher's Quit): wait for any edit in progress to finish. discard: the launcher's
+    "Don't save" (unsaved changes thrown away, no recovery copy left); otherwise they stay in the recovery copy."""
     def stop():
         with edit_lock:
+            if discard:
+                editing.throw_away(db)
             _forget_running()
             SERVER.shutdown()
     threading.Thread(target=stop, daemon=True).start()

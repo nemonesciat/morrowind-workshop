@@ -9,6 +9,24 @@
      needs a new one, ?v=; and it takes the biggest offered, the PNG. With the old address the ring stayed) -->
 <link rel="icon" type="image/png" sizes="256x256" href="/web/vendor/workshop-256.png?v=mw2">
 <link rel="icon" sizes="16x16 24x24 32x32 48x48 64x64" href="/web/vendor/workshop.ico?v=mw2">
+<script>
+// (which window a request came from, on every request to the Workshop, fetch or not: one without it is a script's or a
+// coding agent's, refused while the mod has unsaved changes, project.EXTERNAL)
+window._WIN_ID = Math.random().toString(36).slice(2, 10);
+(() => {
+  const f0 = window.fetch.bind(window);
+  window.fetch = (url, opt) => {
+    const u = typeof url === 'string' ? url : (url && url.url) || '';
+    if (/^\/(api|mcp)\//.test(u) || u.startsWith(location.origin + '/api/')){
+      opt = Object.assign({}, opt || {});
+      const h = new Headers(opt.headers || {});
+      if (!h.has('X-Workshop-Window')) h.set('X-Workshop-Window', window._WIN_ID);
+      opt.headers = h;
+    }
+    return f0(url, opt);
+  };
+})();
+</script>
 <script src="/web/theme.js"></script>
 <style>
 :root{
@@ -915,7 +933,7 @@ const api = async (p, opt) => {
       const e = new Error(r.ok ? "The Workshop's answer came back cut short. Try again." : 'The Workshop had a problem (' + r.status + '). Try again.'); e.offline = true; throw e;
     }
     if (r.status === 503 && read && n < 80){ await new Promise(res => setTimeout(res, 1500)); continue; }
-    if (!r.ok){ const e = new Error(j.error || r.status); if (r.status === 503) e.loading = true; throw e; }
+    if (!r.ok){ const e = new Error(j.error || r.status); if (r.status === 503) e.loading = true; if (j.unsaved) e.unsaved = j.unsaved; throw e; }
     return j;
   }
   } finally { done(); }
@@ -966,8 +984,21 @@ function busyShow(list, making){
 }
 const fmtN = n => Number(n).toLocaleString();
 // (which window an edit came from, so a second window reloads only what another one changed: twowin.js)
-const WIN_ID = Math.random().toString(36).slice(2, 10);
-const post = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json', 'X-Workshop-Window': WIN_ID}, body: JSON.stringify(body || {})});
+const WIN_ID = window._WIN_ID;
+const post0 = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json', 'X-Workshop-Window': WIN_ID}, body: JSON.stringify(body || {})});
+// (refused for unsaved changes: Save first, or for leaving them, Save / Don't save; then asked again. Cancel says so)
+const post = async (p, body) => {
+  try { return await post0(p, body); }
+  catch (e){
+    if (!e.unsaved) throw e;
+    const pre = S.leaveOk && Date.now() - S.leaveOk < 600000 && e.unsaved === 'leave';
+    S.leaveOk = 0;
+    const c = pre ? 'discard' : await unsavedAsk(e.unsaved, e.message.replace(/: your mod has unsaved changes\.$/, ''));
+    if (c === 'save'){ await fileSave(true); return await post0(p, body); }
+    if (c === 'discard') return await post0(p, Object.assign({}, body, {discard: true}));
+    const x = new Error('Cancelled: nothing was changed.'); x.cancelled = true; throw x;
+  }
+};
 // A fault in the page itself (a script error, a promise nobody caught): said on screen and written to the
 // Workshop's log, so "nothing happens" never stays silent
 const _said = {}, PAGE_ERRORS = [];
@@ -1245,10 +1276,10 @@ async function setupScreen(s){
   $('#loading .inner').onclick = async e => {
     const b = e.target.closest('[data-setup]'); if (!b) return;
     try {
-      if (b.dataset.setup === 'pick'){ const r = await post('/api/openmw/pick', {}); if (r.ok) location.reload(); }
+      if (b.dataset.setup === 'pick'){ const r = await post('/api/openmw/pick', {}); if (r.ok) (window._leaving = true, location.reload()); }
       else if (b.dataset.setup === 'get') window.open('https://openmw.org/downloads/', '_blank');
       else if (b.dataset.setup === 'launcher'){ await post('/api/openmw/start', {mode: 'launcher'}); toast('Opening the OpenMW Launcher…'); }
-      else { await api('/api/reload', {method: 'POST'}); location.reload(); }
+      else { await api('/api/reload', {method: 'POST'}); (window._leaving = true, location.reload()); }
     } catch (err){ toast(err.message, true); }
   };
   return true;
@@ -1776,7 +1807,8 @@ function renderProjectPill(){
     if (typeof iconsIn === 'function') iconsIn(gb);
   }
   if (!p){ el.className = 'proj none'; el.innerHTML = '＋ Start a mod'; el.title = 'Create a plugin to save your edits into'; }
-  else { el.className = 'proj'; el.innerHTML = `✎ <b>${esc(p.plugin)}</b> · ${fmtN(p.changes)} change${p.changes === 1 ? '' : 's'}`; el.title = 'Open "My mod"'; }
+  else { el.className = 'proj'; el.innerHTML = `✎ <b>${esc(p.plugin)}${p.unsaved ? ' *' : ''}</b> · ${fmtN(p.changes)} change${p.changes === 1 ? '' : 's'}`; el.title = p.unsaved ? 'Unsaved changes: File → Save (Ctrl+S). Open "My mod"' : 'Open "My mod"'; }
+  unsavedTitle();
 }
 $('#projpill').onclick = () => { if (S.summary && S.summary.project) showView('mymod'); else projectModal(); };
 // While a dialog waits for the Workshop: its button off (no second click to queue a second time), its
@@ -1979,6 +2011,7 @@ const FILE_NOT_DATA = 'That folder is not one of OpenMW\'s data folders: the gam
 let FILE_PICKING = false;
 async function fileOpen(){
   if (FILE_PICKING){ toast(PICK_NOTE); return; }
+  if (!(await unsavedLeave('Opening another mod'))) return;
   FILE_PICKING = true;
   try {
     const r = await post('/api/adopt/pick', {});
@@ -1991,14 +2024,14 @@ async function fileOpen(){
 async function fileSwitch(name){
   rememberSelection();
   try { await post('/api/project/open', {name}); toast('Switched to ' + name + '. Reading your data…'); setTimeout(poll, 300); }
-  catch (e){ toast(e.message, true); }
+  catch (e){ if (!e.cancelled) toast(e.message, true); }
 }
 // (f: {path, name, in_data}; in_data false when the file's folder is not one the game reads)
 function openFileConfirm(f){
   document.querySelectorAll('.modal-bg[data-of]').forEach(x => x.remove());
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.of = '1';
   bg.innerHTML = `<div class="modal"><h2>Open ${esc(f.name)}?</h2>
-    <p class="msg" title="${esc(f.path)}&#10;&#10;As the Construction Set's active file. Nothing in it is lost: placed objects keep their numbers, so saved games still work. Other plugins stay as they are. Later copies go under Backups.">Every change is saved into this file from now on. A dated copy is made beside it first.</p>
+    <p class="msg" title="${esc(f.path)}&#10;&#10;As the Construction Set's active file. Nothing in it is lost: placed objects keep their numbers, so saved games still work. Other plugins stay as they are. Later copies go under Backups.">Save writes your changes into this file. A dated copy is made beside it first.</p>
     ${f.in_data === false ? `<p class="msg warn">${FILE_NOT_DATA}</p>` : ''}
     <div class="msg err" id="of-err"></div>
     <div class="foot"><button class="btn" id="of-cancel">Cancel</button><button class="btn primary" id="of-ok">Open</button></div></div>`;
@@ -2032,14 +2065,13 @@ function saveAsModal(){
   if (!p){ projectModal(); return; }
   const base = p.plugin.replace(/\.[^.]+$/, '');
   const bg = document.createElement('div'); bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Save as a new file</h2>
-    <p class="msg">A new plugin in your mods folder becomes the active file; placed objects keep their numbers.
-      ${p.source ? `${esc(p.plugin)} stays on disk, switched off in the load order (on, the game would show everything twice).` : `The old ${esc(p.plugin)} is removed; the load order follows the new name.`}</p>
+  bg.innerHTML = `<div class="modal" style="width:min(560px,94vw)"><h2>Save as a new mod</h2>
+    <p class="msg" title="Placed objects keep their numbers. Your models and pictures are shared, not copied. The copy takes ${esc(p.plugin)}'s place in the load order; on together, the game would show everything twice.">Everything goes into a copy under the new name, and you carry on in it. ${esc(p.plugin)} stays as last saved.</p>
     <label>File name</label><div class="crow" style="align-items:center;gap:8px"><input class="inp" id="sa-name" value="${esc(base)}" maxlength="60" style="flex:1">
       <select class="inp" id="sa-ext" style="max-width:150px"><option value=".esp">.esp</option><option value=".omwaddon" ${p.plugin.toLowerCase().endsWith('.omwaddon') ? 'selected' : ''}>.omwaddon</option></select></div>
     <p class="msg" id="sa-note" style="margin-top:6px"></p>
     <label class="msg" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="sa-over"> Write over a file of that name if there is one (a dated copy of it is kept beside it)</label>
-    <p class="msg sev-warning">Saving as a new file starts the Undo history afresh (a backup of the project is kept under Backups first).</p>
+    <p class="msg sev-warning">The copy starts with a fresh Undo history.</p>
     <div class="msg err" id="sa-err" style="margin-top:8px"></div>
     <div class="foot"><button class="btn" id="sa-cancel">Cancel</button><button class="btn primary" id="sa-ok">Save as</button></div></div>`;
   document.body.appendChild(bg);
@@ -2058,12 +2090,94 @@ function saveAsModal(){
     try {
       const r = await post('/api/project/saveas', {name: q('#sa-name').value, ext: q('#sa-ext').value, overwrite: q('#sa-over').checked});
       done(); bg.remove();
-      toast(`Saved as ${r.plugin}: it is the active file now${r.old_removed ? ` (${r.was} removed` : ` (${r.was} left as it was`}${r.cfg_changed ? ', your load order follows the new name' : ''}).`
+      toast(`Saved as ${r.name} (${r.plugin}): you are working in the copy now. ${r.was} stays as last saved${r.cfg_changed ? ', switched off in your load order' : ''}.`
             + (r.plain_esp && r.lua_kept ? ` ${r.lua_kept} Lua script${r.lua_kept === 1 ? ' stays' : 's stay'} out of a plain .esp.` : '') + ' Reading your data…');
       setTimeout(poll, 300);
     } catch (e){ done(); q('#sa-err').className = 'msg err'; q('#sa-err').textContent = e.message; q('#sa-ok').disabled = false; }
   };
 }
+// ----- Saving as a program does (the user, 2026-11-23): changes are held in memory, with Undo, until Save (Ctrl+S)
+// writes them into the mod and its plugin. The title shows the mod's name with a * meanwhile. A recovery copy is kept
+// beside the mod (never the mod itself); after a crash or a closed Workshop the page offers it back.
+async function fileSave(quiet){
+  const p = S.summary && S.summary.project;
+  if (!p){ toast('Start a mod first.'); return; }
+  try {
+    const r = await post0('/api/save', {});
+    unsavedNote(false);
+    if (!quiet) toast('Saved ' + r.plugin + (r.pending ? '. The game has the file open: it is written when the game lets go.' : '.'));
+    if (pageOn('mymod')) renderMyMod();
+  } catch (e){ toast(e.message, true); throw e; }
+}
+// (kind 'save': it needs the mod saved, Save / Cancel; 'leave': it leaves the changes behind, Save / Don't save /
+// Cancel. Resolves 'save', 'discard' or null)
+function unsavedAsk(kind, what){
+  return new Promise(res => {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    const name = (S.summary && S.summary.project && S.summary.project.name) || 'your mod';
+    bg.innerHTML = `<div class="modal" style="width:min(460px,94vw)"><h2>Save changes to ${esc(name)}?</h2>
+      <p class="msg">${esc(what || 'This')}: ${kind === 'leave' ? 'your unsaved changes would be lost.' : 'it needs your changes saved first.'}</p>
+      <div class="foot"><button class="btn" data-a="">Cancel</button>${kind === 'leave' ? '<button class="btn" data-a="discard" title="Your changes are thrown away; the mod stays as last saved">Don\'t save</button>' : ''}<button class="btn primary" data-a="save">Save</button></div></div>`;
+    document.body.appendChild(bg);
+    const done = a => { bg.remove(); res(a || null); };
+    bg.onclick = e => { if (e.target === bg) done(null); const b = e.target.closest('button[data-a]'); if (b) done(b.dataset.a); };
+    bg.querySelector('button[data-a="save"]').focus();
+  });
+}
+// Before something that would leave unsaved changes behind (File → Open, before its file picker): asked first. True to
+// go on; "Don't save" lets the next refusal through without asking again.
+async function unsavedLeave(what){
+  const p = S.summary && S.summary.project;
+  if (!p || !p.unsaved) return true;
+  const c = await unsavedAsk('leave', what);
+  if (c === 'save'){ try { await fileSave(true); } catch (e){ return false; } return true; }
+  if (c === 'discard'){ S.leaveOk = Date.now(); return true; }
+  return false;
+}
+let TITLE_SET = '';
+function unsavedTitle(){
+  if (typeof TW !== 'undefined' && TW.second) return;           // (the second window names its place: twTitle)
+  const p = S.summary && S.summary.project;
+  const t = p ? `${p.name}${p.unsaved ? '*' : ''} · Morrowind Workshop` : 'Morrowind Workshop';
+  if (t !== TITLE_SET){ TITLE_SET = t; document.title = t; }
+}
+// (from every window's change poll, once a second: twowin.js)
+function unsavedNote(u, rec){
+  const p = S.summary && S.summary.project;
+  if (!p) return;
+  if (!!p.unsaved !== !!u){ p.unsaved = !!u; renderProjectPill(); }
+  if (rec !== undefined) recoveryOffer(rec);
+}
+function recoveryOffer(rec){
+  if (!rec || (typeof TW !== 'undefined' && TW.second) || document.querySelector('.modal-bg[data-recover]')) return;
+  const key = (S.summary.project.name || '') + rec.day + rec.time;
+  if (S.recoverySeen === key) return;
+  S.recoverySeen = key;
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.dataset.recover = '1';
+  const day = rec.day === new Date().toISOString().slice(0, 10) ? '' : ' on ' + rec.day;
+  bg.innerHTML = `<div class="modal" style="width:min(460px,94vw)"><h2>You have unsaved changes from ${esc(rec.time)}${esc(day)}</h2>
+    <p class="msg" title="The Workshop closed before they were saved. They were kept in a copy beside the mod, never in the mod itself.">${esc(S.summary.project.name)} was closed with them unsaved.</p>
+    <div class="msg err" id="rc-err"></div>
+    <div class="foot"><button class="btn" id="rc-drop">Throw them away</button><button class="btn primary" id="rc-get">Get them back</button></div></div>`;
+  document.body.appendChild(bg);
+  const q = s => bg.querySelector(s);
+  q('#rc-get').onclick = async () => {
+    try { const r = await post0('/api/unsaved/recover', {}); bg.remove(); toast((r.text || 'Got them back') + '. Undo takes them back; Save keeps them.'); await refreshAfterEdits(true); unsavedNote(true); }
+    catch (e){ q('#rc-err').textContent = e.message; }
+  };
+  q('#rc-drop').onclick = async () => {
+    try { await post0('/api/unsaved/discard', {}); bg.remove(); toast('Thrown away. Your mod is as you last saved it.'); }
+    catch (e){ q('#rc-err').textContent = e.message; }
+  };
+}
+// (closing the window with changes unsaved: the browser asks. They aren't lost either way: the Workshop keeps them
+// while it runs, and the recovery copy after)
+// (not in the launcher's own window: closing it, the launcher asks Save / Don't save / Cancel itself)
+const IN_LAUNCHER = new URLSearchParams(location.search).get('launcher') === '1';
+addEventListener('beforeunload', e => {
+  const p = S.summary && S.summary.project;
+  if (p && p.unsaved && !IN_LAUNCHER && !(typeof TW !== 'undefined' && TW.second) && !window._leaving){ e.preventDefault(); e.returnValue = ''; }
+});
 // Your mods: each one's plugin file, Show folder, Switch, and Delete (to the Recycle Bin, out of the load order:
 // modfiles.py). The user's "deleting excessive test mods is something I need to do too".
 async function modsModal(){
@@ -2132,9 +2246,9 @@ async function renderMyMod(){
   const byType = {};
   P.changes.forEach(c => (byType[c.type] = byType[c.type] || []).push(c));
   let h = `<h1>${esc(p.name)}${typeof guideLink === 'function' ? guideLink('sharing-your-mod.md', 'My mod') : ''}</h1>
-    <p class="lead">Saved automatically after every change. <b>File → Save a version</b> keeps one to come back to. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span></p>
+    <p class="lead">${p.unsaved ? '<b>Unsaved changes.</b> <b>File → Save</b> (Ctrl+S) writes them into the mod.' : 'Everything is saved.'} <b>File → Save a version</b> keeps one to come back to. <span class="msg" title="${esc(P.path)}" style="cursor:help;border-bottom:1px dotted var(--faint)">Where?</span></p>
     ${p.source ? `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): this mod <b>is</b> that file, opened as your mod. Its objects keep the numbers the file gave them, its masters stay as the file listed them, and a dated copy of the file as it was is kept beside it (later copies under Backups).${p.plain_esp ? ' A plain .esp holds no Lua scripts: any you write stay in the project and are not written out.' : ''}</p>`
-               : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): every change is saved into it. <b>File → Save as…</b> puts everything into a new .esp or .omwaddon instead.</p>`}
+               : `<p class="msg" style="margin-top:-8px"><b>${esc(p.plugin)}</b> is the active file (as in the Construction Set): Save writes your changes into it. <b>File → Save as…</b> puts everything into a new mod instead.</p>`}
     <div class="cards">
       <div class="card"><div class="big">${fmtN(p.changes)}</div><div class="lab">changes in this mod</div></div>
       <div class="card"><div class="big ${p.enabled_in_cfg ? 'sev-ok' : 'sev-warning'}">${p.enabled_in_cfg ? 'On' : 'Off'}</div><div class="lab">${p.enabled_in_cfg ? 'Enabled in your normal OpenMW load order' : 'Not in your normal load order yet. Play buttons still load it for testing.'}</div></div>
@@ -5154,8 +5268,9 @@ $('#filebtn').onclick = e => {
     <button data-op="open" title="Any .esp or .omwaddon, or one of your mods">Open…<span class="k">${fileKey('open')}</span></button>
     <div class="filerow"><button data-op="recent">Open recent<span class="k">▸</span></button><div class="filesub" id="filerecent"></div></div>
     <hr>
-    <button data-op="save"${off} title="Keeps the mod as it is now, to come back to. The mod itself is saved after every change.">Save a version<span class="k">${fileKey('save')}</span></button>
-    <button data-op="saveas"${off} title="Everything into a new .esp or .omwaddon, which becomes the active file">Save as…</button>
+    <button data-op="save"${off} title="Writes your changes into the mod and its plugin file. Until then they are held here, with Undo">Save<span class="k">${fileKey('save')}</span></button>
+    <button data-op="saveas"${off} title="Everything into a new mod and plugin file, and you carry on in the copy. The original stays as last saved">Save as…</button>
+    <button data-op="saveversion"${off} title="Keeps the mod as saved, to come back to">Save a version<span class="k">${fileKey('saveversion')}</span></button>
     <button data-op="versions"${off} title="Put the mod back to a saved version or a backup">Earlier versions…</button>
     <hr>
     <button data-op="merge"${off} title="Add everything another of your mods holds to this one">Merge a mod into this one…</button>
@@ -5188,7 +5303,7 @@ $('#filemenu').addEventListener('click', e => {
   const b = e.target.closest('button[data-op]'); if (!b || b.disabled) return;
   if (b.dataset.op === 'recent'){ $('#filerecent').classList.toggle('on'); return; }
   $('#filemenu').style.display = 'none';
-  ({new: () => projectModal(true), open: fileOpen, save: () => saveVersion(), saveas: saveAsModal, versions: versionsModal, merge: () => mergeModal(), mergefile: mergeFile,
+  ({new: () => projectModal(true), open: fileOpen, save: () => fileSave(), saveversion: () => saveVersion(), saveas: saveAsModal, versions: versionsModal, merge: () => mergeModal(), mergefile: mergeFile,
     folder: async () => { try { await post('/api/mods/show', {}); } catch (err){ toast(err.message, true); } },
     mods: modsModal, share: () => showView('release')})[b.dataset.op]();
 });
@@ -5356,7 +5471,7 @@ poll();
   let tried = 0; try { tried = +sessionStorage.getItem('ws-reloaded') || 0; } catch (e){}
   if (missing.length && Date.now() - tried > 60000){
     try { sessionStorage.setItem('ws-reloaded', Date.now()); } catch (e){}
-    setTimeout(() => location.reload(), 1500);
+    setTimeout(() => (window._leaving = true, location.reload()), 1500);
   } else if (missing.length) toast('Part of the page did not load (the Workshop was busy). Press ↻ to load it again.', true);
 })();
 </script>

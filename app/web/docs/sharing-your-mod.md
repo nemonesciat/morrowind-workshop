@@ -35,10 +35,11 @@ a town or a big shape out of reach:
 | Entry | What it does |
 |---|---|
 | New mod… | Start another mod; this one stays as it is. |
-| Open… (Ctrl+O) | Your computer's file picker. One of your mods switches to it. Any other .esp or .omwaddon becomes the mod you work on, saved straight back into that file, as the Construction Set's active file. Its placed objects keep their numbers, so saved games still work; a dated copy of the file as it was is kept beside it. |
+| Open… (Ctrl+O) | Your computer's file picker. One of your mods switches to it. Any other .esp or .omwaddon becomes the mod you work on, saved back into that file, as the Construction Set's active file. Its placed objects keep their numbers, so saved games still work; a dated copy of the file as it was is kept beside it. With changes unsaved it asks first. |
 | Open recent | Your other mods, newest first: one click switches. |
-| Save a version (Ctrl+S) | Keeps the mod as it is now, to come back to (see Backups). |
-| Save as… | Everything into a new .esp or .omwaddon, which is the active file from then on. |
+| Save (Ctrl+S) | Writes your changes into the mod and its .esp or .omwaddon. Until then nothing changes your mod's files. |
+| Save as… | Everything, unsaved changes too, into a new mod under a new name, and you carry on in the copy. The original stays as you last saved it. Models and pictures are shared, not copied. The copy takes the original's place in your load order. |
+| Save a version | Keeps the mod as saved, to come back to (see Backups). |
 | Earlier versions… | The versions you saved and the Workshop's own backups, each with Restore. |
 | Merge a mod into this one… | Adds everything another of your mods holds to this one, as one change. It clears this mod's Undo history; a backup is kept. |
 | Merge a plugin file… | The same for any .esp or .omwaddon, picked with your computer's file picker: that file is only read. Its places, objects, records and dialogue come over; where both changed the same thing, you choose. Switch it off in the load order when merging (the window offers it): saved games made with it forget what happened to its things. An .omwaddon's Lua scripts don't come over. |
@@ -100,7 +101,7 @@ from wherever they are. Everyone sees every change within a second or so, in the
 
 ## Backups
 
-**File → Save a version** (**Ctrl+S**) keeps a version of your mod as it is now, until you remove it. **File →
+**File → Save a version** keeps a version of your mod as you last saved it, until you remove it. **File →
 Earlier versions** lists them with the Workshop's own backups, each with **Restore**. The Workshop also keeps
 one by itself before each Make on the Land panel ("before making Uda"), the newest ten.
 

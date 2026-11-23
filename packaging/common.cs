@@ -79,8 +79,62 @@ static class Common
         catch { return null; }
     }
 
-    // Ask a running Workshop to save and stop. True when it has stopped.
-    public static bool AskToQuit(string root, int waitMs)
+    // Whether the running Workshop's mod has unsaved changes (false when it can't be asked)
+    public static bool HasUnsaved(string root)
+    {
+        string url = RunningUrl(root);
+        if (url == null) return false;
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(url + "api/changes?since=2000000000");
+            req.Timeout = 5000;
+            req.Proxy = null;
+            req.Headers.Add("X-Workshop-Window", "launcher");
+            using (var res = req.GetResponse())
+            using (var s = new StreamReader(res.GetResponseStream(), Encoding.UTF8))
+                return Regex.IsMatch(s.ReadToEnd(), "\"unsaved\"\\s*:\\s*true");
+        }
+        catch { return false; }
+    }
+
+    // The running Workshop's File > Save. Null when saved, else what went wrong.
+    public static string SaveMod(string root)
+    {
+        string url = RunningUrl(root);
+        if (url == null) return "the Workshop isn't answering.";
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(url + "api/save");
+            req.Method = "POST";
+            req.Timeout = req.ReadWriteTimeout = 300000;
+            req.Proxy = null;
+            req.ContentType = "application/json";
+            req.Headers.Add("X-Workshop-Window", "launcher");
+            byte[] body = Encoding.ASCII.GetBytes("{}");
+            req.ContentLength = body.Length;
+            using (var s = req.GetRequestStream()) s.Write(body, 0, body.Length);
+            using (req.GetResponse()) { }
+            return null;
+        }
+        catch (WebException e)
+        {
+            try
+            {
+                using (var s = new StreamReader(e.Response.GetResponseStream(), Encoding.UTF8))
+                {
+                    var m = Regex.Match(s.ReadToEnd(), "\"error\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+                    if (m.Success) return Regex.Unescape(m.Groups[1].Value);
+                }
+            }
+            catch { }
+            return e.Message;
+        }
+        catch (Exception e) { return e.Message; }
+    }
+
+    // Ask a running Workshop to stop (discard: its unsaved changes thrown away, "Don't save"; otherwise they stay in
+    // the recovery copy). True when it has stopped.
+    public static bool AskToQuit(string root, int waitMs, bool discard = false)
     {
         string url = RunningUrl(root);
         if (url == null) return true;
@@ -92,6 +146,7 @@ static class Common
             req.Proxy = null;
             req.ContentLength = 0;
             req.Headers.Add("X-Workshop-Quit", "1");
+            if (discard) req.Headers.Add("X-Workshop-Discard", "1");
             using (req.GetResponse()) { }
         }
         catch { }

@@ -62,7 +62,8 @@ const CF_ACT = [
   {id: 'search', label: 'Search box at the top', keys: ['/'], run: () => { $('#q').focus(); $('#q').select(); }},
   {id: 'undo', label: 'Undo', keys: ['Ctrl+Z'], run: () => doUndo()},
   {id: 'redo', label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doRedo()},
-  {id: 'save', label: 'Save a version of your mod', keys: ['Ctrl+S'], typing: true, any: true, run: () => saveVersion()},
+  {id: 'save', label: 'Save your mod', keys: ['Ctrl+S'], typing: true, any: true, run: () => { fileSave().catch(() => {}); }},
+  {id: 'saveversion', label: 'Save a version of your mod', keys: [], typing: true, any: true, run: () => saveVersion()},
   {id: 'open', label: 'Open a mod or plugin file', keys: ['Ctrl+O'], typing: true, run: () => fileOpen()},
   // (not while a land shape is being drawn: there Backspace takes its last point back, landmap.js, and with a thing
   // selected under it that thing was deleted instead)

@@ -236,7 +236,7 @@ def adopt(db, path):
         format(read['own_refs'], ','), '' if read['own_refs'] == 1 else 's')
     entry = p.note(note, state_diff(empty, p.state()))
     p.undo_stack = [(empty, note, entry['id'])]
-    p.save()
+    p.save(force=True)                     # (opening a file is not a change of the user's: written, not held)
     return {'ok': True, 'project': p, 'name': pname, 'plugin': file_name, 'path': path, 'backup': backup,
             'records': n_rec, 'places': n_cells, 'objects': read['own_refs'], 'master_objects': read['master_refs'],
             'masters': [m[0] for m in head['masters']], 'missing_masters': read['missing_masters'],
@@ -272,10 +272,12 @@ def _cfg_rename(db, old, new):
 
 
 def save_as(db, name, ext, overwrite=False):
-    """The Construction Set's Save As: the mod's changes go into a new file (<name>.esp or .omwaddon in your mods
-    folder), which is the active file from then on. The mod's own objects keep their numbers under the new name;
-    the old file of a mod made here is renamed away (and the load order follows); a file opened as the mod stays
-    as it was. The Undo history starts afresh (a backup of the project is kept first)."""
+    """Save As, as a program does (the user, 2026-11-23): everything, unsaved changes and all, is written under a new
+    name (projects/<name>.json and <name>.esp or .omwaddon in your mods folder) and work carries on in the copy. The
+    original stays as it was last saved, its unsaved changes going with the copy (its recovery copy goes). The mod's
+    own models and pictures are in the data folder and shared, not copied; so are the extra files packed with it
+    (files_of). The copy takes the original's place in the load order (both on, the game would show everything twice).
+    Placed objects keep their numbers under the new name; the Undo history starts afresh."""
     import editing
     p = db.project
     if not p:
@@ -297,15 +299,16 @@ def save_as(db, name, ext, overwrite=False):
     folder = os.path.dirname(old_path) if p.source else (os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local')
                                                         or os.path.join(db.config.get('userdata') or db.config['userdir'], 'data'))
     new_path = os.path.join(folder, new_file)
+    new_proj = os.path.join(PROJECTS_DIR, name + '.json')
     if os.path.normcase(os.path.abspath(new_path)) == os.path.normcase(os.path.abspath(old_path)):
-        raise EditError('%s is the file this mod saves into already.' % new_file)
+        raise EditError('%s is the file this mod saves into already: Save (Ctrl+S) writes it.' % new_file)
+    if os.path.exists(new_proj):
+        raise EditError('There is a mod called "%s" already. Pick another name.' % name)
     if db.plugin_index(new_file.lower()) is not None and not overwrite:
         raise EditError('%s is in your load order: the mod would be loaded twice. Pick another name, or switch that file off first.' % new_file)
     if os.path.exists(new_path) and not overwrite:
         raise EditError('There is a %s in %s already. Pick another name, or tick "write over it".' % (new_file, folder))
     editing.flush(db)
-    import backups
-    backups.maybe_backup(p, force=True, why='before save as')
     backup = None
     if os.path.exists(new_path):
         backup = '%s.%s.bak' % (new_path, time.strftime('%Y-%m-%d %H-%M-%S'))
@@ -325,50 +328,42 @@ def save_as(db, name, ext, overwrite=False):
             refs[k] = r
         c['refs'] = refs
     was_own = not p.source
-    old_grass = None
-    try:
-        import grass
-        old_grass = grass.file_path(db) if getattr(p, 'grass', None) else None
-    except Exception:
-        pass
+    old_name = p.name
+    files_from = getattr(p, 'files_of', None) or old_name
+    p.drop_recovery()                      # (the original's unsaved changes go with the copy)
+    p.path = new_proj
+    p.name = name
+    if os.path.isdir(os.path.join(PROJECTS_DIR, files_from + ' files')) and \
+            not os.path.isdir(os.path.join(PROJECTS_DIR, name + ' files')):
+        p.files_of = files_from
     p.plugin = new_file
     p.source = new_path
     p.plugin_backup = backup
+    p.lua_files = []                       # (the original's Lua files are its own: none cleared from under it)
     if was_own:
         p.order = []                       # (written in the Workshop's own order, new things after)
     # the Undo history would put objects back under the old name: it starts afresh, as after a merge
     p.undo_stack = []
     p.redo_stack = []
+    p._grp = None
     for e in p.log:
         e.pop('diff', None)
-    p.note('Saved as %s%s' % (new_file, ' (was %s)' % old_file if old_file.lower() != new_low else ''))
+        e.pop('diff_file', None)           # (the original's history folder: not this mod's)
+    p.note('Saved as %s%s' % (new_file, ' (a copy of %s)' % old_file if old_file.lower() != new_low else ''))
     p.last_state = p.state()
-    p.save()
+    p.unsaved_since = None
     db.sync_project()
-    editing.build(db)                      # (the new file, written now)
-    moved_old = cfg_changed = False
-    if was_own:
-        # the old file was the Workshop's own output: it goes, or the game would load the mod twice
-        try:
-            os.remove(old_path)
-            moved_old = True
-        except OSError:
-            pass
-        if old_grass and os.path.isfile(old_grass):
-            try:
-                os.replace(old_grass, grass.file_path(db))
-            except OSError:
-                pass
-    # the load order follows the new name (a file that was opened as the mod stays on disk, switched off:
-    # loaded beside the new file, the game would show everything twice)
+    p.save(force=True)
+    editing.build(db, force=True)          # (the new file, written now)
+    # the copy takes the original's place in the load order (the original stays on disk as it was saved)
     cfg_changed = _cfg_rename(db, old_file, new_file)
     try:
         _cfg_rename(db, os.path.splitext(old_file)[0] + ' Grass.omwaddon', os.path.splitext(new_file)[0] + ' Grass.omwaddon')
     except OSError:
         pass
-    return {'ok': True, 'plugin': new_file, 'path': new_path, 'was': old_file, 'rekeyed': n_rekeyed, 'backup': backup,
-            'old_removed': moved_old, 'cfg_changed': cfg_changed, 'plain_esp': not p.lua_allowed(), 'lua_kept': len(p.lua),
-            'reload': True}
+    return {'ok': True, 'name': name, 'plugin': new_file, 'path': new_path, 'project': new_proj, 'was': old_file,
+            'was_name': old_name, 'rekeyed': n_rekeyed, 'backup': backup, 'old_removed': False, 'cfg_changed': cfg_changed,
+            'plain_esp': not p.lua_allowed(), 'lua_kept': len(p.lua), 'reload': True}
 
 
 def candidates(db):

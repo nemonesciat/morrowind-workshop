@@ -37,7 +37,7 @@ on the ground. A plain click does nothing, so you can still select things.
   changes (not used by Scatter).
 - **Objects follow the ground**: things standing on it (rocks, plants, people, crates) move up and down with
   it. Buildings move too, so turn it off when you are fitting the ground to a building.
-- Each stroke is saved when you let go, as one Undo step.
+- Each stroke is kept when you let go, as one Undo step (Save writes it into the mod).
 - The brush can't make a step steeper than the game's land can hold (about 83°).
 - Drag the Ground window by its title to move it, or by its bottom-right corner to make it bigger. It keeps its
   place and size.

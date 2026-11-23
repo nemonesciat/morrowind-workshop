@@ -670,7 +670,7 @@ def _mine_dir(db):
 
 
 def extra_dir(db):
-    return os.path.join(PROJECTS_DIR, db.project.name + ' files')
+    return os.path.join(PROJECTS_DIR, (getattr(db.project, 'files_of', None) or db.project.name) + ' files')
 
 
 def assets(db, masters=None):

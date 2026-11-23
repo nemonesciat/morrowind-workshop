@@ -1157,4 +1157,17 @@ class Database:
                 'group': editing.group_state(self),
                 # a plugin opened as the mod itself (adopt.py): saved into that file; a plain .esp takes no Lua
                 'source': getattr(p, 'source', None), 'plain_esp': not p.lua_allowed(),
-                'enabled_in_cfg': p.plugin.lower() in [c.lower() for c in getattr(self, 'cfg_content_all', [])]}
+                'enabled_in_cfg': p.plugin.lower() in [c.lower() for c in getattr(self, 'cfg_content_all', [])],
+                # changes held in memory, not yet saved into the mod (the title's *), and a recovery copy left by a
+                # Workshop that closed with changes unsaved ("You have unsaved changes from 14:05")
+                'unsaved': bool(editing.unsaved(self)), 'recovery': self._recovery(p)}
+
+    def _recovery(self, p):
+        import editing
+        if not editing.HOLD[0] or editing.unsaved(self):
+            return None
+        r = p.recovery_info()
+        if not r:
+            return None
+        return {'time': time.strftime('%H:%M', time.localtime(r['since'] or r['time'])),
+                'day': time.strftime('%Y-%m-%d', time.localtime(r['since'] or r['time']))}

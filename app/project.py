@@ -178,6 +178,22 @@ def _nolock():
     return contextlib.nullcontext()
 
 
+# Saving as a program does (the user, 2026-11-23: "my changes are held in memory only... nothing changes my mod's files
+# until I press Save"). With HOLD on (the server sets it; the lab leaves it off and writes at once, as before) a save
+# that isn't the user's Save writes nothing to the mod: the project is marked unsaved and ON_HELD is told, which keeps
+# a recovery copy (<project>.unsaved beside it, never the mod itself). Save is save(force=True).
+# EXTERNAL.on is set for the request being answered when it comes from a coding agent or a script, not a Workshop
+# window: such a change is written straight into the mod while nothing is unsaved, and refused while something is
+# (editing.commit), so nobody's work is written over anybody's.
+HOLD = [False]
+ON_HELD = [None]
+EXTERNAL = threading.local()
+
+
+def external():
+    return bool(getattr(EXTERNAL, 'on', False))
+
+
 def save_pending():
     """The saves asked for with save_soon, now (the Workshop closing, another mod opening)."""
     for p in list(SOON):
@@ -390,6 +406,20 @@ class Project:
             if os.path.exists(path):
                 os.replace(path, path + '.unreadable')
             os.replace(path + '.tmp', path)
+        self.unsaved_since = None               # (when the first change not yet saved was made: HOLD)
+        self._take(d)
+        self.undo_stack = []
+        self.last_state = self.snapshot()
+        self.settle()                           # (just opened: nothing holds a place yet)
+        self.pending_write = None
+        try:
+            import backups
+            backups.maybe_backup(self, force=True, why='opened')     # how it was before this session
+        except Exception as e:
+            print('backup failed:', e)
+
+    def _take(self, d):
+        """The mod's parts from its file's contents (or a recovery copy's)."""
         self.name = d['name']
         self.plugin = d['plugin']
         self.author = d.get('author', '')
@@ -429,15 +459,47 @@ class Project:
         self.tes3_version = d.get('tes3_version') or 1.3
         self.hedr_raw = d.get('hedr')
         self.plugin_backup = d.get('plugin_backup')
-        self.undo_stack = []
-        self.last_state = self.snapshot()
-        self.settle()                           # (just opened: nothing holds a place yet)
-        self.pending_write = None
+        # (a mod saved as a copy of another (Save As): the extra files packed with it stay the original's, shared)
+        self.files_of = d.get('files_of')
+
+    # ----- unsaved changes and their recovery copy (HOLD) -----
+    def recovery_path(self):
+        return os.path.splitext(self.path)[0] + '.unsaved'
+
+    def mark_unsaved(self):
+        if not self.unsaved_since:
+            self.unsaved_since = time.time()
+
+    def recovery_info(self):
+        """{'time': when the copy was last written, 'since': its first unsaved change} of a recovery copy left by a
+        Workshop that closed with changes unsaved, or None."""
         try:
-            import backups
-            backups.maybe_backup(self, force=True, why='opened')     # how it was before this session
-        except Exception as e:
-            print('backup failed:', e)
+            with open(self.recovery_path(), encoding='utf-8') as f:
+                head = f.read(400)
+            m = re.search(r'"unsaved_since": ([0-9.]+)', head)
+            return {'time': os.path.getmtime(self.recovery_path()), 'since': float(m.group(1)) if m else None}
+        except OSError:
+            return None
+
+    def write_recovery(self, texts=None, rtexts=None):
+        """The mod as it is now, unsaved changes and all, into the recovery copy (not the mod)."""
+        text = self._text(texts, rtexts, prune=False, extra={'unsaved_since': self.unsaved_since or time.time(),
+                                                               'recovery_of': os.path.basename(self.path)})
+        tmp = self.recovery_path() + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp, self.recovery_path())
+
+    def read_recovery(self):
+        with open(self.recovery_path(), encoding='utf-8') as f:
+            return json.load(f)
+
+    def drop_recovery(self):
+        for p in (self.recovery_path(), self.recovery_path() + '.tmp'):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
     @classmethod
     def create(cls, name, author='', description=''):
@@ -457,7 +519,7 @@ class Project:
     def _history_dir(self):
         return os.path.splitext(self.path)[0] + ' history'
 
-    def _log_to_keep(self, limit=2_000_000, count=500):
+    def _log_to_keep(self, limit=2_000_000, count=500, prune=True):
         """The newest log entries, no more than `count` and about `limit` bytes of them in the project file: the diffs
         kept with each change made a 1 MB project a 7 MB file, written again after every move. A big change's diff (a
         town, a reshaped valley) is written once to the history folder beside the project and the entry keeps its file
@@ -505,6 +567,8 @@ class Project:
             out.append(e)
             total += size
         out.reverse()
+        if not prune:
+            return out                  # (a recovery copy: the saved mod's entries may still name the others)
         # (history files no kept entry names any more: gone)
         try:
             for fn in os.listdir(hd):
@@ -521,10 +585,14 @@ class Project:
         import threading
         n = self._soon_n = getattr(self, '_soon_n', 0) + 1
         SOON.add(self)
+        ext = external()
+        if HOLD[0] and not (ext and not self.unsaved_since):
+            self.mark_unsaved()                         # (unsaved from now, not from when the timer runs)
 
         def run():
             if getattr(self, '_soon_n', 0) != n or self not in SOON:
                 return                                  # (a newer one comes, or a save took it)
+            EXTERNAL.on = ext
             with SAVE_LOCK or _nolock():
                 if self in SOON:
                     self.save()
@@ -532,19 +600,48 @@ class Project:
         t.daemon = True
         t.start()
 
-    def save(self, texts=None, rtexts=None):
+    def save(self, texts=None, rtexts=None, force=False):
         """texts: {place key: its JSON text} already made for this write (editing._write_now), put in as they are;
-        rtexts: the same for the records (made for this write too: never the texts kept from an earlier one)."""
+        rtexts: the same for the records (made for this write too: never the texts kept from an earlier one).
+        With HOLD on, only the user's Save (force) writes the mod; any other save marks it unsaved (see HOLD).
+        force='through': written with nothing unsaved (an agent's change, the lab), the recovery copy left alone."""
         SOON.discard(self)
+        if HOLD[0] and not force and os.path.exists(self.path) and not (external() and not self.unsaved_since):
+            self.mark_unsaved()
+            cb = ON_HELD[0]
+            if cb:
+                try:
+                    cb(self)
+                except Exception as e:
+                    print('recovery copy:', e)
+            return
+        text = self._text(texts, rtexts)
         tmp = self.path + '.tmp'
-        d = {'name': self.name, 'plugin': self.plugin, 'author': self.author,
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp, self.path)
+        if force is True:
+            self.unsaved_since = None           # (everything is in the mod now)
+            self.drop_recovery()
+        try:
+            import backups
+            backups.maybe_backup(self)            # (every few minutes; see backups.py)
+        except Exception as e:
+            print('backup failed:', e)
+
+    def _text(self, texts=None, rtexts=None, prune=True, extra=None):
+        """The project file's text. extra: keys put first (a recovery copy's)."""
+        d = dict(extra or {})
+        d.update({'name': self.name, 'plugin': self.plugin, 'author': self.author,
              'description': self.description, 'records': self.records, 'cells': self.cells,
-             'next_ref': self.next_ref, 'log': self._log_to_keep(), 'release': self.release,
-             'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass}
+             'next_ref': self.next_ref, 'log': self._log_to_keep(prune=prune), 'release': self.release,
+             'lua': self.lua, 'lua_files': self.lua_files, 'grass': self.grass})
         if self.land:
             d['land'] = self.land
         if self.forged:
             d['forged'] = self.forged
+        if getattr(self, 'files_of', None):
+            d['files_of'] = self.files_of
         if self.quests:
             d['quests'] = self.quests
         if getattr(self, 'merged_in', None):
@@ -572,15 +669,7 @@ class Project:
             if k == 'records':
                 return '{' + ', '.join('%s: %s' % (json.dumps(rk), rtexts.get(rk) or json.dumps(r)) for rk, r in list(quiet(v))) + '}'
             return json.dumps(v)
-        text = '{' + ', '.join('%s: %s' % (json.dumps(k), val(k, v)) for k, v in d.items()) + '}'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            f.write(text)
-        os.replace(tmp, self.path)
-        try:
-            import backups
-            backups.maybe_backup(self)            # (every few minutes; see backups.py)
-        except Exception as e:
-            print('backup failed:', e)
+        return '{' + ', '.join('%s: %s' % (json.dumps(k), val(k, v)) for k, v in d.items()) + '}'
 
     def state(self):
         return json.dumps({'records': dict(quiet(self.records)), 'cells': dict(quiet(self.cells)), 'next_ref': self.next_ref, 'lua': self.lua,
@@ -716,7 +805,8 @@ class Project:
                     pass
         if sorted(outs) != sorted(self.lua_files):
             self.lua_files = sorted(outs)
-            self.save()
+            if not getattr(self, '_test_build', False):
+                self.save(force=None if self.unsaved_since else 'through')     # (part of a Save: written, as the plugin is)
 
     def note(self, text, diff=None):
         nid = max([e.get('id', 0) for e in self.log] + [0]) + 1
@@ -923,7 +1013,7 @@ class Project:
             self.write_lua(os.path.dirname(out_path))
         except OSError:
             pass                                  # (a script file in use: written next time)
-        if self.source:
+        if self.source and not getattr(self, '_test_build', False):
             try:
                 with open(out_path, 'rb') as f:
                     same = f.read() == blob

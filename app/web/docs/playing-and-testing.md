@@ -11,6 +11,8 @@ order and your mod. Your mod always loads last.
 - **Pick a spot** first to start (or, while the game runs, teleport) exactly where you click.
 - Outdoors without a spot you start in the middle of the cell; indoors, just inside the place's door.
 - **Your normal saves are untouched.**
+- With changes unsaved, the game plays them from a test copy the Workshop keeps in its own folder. Your mod's own
+  file stays as you last saved it until you Save.
 
 ## Who you play as
 

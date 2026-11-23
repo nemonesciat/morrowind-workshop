@@ -146,6 +146,8 @@ tell it so if it offers. To keep your window where it is, untick **Show me what 
 How its work is kept in check:
 - Every change goes through the same steps as the Workshop's buttons, shows in **My changes** marked with 🤖 and the
   agent's name, and **Undo** takes it back. An agent can undo only its own last change.
+- An agent's change goes straight into your mod, but only while you have nothing unsaved. From your first unsaved
+  change until you Save or throw your changes away, its changes are refused, so neither of you writes over the other.
 - A Lua script it writes is checked before it is saved: its shape, the rules for its kind, every function and field
   against OpenMW's own list, and a function only a whole-game script may use. One with errors, or with a name OpenMW
   doesn't have, is refused with the reason, for the agent to fix. Forgotten `require` lines are put in. Events that

@@ -50,7 +50,8 @@ static class AppWindow
         return null;
     }
 
-    // Edge windows showing the Workshop (normal Edge windows are titled "... - Microsoft Edge"). A second
+    // Edge windows showing the Workshop (normal Edge windows are titled "... - Microsoft Edge"; the Workshop's own
+    // "Morrowind Workshop" or "<mod> · Morrowind Workshop"). A second
     // window opened from the Workshop (web/twowin.js) is titled "Morrowind Workshop: <place>": counted
     // only with seconds, so showing the Workshop fronts the main window and quitting closes them all.
     public static List<IntPtr> Windows(bool seconds = false)
@@ -68,7 +69,8 @@ static class AppWindow
                 var sb = new StringBuilder(256);
                 GetWindowText(h, sb, sb.Capacity);
                 string t = sb.ToString();
-                if (t == Title || (seconds && t.StartsWith(Title + ": "))) found.Add(h);
+                // (the main window is titled "<mod> · Morrowind Workshop", with a * while anything is unsaved)
+                if (t == Title || t.EndsWith(" \u00b7 " + Title) || (seconds && t.StartsWith(Title + ": "))) found.Add(h);
             }
             return true;
         }, IntPtr.Zero);
@@ -87,7 +89,7 @@ static class AppWindow
         }
         string edge = FindEdge();
         if (edge == null) return false;
-        Process.Start(new ProcessStartInfo(edge, "--app=\"" + url + "\" --window-size=1440,900") { UseShellExecute = false });
+        Process.Start(new ProcessStartInfo(edge, "--app=\"" + url + "?launcher=1\" --window-size=1440,900") { UseShellExecute = false });
         return true;
     }
 

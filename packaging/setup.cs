@@ -66,7 +66,7 @@ class SetupForm : Form
         intro.Text = existing != null
             ? "Morrowind Workshop is already installed. This puts version " + BuildInfo.Version + " in its place. Your projects and settings are kept."
             : "A modern, easy editor for making Morrowind mods with OpenMW. Build and furnish places, add people, " +
-              "items, dialogue and quests, and try them in the running game straight away.";
+              "items, dialogue and quests, and try them in the game right away.";
         intro.ForeColor = Text1;
         intro.SetBounds(26, 58, 508, 46);
         // what you need, said before anything is installed
@@ -77,7 +77,7 @@ class SetupForm : Form
                    "•  OpenMW 0.49 or newer (free, openmw.org), set up once with its Launcher\n" +
                    "•  Morrowind itself (for example from Steam or GOG)\n\n" +
                    "Everything else comes with the Workshop: no Python or other downloads, no administrator rights. " +
-                   "The AI assistant is optional; it needs your own Anthropic API key and is paid per use.",
+                   "AI help is optional and free: a model on your own PC, or your own coding agent.",
             ForeColor = Muted
         };
         needs.SetBounds(26, 108, 508, 142);
@@ -101,7 +101,7 @@ class SetupForm : Form
         desktop.Text = "Put a shortcut on the desktop";
         desktop.Checked = existing == null || File.Exists(Common.DesktopLink());
         desktop.SetBounds(26, 66, 500, 24);
-        bring.Text = "Bring over projects and settings from an earlier Workshop folder:";
+        bring.Text = "Bring over my projects from an earlier Workshop (not needed the first time):";
         bring.SetBounds(26, 100, 500, 24);
         oldFolder.SetBounds(46, 128, 400, 26);
         Style(oldFolder);
@@ -114,7 +114,7 @@ class SetupForm : Form
         bring.Checked = guess != null && existing == null;
         bring.CheckedChanged += (s, e) => { oldFolder.Enabled = browseOld.Enabled = bring.Checked; };
         oldFolder.Enabled = browseOld.Enabled = bring.Checked;
-        var oldNote = Lbl("(the folder with \"projects\" in it, such as one you unzipped before)", 46, 158);
+        var oldNote = Lbl("(an earlier Workshop's folder, with app and projects in it; not Morrowind's)", 46, 158);
         oldNote.ForeColor = Muted;
         options.Controls.AddRange(new Control[] { lf, folder, browse, desktop, bring, oldFolder, browseOld, oldNote });
 
@@ -209,6 +209,17 @@ class SetupForm : Form
         return null;
     }
 
+    // Morrowind's own folder, or OpenMW's: not an earlier Workshop
+    static bool IsGameFolder(string d)
+    {
+        try
+        {
+            return Directory.Exists(Path.Combine(d, "Data Files")) || File.Exists(Path.Combine(d, "Morrowind.exe")) ||
+                   File.Exists(Path.Combine(d, "Morrowind.esm")) || File.Exists(Path.Combine(d, "openmw.exe"));
+        }
+        catch { return false; }
+    }
+
     void Start()
     {
         string target = folder.Text.Trim();
@@ -224,9 +235,17 @@ class SetupForm : Form
             return;
         }
         string from = bring.Checked ? oldFolder.Text.Trim() : null;
+        if (from != null && !Directory.Exists(Path.Combine(from, "projects")) && IsGameFolder(from))
+        {
+            // (a tester chose his Steam Morrowind folder here, 2026-11-23: the option read as "where is Morrowind")
+            MessageBox.Show(this, "That is Morrowind's (or OpenMW's) folder:\n" + from + "\n\nThis option only brings over projects " +
+                "from an earlier Workshop. The Workshop finds Morrowind by itself, through OpenMW.\n\n" +
+                "If this is your first Workshop, untick it.", Text);
+            return;
+        }
         if (from != null && !Directory.Exists(Path.Combine(from, "projects")))
         {
-            MessageBox.Show(this, "There is no \"projects\" folder in\n" + from + "\n\nChoose the folder of the earlier Workshop (it has app and projects in it), or untick that option.", Text);
+            MessageBox.Show(this,"There is no \"projects\" folder in\n" + from + "\n\nChoose the folder of the earlier Workshop (it has app and projects in it), or untick that option.", Text);
             return;
         }
         if (from != null && string.Equals(Path.GetFullPath(from).TrimEnd('\\'), Path.GetFullPath(target).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
@@ -336,6 +355,18 @@ class SetupForm : Form
         if (say == null) say = (t, p) => { };
         Directory.CreateDirectory(Common.Long(target));
         say("Removing the old program files…", 5);
+        // (what an older build learnt into app\cache moved to the Workshop's cache folder first: the strays, town
+        // dressing and town life were learnt again after every install, minutes each, 2026-11-09)
+        string oldCache = Path.Combine(target, "app", "cache"), newCache = Path.Combine(target, "cache");
+        if (Directory.Exists(Common.Long(oldCache)))
+        {
+            Directory.CreateDirectory(Common.Long(newCache));
+            foreach (var f in Directory.GetFiles(Common.Long(oldCache), "*.json"))
+            {
+                string dst = Path.Combine(Common.Long(newCache), Path.GetFileName(f));
+                if (!File.Exists(dst)) { try { File.Move(f, dst); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+            }
+        }
         foreach (var d in new[] { "python", "app" })
         {
             string p = Path.Combine(target, d);

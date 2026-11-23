@@ -189,7 +189,7 @@ function renderGuide(){
       Your game files are never changed: everything goes into a mod of your own.</p>
     <div class="home-proj">${p
       ? `<span>Working on <b>${esc(p.name)}</b></span><button class="btn sm" data-gview="mymod">My mod</button><button class="btn sm" id="home-switch">Open another…</button>`
-      : `<button class="btn primary" id="home-new">＋ Start a mod</button><span class="msg">Give it a name. It's saved as you work, and Undo (${HELP_KEY('Ctrl+Z')}) takes anything back.</span>`}</div>
+      : `<button class="btn primary" id="home-new">＋ Start a mod</button><span class="msg">Give it a name. Save (${HELP_KEY('Ctrl+S')}) writes your work into it, and Undo (${HELP_KEY('Ctrl+Z')}) takes anything back.</span>`}</div>
   </div>
 
   <div class="cgrid home-cards">
@@ -210,7 +210,7 @@ function renderGuide(){
     <div class="gcard"><b>1 · It reads your game</b><p>The Workshop reads OpenMW's own settings, so it sees your Morrowind files and the mods you have switched on,
       in the same order as the game. It never changes your game files: your work goes into a mod file of your own.</p></div>
     <div class="gcard"><b>2 · Start a mod</b><p>Press <b>＋ Start a mod</b> at the top and give it a name. Everything you make or change from then on
-      is saved into it straight away. There's no Save button, and <b>Undo</b> (${HELP_KEY('Ctrl+Z')}) takes back the last change and <b>Redo</b> (${HELP_KEY('Ctrl+Y')}) puts it back.</p>
+      goes into it when you <b>Save</b> (${HELP_KEY('Ctrl+S')}); the title shows a * until then. <b>Undo</b> (${HELP_KEY('Ctrl+Z')}) takes back the last change and <b>Redo</b> (${HELP_KEY('Ctrl+Y')}) puts it back.</p>
       ${p ? `<p class="msg">You're working on <b>${esc(p.name)}</b>.</p>` : '<button class="btn sm primary" onclick="projectModal()">＋ Start a mod</button>'}</div>
     <div class="gcard"><b>3 · Try it in the game</b><p><b>▶ OpenMW → Start the game</b> at the top, or <b>Play here</b> on the World map, starts OpenMW
       with your mod and the <b>live link</b>: what you change in the Workshop appears in the game within a second.</p></div>
@@ -230,7 +230,7 @@ function renderGuide(){
     <tr><td><b>Scripts</b></td><td>Morrowind scripts and OpenMW Lua scripts, checked as you type.</td></tr>
     <tr><td><b>Rules</b></td><td>Factions, classes, races, birthsigns, skills, regions and weather, sounds (and the sounds creatures make), magic effects, global variables and game settings.</td></tr>
     <tr><td><b>My mod</b></td><td>What your mod contains, and <b>Get ready to share</b>: checks it, writes a readme and packs a zip.</td></tr>
-    <tr><td><b>📁 File</b> (at the top)</td><td><b>Open…</b> opens any .esp or .omwaddon, or one of your mods, from your computer's file picker. As in the Construction Set the file is the <b>active file</b>, saved straight back into; its placed objects keep their numbers, so saved games still work. <b>Save a version</b> and <b>Earlier versions</b> keep and bring back the mod as it was. <b>Save as…</b> puts everything into a new .esp or .omwaddon, which is the active file from then on. <b>Merge a mod into this one</b> folds another of your mods into this one as one change; <b>Merge a plugin file</b> does the same for any .esp or .omwaddon. <b>Manage mods</b> lists them all, to switch or delete.</td></tr>
+    <tr><td><b>📁 File</b> (at the top)</td><td><b>Open…</b> opens any .esp or .omwaddon, or one of your mods, from your computer's file picker. As in the Construction Set the file is the <b>active file</b>, saved back into; its placed objects keep their numbers, so saved games still work. <b>Save</b> (Ctrl+S) writes your changes into the mod; until then they are held here. <b>Save as…</b> puts everything into a new mod and you carry on in the copy. <b>Save a version</b> and <b>Earlier versions</b> keep and bring back the mod as it was saved. <b>Merge a mod into this one</b> folds another of your mods into this one as one change; <b>Merge a plugin file</b> does the same for any .esp or .omwaddon. <b>Manage mods</b> lists them all, to switch or delete.</td></tr>
     <tr><td><b>Health check</b></td><td>Problems in your load order, like missing masters, models or textures, and <b>Check my mod</b>: every record of your mod checked the way the game's editor checks them.</td></tr>
     <tr><td><b>Load order</b></td><td>Switch plugins on or off and change their order (saved to OpenMW's settings, with a backup).</td></tr>
   </table>

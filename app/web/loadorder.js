@@ -351,8 +351,14 @@ async function launchModal(){
   };
 }
 // Start the game through the Workshop: when "ask me each time" is on, the options come up first.
-// Returns the server's answer, or null when cancelled.
+// Returns the server's answer, or null when cancelled. With changes unsaved the game plays them from a test copy
+// (the mod's own file stays as saved): said once it starts.
 async function gameStart(url, body){
+  const r = await gameStart1(url, body);
+  if (r && r.test_copy) setTimeout(() => toast('Playing your unsaved changes. Your mod\'s file stays as saved until you Save.'), 4000);
+  return r;
+}
+async function gameStart1(url, body){
   let L = null;
   try { L = await api('/api/launch'); } catch (e){}
   if (!L || !L.ask) return await post(url, body);

@@ -21,6 +21,7 @@ import uuid
 import ai
 import editing
 from editing import EditError
+import project as _projmod
 from project import load_settings, save_settings
 
 PROTOCOLS = ('2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05')
@@ -31,7 +32,8 @@ MARK = '\U0001F916 '          # (an agent's change in My changes: "🤖 claude-c
 
 INSTRUCTIONS = """Morrowind Workshop is an editor for OpenMW mods (Morrowind). These tools act on the mod the user has \
 open in the Workshop: every change is saved into it straight away, shows in the user's My changes marked as yours, \
-and can be undone. Work the way the Workshop's buttons do; never edit the mod's files on disk (the Workshop writes \
+and can be undone. While the user has unsaved changes of their own (workshop_status: mod.unsaved) your changes are \
+refused until they save or throw theirs away: wait and try again, never work around it. Work the way the Workshop's buttons do; never edit the mod's files on disk (the Workshop writes \
 them from the mod and would write over your changes).
 
 The user watches your work in the Workshop's own window: it goes by itself to the place you open or change and selects what you place or move, with a line saying what you did. Never control the screen, mouse or keyboard to work the Workshop or the game: these tools are the only way in.
@@ -336,7 +338,10 @@ class Agent:
                'mod': None, 'place_open': self.helper.ctx.get('cell')}
         if p:
             out['mod'] = {'name': p.name, 'file': p.plugin, 'can_hold_lua': p.lua_allowed(),
-                          'lua_scripts': [s['name'] for s in p.lua], 'changes': len(p.log)}
+                          'lua_scripts': [s['name'] for s in p.lua], 'changes': len(p.log),
+                          'unsaved': bool(editing.unsaved(db))}
+            if out['mod']['unsaved']:
+                out['mod']['unsaved_note'] = editing.REFUSED
             if not p.lua_allowed():
                 out['mod']['note'] = 'A plain .esp can\'t hold Lua: File > Save as... in the Workshop makes an .omwaddon of it.'
         else:
@@ -743,10 +748,12 @@ def handle(db, lock, msg, session):
                 p = db.project
                 before = len(p.log) if p else 0
                 editing.ORIGIN.window = 'agent'
+                _projmod.EXTERNAL.on = True          # (refused while the user has unsaved changes: editing.commit)
                 try:
                     out = agent.call(tool, args)
                 finally:
                     editing.ORIGIN.window = None
+                    _projmod.EXTERNAL.on = False
                 if db.project is p and p is not None:
                     _mark_new(p, before, agent.name)
                 _act(agent, tool, out, steps0, p.log[before:] if (p is not None and db.project is p) else [], args=args)

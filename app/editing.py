@@ -1,11 +1,13 @@
 """All the ways a project can change: field edits, templates, reverts and
-placing/moving/removing objects in cells. Every change is saved immediately."""
+placing/moving/removing objects in cells. In the server a change is held in memory (with a recovery copy beside the
+mod) until the user's Save writes it into the mod: project.HOLD, save() below."""
 import os
 import re
 import struct
 import threading
 import time
 
+import project
 from esm import ENC, iter_subrecords, zstr
 from project import Snap, b64, join_subs, ref_info, set_ref_pos, state_diff, state_text, unb64, zs
 
@@ -20,7 +22,50 @@ class EditError(Exception):
     pass
 
 
+class Unsaved(EditError):
+    """Refused while the mod has unsaved changes. kind 'save': it needs the mod saved first (the page offers Save);
+    'leave': it would leave them behind (the page offers Save, Don't save; asked again with discard)."""
+    def __init__(self, msg, kind='save'):
+        super().__init__(msg)
+        self.kind = kind
+
+
+HOLD = project.HOLD
+REFUSED = ('Not changed: the mod has unsaved changes in the Workshop. Changes from other tools and scripts are refused '
+           'until the user saves them (Ctrl+S) or throws them away.')
+
+
+def unsaved(db):
+    """When the first unsaved change was made (time), or None."""
+    p = db.project
+    return getattr(p, 'unsaved_since', None) if (p is not None and HOLD[0]) else None
+
+
+def need_saved(db, what, kind='save'):
+    """Refuse (Unsaved) while there are unsaved changes: what = what would be done, 'Packing the mod'."""
+    if unsaved(db):
+        raise Unsaved('%s: your mod has unsaved changes.' % what, kind)
+
+
+def outside_blocked(db):
+    """Changes from coding agents and scripts are refused: the mod has unsaved changes, or a recovery copy of some is
+    waiting for the user's answer (written into the mod meanwhile, they would be lost to it)."""
+    p = db.project
+    return bool(HOLD[0] and p is not None and project.external() and (unsaved(db) or p.recovery_info()))
+
+
+def refuse_external(db):
+    """A coding agent or script may change the mod only while nothing is unsaved."""
+    if outside_blocked(db):
+        raise EditError(REFUSED)
+
+
+_INTO = [None]          # (a folder the mod's files are written into instead, for Play here's test copy: play_copy)
+
+
 def plugin_path(db):
+    if _INTO[0]:
+        return os.path.join(_INTO[0], os.path.basename(db.project.source or db.project.plugin))
     if getattr(db.project, 'source', None):
         return db.project.source          # a plugin opened as the mod: saved straight into that file (adopt.py)
     d = os.environ.get('WORKSHOP_PLUGIN_DIR') or db.config.get('data_local') or \
@@ -28,8 +73,11 @@ def plugin_path(db):
     return os.path.join(d, db.project.plugin)
 
 
-def build(db, texts=None):
-    """Write the mod (with its Lua files) and its grass file, if it has grass. texts: the places' JSON texts, if made."""
+def build(db, texts=None, force=False):
+    """Write the mod (with its Lua files) and its grass file, if it has grass. texts: the places' JSON texts, if made.
+    With changes unsaved (HOLD) nothing is written unless force (the user's Save)."""
+    if not force and not _INTO[0] and unsaved(db):
+        return
     db.project.build(db.proj_masters, plugin_path(db), texts)
     try:
         import grass
@@ -295,8 +343,24 @@ def busy_with():
     return None
 
 
+def _refuse_and_put_back(db):
+    """An agent's or script's change while the mod has unsaved changes: the project goes back to how it was before it
+    (the state after the last change), and the change is refused."""
+    p = db.project
+    if outside_blocked(db):
+        st = getattr(p, 'last_state', None)
+        if st is not None:
+            try:
+                p.restore(st, p.snapshot(st))
+                db.sync_project()
+            except Exception as e:
+                print('putting back a refused change:', e)
+        raise EditError(REFUSED)
+
+
 def commit(db, note=None, reverts=None):
     p = db.project
+    _refuse_and_put_back(db)
     before = getattr(p, 'last_state', None)
     after = p.snapshot(before)
     entry = None
@@ -371,8 +435,9 @@ def _hold():
     return bool(_op or BUSY) and time.time() - _writer['last'] < WRITE_HOLD
 
 
-def _write_now(db):
-    import json
+def _write_now(db, save=False):
+    """Write the mod: the project file, the plugin, its Lua and grass files. With changes unsaved (HOLD) and not the
+    user's Save, the recovery copy instead (project.write_recovery), never the mod."""
     texts = _rt = None
     try:
         # (each place's text made once, for the project file and to tell which places' bytes are as they were)
@@ -391,8 +456,21 @@ def _write_now(db):
     except Exception as e:
         print('could not read the places:', e)
     _writer['last'] = time.time()
+    if HOLD[0] and not save and unsaved(db):
+        try:
+            db.project.write_recovery(texts, _rt)
+        except Exception as e:
+            print('could not keep the recovery copy:', e)
+        _writer['recovered'] = time.time()
+        return
+    if save:
+        db.project.save(texts, _rt, force=True)     # (the user's Save: a failure is said, not printed)
+        build(db, texts, force=True)
+        return
     try:
-        db.project.save(texts, _rt)         # (the records' texts just made: not encoded a second time)
+        # (the records' texts just made: not encoded a second time. Nothing unsaved here: the lab, or an agent's change
+        # to a mod with nothing unsaved, written straight in)
+        db.project.save(texts, _rt, force='through')
     except Exception as e:
         print('could not save the project:', e)
     try:
@@ -402,6 +480,8 @@ def _write_now(db):
 
 
 def _write_soon(db):
+    if HOLD[0] and db.project is not None and not (project.external() and not db.project.unsaved_since):
+        db.project.mark_unsaved()           # (held: the writer keeps the recovery copy, RECOVERY_EVERY)
     if WRITE_LOCK is None:
         if _hold():
             _writer['held'] = db
@@ -431,7 +511,9 @@ def _writer_run():
                     _writer['done'].set()
                     return
             continue
-        if _hold():                          # (long work under way and written not long ago: looked at again shortly)
+        if _hold() or (unsaved(db) and time.time() - _writer.get('recovered', 0) < RECOVERY_EVERY):
+            # (long work under way and written not long ago, or a recovery copy kept a moment ago: looked at again
+            # shortly. A copy is the whole mod, half a second on a big one: not after every stroke)
             with _writer['lock']:
                 if _writer['pending'] is None:
                     _writer['pending'] = db
@@ -440,8 +522,81 @@ def _writer_run():
             _write_now(db)
 
 
+RECOVERY_EVERY = 5.0         # (the recovery copy is at most this old while changes go on: what a crash can lose)
+
+
+def save(db):
+    """The user's Save (Ctrl+S): everything into the mod, its .esp/.omwaddon, Lua and grass files; the recovery copy
+    goes. Called under WRITE_LOCK."""
+    _require_project(db)
+    if busy_with():
+        raise EditError('%s: Save waits until it is done.' % busy_with())
+    with _writer['lock']:
+        _writer['pending'] = None
+    _writer['held'] = None
+    try:
+        _write_now(db, save=True)
+    except OSError as e:
+        raise EditError('Could not save: %s' % e)
+    p = db.project
+    _notify(db)                          # (the windows show the title without its *)
+    return {'ok': True, 'name': p.name, 'plugin': p.plugin, 'pending': bool(getattr(p, 'pending_write', None))}
+
+
+def throw_away(db):
+    """Unsaved changes thrown away: nothing pending is written and the recovery copy goes. The caller opens the mod
+    again from its file (workshop.py)."""
+    with _writer['lock']:
+        _writer['pending'] = None
+    _writer['held'] = None
+    p = db.project
+    if p is not None:
+        project.SOON.discard(p)
+        p.unsaved_since = None
+        p.drop_recovery()
+
+
+PLAY_DIR = os.path.join(project.APP_DIR, 'cache', 'play')
+
+
+def play_copy(db):
+    """Play here with changes unsaved: the mod as it is in memory written into a folder of the Workshop's own
+    (PLAY_DIR), under the mod's own file names, for the game to load in place of the saved files (workshop.py gives
+    it as OpenMW's data-local, which wins over every other data folder). The mod's files stay as they were saved.
+    Returns the folder, or None when nothing is unsaved (the game loads the mod's own files)."""
+    if not unsaved(db):
+        return None
+    p = db.project
+    os.makedirs(PLAY_DIR, exist_ok=True)
+    for fn in os.listdir(PLAY_DIR):               # (another mod's copy, an earlier one's grass)
+        full = os.path.join(PLAY_DIR, fn)
+        try:
+            if os.path.isfile(full):
+                os.remove(full)
+        except OSError:
+            pass
+    lua_files = list(p.lua_files)
+    _INTO[0] = PLAY_DIR
+    p._test_build = True
+    try:
+        p.build(db.proj_masters, plugin_path(db))
+        try:
+            import grass
+            grass.write(db)
+        except Exception as e:
+            print('could not write the grass file:', e)
+    finally:
+        _INTO[0] = None
+        p._test_build = False
+        p.lua_files = lua_files
+    if getattr(p, 'pending_write', None) and os.path.dirname(p.pending_write[1]) == PLAY_DIR:
+        p.pending_write = None
+        raise EditError('The test copy of your mod is still in use (is the game closing?). Try again in a moment.')
+    return PLAY_DIR
+
+
 def flush(db=None):
-    """Write any change still pending, now (and wait for it)."""
+    """Write any change still pending, now (and wait for it): with changes unsaved, the recovery copy."""
     if WRITE_LOCK is None:
         held, _writer['held'] = _writer.get('held'), None
         if held is not None:
@@ -587,6 +742,7 @@ def touched(db):
 def undo(db, to_depth=None):
     """Undo the last change, or every change back to a recorded depth."""
     _require_project(db)
+    refuse_external(db)
     p = db.project
     p._touched = []
     try:
@@ -640,6 +796,7 @@ def undo(db, to_depth=None):
 def redo(db):
     """Put back the last change Undo took back, exactly as it was. Returns its note."""
     _require_project(db)
+    refuse_external(db)
     p = db.project
     p._touched = []
     try:
@@ -690,6 +847,7 @@ def fold(db, n, note):
     the Hall by 7 pieces"; a room added and furnished becomes one step). The log keeps one entry for the
     whole, with the diff from before the first to after the last."""
     _require_project(db)
+    refuse_external(db)
     p = db.project
     stack = getattr(p, 'undo_stack', [])
     asked = int(n)

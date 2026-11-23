@@ -10,7 +10,12 @@ your own.
 
 - **＋ Start a mod** (on Home) gives it a name. Its name then shows at the top, with how many changes it has:
   click it for **My mod**. **Open another…** on Home switches to another mod or starts a new one.
-- There is **no Save button**: every change is saved as you make it.
+- Your changes are kept in the Workshop until you **Save** (**File → Save**, Ctrl+S): only then do they go into
+  your mod and its plugin file. The title shows the mod's name with a **\*** while anything is unsaved.
+- Opening another mod, joining someone's, or closing the Workshop with changes unsaved asks first: **Save**,
+  **Don't save** or **Cancel**.
+- If the Workshop stops with changes unsaved anyway (a crash, or an update), they aren't lost: a recovery copy is
+  kept beside the mod, never in it. Next time it asks: **Get them back** or **Throw them away**.
 - **Undo** (Ctrl+Z) takes back the last change, **Redo** (Ctrl+Y) puts it back. Most tools make one change at a
   time, so one Undo takes back a whole furnished room or a shaped valley.
 - The Workshop also keeps **backups** of your mod while you work (Settings → Backups) and can restore any of
