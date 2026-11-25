@@ -609,8 +609,11 @@ def check_scene(db, sc):
                 if rk not in refs:
                     bad('%s: no object %s in the scene\'s cell.' % (a['key'], rk), 'warning')
         elif a.get('id'):
-            if db.resolve_id(str(a['id'])) is None:
+            ri = db.resolve_id(str(a['id']))
+            if ri is None:
                 bad('%s: there is no "%s".' % (a['key'], a['id']))
+            elif a.get('spawn') and db.recs[ri][0] not in ('NPC_', 'CREA'):
+                bad('%s: only a person or creature can be made by the scene ("%s" is a %s).' % (a['key'], a['id'], db.recs[ri][0]))
             if a.get('pick') not in (None, 'nearest'):
                 bad('%s: "pick" is "nearest".' % a['key'])
         else:
@@ -618,8 +621,48 @@ def check_scene(db, sc):
         for c in a.get('clips') or []:
             if not isinstance(c, dict) or not c.get('group'):
                 bad('%s: each clip names its animation "group".' % a['key'])
+        if a.get('spawn') and not a.get('id'):
+            bad('%s: an actor the scene makes ("spawn") needs its "id".' % a['key'])
+        marks0 = sc.get('marks') or {}
+        for mv in a.get('moves') or []:
+            to = mv.get('to') if isinstance(mv, dict) else None
+            for m in (to if isinstance(to, list) else [to]):
+                if not m or m not in marks0:
+                    bad('%s: a walk goes to marks; there is no mark "%s".' % (a['key'], m))
+        lv = a.get('leave')
+        if lv is not None and not (isinstance(lv, dict) and lv.get('how', 'vanish') in ('die', 'vanish')):
+            bad('%s: "leave" is {at, how: "die" or "vanish"}.' % a['key'])
+        if a.get('spawn') and a.get('mark') and a['mark'] not in marks0:
+            bad('%s: there is no mark "%s" to make them at.' % (a['key'], a['mark']))
     keys.add('player')
     marks = sc.get('marks') or {}
+    for v in sc.get('vfx') or []:
+        if not isinstance(v, dict) or not v.get('model'):
+            bad('Each effect has a "model" (meshes/...).')
+            continue
+        if v.get('on') and v['on'] not in keys | {'player'}:
+            bad('Effect %s: no actor "%s".' % (v.get('model'), v['on']))
+        if not v.get('on') and not v.get('pos') and not v.get('mark'):
+            bad('Effect %s is on an actor ("on") or at a spot ("mark" or "pos").' % v.get('model'))
+        if v.get('mark') and v['mark'] not in marks:
+            bad('Effect %s: there is no mark "%s".' % (v.get('model'), v['mark']))
+        if db.recs and v.get('model') and not db.meshes.read(str(v['model']).replace(chr(92), '/').lower()):
+            bad('Effect: no model %s in the game data.' % v['model'], 'warning')
+    for w in sc.get('world') or []:
+        if not isinstance(w, dict):
+            continue
+        if w.get('ref'):
+            try:
+                ref_key(w['ref'])
+            except EditError as e:
+                bad('World cue: %s' % e)
+            if w.get('do', 'activate') not in ('open', 'close', 'activate', 'hide', 'show'):
+                bad('World cue: "do" is open, close, activate, hide or show.')
+        elif not w.get('weather') and w.get('hour') is None:
+            bad('A world cue has an object ("ref"), a "weather" or an "hour".')
+    for c in sc.get('sound') or []:
+        if isinstance(c, dict) and c.get('on') and c['on'] not in keys | {'player'}:
+            bad('Sound %s: no actor "%s".' % (c.get('sound'), c['on']))
     for m, v in marks.items() if isinstance(marks, dict) else []:
         if not (isinstance(v, (list, tuple)) and len(v) in (3, 4)):
             bad('Mark %s is [x, y, z] or [x, y, z, yaw].' % m)
@@ -870,6 +913,18 @@ def http(handler, db, lock, method):
                 return send(200, get_scene(db, q.get('scene') or q.get('id')))
             if path == '/actions':
                 return send(200, actions(q.get('search')))
+            if path in ('/scene_cast', '/scene_effects'):
+                # (for a cutscene editor: who and what a place holds, and the effects a scene can show)
+                import scenes as _sc
+                if path == '/scene_effects':
+                    return send(200, {'effects': _sc.effect_models(db), 'weathers': _sc.WEATHERS})
+                c = q.get('cell') or ''
+                try:
+                    ck = cell_key(json.loads(c) if c.startswith('[') else c)
+                except (EditError, ValueError) as e:
+                    return send(400, {'error': str(e)})
+                return send(200, {'actors': [{k: a[k] for k in ('ref', 'id', 'name', 'type', 'pos', 'yaw')} for a in _sc.place_actors(db, ck)],
+                                  'objects': _sc.place_objects(db, ck)})
             return send(404, {'error': 'No such bridge call: %s %s.' % (method, u.path)})
         if path == '/action':
             out = None

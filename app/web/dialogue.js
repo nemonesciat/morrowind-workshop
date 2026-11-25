@@ -458,9 +458,9 @@ async function dEditLine(topicKey, line, isNew){
       if (!v1) return toast('Pick the scene.', true);
       try {
         const t = await post('/api/scenes/trigger', {scene: v1, trigger: {kind: 'dialogue', once: true}});
-        res.value = (res.value.trim() ? res.value.trimEnd() + '\n' : '') + `set ${t.trigger.name} to 1`;
+        res.value = (res.value.trim() ? res.value.trimEnd() + '\n' : '') + `set ${t.trigger.name} to 1` + (/^\s*goodbye\s*$/im.test(res.value) ? '' : '\nGoodbye');   // (a conversation holds the world still: Goodbye lets the scene play; its At the end › Talk with opens it again)
         act.value = ''; act.onchange(); res.oninput(); afterChange();
-        toast('The scene plays after this line (once it is saved).');
+        toast('The scene plays after this line (once it is saved). To come back to the conversation: in the scene, At the end › Talk with.');
       } catch (e){ toast(e.message, true); }
       return;
     }

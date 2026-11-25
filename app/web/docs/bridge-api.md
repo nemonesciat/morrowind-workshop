@@ -197,6 +197,20 @@ POST /bridge/scene/delete  {"scene": "<id>"}
 A scene with an error isn't kept, and the answer says why. Kept scenes are part of the mod, with Undo, and are
 written when the user saves. The Workshop keeps fields it doesn't know and sends them back as they were.
 
+For a cutscene editor (Workshop 2.9.12):
+
+```
+GET /bridge/scene_cast?cell=<interior name or [x,y]>
+    -> {"actors": [{"ref": {file, index}, "id", "name", "type": "npc"|"creature", "pos", "yaw"}],
+        "objects": [{"ref", "id", "name", "type": "door"|"light"|"activator"|"container", "pos", "teleport"}]}
+GET /bridge/scene_effects
+    -> {"effects": [{"model": "meshes/...", "name", "group": "Magic"|"Fire"|"This mod"}], "weathers": [...]}
+```
+
+`actors` are who can be in a scene there (`ref` as a scene's `actors[].ref`); `objects` are what a `world` cue or a
+`sound`'s `ref` can name. `effects` are models for `vfx` and for `appear` / `leave` effects; `weathers` are the
+names a `world` weather cue takes. Anyone else (a creature to summon) is an `id` with `"spawn": true`.
+
 ### Anything else the Workshop does
 
 ```
@@ -257,8 +271,13 @@ Agreed rules:
   - So `"offset": [90, -60, 0]` is 90 units to her right and 60 behind her.
 - **Voices** are full data paths (`Sound/Vo/...`), played with `core.sound.say` so the lips move.
 - **`end`** always runs: on finishing, on skip, on loading a save mid-scene, and when an actor is missing.
-- **Exposure and colour temperature** need a post-processing shader, which the Workshop will ship. With
+- **Exposure and colour temperature** use the Workshop's post-processing shaders (section 5). With
   post-processing off in a player's settings, those cues are skipped.
+- **People coming and going** (Workshop 2.9.12): an actor with `"spawn": true` and an `id` is made by the scene at
+  its `mark` (removed at the end unless `"stay": true`); `"appear": {"at", "vfx"}` keeps one out of the scene until
+  `at`; `"moves": [{"at", "to": "C" or ["C", "D"], "run"}]` walks them along marks, turning to the last mark's yaw;
+  `"leave": {"at", "how": "die" or "vanish", "vfx"}`; `"back": true` puts a placed actor back where it stood
+  once the scene ends. A skip or an early end settles them as the scene would have.
 - **Video:** a cue in `screen`, `{"at": 12.0, "movie": "mi_intro.bik"}`, plays a video from the game's `Video`
   folder (`Video/mi_intro.bik` works too; send the file with `/bridge/file` to `video/...`). The whole game, the
   scene player included, stands still for the video's length, then the scene carries on.
@@ -311,11 +330,15 @@ keeps the trigger the user picked. The choices are:
 | `actors` | `ref` is found by its plugin and index. `id` + `pick: "nearest"` takes the nearest loaded one. Its AI is held until the end. |
 | `clips` | `group` is played as MWScript's PlayGroup does. `loop: true` repeats it; otherwise it plays once. `speed` is supported. A group the actor doesn't have is written to openmw.log and passed over. `keys: {"<text key>": "vfx:<id>"}` starts that effect at the key. |
 | `shots` | The current shot is the last one whose `at` has passed. `fov` is vertical, in degrees. `move.to` takes `offset` (aimed shots) or `pos` (fixed shots), over `dur` seconds with `ease` (`in`, `out`, `inOut`, `linear`). |
-| `lines` | Played with `core.sound.say` (lips move) when the voice file exists. Without one, the text is shown as a message. |
-| `sound` | `music` is streamed. `sound` plays a sound file once. The music stops at the end. |
-| `vfx` | Added with `animation.addVfx` on `bone`, and removed after `dur`. One with `at` starts at that time; one without waits for a text key. |
-| `screen` | `fade: "in"` / `"out"` over `dur` (1 s if not given). `letterbox: "2.39"` (or another ratio) adds the bars. `movie: "<file>"` plays a video (PlayBink, through a small MWScript the Workshop adds to the mod: a global `ws<mod>_mv`, a start script `ws<mod>_mvs`, kept in step with the scenes and with Undo). A preview (`data`) plays only movies that a saved scene of the mod already uses. |
-| `end.do` | Runs in order: `{"controls": "on"}`, `{"quest": id, "stage": n}` (adds the journal entry), `{"global": name, "value": v}`, `{"event": name, "data": {...}}` (a global event). |
+| `lines` | Played with `core.sound.say` (lips move) when the voice file exists. The text shows as a subtitle in the black bars (or low on the screen), until the next line or for as long as it takes to read; `dur` sets it. The game's HUD is hidden while a scene plays. |
+| `sound` | `music` is streamed. `sound` is a sound's ID (`"destruction hit"`) or a file (`"Sound/..."`), played once; with `on` (an actor's key) or `ref` (a placed object) it is heard from there. The music stops at the end. |
+| `vfx` | On an actor (`on`): added with `animation.addVfx` on `bone`. At a spot (`mark` or `pos`): `world.vfx.spawn`, `scale` too. Removed after `dur`; `loop: true` repeats it until then (or until the end). One with `at` starts at that time; one on an actor without `at` waits for a text key. Models are data paths (`meshes/e/magic_hit_dst.NIF`); the Workshop's `GET /api/scenes/effects` lists the game's magic looks and fires and the mod's own particle effects. |
+| `world` | `{"at", "ref", "do"}`: `open` / `close` a door, `activate` (as the player using it: levers, scripted things), `hide` / `show` any object (a light goes out). `{"at", "weather": "Thunderstorm", "back": true}` changes the region's weather (back once the scene ends). `{"at", "hour": 21}` moves the clock on to that hour. |
+| `actors` coming and going | `spawn` (made from `id` at `mark`, calm so guards leave it be; `"hostile": true` leaves it as it is), `appear`, `moves` (walked with the actor's own controls, AI held; someone in the way stops them just short), `leave` (`die`: health to 0, the death plays; `vanish`: hidden), `back`. |
+| `shots` `cut` | `"dip"` or `"white"` with `cutdur` (0.6 s): the screen dips to black or white around the cut, darkest at the moment the camera changes. Without it, a straight cut. |
+| `screen` | `shake` (0 to 1) over `dur`: the camera shakes, strongest at the start. `fade: "in"` / `"out"` over `dur` (1 s if not given). `letterbox: "2.39"` (or another ratio) adds the bars. `movie: "<file>"` plays a video (PlayBink, through a small MWScript the Workshop adds to the mod: a global `ws<mod>_mv`, a start script `ws<mod>_mvs`, kept in step with the scenes and with Undo). A preview (`data`) plays only movies that a saved scene of the mod already uses. Post-processing cues (see below) go here too. |
+| `screen` look | Post-processing, blended in from the value before over `dur` (0: at once) and held until a later cue changes it; all off at the end. Colour: `exposure` (steps of light: 1 twice as bright, -1 half), `temperature` (-100 cold to 100 warm), `saturation` (1 as it is, 0 grey), `vignette` (0 to 1). Depth of field: `blur` (0 to 1), `range` (units of sharp depth, 250 if not given), `focus` (`{"actor": key, "at": "head"}`, followed every frame, or a distance in units). Motion blur: `motionblur` (0 to 1). The Workshop adds three hidden shaders to the mod (`shaders/ws_scene_*.omwfx`) when a scene uses these. The player needs post-processing on in OpenMW (Options › Post Processing); without it the scene plays the same, without the look. |
+| `end.do` | Runs in order: `{"controls": "on"}`, `{"quest": id, "stage": n}` (adds the journal entry), `{"global": name, "value": v}`, `{"event": name, "data": {...}}` (a global event), `{"talk": key}` (the conversation opens with them again: for a scene started from a line of dialogue, whose result says `Goodbye` so the world can move). |
 | `end.onSkip` | `"end"` (the default) ends the scene on skip. `"none"` turns skip off. |
 | `end.onMissingActor` | `"end"` (the default) ends the scene when an actor is missing or dies. |
 
@@ -324,8 +347,14 @@ keeps the trigger the user picked. The choices are:
   interface, the end steps, and the camera claim and release all ran as written;
 - the controls were off during each scene and back after it;
 - a movie cue 2 s in stopped the game for the video's 16.4 s, then the scene went on and ended on time;
+- colour and focus cues at 0 s and motion blur at 2 s switched the three shaders on as written, and all were off at the end;
 - a fixed shot with pitch -30 looked down at the right angle;
-- an aimed close-up stayed on the actor's head (at most 4° behind while the camera moves, exact once it stops).
+- an aimed close-up stayed on the actor's head (at most 4° behind while the camera moves, exact once it stops);
+- (2.9.12) walking up to Fargoth started a scene where a Dremora is summoned and burns him (an effect on his body,
+  fire at his feet, shakes, dips at two cuts) and he dies; the Dremora walks off, vanishes and is gone after the
+  end; the weather turned to a storm and back;
+- (2.9.12) a line of Sellus Gravius's dialogue started a scene where Socucius Ergalla comes in, walks over, speaks,
+  walks out and is back at his desk; the conversation with Sellus opened again at the end.
 
 ## 6. The two live links in one game
 
@@ -341,10 +370,10 @@ game scripts added. Each link keeps its own script and files, under three rules:
 
 ## 7. Not built yet
 
-- `exposure` and `temperature` (the post-processing shader), and `duck` on music. Until then they are passed over.
+- `duck` on music. Until then it is passed over.
 - Starting the game for a linked mod with your program's scripts added.
 - `CameraClaim` / `CameraRelease` on the Workshop's own link.
-- The post-processing shader for exposure and colour temperature.
+- Walking finds no way round things: it goes straight from mark to mark, so put marks where the way is clear.
 
 ## 8. A short example (Python)
 

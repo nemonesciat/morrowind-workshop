@@ -123,6 +123,16 @@ def anim_groups(db, rec_i):
         elif r[5]:
             kf = nifanim.files_for(db, r[5]).get('kf')
             files = [kf] if kf else []
+            # (a creature on the person skeleton, such as a Dremora or a Golden Saint: its walk, cast and attacks
+            #  come from the game's base animations, its own file adds what it has of its own)
+            base = 'meshes/xbase_anim.kf'
+            if kf and base not in files:
+                try:
+                    own = nifanim.groups(nifanim.text_keys(db.meshes.read(kf) or b'')[0])
+                except Exception:
+                    own = []
+                if len(own) < 10 and db.meshes.read(base):
+                    files.insert(0, base)
     except Exception as e:
         print('scene maker: no animation for', r[1], e)
     out = {}
@@ -222,6 +232,83 @@ def place_actors(db, cell_key):
     return sorted(out, key=lambda a: a['name'].lower())
 
 
+OBJECT_KINDS = {'DOOR': 'door', 'LIGH': 'light', 'ACTI': 'activator', 'CONT': 'container'}
+
+
+def place_objects(db, cell_key):
+    """The doors, lights, activators and containers of a place, for a scene's world cues: [{'ref', 'id', 'name',
+    'type': 'door'|'light'|'activator'|'container', 'pos', 'teleport'}] (teleport: a door to another place)."""
+    from project import ref_info
+    refs, _h = db.cell_refs(cell_key)
+    names = _plugin_names(db)
+    out = []
+    for rk, ref in refs.items():
+        if ref.get('deleted'):
+            continue
+        rid, pos, scale, gone = ref_info(ref['subs'])
+        if gone:
+            continue
+        ri = db.resolve_id(rid)
+        if ri is None or db.recs[ri][0] not in OBJECT_KINDS:
+            continue
+        origin = str(ref.get('origin') or rk.rsplit('|', 1)[0])
+        tele = any(t == 'DODT' for t, _d in ref['subs']) if db.recs[ri][0] == 'DOOR' else False
+        out.append({'ref': {'file': names.get(origin.lower(), origin), 'index': int(ref.get('idx') if ref.get('idx') is not None else rk.rsplit('|', 1)[1])},
+                    'id': db.recs[ri][1], 'name': db.recs[ri][2] or db.recs[ri][1], 'type': OBJECT_KINDS[db.recs[ri][0]],
+                    'pos': [round(pos[0]), round(pos[1]), round(pos[2])], 'teleport': tele})
+    return sorted(out, key=lambda a: (a['type'], a['name'].lower()))
+
+
+def effect_models(db):
+    """Effects a scene can show, from the game's magic effects (their cast, hit, area and bolt looks) and every VFX
+    static, then the mod's own particle effects: [{'model': 'meshes/...', 'name', 'group'}]."""
+    seen, out = set(), []
+
+    def add(model, name, group):
+        m = (model or '').replace('\\', '/').strip()
+        if not m:
+            return
+        if not m.lower().startswith('meshes/'):
+            m = 'meshes/' + m
+        if m.lower() in seen:
+            for e in out:
+                if e['model'].lower() == m.lower() and group == 'Magic' and name not in e['name']:
+                    e['name'] += ' / ' + name
+            return
+        seen.add(m.lower())
+        out.append({'model': m, 'name': name, 'group': group})
+    for i, r in enumerate(db.recs):
+        if r[0] == 'STAT' and r[1].lower().startswith('vfx_'):
+            nm = re.sub(r'^vfx_', '', r[1], flags=re.I).replace('_', ' ')
+            nm = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', nm)
+            add(r[5], nm[:1].upper() + nm[1:], 'Magic')
+    for i, r in enumerate(db.recs):
+        if r[0] == 'LIGH' and r[5] and re.search(r'fire|flame|brazier', r[1], re.I):
+            nm = re.sub(r'^(light|furn)[ _]', '', r[1], flags=re.I).replace('_', ' ').strip()
+            add(r[5], nm[:1].upper() + nm[1:], 'Fire')
+    import os
+    import editing
+    try:
+        folder = os.path.dirname(editing.plugin_path(db)) if db.project is not None else None
+    except Exception:
+        folder = None
+    if folder and os.path.isdir(os.path.join(folder, 'meshes')):
+        # (the mod's own effects: its models with particles in them, such as the particle maker's)
+        for root, _d, files in os.walk(os.path.join(folder, 'meshes')):
+            for f in sorted(files):
+                if f.lower().endswith('.nif'):
+                    try:
+                        raw = open(os.path.join(root, f), 'rb').read()
+                    except OSError:
+                        continue
+                    if b'NiParticle' in raw or b'NiBSParticle' in raw:
+                        add(os.path.relpath(os.path.join(root, f), folder).replace(os.sep, '/'), f[:-4], 'This mod')
+    return out
+
+
+WEATHERS = ['Clear', 'Cloudy', 'Foggy', 'Overcast', 'Rain', 'Thunderstorm', 'Ashstorm', 'Blight', 'Snow', 'Blizzard']
+
+
 FORMAT = """openmw-scene/1, a JSON object:
 format "openmw-scene/1"; scene (id: letters, numbers, _); name; cell ([x, y] outdoors, or an interior's name);
 length (seconds).
@@ -234,14 +321,149 @@ looks down; fov vertical degrees), or [{at, aim: {actor, at: "head"|"chest"|"fee
 the aimed actor's own frame from its aim height, fov}] or [{at, aim: {actor}, from: {actor: "player", shoulder:
 "right"|"left"}}]; never pos and aim in one shot. move: {to: {offset or pos}, ease: "in"|"out"|"inOut"|"linear",
 dur}. The shot showing is the last whose at has passed.
+Actors also: spawn: true (made by the scene from id, at its mark; removed at the end unless stay: true); back: true (put back
+where they stood once the scene ends);
+appear: {at, vfx: model} (not there until at; a spawned one is made then); moves: [{at, to: "C" or ["C", "D"],
+run}] (walks along the marks, turning to the last mark's yaw); leave: {at, how: "die"|"vanish", vfx: model}.
+A skip or early end settles them as the scene would have (appeared, dead, gone).
 lines [{at, who, text, voice: "Sound/Vo/..." (full data path; lips move)}].
-sound [{at, music: "Music/..."}, {at, sound: "Sound/..."}].
-vfx [{id, on, bone, model, dur, at}].
-screen [{at, fade: "in"|"out", dur}, {at, letterbox: "2.39"}, {at, movie: "file.bik"}].
-end {do: [{controls: "on"}, {quest, stage}, {global, value}, {event, data}], onSkip: "end"|"none",
+sound [{at, music: "Music/..."}, {at, sound: "Sound/..." or a sound ID, on: actor key or ref: {file, index}}]
+(on/ref: heard from there).
+vfx [{id, on, bone, model, dur, at, loop}] on an actor, or [{at, mark: "X" or pos: [x, y, z], model, dur, loop,
+scale}] at a spot (model: "meshes/...", such as a magic effect's cast, hit or area static).
+world [{at, ref: {file, index}, do: "open"|"close"|"activate"|"hide"|"show"}, {at, weather: "thunderstorm", back:
+true}, {at, hour: 21}] (doors, levers and activators, lights or any object shown or hidden; the weather; the time).
+screen [{at, fade: "in"|"out", dur}, {at, letterbox: "2.39"}, {at, movie: "file.bik"}, {at, shake: 0-1, dur}].
+Shots also take cut: "dip" | "white" and cutdur (seconds, 0.6): a dip to black or white around the cut.
+end {do: [{controls: "on"}, {quest, stage}, {global, value}, {event, data}, {talk: actor key} (the conversation
+opens with them again: for a scene started from a line of dialogue)], onSkip: "end"|"none",
 onMissingActor: "end"}. The end always runs: finishing, skip, a save loaded mid-scene, a missing actor.
 Typical close-up: offset [40, 90, 0] (in front, a little to her right), fov 35; over the shoulder: from the player's
 right shoulder aiming at the speaker; wide: a fixed shot 600-1200 units away, pitch -10."""
+
+
+# Post-processing in scenes: three small shaders of the Workshop's own (hidden from the player's shader menu, switched
+# on by the scene player only while a scene uses them). The player needs post-processing on in OpenMW's settings;
+# without it the cues do nothing and the scene plays the same.
+PP_KEYS = ('exposure', 'temperature', 'saturation', 'vignette', 'focus', 'blur', 'motionblur')
+
+SHADERS = {
+    'shaders/ws_scene_grade.omwfx': r"""uniform_float uExposure { default = 0.0; min = -4.0; max = 4.0; step = 0.01; static = false; }
+uniform_float uTemperature { default = 0.0; min = -100.0; max = 100.0; step = 1.0; static = false; }
+uniform_float uSaturation { default = 1.0; min = 0.0; max = 2.0; step = 0.01; static = false; }
+uniform_float uVignette { default = 0.0; min = 0.0; max = 1.0; step = 0.01; static = false; }
+
+fragment main {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec4 c = omw_GetLastShader(omw_TexCoord);
+        c.rgb *= exp2(uExposure);
+        float t = uTemperature / 100.0;
+        c.rgb *= vec3(1.0 + 0.14 * t, 1.0 + 0.03 * t, 1.0 - 0.14 * t);
+        float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+        c.rgb = mix(vec3(l), c.rgb, uSaturation);
+        float d = distance(omw_TexCoord, vec2(0.5));
+        c.rgb *= 1.0 - uVignette * smoothstep(0.25, 0.75, d);
+        omw_FragColor = c;
+    }
+}
+
+technique {
+    description = "Morrowind Workshop scene colour";
+    version = "1.0";
+    author = "Morrowind Workshop";
+    passes = main;
+    flags = hidden;
+    dynamic = true;
+}
+""",
+    'shaders/ws_scene_dof.omwfx': r"""uniform_float uFocus { default = 300.0; min = 1.0; max = 100000.0; step = 1.0; static = false; }
+uniform_float uRange { default = 250.0; min = 1.0; max = 100000.0; step = 1.0; static = false; }
+uniform_float uStrength { default = 0.0; min = 0.0; max = 1.0; step = 0.01; static = false; }
+
+fragment main {
+    omw_In vec2 omw_TexCoord;
+
+    float soft(vec2 uv)
+    {
+        return clamp(abs(omw_GetLinearDepth(uv) - uFocus) / uRange, 0.0, 1.0);
+    }
+
+    void main()
+    {
+        vec4 base = omw_GetLastShader(omw_TexCoord);
+        float c = soft(omw_TexCoord) * uStrength;
+        if (c < 0.01) {
+            omw_FragColor = base;
+            return;
+        }
+        vec2 r = omw.rcpResolution * 10.0 * c;
+        vec3 sum = base.rgb;
+        float w = 1.0;
+        for (int i = 0; i < 24; i++) {
+            float a = float(i) * 2.39996;
+            float rr = sqrt((float(i) + 0.5) / 24.0);
+            vec2 uv = omw_TexCoord + vec2(cos(a), sin(a)) * rr * r;
+            float ww = max(soft(uv), 0.15);
+            sum += omw_GetLastShader(uv).rgb * ww;
+            w += ww;
+        }
+        omw_FragColor = vec4(sum / w, base.a);
+    }
+}
+
+technique {
+    description = "Morrowind Workshop scene depth of field";
+    version = "1.0";
+    author = "Morrowind Workshop";
+    passes = main;
+    flags = hidden;
+    dynamic = true;
+}
+""",
+    'shaders/ws_scene_motion.omwfx': r"""uniform_float uStrength { default = 0.0; min = 0.0; max = 1.0; step = 0.01; static = false; }
+
+fragment main {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec4 base = omw_GetLastShader(omw_TexCoord);
+        if (uStrength < 0.01) {
+            omw_FragColor = base;
+            return;
+        }
+        vec4 world = vec4(omw_GetWorldPosFromUV(omw_TexCoord), 1.0);
+        vec4 now = omw.projectionMatrix * omw.viewMatrix * world;
+        vec4 before = omw.projectionMatrix * omw.prevViewMatrix * world;
+        vec2 v = (now.xy / now.w - before.xy / before.w) * 0.5 * uStrength;
+        float n = length(v);
+        if (n > 0.04) v *= 0.04 / n;
+        vec3 sum = base.rgb;
+        for (int i = 1; i < 10; i++) {
+            sum += omw_GetLastShader(omw_TexCoord - v * (float(i) / 9.0)).rgb;
+        }
+        omw_FragColor = vec4(sum / 10.0, base.a);
+    }
+}
+
+technique {
+    description = "Morrowind Workshop scene motion blur";
+    version = "1.0";
+    author = "Morrowind Workshop";
+    passes = main;
+    flags = hidden;
+    dynamic = true;
+}
+""",
+}
+
+
+def uses_pp(scenes):
+    return any(isinstance(c, dict) and any(k in c for k in PP_KEYS)
+               for sc in (scenes or {}).values() if isinstance(sc, dict) for c in (sc.get('screen') or []))
 
 
 def outputs(slug, scenes):
@@ -256,6 +478,8 @@ def outputs(slug, scenes):
                      .replace('%MOVIES%', lua_value({f: i + 1 for i, f in enumerate(mv)})))
     out = {base + 'data.lua': data, base + 'global.lua': sub(GLOBAL), base + 'player.lua': sub(PLAYER),
            base + 'actor.lua': sub(ACTOR)}
+    if uses_pp(scenes):
+        out.update(SHADERS)
     lines = ['GLOBAL: ' + base + 'global.lua', 'PLAYER: ' + base + 'player.lua', 'CUSTOM: ' + base + 'actor.lua']
     return out, lines
 
@@ -292,15 +516,18 @@ local function cellName(sc)
   return ''                                            -- (outdoors: the position says where)
 end
 
-local function findActor(a, near)
-  if type(a.ref) == 'table' and a.ref.file and a.ref.index then
-    local ok, id = pcall(core.getFormId, a.ref.file, tonumber(a.ref.index))
-    if ok and id then
-      local ok2, obj = pcall(world.getObjectByFormId, id)
-      if ok2 and obj and obj:isValid() then return obj end
-    end
-    return nil
+local function findRef(ref)
+  if type(ref) ~= 'table' or not ref.file or not ref.index then return nil end
+  local ok, id = pcall(core.getFormId, ref.file, tonumber(ref.index))
+  if ok and id then
+    local ok2, obj = pcall(world.getObjectByFormId, id)
+    if ok2 and obj and obj:isValid() then return obj end
   end
+  return nil
+end
+
+local function findActor(a, near)
+  if type(a.ref) == 'table' and a.ref.file and a.ref.index then return findRef(a.ref) end
   if a.id then
     local best, bd = nil, math.huge
     local ok, list = pcall(world.getObjectsByRecordId, string.lower(a.id))
@@ -323,18 +550,69 @@ local function missing(obj)
   return ok and dead
 end
 
+local function markAt(sc, name)
+  local marks = type(sc.marks) == 'table' and sc.marks or {}
+  return name and marks[name] or nil
+end
+
+local function hereCell()
+  local p = player()
+  return (p and p.cell and not p.cell.isExterior) and p.cell.name or ''
+end
+
+local function spotVfx(model, pos, opts)
+  if not model or model == '' or not pos then return end
+  local ok, err = pcall(world.vfx.spawn, model, pos, opts or {})
+  if not ok then say('effect %s: %s', tostring(model), tostring(err)) end
+end
+
 local function sendPlayer(name, data)
   local p = player()
   if p then p:sendEvent(EV .. name, data or {}) end
 end
 
+local spawnActor, leaveActor, appearActor
+
+-- skipped or ended early: who appears, dies or goes still does, so the world is as the scene leaves it
+local function settle()
+  for _, a in ipairs(type(cur.sc.actors) == 'table' and cur.sc.actors or {}) do
+    local k = a.key
+    if k and cur.waiting[k] and (a.stay or type(a.leave) ~= 'table') then spawnActor(a, true) end
+    if k and cur.hidden[k] then appearActor(a, true) end
+    if k and type(a.leave) == 'table' and not cur.gone[k] and cur.actors[k] then leaveActor(a, true) end
+  end
+end
+
 local function finish(how)
   if not cur then return end
+  if how ~= 'finish' and how ~= 'load' then pcall(settle) end
   local sc, actors = cur.sc, cur.actors
-  local id = cur.id
+  local id, made, spots, back, home = cur.id, cur.made, cur.spots, cur.weatherBack, cur.home
   cur = nil
+  for key, h in pairs(home or {}) do
+    local obj = actors[key]
+    if obj and obj:isValid() then
+      pcall(function() obj.enabled = true end)
+      pcall(function() obj:teleport(h.cell, h.pos, {rotation = h.rot}) end)
+    end
+  end
+  for key, m in pairs(made or {}) do
+    -- (made by the scene: gone again at the end, unless it stays)
+    local obj = actors[key]
+    if not m.stay and obj and obj:isValid() then
+      local ok, err = pcall(function() obj:remove() end)
+      if not ok then say('%s: could not remove %s: %s', tostring(id), key, tostring(err)); pcall(function() obj.enabled = false end) end
+      actors[key] = nil
+    end
+  end
+  for vid in pairs(spots or {}) do pcall(world.vfx.remove, vid) end
+  if back then
+    local p0 = player()
+    pcall(function() core.weather.changeWeather(p0.cell.region, back) end)
+  end
   local p = player()
   local endv = type(sc['end']) == 'table' and sc['end'] or {}
+  local talkTo = nil
   for _, d in ipairs(type(endv['do']) == 'table' and endv['do'] or {}) do
     local ok, err = pcall(function()
       if d.quest and p then
@@ -344,6 +622,8 @@ local function finish(how)
         world.mwscript.getGlobalVariables(p)[d.global] = tonumber(d.value) or 0
       elseif d.event then
         core.sendGlobalEvent(d.event, type(d.data) == 'table' and d.data or {})
+      elseif d.talk then
+        talkTo = actors[d.talk]                       -- (the conversation goes on with them once the camera is back)
       end
     end)
     if not ok then say('%s: an end step failed: %s', id, tostring(err)) end
@@ -352,6 +632,7 @@ local function finish(how)
     if obj:isValid() and obj ~= p then obj:sendEvent(EV .. 'End', {}) end
   end
   sendPlayer('End', {how = how, controls = true})
+  if talkTo and talkTo:isValid() then sendPlayer('Talk', {who = talkTo}) end
   core.sendGlobalEvent('CameraRelease', {name = NAME})
   core.sendGlobalEvent('WsScene_Ended', {scene = id, mod = SLUG, how = how})
   say('%s ended (%s)', id, how)
@@ -380,18 +661,30 @@ local function start(id, t, data)
   if not p then return end
   local actors, keys = {player = p}, {}
   local marks = type(sc.marks) == 'table' and sc.marks or {}
-  cur = {id = id, sc = sc, t = 0, paused = false, actors = actors, fired = {}, preview = data ~= nil}
+  cur = {id = id, sc = sc, t = 0, paused = false, actors = actors, fired = {}, preview = data ~= nil,
+         gone = {}, made = {}, waiting = {}, hidden = {}, begun = {}, grace = {}, spots = {}, spotEnd = {}, home = {}}
   for _, a in ipairs(type(sc.actors) == 'table' and sc.actors or {}) do
     if a.key then
-      local obj = findActor(a, p.position)
-      if missing(obj) then
-        if onMissing(a.key) then return end
+      local appearAt = type(a.appear) == 'table' and (tonumber(a.appear.at) or 0) or 0
+      if a.spawn and a.id then
+        cur.waiting[a.key] = true                       -- (made when its time comes)
       else
-        actors[a.key] = obj
-        keys[#keys + 1] = a.key
-        if not obj:hasScript(ACTOR) then obj:addScript(ACTOR) end
-        obj:sendEvent(EV .. 'Begin', {vfx = sc.vfx})
-        if a.mark and marks[a.mark] then place(obj, marks[a.mark]) end
+        local obj = findActor(a, p.position)
+        if missing(obj) then
+          if onMissing(a.key) then return end
+        else
+          actors[a.key] = obj
+          keys[#keys + 1] = a.key
+          if not obj:hasScript(ACTOR) then obj:addScript(ACTOR) end
+          obj:sendEvent(EV .. 'Begin', {vfx = sc.vfx})
+          cur.begun[a.key] = obj
+          if a.back then
+            -- (back where they were once the scene ends)
+            cur.home[a.key] = {cell = (obj.cell and not obj.cell.isExterior) and obj.cell.name or '', pos = obj.position, rot = obj.rotation}
+          end
+          if a.mark and marks[a.mark] then place(obj, marks[a.mark]) end
+          if appearAt > 0 then pcall(function() obj.enabled = false end); cur.hidden[a.key] = true end
+        end
       end
     end
   end
@@ -410,11 +703,155 @@ end
 local function lineSay(ln)
   local who = cur.actors[ln.who or ln.actor or '']
   if who and ln.voice and vfs.fileExists(ln.voice) then
-    local ok, err = pcall(core.sound.say, ln.voice, who, ln.text)
-    if ok then return end
-    say('%s: voice %s failed: %s', cur.id, tostring(ln.voice), tostring(err))
+    local ok, err = pcall(core.sound.say, ln.voice, who)
+    if not ok then say('%s: voice %s failed: %s', cur.id, tostring(ln.voice), tostring(err)) end
   end
-  if ln.text then sendPlayer('Text', {text = ln.text}) end
+  if ln.text and ln.text ~= '' then
+    -- (on screen until the next line, or for as long as it takes to read)
+    local dur = tonumber(ln.dur) or (1.6 + #ln.text * 0.055)
+    for _, o in ipairs(type(cur.sc.lines) == 'table' and cur.sc.lines or {}) do
+      local d = (tonumber(o.at) or 0) - (tonumber(ln.at) or 0)
+      if d > 0.05 and d < dur then dur = d end
+    end
+    sendPlayer('Text', {text = ln.text, dur = dur})
+  end
+end
+
+-- an actor made by the scene (spawn), shown (appear), walked (moves), killed or sent away (leave)
+spawnActor = function(a, quiet)
+  cur.waiting[a.key] = nil
+  local p = player()
+  local m = markAt(cur.sc, a.mark) or (p and {p.position.x, p.position.y + 150, p.position.z, 0})
+  local ok, obj = pcall(world.createObject, string.lower(a.id), 1)
+  if not ok or not obj then say('%s: could not make %s: %s', cur.id, tostring(a.id), tostring(obj)); cur.gone[a.key] = true; return end
+  pcall(function() obj:addScript(ACTOR) end)
+  pcall(function() obj:teleport(hereCell(), v3(m), {rotation = util.transform.rotateZ(deg(m[4])), onGround = true}) end)
+  cur.made[a.key] = {near = v3(m), stay = a.stay and true or false}
+  cur.actors[a.key] = obj
+  cur.grace[a.key] = cur.t + 1.5
+  local fx = type(a.appear) == 'table' and a.appear.vfx
+  if fx and not quiet then spotVfx(fx, v3(m)) end
+  sendPlayer('Actors', {actors = cur.actors})
+end
+
+appearActor = function(a, quiet)
+  cur.hidden[a.key] = nil
+  local obj = cur.actors[a.key]
+  if not obj or not obj:isValid() then return end
+  pcall(function() obj.enabled = true end)
+  local fx = type(a.appear) == 'table' and a.appear.vfx
+  if fx and not quiet then spotVfx(fx, obj.position) end
+end
+
+leaveActor = function(a, quiet)
+  local obj = cur.actors[a.key]
+  cur.gone[a.key] = true
+  if not obj or not obj:isValid() then return end
+  local how = a.leave.how or 'vanish'
+  if a.leave.vfx and not quiet then spotVfx(a.leave.vfx, obj.position) end
+  if how == 'die' then
+    obj:sendEvent(EV .. 'Die', {})                 -- (health is set by their own script: only it may)
+  else
+    local ok, err = pcall(function() obj.enabled = false end)
+    if not ok then say('%s: %s could not be hidden: %s', cur.id, a.key, tostring(err)) end
+  end
+end
+
+local function walkActor(a, mv)
+  local obj = cur.actors[a.key]
+  if not obj or not obj:isValid() then return end
+  local to = type(mv.to) == 'table' and mv.to or {mv.to}
+  local pts, face = {}, nil
+  for _, name in ipairs(to) do
+    local m = markAt(cur.sc, name)
+    if m then pts[#pts + 1] = v3(m); face = m[4] and deg(m[4]) or nil end
+  end
+  if #pts > 0 then obj:sendEvent(EV .. 'Walk', {points = pts, run = mv.run and true or false, face = face}) end
+end
+
+local function worldCue(w)
+  local p = player()
+  if w.ref then
+    local obj = findRef(w.ref)
+    if not obj then say('%s: no object %s|%s for a world cue', cur.id, tostring(w.ref.file), tostring(w.ref.index)); return end
+    local d = w['do'] or 'activate'
+    if d == 'open' or d == 'close' then pcall(types.Door.activateDoor, obj, d == 'open')
+    elseif d == 'hide' then pcall(function() obj.enabled = false end)
+    elseif d == 'show' then pcall(function() obj.enabled = true end)
+    elseif p then pcall(function() obj:activateBy(p) end) end
+  end
+  if w.weather and p and p.cell then
+    local rec = core.weather.records[w.weather] or core.weather.records[string.lower(w.weather)]
+    if not rec then
+      for _, r in pairs(core.weather.records) do
+        if string.lower(r.recordId or '') == string.lower(w.weather) or string.lower(r.name or '') == string.lower(w.weather) then rec = r end
+      end
+    end
+    if rec then
+      if w.back and not cur.weatherBack then cur.weatherBack = core.weather.getCurrent(p.cell) end
+      local ok, err = pcall(core.weather.changeWeather, p.cell.region or '', rec)
+      if not ok then say('%s: weather: %s', cur.id, tostring(err)) end
+    else say('%s: no weather %s', cur.id, tostring(w.weather)) end
+  end
+  if w.hour then
+    local now = (world.getGameTime() / 3600) % 24
+    local h = ((tonumber(w.hour) or now) - now) % 24
+    if h > 0.01 then pcall(world.advanceTime, h) end
+  end
+end
+
+local function sound3d(c)
+  local obj = (c.on and cur.actors[c.on]) or (c.ref and findRef(c.ref))
+  if not obj or not c.sound then return end
+  local opts = {volume = tonumber(c.volume) or 1}
+  local file = string.find(c.sound, '[/\\.]') ~= nil
+  local ok, err = pcall(file and core.sound.playSoundFile3d or core.sound.playSound3d, c.sound, obj, opts)
+  if not ok then say('%s: sound %s: %s', cur.id, tostring(c.sound), tostring(err)) end
+end
+
+local function cueTimes(t, run)
+  -- (every timed cue that isn't the actors' clips or lines: run = false marks those before t as done, for a seek)
+  local sc = cur.sc
+  for _, a in ipairs(type(sc.actors) == 'table' and sc.actors or {}) do
+    if a.key then
+      if cur.waiting[a.key] then
+        local at = type(a.appear) == 'table' and (tonumber(a.appear.at) or 0) or 0
+        if at <= t then spawnActor(a, not run) end
+      end
+      if cur.hidden[a.key] and type(a.appear) == 'table' and (tonumber(a.appear.at) or 0) <= t then appearActor(a, not run) end
+      for i, mv in ipairs(type(a.moves) == 'table' and a.moves or {}) do
+        local k = 'move:' .. a.key .. ':' .. i
+        if not cur.fired[k] and (tonumber(mv.at) or 0) <= t then cur.fired[k] = true; if run then walkActor(a, mv) end end
+      end
+      if type(a.leave) == 'table' and not cur.gone[a.key] and (tonumber(a.leave.at) or 0) <= t then
+        if cur.actors[a.key] then leaveActor(a, not run) end
+      end
+    end
+  end
+  for i, w in ipairs(type(sc.world) == 'table' and sc.world or {}) do
+    local k = 'world:' .. i
+    if not cur.fired[k] and (tonumber(w.at) or 0) <= t then cur.fired[k] = true; if run or w.weather then worldCue(w) end end
+  end
+  for i, c in ipairs(type(sc.sound) == 'table' and sc.sound or {}) do
+    local k = 'snd3:' .. i
+    if (c.on or c.ref) and not cur.fired[k] and (tonumber(c.at) or 0) <= t then cur.fired[k] = true; if run then sound3d(c) end end
+  end
+  for i, v in ipairs(type(sc.vfx) == 'table' and sc.vfx or {}) do
+    local k = 'vfx:' .. i
+    if not v.on and (v.mark or v.pos) and not cur.fired[k] and (tonumber(v.at) or 0) <= t then
+      cur.fired[k] = true
+      local m = v.pos or markAt(sc, v.mark)
+      if run and m then
+        local vid = 'wsscene_' .. SLUG .. '_' .. i
+        spotVfx(v.model, v3(m), {vfxId = vid, loop = v.loop and true or false, scale = tonumber(v.scale) or 1})
+        cur.spots[vid] = true
+        if v.dur then cur.spotEnd[vid] = (tonumber(v.at) or 0) + (tonumber(v.dur) or 1) end
+      end
+    end
+  end
+  for vid, te in pairs(cur.spotEnd) do
+    if t >= te then cur.spotEnd[vid] = nil; cur.spots[vid] = nil; pcall(world.vfx.remove, vid) end
+  end
 end
 
 local function seek(t)
@@ -439,6 +876,7 @@ local function seek(t)
   for i, c in ipairs(type(sc.screen) == 'table' and sc.screen or {}) do
     if c.movie and (tonumber(c.at) or 0) <= cur.t then cur.fired['movie:' .. i] = true end
   end
+  cueTimes(cur.t, false)
   sendPlayer('Seek', {t = cur.t})
 end
 
@@ -450,14 +888,23 @@ local function step(dt)
     local obj = cur.actors[a.key]
     if obj and (not obj:isValid() or obj.count == 0) then
       -- (moved to their mark, the game hands out a fresh object for them: found again, the camera told)
-      local again = findActor(a, player() and player().position)
+      local made = cur.made[a.key]
+      local again = findActor(made and {id = a.id} or a, made and made.near or (player() and player().position))
       if again and again:isValid() and again.count > 0 then
         obj = again; cur.actors[a.key] = again
         sendPlayer('Actors', {actors = cur.actors})
-      elseif cur.t < 1.5 then
+      elseif cur.t < math.max(1.5, cur.grace[a.key] or 0) then
         obj = nil                                       -- (a moment's grace while a move settles)
       end
     end
+    if obj and not cur.begun[a.key] and obj:isValid() and obj.count > 0 then
+      -- (made by the scene: its script started once the game has it in the cell)
+      if not obj:hasScript(ACTOR) then pcall(function() obj:addScript(ACTOR) end) end
+      obj:sendEvent(EV .. 'Begin', {vfx = sc.vfx})
+      cur.begun[a.key] = obj
+      if cur.made[a.key] and not a.hostile then obj:sendEvent(EV .. 'Calm', {}) end
+    end
+    if obj and cur.gone[a.key] then obj = nil end      -- (killed or sent away by the scene: not missing)
     if obj then
       if missing(obj) then
         cur.actors[a.key] = nil
@@ -491,12 +938,14 @@ local function step(dt)
     end
   end
   for i, v in ipairs(type(sc.vfx) == 'table' and sc.vfx or {}) do
-    if v.at and not cur.fired['vfx:' .. i] and (tonumber(v.at) or 0) <= t then
+    if v.on and v.at and not cur.fired['vfx:' .. i] and (tonumber(v.at) or 0) <= t then
       cur.fired['vfx:' .. i] = true
       local obj = cur.actors[v.on or '']
       if obj then obj:sendEvent(EV .. 'Vfx', {vfx = v}) end
     end
   end
+  cueTimes(t, true)
+  if not cur then return end
   if t >= (tonumber(sc.length) or 0) then finish('finish') end
 end
 
@@ -605,9 +1054,15 @@ local util = require('openmw.util')
 local input = require('openmw.input')
 local vfs = require('openmw.vfs')
 local okA, ambient = pcall(require, 'openmw.ambient')
+local okP, pp = pcall(require, 'openmw.postprocessing')
+local I = require('openmw.interfaces')
 
 local EV = 'WsScene_%SLUG%_'
 local S = nil              -- {sc, actors, t, paused, mode, switches, bars, fade, music}
+local LAYER = 'WsScene'    -- (the scene's own screen layer: bars, fades and subtitles above the game, the HUD hidden)
+pcall(function() if not ui.layers.indexOf(LAYER) then ui.layers.insertAfter('HUD', LAYER, {interactive = false}) end end)
+local function layer() local ok, i = pcall(ui.layers.indexOf, LAYER); return (ok and i) and LAYER or 'HUD' end
+local function hud(on) pcall(function() I.UI.setHudVisibility(on) end) end
 local hold = false
 local SWITCHES = {'Controls', 'Fighting', 'Jumping', 'Looking', 'Magic', 'ViewMode', 'VanityMode'}
 
@@ -728,21 +1183,67 @@ local function placeCamera()
     end
     yaw, pitch = look(pos, P)
   end
+  if S.shake then
+    -- (a shake: strongest at its start, gone by its end)
+    local f = (S.t - S.shake.t0) / math.max(0.05, S.shake.dur)
+    if f >= 1 then S.shake = nil
+    else
+      local a = S.shake.amp * (1 - f)
+      pos = pos + util.vector3(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * (14 * a)
+      yaw = yaw + (math.random() - 0.5) * 0.03 * a
+      pitch = pitch + (math.random() - 0.5) * 0.03 * a
+    end
+  end
   camera.setStaticPosition(pos)
   camera.setYaw(yaw)
   camera.setPitch(pitch)
   if s.fov then camera.setFieldOfView(deg(s.fov)) end
 end
 
-local function black(alpha, y, h)
-  return ui.create({layer = 'HUD', type = ui.TYPE.Image, props = {
-    resource = ui.texture({path = 'white'}), color = util.color.rgb(0, 0, 0), alpha = alpha,
+local function black(alpha, y, h, white)
+  local c = white and 1 or 0
+  return ui.create({layer = layer(), type = ui.TYPE.Image, props = {
+    resource = ui.texture({path = 'white'}), color = util.color.rgb(c, c, c), alpha = alpha,
     relativePosition = util.vector2(0, y), relativeSize = util.vector2(1, h)}})
+end
+
+local function subtitle(text, dur)
+  if S.sub then S.sub:destroy(); S.sub = nil end
+  local sz = ui.screenSize()
+  local bar = S.barH or 0
+  local y = bar > 0.04 and (1 - bar / 2) or 0.86
+  S.sub = ui.create({layer = layer(), type = ui.TYPE.Text, props = {
+    relativePosition = util.vector2(0.5, y), anchor = util.vector2(0.5, 0.5), size = util.vector2(sz.x * 0.8, sz.y * 0.1),
+    autoSize = false, multiline = true, wordWrap = true, text = text, textSize = math.max(16, math.floor(sz.y / 32)),
+    textColor = util.color.rgb(0.93, 0.9, 0.82), textShadow = true, textShadowColor = util.color.rgb(0, 0, 0),
+    textAlignH = ui.ALIGNMENT.Center, textAlignV = ui.ALIGNMENT.Center}})
+  S.subEnd = S.t + (tonumber(dur) or 3)
 end
 
 local function clearScreen()
   if S and S.bars then for _, e in ipairs(S.bars) do e:destroy() end; S.bars = nil end
   if S and S.fade then S.fade.el:destroy(); S.fade = nil end
+  if S and S.dip then S.dip.el:destroy(); S.dip = nil end
+  if S and S.sub then S.sub:destroy(); S.sub = nil end
+  if S then S.shake = nil end
+end
+
+-- a dip to black (or white) around a cut that asks for one: dark at the moment the camera changes
+local function dips()
+  local a, white = 0, false
+  for _, s in ipairs(type(S.sc.shots) == 'table' and S.sc.shots or {}) do
+    if s.cut == 'dip' or s.cut == 'white' then
+      local half = math.max(0.05, (tonumber(s.cutdur) or 0.6) / 2)
+      local d = math.abs(S.t - (tonumber(s.at) or 0))
+      if d < half and 1 - d / half > a then a, white = 1 - d / half, s.cut == 'white' end
+    end
+  end
+  if a > 0.001 then
+    if S.dip and S.dip.white ~= white then S.dip.el:destroy(); S.dip = nil end
+    if not S.dip then S.dip = {el = black(a, 0, 1, white), white = white} end
+    S.dip.el.layout.props.alpha = a
+    S.dip.el:update()
+  elseif S.dip then S.dip.el:destroy(); S.dip = nil end
 end
 
 local function screenCues()
@@ -753,10 +1254,11 @@ local function screenCues()
         local ratio = tonumber(c.letterbox) or 2.39
         local sz = ui.screenSize()
         local bar = (1 - (sz.x / sz.y) / ratio) / 2
-        if bar > 0.005 then S.bars = {black(1, 0, bar), black(1, 1 - bar, bar)} end
+        if bar > 0.005 then S.bars = {black(1, 0, bar), black(1, 1 - bar, bar)}; S.barH = bar end
       elseif c.letterbox == false and S.bars then
-        for _, e in ipairs(S.bars) do e:destroy() end; S.bars = nil
+        for _, e in ipairs(S.bars) do e:destroy() end; S.bars = nil; S.barH = nil
       end
+      if c.shake then S.shake = {t0 = tonumber(c.at) or S.t, amp = math.max(0, math.min(1, tonumber(c.shake) or 0.5)), dur = tonumber(c.dur) or 1} end
       if c.fade == 'in' or c.fade == 'out' then
         if S.fade then S.fade.el:destroy() end
         S.fade = {el = black(c.fade == 'in' and 1 or 0, 0, 1), from = (c.fade == 'in') and 1 or 0,
@@ -775,14 +1277,83 @@ local function screenCues()
     if not S.fired[k] and (tonumber(c.at) or 0) <= S.t then
       S.fired[k] = true
       if c.music and okA and vfs.fileExists(c.music) then pcall(ambient.streamMusic, c.music); S.music = true end
-      if c.sound and okA and vfs.fileExists(c.sound) then pcall(ambient.playSoundFile, c.sound) end
+      if c.sound and okA and not c.on and not c.ref then
+        if string.find(c.sound, '[/\\.]') then
+          if vfs.fileExists(c.sound) then pcall(ambient.playSoundFile, c.sound, {volume = tonumber(c.volume) or 1}) end
+        else pcall(ambient.playSound, c.sound, {volume = tonumber(c.volume) or 1}) end
+      end
     end
+  end
+end
+
+-- post-processing: the scene's colour, depth of field and motion blur (the Workshop's own shaders, hidden from the
+-- player's menu). A cue's values blend from what they were over its dur; they hold until the next cue changes them.
+local PP = {
+  exposure = {'grade', 'uExposure', 0}, temperature = {'grade', 'uTemperature', 0}, saturation = {'grade', 'uSaturation', 1},
+  vignette = {'grade', 'uVignette', 0}, blur = {'dof', 'uStrength', 0}, range = {'dof', 'uRange', 250},
+  motionblur = {'motion', 'uStrength', 0},
+}
+local PPFILE = {grade = 'ws_scene_grade', dof = 'ws_scene_dof', motion = 'ws_scene_motion'}
+
+local function ppShader(kind)
+  if not okP then return nil end
+  S.shaders = S.shaders or {}
+  if S.shaders[kind] == nil then
+    local ok, sh = pcall(pp.load, PPFILE[kind])
+    S.shaders[kind] = ok and sh or false
+    if ok and sh then pcall(function() sh:enable() end) end
+  end
+  return S.shaders[kind] or nil
+end
+
+local function ppCues()
+  S.pp = S.pp or {}
+  for i, c in ipairs(type(S.sc.screen) == 'table' and S.sc.screen or {}) do
+    local k = 'pp' .. i
+    if not S.fired[k] and (tonumber(c.at) or 0) <= S.t then
+      for name, d in pairs(PP) do
+        if c[name] ~= nil and tonumber(c[name]) then
+          local cur = S.pp[name] and S.pp[name].now or d[3]
+          S.pp[name] = {from = cur, to = tonumber(c[name]), t0 = tonumber(c.at) or S.t, dur = tonumber(c.dur) or 0, now = cur}
+        end
+      end
+      if c.focus ~= nil then S.focus = c.focus end
+      S.fired[k] = true
+    end
+  end
+  for name, v in pairs(S.pp) do
+    local f = v.dur > 0 and math.max(0, math.min(1, (S.t - v.t0) / v.dur)) or 1
+    v.now = v.from + (v.to - v.from) * f
+    local d = PP[name]
+    local sh = ppShader(d[1])
+    if sh then pcall(function() sh:setFloat(d[2], v.now) end) end
+  end
+end
+
+-- the depth of field's focus: on someone (their distance from the camera, every frame) or at a distance
+local function ppFocus()
+  if not S or not S.pp or not S.pp.blur or S.focus == nil then return end
+  local sh = S.shaders and S.shaders.dof
+  if not sh then return end
+  local dist = tonumber(S.focus)
+  if not dist and type(S.focus) == 'table' then
+    local who = S.actors[S.focus.actor or ''] or (S.focus.actor == 'player' and self.object)
+    if who and who:isValid() then dist = (aimPoint(who, S.focus.at or 'head') - camera.getPosition()):length() end
+  end
+  if dist then pcall(function() sh:setFloat('uFocus', dist) end) end
+end
+
+local function ppOff()
+  for kind, sh in pairs(S and S.shaders or {}) do
+    if sh then pcall(function() sh:disable() end) end
   end
 end
 
 local function finish(how)
   if not S then return end
+  ppOff()
   clearScreen()
+  hud(true)
   pcall(function() camera.setFieldOfView(camera.getBaseFieldOfView()) end)
   pcall(camera.setMode, S.mode or camera.MODE.ThirdPerson, true)
   setControls(true, S.switches)
@@ -796,6 +1367,9 @@ return {
       if not S or S.paused then return end
       S.t = S.t + dt
       screenCues()
+      dips()
+      ppCues()
+      if S.sub and S.t >= (S.subEnd or 0) then S.sub:destroy(); S.sub = nil end
     end,
     onFrame = function()
       if S and S.face then
@@ -805,6 +1379,7 @@ return {
         if math.abs(d) < 0.01 or S.faceTries > 20 then S.face = nil else self.controls.yawChange = d; S.faceTries = S.faceTries + 1 end
       end
       if S and not hold then placeCamera() end
+      if S then ppFocus() end
     end,
     onKeyPress = function(key)
       if S and (key.code == input.KEY.Space or key.code == input.KEY.Enter) then core.sendGlobalEvent('WsScene_Skip', {}) end
@@ -812,7 +1387,7 @@ return {
     onSave = function() return S and {active = true, switches = S.switches, mode = S.mode} or nil end,
     onLoad = function(data)
       -- (saved in the middle of a scene: the player gets the controls and camera back; the scene's end runs too)
-      if data and data.active then setControls(true, data.switches); pcall(camera.setMode, data.mode or camera.MODE.ThirdPerson, true) end
+      if data and data.active then setControls(true, data.switches); pcall(camera.setMode, data.mode or camera.MODE.ThirdPerson, true); hud(true) end
     end,
   },
   eventHandlers = {
@@ -826,13 +1401,23 @@ return {
       if pl.controls ~= 'on' then setControls(false, S.switches) end
       if pl.sheathe then pcall(function() types.Actor.setStance(self, types.Actor.STANCE.Nothing) end) end
       camera.setMode(camera.MODE.Static, true)
+      hud(false)
       screenCues()
+      ppCues()
     end,
-    [EV .. 'Seek'] = function(e) if S then S.t = tonumber(e.t) or 0; S.fired = {}; clearScreen() ; screenCues() end end,
+    [EV .. 'Seek'] = function(e)
+      if S then S.t = tonumber(e.t) or 0; S.fired = {}; clearScreen(); S.pp = {}; S.focus = nil; screenCues(); ppCues() end
+    end,
     [EV .. 'Pause'] = function() if S then S.paused = true end end,
     [EV .. 'Resume'] = function() if S then S.paused = false end end,
-    [EV .. 'Text'] = function(e) if e.text then ui.showMessage(e.text) end end,
+    [EV .. 'Text'] = function(e)
+      if not e.text then return end
+      if S then subtitle(e.text, e.dur) else ui.showMessage(e.text) end
+    end,
     [EV .. 'Hold'] = function(e) hold = e.on and true or false end,
+    [EV .. 'Talk'] = function(e)
+      if e.who and e.who:isValid() then pcall(function() I.UI.setMode('Dialogue', {target = e.who}) end) end
+    end,
     [EV .. 'Actors'] = function(e) if S and e.actors then S.actors = e.actors end end,
     [EV .. 'End'] = function(e)
       if S then finish(e.how) elseif e.controls then setControls(true) end
@@ -845,11 +1430,42 @@ ACTOR = r'''-- Made by Morrowind Workshop: an actor in one of this mod's scenes 
 local self = require('openmw.self')
 local anim = require('openmw.animation')
 local async = require('openmw.async')
+local types = require('openmw.types')
 local I = require('openmw.interfaces')
 
 local EV = 'WsScene_%SLUG%_'
 local active, last, keys, vfx = false, nil, {}, {}
 local hooked = {}
+local walk = nil           -- {pts, i, run, face}: walking along the scene's marks
+
+local function turnTo(want, dt)
+  local d = (want - self.rotation:getYaw() + math.pi) % (2 * math.pi) - math.pi
+  self.controls.yawChange = math.max(-5 * dt, math.min(5 * dt, d))
+  return d
+end
+
+local function walking(dt)
+  if not walk or dt <= 0 then return end
+  local p = walk.pts[walk.i]
+  if p then
+    local dx, dy = p.x - self.position.x, p.y - self.position.y
+    local dist = math.sqrt(dx * dx + dy * dy)
+    if dist < (walk.i < #walk.pts and 60 or 28) then walk.i = walk.i + 1; walk.best = nil; return end
+    -- (someone or something in the way: no nearer for a while, and close, or long stuck: they stop there)
+    if not walk.best or dist < walk.best - 5 then walk.best, walk.since = dist, 0 else walk.since = walk.since + dt end
+    if (walk.since > 0.6 and dist < 140) or walk.since > 2.5 then walk.i = walk.i + 1; walk.best = nil; return end
+    local d = turnTo(math.atan2(dx, dy), dt)
+    self.controls.movement = math.abs(d) < 1.0 and 1 or 0
+    self.controls.run = walk.run
+    walk.left = (walk.left or 30) - dt
+    if walk.left < 0 then walk.pts = {} end                   -- (stuck: given up after half a minute)
+  else
+    self.controls.movement = 0
+    if walk.face and math.abs(turnTo(walk.face, dt)) > 0.03 then return end
+    self.controls.yawChange = 0
+    walk = nil
+  end
+end
 
 local function addVfx(v)
   if not v or not v.model then return end
@@ -898,13 +1514,31 @@ return {
       end
     end,
     [EV .. 'Vfx'] = function(e) addVfx(e.vfx) end,
+    [EV .. 'Walk'] = function(e)
+      if last then pcall(anim.cancel, self, last); last = nil end
+      walk = {pts = e.points or {}, i = 1, run = e.run and true or false, face = e.face}
+    end,
+    [EV .. 'Die'] = function()
+      walk = nil
+      if last then pcall(anim.cancel, self, last); last = nil end
+      pcall(function() self:enableAI(true) end)
+      local ok, err = pcall(function() types.Actor.stats.dynamic.health(self).current = 0 end)
+      print('[WsScene] ' .. tostring(self.recordId) .. (ok and ' dies' or (' could not die: ' .. tostring(err))))
+    end,
+    [EV .. 'Calm'] = function()
+      -- (made for the scene: a Dremora stays calm, so guards and townsfolk don't fall on it)
+      local ok, err = pcall(function() types.Actor.stats.ai.fight(self).base = 0 end)
+      if not ok then print('[WsScene] ' .. tostring(self.recordId) .. ' stays hostile: ' .. tostring(err)) end
+    end,
     [EV .. 'End'] = function()
       active = false
+      if walk then self.controls.movement = 0; walk = nil end
       if last then pcall(anim.cancel, self, last); last = nil end
       pcall(function() self:enableAI(true) end)
     end,
   },
   engineHandlers = {
+    onUpdate = walking,
     onSave = function() return {active = active} end,
     onLoad = function(data)
       -- (saved during a scene: the actor walks again)

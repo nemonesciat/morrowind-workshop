@@ -34,7 +34,7 @@ const GUIDES = [
   {file: 'openmw-052.md', title: 'What OpenMW 0.52 adds', what: 'Your own skills, attributes, weathers, traps, loot rules and list additions; magic effects that burst, strike, glow and act where the bolt strikes.'},
   {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
   {file: 'scripts-and-game-rules.md', title: 'Scripts and game rules', what: 'MWScript and Lua, global variables, game settings, factions, classes, races and the rest.'},
-  {file: 'making-cutscenes.md', title: 'Your first cutscene', what: 'A scene step by step: people on their spots, shots, lines, preview, and trying it in the game.'},
+  {file: 'making-cutscenes.md', title: 'Your first cutscene', what: 'A scene step by step: people on their spots, shots, lines, people coming and going, effects, doors and weather, preview, and trying it in the game.'},
   {file: 'coding-with-ai.md', title: 'Coding with AI', what: 'Lua, effects and dialogue written by a model on your PC, and coding agents (Claude Code, Codex…) on your mod.'},
   {file: 'playing-and-testing.md', title: 'Playing and testing', what: 'Play here, playing as your own character, test setups, the live link, the OpenMW menu.'},
   {file: 'sharing-your-mod.md', title: 'Sharing your mod', what: 'My mod, Get ready to share, Health check, Load order, merging, .esp files, building together, backups.'},

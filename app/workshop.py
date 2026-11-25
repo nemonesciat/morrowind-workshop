@@ -1701,13 +1701,17 @@ class Handler(BaseHTTPRequestHandler):
                 # (a voice file's length, so a scene's line lasts as long as it is spoken: scenes.js)
                 import scenes as _scn
                 self._json({'secs': _scn.sound_length(db, q.get('path'))})
-            elif u.path in ('/api/scenes/get', '/api/scenes/actors', '/api/scenes/anims'):
+            elif u.path in ('/api/scenes/get', '/api/scenes/actors', '/api/scenes/anims', '/api/scenes/objects', '/api/scenes/effects'):
                 # the scene maker (web/scenes.js): one scene whole; the people and creatures of a place; what an actor can play
                 import bridge
                 import scenes as _scn
                 try:
                     if u.path == '/api/scenes/get':
                         self._json(bridge.get_scene(db, q.get('scene')))
+                    elif u.path == '/api/scenes/objects':
+                        self._json({'objects': _scn.place_objects(db, bridge.cell_key(json.loads(q['cell']) if q.get('cell', '').startswith('[') else q.get('cell')))})
+                    elif u.path == '/api/scenes/effects':
+                        self._json({'effects': _scn.effect_models(db), 'weathers': _scn.WEATHERS})
                     elif u.path == '/api/scenes/actors':
                         self._json({'actors': _scn.place_actors(db, bridge.cell_key(json.loads(q['cell']) if q.get('cell', '').startswith('[') else q.get('cell')))})
                     else:
