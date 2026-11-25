@@ -101,8 +101,9 @@ def _int(v, lo, hi, what):
     return max(lo, min(hi, v))
 
 
-def save(db, cell_key, refkey, o):
-    """o: owner, faction, rank, global, soul, lock, key, trap, uses (None or '' = none)."""
+def save(db, cell_key, refkey, o, save=True):
+    """o: owner, faction, rank, global, soul, lock, key, trap, uses, charge (None or '' = none; charge left out: as it
+    was). save=False: the caller commits (one change of several steps: bridge.ref_fields) and the note comes back."""
     c, ref = _ref(db, cell_key, refkey)
     cur = read(db, cell_key, refkey)
     owner = _check(db, o.get('owner'), ('NPC_',), 'a person (owners are NPCs)')
@@ -137,7 +138,16 @@ def save(db, cell_key, refkey, o):
         own.append(('CNAM', zs(faction)))
         own.append(('INDX', struct.pack('<i', rank)))
     old = {t: d for t, d in ref['subs']}
-    if 'XCHG' in old:
+    charge = cur.get('charge')
+    if 'charge' in o:
+        # (an enchanted thing's charge left in it, as the game keeps it on the placed one: a connected program sends it)
+        ch = o.get('charge')
+        charge = None if ch in (None, '') else round(max(0.0, float(ch)), 1)
+        if charge is not None and charge == cur.get('charge') and 'XCHG' in old:
+            own.append(('XCHG', old['XCHG']))           # (the same, as read and rounded: the exact value kept)
+        elif charge is not None:
+            own.append(('XCHG', struct.pack('<f', charge)))
+    elif 'XCHG' in old:
         own.append(('XCHG', old['XCHG']))
     if uses is not None:
         own.append(('INTV', struct.pack('<i', uses)))
@@ -157,7 +167,7 @@ def save(db, cell_key, refkey, o):
     at = next((n for n, (t, _d) in enumerate(subs) if t in ('UNAM', 'DATA')), len(subs))
     subs[at:at] = locks
     if subs == list(ref['subs']):
-        return cur
+        return cur if save else None
     _store(c, refkey, ref['origin'], ref['idx'], subs)
 
     what = []
@@ -185,5 +195,10 @@ def save(db, cell_key, refkey, o):
         what.append('%s %s' % ((cur.get('uses_label') or 'uses').lower(), 'as new' if uses is None else uses))
     if soul != cur['soul']:
         what.append(('holds the soul of ' + soul) if soul else 'soul gone')
-    commit(db, '"%s" in %s: %s' % (name, cell_label(db, cell_key), '; '.join(what) or 'ownership changed'))
+    if charge != cur.get('charge'):
+        what.append('charge %s' % ('as new' if charge is None else charge))
+    note = '"%s" in %s: %s' % (name, cell_label(db, cell_key), '; '.join(what) or 'ownership changed')
+    if not save:
+        return note
+    commit(db, note)
     return read(db, cell_key, refkey)

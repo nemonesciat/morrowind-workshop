@@ -404,10 +404,13 @@ def ref_fields(db, body):
     rk = ref_key(body.get('ref'))
     fields = {k: body[k] for k in ('owner', 'faction', 'rank', 'global', 'soul', 'lock', 'key', 'trap', 'uses', 'charge')
               if k in body}
-    changed = False
+    changed, notes = False, []
     if fields:
         now = refprops.read(db, key, rk)
-        refprops.save(db, key, rk, dict(now or {}, **fields))
+        n = refprops.save(db, key, rk, dict(now or {}, **fields), save=False)
+        if n:
+            notes.append(n)
+            db.sync_project()                          # (the door below reads the object with these details in)
         changed = True
     if 'door' in body:
         c, refs = editing._cell(db, key)
@@ -430,17 +433,72 @@ def ref_fields(db, body):
                 add.append(('DNAM', zs(dc.strip())))
             subs[at:at] = add
         editing._store(c, rk, ref['origin'], ref['idx'], subs)
-        editing.commit(db, 'Set where a door leads in %s' % editing.cell_label(db, key))
+        notes.append('Set where a door leads in %s' % editing.cell_label(db, key))
         changed = True
     if not changed:
         raise EditError('Nothing to change: give the fields, or "door".')
+    if notes:
+        editing.commit(db, '; '.join(notes))           # (one change, one Undo, however many details)
     return {'ref': _as_ref(rk), 'cell': key}
+
+
+CELL_TAGS = ('NAME', 'DATA', 'RGNN', 'NAM5', 'WHGT', 'INTV', 'AMBI')
+
+
+def put_cell(db, body):
+    """An interior's header, as the program writes it: {"cell": its name, "subs": [["NAME", b64], ["DATA", b64],
+    ["AMBI", b64], ["WHGT", b64]...]}. A new interior is made in the mod (empty: place things in it after); one that
+    exists (the game's or the mod's) gets this header: its light, water and flags come from it.
+    Outdoors, a cell's name goes through the Workshop's own action (/api/cell/name)."""
+    import base64
+    import struct
+    from project import b64, zs, zstr
+    p = _need_mod(db)
+    raw = body.get('cell')
+    name = '' if isinstance(raw, (list, tuple)) else str(raw or '').strip()
+    if not name or name.startswith('#'):
+        raise EditError('"cell" is an interior\'s name (outdoors, a cell\'s name goes through /api/cell/name).')
+    if len(name.encode('cp1252', 'replace')) > 63:
+        raise EditError('An interior\'s name can be at most 63 characters.')
+    subs = []
+    for s in body.get('subs') or []:
+        if not (isinstance(s, (list, tuple)) and len(s) == 2 and s[0] in CELL_TAGS):
+            raise EditError('"subs" are the cell header\'s subrecords, of: %s.' % ' '.join(CELL_TAGS))
+        try:
+            subs.append((s[0], base64.b64decode(s[1] or '', validate=True)))
+        except Exception:
+            raise EditError('Subrecord %s is not base64.' % s[0])
+    have = dict(subs)
+    if have.get('NAME') is not None and zstr(have['NAME']).lower() != name.lower():
+        raise EditError('"cell" is %s but the header\'s NAME is %s.' % (name, zstr(have['NAME'])))
+    if 'DATA' in have and (len(have['DATA']) < 12 or not struct.unpack_from('<i', have['DATA'])[0] & 1):
+        raise EditError('The header\'s DATA must say it is an interior (flag 1).')
+    # (always a NAME, an interior DATA and an AMBI, in the game's order)
+    out = [('NAME', zs(name)), ('DATA', have.get('DATA') or struct.pack('<Iii', 1, 0, 0))]
+    for t in ('RGNN', 'NAM5', 'WHGT', 'INTV'):
+        if t in have:
+            out.append((t, have[t]))
+    out.append(('AMBI', have.get('AMBI') or struct.pack('<IIIf', 0x404040, 0x505050, 0x202020, 0.5)))
+    key = name.lower()
+    exists = any(v not in db.dead for v in db.by_key.get(('CELL', key), []))
+    if key in p.cells or exists:
+        c = p.cells[key] if key in p.cells else editing._cell(db, key)[0]
+        c['header'] = [[t, b64(d)] for t, d in out]
+        c['props'] = True
+        what = 'Changed the light and water of "%s"' % name
+    else:
+        p.cells[key] = {'flags': 0, 'header': [[t, b64(d)] for t, d in out], 'refs': {}}
+        what = 'Made the interior "%s"' % name
+    db.sync_project()
+    editing.commit(db, what)
+    return {'cell': key, 'made': what.startswith('Made')}
 
 
 def take_file(db, body):
     """A file from this PC into the mod's folder, under the path the game will look for it ("to": meshes/...).
-    Files aren't held for Save: they go in at once, as the Library's do; a file already there is kept unless
-    "replace" is true (the one there is then kept beside it as <name>.before-<time>)."""
+    Files aren't held for Save: they go in at once, as the Library's do. The same file again is nothing to do; a
+    different one already there is kept unless "replace" is true (the one there then goes to the Workshop's own
+    folder, cache/replaced files, the last five of each: never kept in the mod's folder)."""
     _need_mod(db)
     src = str(body.get('path') or '')
     if not src or not os.path.isfile(src):
@@ -457,13 +515,40 @@ def take_file(db, body):
         return {'to': '/'.join(parts), 'path': dst, 'same': True}
     kept = None
     if os.path.exists(dst):
+        if _same_file(src, dst):
+            # (the same file sent again, as a program's every Save sends its models: nothing to do)
+            return {'to': '/'.join(parts), 'path': dst, 'same': True, 'kept': None}
         if not body.get('replace'):
             raise EditError('%s is already in the mod: send "replace": true to put this one in its place.' % '/'.join(parts))
-        kept = dst + '.before-' + time.strftime('%Y%m%d-%H%M%S')
-        os.replace(dst, kept)
+        # (the one replaced is kept in the Workshop's own folder, never the mod's: the last five of each)
+        kept_dir = os.path.join(_projmod.APP_DIR, 'cache', 'replaced files', re.sub(r'[^\w. -]+', '_', db.project.name), *parts[:-1])
+        os.makedirs(kept_dir, exist_ok=True)
+        kept = os.path.join(kept_dir, parts[-1] + '.' + time.strftime('%Y%m%d-%H%M%S'))
+        shutil.move(dst, kept)
+        olds = sorted(f for f in os.listdir(kept_dir) if f.startswith(parts[-1] + '.'))
+        for f in olds[:-5]:
+            try:
+                os.remove(os.path.join(kept_dir, f))
+            except OSError:
+                pass
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copy2(src, dst)
     return {'to': '/'.join(parts), 'path': dst, 'kept': kept}
+
+
+def _same_file(a, b):
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, 'rb') as fa, open(b, 'rb') as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
 
 
 # ------------------------------------------------------------------ scenes
@@ -824,6 +909,8 @@ def http(handler, db, lock, method):
                     out = drop_record(db, body)
                 elif path == '/ref_fields':
                     out = ref_fields(db, body)
+                elif path == '/cell':
+                    out = put_cell(db, body)
                 elif path == '/scene':
                     out = put_scene(db, body.get('scene') if isinstance(body.get('scene'), dict) else body)
                 elif path == '/scene/delete':

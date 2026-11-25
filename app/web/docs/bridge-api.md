@@ -1,7 +1,7 @@
 # Morrowind Workshop bridge: for programs that work with the Workshop's open mod
 
 *For the authors of modding programs (first the OpenMW Suite for Blender and Maya) and their coding agents. Bridge
-API 1, Workshop 2.9.8 and later (records, land and object details: 2.9.9). Nothing here is for the Workshop's own users.*
+API 1, Workshop 2.9.8 and later (records, land and object details: 2.9.9; interiors: 2.9.11). Nothing here is for the Workshop's own users.*
 
 ## How it works
 
@@ -146,7 +146,26 @@ POST /bridge/ref_fields  {"cell": [-2, -9], "ref": {"file": "my mod.omwaddon", "
   it. Names are checked: the owner must be an NPC, the key a misc item, the trap a spell, and so on.
 - **`door`** sets where a door leads: `pos` in degrees, and `cell` an interior's name (leave it out for outdoors).
   `"door": null` makes it lead nowhere.
-- Works on objects of the mod and of the game. Each call is one change with Undo.
+- `charge` is an enchanted thing's charge left in it (a number; `null` back to full). (2.9.11)
+- Works on objects of the mod and of the game. Each call is one change with Undo, however many fields and the door
+  it holds. (2.9.11; before, a door destination was a second change.)
+
+### Interiors: made, and their light and water (Workshop 2.9.11)
+
+```
+POST /bridge/cell  {"cell": "Maggie Island, Cellar", "subs": [["NAME", "<base64>"], ["DATA", "<base64>"],
+                    ["WHGT", "<base64>"], ["AMBI", "<base64>"]]}
+  -> {"cell": "maggie island, cellar", "made": true}
+```
+
+- The interior's header as your program writes it: `NAME`, `DATA` (flag 1, interior; 2, water; 4, no sleeping;
+  0x80, behaves like outdoors), and as it has them `RGNN`, `NAM5`, `WHGT` (water height), `INTV` (old water height),
+  `AMBI` (ambient, sunlight and fog colours, fog density). Without `AMBI` it gets a plain dim light.
+- **An interior the mod doesn't have is made**, empty: `/bridge/place` puts things in it straight after.
+- **One that exists** (the game's or the mod's) gets this header: its light, water and flags change. One change with
+  Undo.
+- **Outdoors** a cell is named with `POST /bridge/action {"action": "/api/cell/name", "method": "POST",
+  "args": {"cell": "#x,y", "name": "..."}}`; `/bridge/cell` refuses outdoor cells.
 
 ### Files
 
@@ -158,8 +177,11 @@ POST /bridge/file  {"path": "C:\\work\\animations\\xflima.kf", "to": "meshes/mi/
 - `to` is the path the game looks for, starting with one of: meshes, textures, icons, bookart, sound, music,
   splash, video, fonts.
 - File types taken: `.nif .kf .dds .tga .bmp .png .jpg .wav .mp3 .ogg .bik .fnt .tex`.
-- A file already there is refused unless `"replace": true`. The one it replaces is kept beside it as
-  `<name>.before-<time>`.
+- **The same file sent again** (byte for byte) is nothing to do: `"same": true`. Send your models with every Save
+  as you like. (2.9.11)
+- **A different file already there** is refused unless `"replace": true`. The one it replaces is kept in the
+  Workshop's own folder (`kept` says where, the last five of each), never in the mod's. (2.9.11; before, it was
+  kept beside it as `<name>.before-<time>`.)
 - **Animations:** send both halves (`xname.nif` and `xname.kf`). To give one character its own animation file,
   send the files, then set that NPC's animation through an action (see below) rather than changing every actor
   with the skeleton.
