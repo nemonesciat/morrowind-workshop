@@ -186,6 +186,7 @@ def _nolock():
 # window: such a change is written straight into the mod while nothing is unsaved, and refused while something is
 # (editing.commit), so nobody's work is written over anybody's.
 HOLD = [False]
+WANT_REF = threading.local()      # (bridge.py: the number a linked program gave a new object, for new_ref_key)
 ON_HELD = [None]
 EXTERNAL = threading.local()
 
@@ -447,6 +448,7 @@ class Project:
         self.quests = d.get('quests', {})       # the quest Board's plans: quest key -> {'cast': [ids picked before any move uses them]}
         # plugins merged into this mod (merge.py): never its masters, though one may still be on in the load order
         self.merged_in = [str(x).lower() for x in d.get('merged_in') or []]
+        self.scenes = d.get('scenes', {})       # cutscenes (bridge.py): scene id -> an openmw-scene/1 file, as sent
         self.rolls = d.get('rolls', {})         # interiors in limbo (rollinside.py): door 'cell|ref' -> {'old', 'name', 'rolls', ...}
         self.forged = d.get('forged', {})       # the Forge: piece id (lower) -> {'mat'} or {'between': [a, b, f]}, what it was
                                                 # forged as ("Duskglass" isn't glass); outside Undo, read only while the record is there
@@ -648,6 +650,8 @@ class Project:
             d['merged_in'] = self.merged_in
         if getattr(self, 'rolls', None):
             d['rolls'] = self.rolls
+        if getattr(self, 'scenes', None):
+            d['scenes'] = self.scenes
         if self.scattered:
             d['scattered'] = sorted(self.scattered)
         if self.town_parts:
@@ -674,12 +678,14 @@ class Project:
     def state(self):
         return json.dumps({'records': dict(quiet(self.records)), 'cells': dict(quiet(self.cells)), 'next_ref': self.next_ref, 'lua': self.lua,
                            'grass': self.grass, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts,
-                           'rolls': getattr(self, 'rolls', None) or {}, 'places': getattr(self, 'places', None) or {}})
+                           'rolls': getattr(self, 'rolls', None) or {}, 'places': getattr(self, 'places', None) or {},
+                'scenes': getattr(self, 'scenes', None) or {}})
 
     def meta(self):
         """What a state holds beside its records, places and grass."""
         return {'next_ref': self.next_ref, 'lua': self.lua, 'scattered': sorted(self.scattered), 'town_parts': self.town_parts,
-                'rolls': getattr(self, 'rolls', None) or {}, 'places': getattr(self, 'places', None) or {}}
+                'rolls': getattr(self, 'rolls', None) or {}, 'places': getattr(self, 'places', None) or {},
+                'scenes': getattr(self, 'scenes', None) or {}}
 
     def snapshot(self, prev=None):
         """The state in parts (Snap), sharing the parts that didn't change with prev (the last one by default)."""
@@ -699,6 +705,7 @@ class Project:
             self.town_parts = d.get('town_parts') or {}
             self.rolls = d.get('rolls') or {}
             self.places = d.get('places') or {}
+            self.scenes = d.get('scenes') or {}
             return
         cur = cur if isinstance(cur, Snap) else None
 
@@ -715,6 +722,7 @@ class Project:
         self.town_parts = m.get('town_parts') or {}
         self.rolls = m.get('rolls') or {}
         self.places = m.get('places') or {}
+        self.scenes = m.get('scenes') or {}
 
     def cell_bytes_of(self, key, c, masters, text=None):
         """cell_bytes, kept for each place by its JSON text: a place that didn't change isn't encoded again. Every change
@@ -750,7 +758,7 @@ class Project:
 
     def lua_outputs(self):
         """{relative path: text} of every file the Lua scripts need, including the .omwscripts list."""
-        if not self.lua or not self.lua_allowed():
+        if not (self.lua or getattr(self, 'scenes', None)) or not self.lua_allowed():
             return {}
         out, lines, attach = {}, [], {}
         import myeffects
@@ -780,6 +788,12 @@ class Project:
                            'return {\n  engineHandlers = {\n    onObjectActive = give,\n    onActorActive = give,\n'
                            '    onItemActive = give,\n  },\n}\n' % table)
             lines.insert(0, 'GLOBAL: ' + helper)
+        if getattr(self, 'scenes', None):
+            # the scene player and the mod's scenes (scenes.py; sent by other programs: bridge.py)
+            import scenes
+            files, more = scenes.outputs(self.lua_slug(), self.scenes)
+            out.update(files)
+            lines += more
         out[self.lua_omwscripts()] = '# Made by Morrowind Workshop for %s\n' % self.plugin + '\n'.join(lines) + '\n'
         return out
 
@@ -843,6 +857,11 @@ class Project:
         return c
 
     def new_ref_key(self):
+        want = getattr(WANT_REF, 'n', None)
+        if want is not None:
+            # (a linked program's own number, from its block: bridge.py; used once, next_ref left as it is)
+            WANT_REF.n = None
+            return '%s|%d' % (self.plugin.lower(), want)
         k = '%s|%d' % (self.plugin.lower(), self.next_ref)
         if LEDGER:
             st = LEDGER.get(threading.get_ident())
@@ -1092,17 +1111,18 @@ class Snap:
         d = json.loads(s)
         return Snap.of(d['records'], d['cells'], d.get('grass') or {}, {'next_ref': d['next_ref'], 'lua': d.get('lua', []),
                        'scattered': d.get('scattered') or [], 'town_parts': d.get('town_parts') or {},
-                       'rolls': d.get('rolls') or {}, 'places': d.get('places') or {}})
+                       'rolls': d.get('rolls') or {}, 'places': d.get('places') or {},
+                       'scenes': d.get('scenes') or {}})
 
     def text(self):
         """The whole state as Project.state() writes it."""
         def obj(parts):
             return '{' + ', '.join('%s: %s' % (json.dumps(k), v) for k, v in parts.items()) + '}'
         m = json.loads(self.m)
-        return '{"records": %s, "cells": %s, "next_ref": %s, "lua": %s, "grass": %s, "scattered": %s, "town_parts": %s, "rolls": %s, "places": %s}' % (
+        return '{"records": %s, "cells": %s, "next_ref": %s, "lua": %s, "grass": %s, "scattered": %s, "town_parts": %s, "rolls": %s, "places": %s, "scenes": %s}' % (
             obj(self.r), obj(self.c), json.dumps(m['next_ref']), json.dumps(m.get('lua', [])), obj(self.g),
             json.dumps(m.get('scattered') or []), json.dumps(m.get('town_parts') or {}), json.dumps(m.get('rolls') or {}),
-            json.dumps(m.get('places') or {}))
+            json.dumps(m.get('places') or {}), json.dumps(m.get('scenes') or {}))
 
 
 _AS_SNAP = {}       # (a state text made into a Snap: the last one, by its text)

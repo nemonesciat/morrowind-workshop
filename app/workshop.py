@@ -778,6 +778,10 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == '/mcp':
             import mcpserver
             return mcpserver.http(self, db, edit_lock, 'GET')
+        if u.path.startswith('/bridge/'):
+            # another modding program connected to the open mod (bridge.py): its own key, never a web page
+            import bridge
+            return bridge.http(self, db, edit_lock, 'GET')
         try:
             if u.path in ('/', '/index.html'):
                 with open(os.path.join(WEB, 'index.html'), 'rb') as f:
@@ -851,6 +855,7 @@ class Handler(BaseHTTPRequestHandler):
                     learning.prewarm(db)                 # (the learning starts now, not at the first furnish)
                 s['surveys'] = background.status()      # (what is being learnt from the game's places right now)
                 s['os'] = OS_WORDS                       # (the page's words for the game's program, the bin, the file manager)
+                s['version'] = __import__('helpinfo').version()    # (for other programs: bridge.py)
                 # (the Ayleid dungeon kind is offered where its pieces are in the load order, ruins.js)
                 s['ayleid'] = bool(db.state == 'ready' and db.recs and db.resolve_id('t_ayl_dngruin_i_hall_01') is not None)
                 self._json(s)
@@ -1687,6 +1692,15 @@ class Handler(BaseHTTPRequestHandler):
                                 project=db.project.plugin if db.project else None, agent=mcpserver.activity_head(),
                                 unsaved=bool(editing.unsaved(db)),          # (the title's *, in every window)
                                 recovery=db._recovery(db.project) if db.project and db.state == 'ready' else None))
+            elif u.path == '/api/scenes':
+                # the mod's cutscenes (sent by programs such as the OpenMW Suite: bridge.py; played by scenes.py)
+                import bridge
+                self._json({'scenes': bridge.scenes(db) if db.project else [], 'lua_ok': bool(db.project and db.project.lua_allowed()),
+                            'triggers': bridge.TRIGGERS})
+            elif u.path == '/api/bridge/asks':
+                # (programs asking to connect, for the window's Allow: bridge.py; and those connected)
+                import bridge
+                self._json({'asks': bridge.asks(), 'programs': bridge.listing()})
             elif u.path == '/api/mcp/activity':
                 # what coding agents did since a note, for the window to show and follow
                 import mcpserver
@@ -1728,6 +1742,9 @@ class Handler(BaseHTTPRequestHandler):
             # a coding agent's request (the Model Context Protocol, mcpserver.py): its own key, never a web page
             import mcpserver
             return mcpserver.http(self, db, edit_lock, 'POST')
+        if u.path.startswith('/bridge/'):
+            import bridge
+            return bridge.http(self, db, edit_lock, 'POST')
         n = int(self.headers.get('Content-Length') or 0)
         editing.ORIGIN.window = self.headers.get('X-Workshop-Window')       # (whose change this is: editing.CHANGES)
         # (a coding agent's action, or a script's request with no window of its own: refused while the mod has
@@ -2002,6 +2019,14 @@ class Handler(BaseHTTPRequestHandler):
                     link.refresh_watch(extra_globals=[args[0]] if verb == 'global' else [],
                                        extra_items=[args[0]] if verb != 'global' else [])
                 return self._json({'seq': link.command(verb, *[str(a).strip() for a in args[:need[verb]]])})
+            if u.path in ('/api/bridge/answer', '/api/bridge/remove'):
+                # (the user's Allow / Not now for a program asking to connect, or removing one: bridge.py)
+                import bridge
+                if self.headers.get('X-Workshop-Window') in (None, '', 'agent') or str(self.headers.get('X-Workshop-Window')).startswith('bridge:'):
+                    return self._json({'error': 'Only the Workshop window can answer this.'}, 403)
+                if u.path == '/api/bridge/answer':
+                    return self._json(bridge.answer(body.get('id'), bool(body.get('allow'))))
+                return self._json({'programs': bridge.remove(str(body.get('name') or ''))})
             if u.path == '/api/quit':
                 # from the launcher's Quit (the custom header keeps web pages from doing this)
                 if self.headers.get('X-Workshop-Quit') != '1':
@@ -3133,6 +3158,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'i': editing.set_contents(db, int(body['i']), body.get('items') or [])})
                 if u.path == '/api/revert':
                     return self._json({'i': editing.revert_record(db, int(body['i']))})
+                if u.path == '/api/scenes/trigger':
+                    import bridge
+                    return self._json(bridge.set_trigger(db, body.get('scene'), body.get('trigger')))
+                if u.path == '/api/scenes/delete':
+                    import bridge
+                    return self._json(bridge.drop_scene(db, body.get('scene')))
                 if u.path == '/api/ref/move':
                     editing.move_ref(db, body['cell'], body['ref'], [float(v) for v in body['p']], body.get('s'))
                     return self._json(mapdata.cellmap(db, body['cell']))
@@ -3606,6 +3637,8 @@ def main():
     try:
         with open(RUNNING_FILE, 'w', encoding='utf-8') as f:
             json.dump({'pid': os.getpid(), 'port': port, 'url': url}, f)
+        import bridge
+        bridge.announce(port)                           # (for other modding programs: bridge.py)
         import atexit
         atexit.register(_forget_running)
         atexit.register(lambda: editing.flush(db))      # (nothing left unwritten when the Workshop closes)

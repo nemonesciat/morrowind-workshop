@@ -82,6 +82,18 @@ Right-click a placed object for **🚪 Make this a door to…**, **↪ Rotating 
 panel that slides aside, used directly or pulled by another object, such as a lever or a book). The Workshop
 writes the scripts in the game's own way. See *Building interiors*.
 
+## Scenes
+
+A scene is a cutscene: camera shots, actors playing their animations, spoken lines, music, fades, and what happens
+at the end. Scenes are made in a modding program connected to the Workshop (**Settings › Connected programs**;
+such a program asks once and you press **Allow**). What it sends joins your unsaved work, marked ⇄ in My changes,
+each with Undo.
+
+On the Scripts page, **Scenes** lists them. Pick one to choose what starts it in the game: only when asked by
+another script, the player coming near a spot, a quest reaching a stage, or a global variable set to 1 (from a
+dialogue result, for example). **Only once a game** is ticked to start with. In the game, Space or Enter skips a
+scene; its end always runs. Scenes play in an .omwaddon mod.
+
 ## Effects in the game
 
 Your own magic effects can shake the ground, change the weather, summon, teleport and more, with no scripting of

@@ -375,6 +375,10 @@ async function renderSettings(){
     ${mcp.clients && mcp.clients.length ? `<div class="msg" style="margin-top:6px">Connected lately: ${mcp.clients.map(c => `<b>${esc(c.name)}</b> ${c.last < 90 ? 'now' : Math.round(c.last / 60) + ' min ago'} (${c.calls} call${c.calls === 1 ? '' : 's'})`).join(' · ')}</div>` : ''}` : ''}
   </section>
 
+  <section class="card setsec" id="st-bridge-sec" hidden><h3>Connected programs</h3>
+    <p class="msg" title="Modding programs you allowed to work on your open mod. Their changes join your unsaved work, marked ⇄ in My changes, each with Undo.">Programs you allowed to work on your open mod.</p>
+    <div id="st-bridge"></div></section>
+
   <section class="card setsec"><h3>Backups of your mod</h3>
     <p class="msg">The Workshop copies your mod's project file when you open it and then regularly while you work, and keeps the newest ones.</p>
     <div class="setrow"><span>Make a backup every</span><span><input class="inp num" id="st-bmin" type="number" min="1" max="240" value="${st.backup_minutes}" style="width:70px"> minutes while you work</span></div>
@@ -396,6 +400,7 @@ async function renderSettings(){
     <div class="actions"><button class="btn sm" data-open="projects">Open the projects folder</button><button class="btn sm" data-open="app">Open the Workshop's folder</button></div></section>`;
 
   if (typeof thBind === 'function') thBind(w);
+  if (typeof lpSettings === 'function') lpSettings();      // (Connected programs: bridge.js)
   const save = body => post('/api/settings', body).then(() => toast('Saved.')).catch(e => toast(e.message, true));
   $('#st-pick').onclick = async () => { try { toast('Choose OpenMW\'s folder in the window that opens…'); const r = await post('/api/openmw/pick', {}); if (r.ok){ toast('Using OpenMW in ' + r.install + '. Reading your game again…'); setTimeout(poll, 300); } } catch (e){ toast(e.message, true); } };
   const auto = $('#st-auto'); if (auto) auto.onclick = async () => { await post('/api/settings', {openmw_reset: true}); toast('Looking for OpenMW by itself. Reading your game again…'); setTimeout(poll, 300); };

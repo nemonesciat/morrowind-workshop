@@ -774,7 +774,7 @@ def handle(db, lock, msg, session):
 # page's buttons, read from workshop.py itself: each with its method, its comments, the arguments it reads and how.
 # Run through the Workshop's own address, so each goes through the same checks, My changes and Undo as a click.)
 KEPT = [
-    (r'^/api/(mcp|together|settings$|quit$|clienterror$)', 'the Workshop\'s own settings'),
+    (r'^/api/(mcp|together|bridge/|settings$|quit$|clienterror$)', 'the Workshop\'s own settings'),
     (r'^/api/project/(new|open|adopt|merge|saveas|enable)$|^/api/adopt/pick$', 'switching the user\'s mod'),
     (r'^/api/(mods/delete|backups/(clear|remove|restore)|revert)$', 'deleting or putting back files'),
     (r'^/api/(undo|redo|undo_entry|undo_group)$', 'the user\'s own Undo (undo_last_change takes back yours)'),

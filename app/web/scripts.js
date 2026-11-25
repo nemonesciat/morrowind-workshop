@@ -15,13 +15,14 @@ async function renderScripts(){
       <div class="dd"><input class="inp" id="s-find" placeholder="Find a script… (e.g. LocalState)" autocomplete="off"><div class="ddlist" id="s-find-l"></div></div>
       <h3>In my mod</h3><div id="s-mine"></div>
       <h3>Lua scripts (OpenMW)</h3><div id="s-lua"></div>
+      <h3>Scenes</h3><div id="s-scenes"></div>
       <h3>Shared numbers and rules</h3><div class="drow" data-srules="global"><span>🌐 Global variables</span></div><div class="drow" data-srules="gmst"><span>⚙ Game settings</span></div>`;
     side.querySelectorAll('[data-srules]').forEach(r => r.onclick = () => ruShow(r.dataset.srules));
     ddSearch('s-find', 'SCPT', r => sOpen(r.id));
     $('#s-new').onclick = () => sNew();
     side.addEventListener('click', e => { const r = e.target.closest('[data-sopen]'); if (r) sOpen(r.dataset.sopen); });
   }
-  await scInfo(true); sMine(); luMine();
+  await scInfo(true); sMine(); luMine(); if (typeof scnMine === 'function') scnMine();
   if (LU.name && LU.data){ luRender(); return; }
   if (!SC.id && !SC.newOpen) sWelcome();
 }
