@@ -104,6 +104,146 @@ def movie_records(db):
     db.sync_project()
 
 
+# ------------------------------------------------------------------ for the scene maker and coding agents
+_GROUPS = {}
+
+
+def anim_groups(db, rec_i):
+    """The animation groups an actor can play, by name with their length in seconds: a person's from the game's
+    layers (xbase_anim, beast or female, their own), a creature's from its own .kf."""
+    import nifanim
+    r = db.recs[rec_i]
+    key = (r[0], r[1].lower(), (r[5] or '').lower())
+    if key in _GROUPS:
+        return _GROUPS[key]
+    files = []
+    try:
+        if r[0] == 'NPC_':
+            files = [s['file'] for s in nifanim.layers(db, nifanim._person(db, rec_i), None)]
+        elif r[5]:
+            kf = nifanim.files_for(db, r[5]).get('kf')
+            files = [kf] if kf else []
+    except Exception as e:
+        print('scene maker: no animation for', r[1], e)
+    out = {}
+    for f in files:
+        raw = db.meshes.read(f)
+        if not raw:
+            continue
+        for g in nifanim.groups(nifanim.text_keys(raw)[0]):
+            out[g['name'].lower()] = {'group': g['name'], 'length': round(max(0.0, g['stop'] - g['start']), 2)}
+    _GROUPS[key] = sorted(out.values(), key=lambda g: g['group'].lower())
+    return _GROUPS[key]
+
+
+def sound_length(db, path):
+    """A sound file's length in seconds (WAV from its header; MP3 from its frames' bit rate, or its Xing count), or
+    None when it can't be read. path: as the game has it, "Sound/Vo/..." (case and slashes as you like)."""
+    import struct
+    p = (path or '').replace('\\', '/').lower().lstrip('/')
+    if not p.startswith('sound/') and not p.startswith('music/'):
+        p = 'sound/' + p
+    try:
+        raw = db.meshes.read(p)
+    except Exception:
+        raw = None
+    if not raw:
+        return None
+    if raw[:4] == b'RIFF' and raw[8:12] == b'WAVE':
+        i, rate, size = 12, None, None
+        while i + 8 <= len(raw):
+            tag, n = raw[i:i + 4], struct.unpack_from('<I', raw, i + 4)[0]
+            if tag == b'fmt ':
+                rate = struct.unpack_from('<I', raw, i + 16)[0]            # (bytes a second)
+            elif tag == b'data':
+                size = n
+                break
+            i += 8 + n + (n & 1)
+        return round(size / rate, 2) if rate and size else None
+    i = 0
+    if raw[:3] == b'ID3' and len(raw) > 10:
+        i = 10 + ((raw[6] & 0x7f) << 21 | (raw[7] & 0x7f) << 14 | (raw[8] & 0x7f) << 7 | (raw[9] & 0x7f))
+    while i + 4 < len(raw) and not (raw[i] == 0xFF and (raw[i + 1] & 0xE0) == 0xE0):
+        i += 1
+    if i + 4 >= len(raw):
+        return None
+    h = struct.unpack('>I', raw[i:i + 4])[0]
+    ver, layer, bri, sri = (h >> 19) & 3, (h >> 17) & 3, (h >> 12) & 15, (h >> 10) & 3
+    rates = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}.get(ver)
+    if not rates or sri == 3 or layer != 1:
+        return None
+    sr = rates[sri]
+    br1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
+    br2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0]
+    kbps = (br1 if ver == 3 else br2)[bri]
+    spf = 1152 if ver == 3 else 576
+    xi = raw.find(b'Xing', i, i + 200)
+    if xi < 0:
+        xi = raw.find(b'Info', i, i + 200)
+    if xi >= 0 and struct.unpack_from('>I', raw, xi + 4)[0] & 1:
+        frames = struct.unpack_from('>I', raw, xi + 8)[0]
+        return round(frames * spf / sr, 2)
+    return round((len(raw) - i) * 8 / (kbps * 1000), 2) if kbps else None
+
+
+def _plugin_names(db):
+    names = {}
+    for p in getattr(db, 'plugins', None) or []:
+        n = p.get('name') if isinstance(p, dict) else None
+        if n:
+            names[n.lower()] = n
+    if db.project is not None:
+        names[db.project.plugin.lower()] = db.project.plugin
+    return names
+
+
+def place_actors(db, cell_key):
+    """The people and creatures standing in a place, for a scene: [{'ref': {file, index}, 'id', 'name', 'type',
+    'pos': [x, y, z], 'yaw'}] (the plugin file as the game knows it, so the scene player finds them)."""
+    import math
+    from project import ref_info
+    refs, _h = db.cell_refs(cell_key)
+    names = _plugin_names(db)
+    out = []
+    for rk, ref in refs.items():
+        if ref.get('deleted'):
+            continue
+        rid, pos, scale, gone = ref_info(ref['subs'])
+        if gone:
+            continue
+        ri = db.resolve_id(rid)
+        if ri is None or db.recs[ri][0] not in ('NPC_', 'CREA'):
+            continue
+        origin = str(ref.get('origin') or rk.rsplit('|', 1)[0])
+        out.append({'ref': {'file': names.get(origin.lower(), origin), 'index': int(ref.get('idx') if ref.get('idx') is not None else rk.rsplit('|', 1)[1])},
+                    'k': rk, 'ri': ri,
+                    'id': db.recs[ri][1], 'name': db.recs[ri][2] or db.recs[ri][1], 'type': 'npc' if db.recs[ri][0] == 'NPC_' else 'creature',
+                    'pos': [round(pos[0]), round(pos[1]), round(pos[2])], 'yaw': round(math.degrees(pos[5]), 1)})
+    return sorted(out, key=lambda a: a['name'].lower())
+
+
+FORMAT = """openmw-scene/1, a JSON object:
+format "openmw-scene/1"; scene (id: letters, numbers, _); name; cell ([x, y] outdoors, or an interior's name);
+length (seconds).
+player {controls: "off"|"on", sheathe: true, mark: "A"}.
+marks {"A": [x, y, z, yaw]} world positions, yaw in degrees as the game turns things.
+actors [{key, ref: {file, index}} or {key, id, pick: "nearest"}, mark: "B", clips: [{at, group, loop, speed,
+keys: {"<text key>": "vfx:<id>"}}]] (group: one of the actor's own animation groups).
+shots [{at, name, pos: [x, y, z], yaw, pitch, fov}] fixed (yaw: compass degrees, 0 north, clockwise; pitch below 0
+looks down; fov vertical degrees), or [{at, aim: {actor, at: "head"|"chest"|"feet"}, offset: [right, ahead, up] in
+the aimed actor's own frame from its aim height, fov}] or [{at, aim: {actor}, from: {actor: "player", shoulder:
+"right"|"left"}}]; never pos and aim in one shot. move: {to: {offset or pos}, ease: "in"|"out"|"inOut"|"linear",
+dur}. The shot showing is the last whose at has passed.
+lines [{at, who, text, voice: "Sound/Vo/..." (full data path; lips move)}].
+sound [{at, music: "Music/..."}, {at, sound: "Sound/..."}].
+vfx [{id, on, bone, model, dur, at}].
+screen [{at, fade: "in"|"out", dur}, {at, letterbox: "2.39"}, {at, movie: "file.bik"}].
+end {do: [{controls: "on"}, {quest, stage}, {global, value}, {event, data}], onSkip: "end"|"none",
+onMissingActor: "end"}. The end always runs: finishing, skip, a save loaded mid-scene, a missing actor.
+Typical close-up: offset [40, 90, 0] (in front, a little to her right), fov 35; over the shoulder: from the player's
+right shoulder aiming at the speaker; wide: a fixed shot 600-1200 units away, pitch -10."""
+
+
 def outputs(slug, scenes):
     """{relative path: text} and the .omwscripts lines for a mod's scenes ({} and [] when it has none)."""
     if not scenes:
@@ -308,6 +448,16 @@ local function step(dt)
   local sc, t = cur.sc, cur.t
   for _, a in ipairs(type(sc.actors) == 'table' and sc.actors or {}) do
     local obj = cur.actors[a.key]
+    if obj and (not obj:isValid() or obj.count == 0) then
+      -- (moved to their mark, the game hands out a fresh object for them: found again, the camera told)
+      local again = findActor(a, player() and player().position)
+      if again and again:isValid() and again.count > 0 then
+        obj = again; cur.actors[a.key] = again
+        sendPlayer('Actors', {actors = cur.actors})
+      elseif cur.t < 1.5 then
+        obj = nil                                       -- (a moment's grace while a move settles)
+      end
+    end
     if obj then
       if missing(obj) then
         cur.actors[a.key] = nil
@@ -488,6 +638,17 @@ local function aimPoint(obj, at)
   return util.vector3(p.x, p.y, top)               -- 'head'
 end
 
+local function markOf(who)
+  -- (where someone's scene spot is: [x, y, z, yaw] or nil)
+  local sc = S and S.sc or {}
+  local marks = type(sc.marks) == 'table' and sc.marks or {}
+  if who == 'player' then return sc.player and sc.player.mark and marks[sc.player.mark] end
+  for _, a in ipairs(type(sc.actors) == 'table' and sc.actors or {}) do
+    if a.key == who and a.mark then return marks[a.mark] end
+  end
+  return nil
+end
+
 local function frame(obj)
   local yaw = obj.rotation:getYaw()
   local fwd = util.vector3(math.sin(yaw), math.cos(yaw), 0)
@@ -550,6 +711,13 @@ local function placeCamera()
     if type(s.from) == 'table' then
       local f = S.actors[s.from.actor or 'player'] or self.object
       local fwd, right = frame(f)
+      local who = s.from.actor or 'player'
+      local mk = markOf(who)
+      if mk and mk[4] then
+        -- (on a spot: the spot's facing, as the game may not have turned them yet)
+        local y = (tonumber(mk[4]) or 0) * math.pi / 180
+        fwd, right = util.vector3(math.sin(y), math.cos(y), 0), util.vector3(math.cos(y), -math.sin(y), 0)
+      end
       local side = (s.from.shoulder == 'left') and -1 or 1
       pos = aimPoint(f, 'head') + right * (28 * side) - fwd * 45 + util.vector3(0, 0, 6)
     else
@@ -630,6 +798,12 @@ return {
       screenCues()
     end,
     onFrame = function()
+      if S and S.face then
+        -- (the player turned to face as their spot says: moving them there doesn't turn them)
+        local d = S.face - self.rotation:getYaw()
+        d = (d + math.pi) % (2 * math.pi) - math.pi
+        if math.abs(d) < 0.01 or S.faceTries > 20 then S.face = nil else self.controls.yawChange = d; S.faceTries = S.faceTries + 1 end
+      end
       if S and not hold then placeCamera() end
     end,
     onKeyPress = function(key)
@@ -644,7 +818,9 @@ return {
   eventHandlers = {
     [EV .. 'Begin'] = function(e)
       finish('replaced')
-      S = {sc = e.sc, actors = e.actors or {}, t = 0, paused = false, fired = {}, switches = {}, mode = camera.getMode()}
+      S = {sc = e.sc, actors = e.actors or {}, t = 0, paused = false, fired = {}, switches = {}, mode = camera.getMode(), faceTries = 0}
+      local pm = markOf('player')
+      if pm and pm[4] then S.face = (tonumber(pm[4]) or 0) * math.pi / 180 end
       hold = e.held or false
       local pl = type(e.sc.player) == 'table' and e.sc.player or {}
       if pl.controls ~= 'on' then setControls(false, S.switches) end
@@ -657,6 +833,7 @@ return {
     [EV .. 'Resume'] = function() if S then S.paused = false end end,
     [EV .. 'Text'] = function(e) if e.text then ui.showMessage(e.text) end end,
     [EV .. 'Hold'] = function(e) hold = e.on and true or false end,
+    [EV .. 'Actors'] = function(e) if S and e.actors then S.actors = e.actors end end,
     [EV .. 'End'] = function(e)
       if S then finish(e.how) elseif e.controls then setControls(true) end
     end,
@@ -684,7 +861,7 @@ local function addVfx(v)
 end
 
 local function onKey(group, key)
-  local what = active and keys[group] and keys[group][key]
+  local what = active and keys[string.lower(group)] and keys[string.lower(group)][string.lower(key)]
   if type(what) == 'string' and what:sub(1, 4) == 'vfx:' then
     local id = what:sub(5)
     for _, v in ipairs(vfx) do if v.id == id then addVfx(v) end end
@@ -700,21 +877,23 @@ return {
     [EV .. 'Clip'] = function(e)
       local c = e.clip or {}
       if not c.group then return end
-      if not anim.hasGroup(self, c.group) then
+      local g = string.lower(c.group)            -- (OpenMW knows groups in lower case; the files may write Idle2)
+      if not anim.hasGroup(self, g) then
         print('[WsScene] ' .. tostring(self.recordId) .. ' has no animation group ' .. tostring(c.group))
         return
       end
-      if last and last ~= c.group then pcall(anim.cancel, self, last) end
+      if last and last ~= g then pcall(anim.cancel, self, last) end
       anim.clearAnimationQueue(self, false)
       local opts = {speed = tonumber(c.speed) or 1}
       if not c.loop then opts.loops = 0 end
-      anim.playQueued(self, c.group, opts)
-      last = c.group
+      anim.playQueued(self, g, opts)
+      last = g
       if type(c.keys) == 'table' then
-        keys[c.group] = c.keys
-        if not hooked[c.group] and I.AnimationController then
-          hooked[c.group] = true
-          I.AnimationController.addTextKeyHandler(c.group, onKey)
+        keys[g] = {}
+        for k, v in pairs(c.keys) do keys[g][string.lower(k)] = v end
+        if not hooked[g] and I.AnimationController then
+          hooked[g] = true
+          I.AnimationController.addTextKeyHandler(g, onKey)
         end
       end
     end,

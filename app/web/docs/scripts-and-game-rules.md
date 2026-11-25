@@ -84,15 +84,29 @@ writes the scripts in the game's own way. See *Building interiors*.
 
 ## Scenes
 
-A scene is a cutscene: camera shots, actors playing their animations, spoken lines, music, fades, and what happens
-at the end. Scenes are made in a modding program connected to the Workshop (**Settings › Connected programs**;
-such a program asks once and you press **Allow**). What it sends joins your unsaved work, marked ⇄ in My changes,
-each with Undo.
+A scene is a cutscene: camera shots, people playing their animations, spoken lines, music, fades, videos, and what
+happens at the end. **🎬 Scenes** is in the Scripts and Dialogue menus.
 
-On the Scripts page, **Scenes** lists them. Pick one to choose what starts it in the game: only when asked by
-another script, the player coming near a spot, a quest reaching a stage, or a global variable set to 1 (from a
-dialogue result, for example). **Only once a game** is ticked to start with. In the game, Space or Enter skips a
-scene; its end always runs. Scenes play in an .omwaddon mod.
+**Making one.** Open the place on the World map, then **+ New scene**. The scene maker has:
+- **People**: add the ones standing in the place. The player can be kept still, with the weapon put away.
+- **Shots**: **+ Shot from the 3D view** takes the 3D view's camera as it is (frame it there first); **+ Shot on
+  someone** aims at a person as a close-up, medium, wide or over the player's shoulder, and **push in** moves the
+  camera slowly closer. **👁** shows a shot in the 3D view.
+- **Animations**: what each person plays and when, from the animations they really have.
+- **Lines**: who says what, and a voice file if you have one (their lips move).
+- **Screen and sound**: fades, black bars, music, a video.
+- **At the end**: the player gets the controls back; a quest stage or a global variable can be set.
+- **Starts when**: only when asked (another script, or ▶ Play), the player coming near a spot, a quest reaching a
+  stage, or a global variable set to 1 (from a dialogue result, for example).
+
+The **timeline** shows what happens when; click it to pick the time new things start at. **Check** finds what would
+stop it playing; **Save** keeps it in your mod with Undo (File › Save writes it). In a game started with **Play
+here**, **▶ Play in the game** plays it as last saved.
+
+In the game, Space or Enter skips a scene; its end always runs. Scenes play in an .omwaddon mod.
+
+A coding agent can make scenes too (ask it for a cutscene: see *Coding with AI*), and so can a modding program
+connected to the Workshop (**Settings › Connected programs**). Theirs show here with yours.
 
 ## Effects in the game
 

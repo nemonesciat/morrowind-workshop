@@ -194,6 +194,9 @@ local function runCommand(c)
     end
   elseif v == 'topic' then
     types.Player.addTopic(player, a)
+  elseif v == 'scene' then
+    -- (the scene maker's Play in the game: the mod's scene player, scenes.py; '-' stops the one playing)
+    if a == '-' then core.sendGlobalEvent('WsScene_Stop', {}) else core.sendGlobalEvent('WsScene_Play', {scene = a, t = tonumber(b) or 0}) end
   else
     return 'unknown command ' .. tostring(v)
   end

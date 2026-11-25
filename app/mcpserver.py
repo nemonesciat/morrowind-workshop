@@ -201,6 +201,37 @@ TOOLS += [
     {'name': 'lua_delete_script', 'title': 'Remove a Lua script', 'annotations': dict(DESTROY, title='Remove a Lua script'),
      'description': 'Remove a Lua script from the mod (Undo brings it back).',
      'inputSchema': _schema({'name': S}, ['name'])},
+    {'name': 'scene_format', 'title': 'Scene format', 'annotations': dict(READ, title='Scene format'),
+     'description': 'How a cutscene (an openmw-scene/1 scene) is written for the Workshop\'s scene player: shots, actors '
+                    'and their animations, lines, music, fades, videos, the end. Read it before scene_write.',
+     'inputSchema': _schema({})},
+    {'name': 'scenes_list', 'title': 'Scenes', 'annotations': dict(READ, title='Scenes'),
+     'description': 'The cutscenes of the open mod: id, name, length, place, what starts each one.',
+     'inputSchema': _schema({})},
+    {'name': 'scene_read', 'title': 'Read a scene', 'annotations': dict(READ, title='Read a scene'),
+     'description': 'One cutscene of the mod, whole (to change it: edit and send it back with scene_write).',
+     'inputSchema': _schema({'scene': S}, ['scene'])},
+    {'name': 'scene_actors', 'title': 'People of a place', 'annotations': dict(READ, title='People of a place'),
+     'description': 'The people and creatures standing in a place, for a scene: each one\'s ref {file, index} (use it '
+                    'as the actor\'s ref), id, name, position and facing, and with animations=true the animation groups '
+                    'each can play. place: a key from find_places ("#x,y" outdoors, an interior\'s name).',
+     'inputSchema': _schema({'place': S, 'animations': {'type': 'boolean'}}, ['place'])},
+    {'name': 'scene_animations', 'title': 'An actor\'s animations', 'annotations': dict(READ, title='An actor\'s animations'),
+     'description': 'The animation groups a person or creature (its record id) can play, with their lengths in seconds.',
+     'inputSchema': _schema({'id': S}, ['id'])},
+    {'name': 'scene_check', 'title': 'Check a scene', 'annotations': dict(READ, title='Check a scene'),
+     'description': 'Check a scene without keeping it: what scene_write would refuse (errors) or warn about.',
+     'inputSchema': _schema({'scene': {'type': 'object'}}, ['scene'])},
+    {'name': 'scene_write', 'title': 'Make or change a scene', 'annotations': dict(WRITE, title='Make or change a scene'),
+     'description': 'Keep a cutscene in the mod (made, or changed when its id exists), checked; one change with Undo. The '
+                    'Workshop writes the Lua that plays it when the user saves. Read scene_format first. Use real refs '
+                    'from scene_actors and animation groups the actor has (scene_animations).',
+     'inputSchema': _schema({'scene': {'type': 'object'}}, ['scene'])},
+    {'name': 'scene_trigger', 'title': 'What starts a scene', 'annotations': dict(WRITE, title='What starts a scene'),
+     'description': 'What starts a scene in the game: {"kind": "area", "center": [x, y, z], "radius", "cell"?, "once"}, '
+                    '{"kind": "quest", "quest", "stage", "once"}, {"kind": "global", "name", "once"} (set to 1 by a dialogue '
+                    'result or MWScript), or null: only when another script sends WsScene_Play.',
+     'inputSchema': _schema({'scene': S, 'trigger': {'type': ['object', 'null']}}, ['scene'])},
     {'name': 'lua_check', 'title': 'Check Lua', 'annotations': dict(READ, title='Check Lua'),
      'description': 'Check Lua text without saving it, as lua_write_script would: shape, the rules for the kind, OpenMW\'s '
                     'own list of functions.',
@@ -277,6 +308,10 @@ PROMPTS = [
      'description': 'Fix one of the mod\'s Lua scripts from the checker and the game\'s own errors.',
      'arguments': [{'name': 'name', 'description': 'The script\'s name', 'required': True},
                    {'name': 'problem', 'description': 'What goes wrong in the game, if anything', 'required': False}]},
+    {'name': 'make_scene', 'title': 'Make a cutscene',
+     'description': 'A cutscene for the open mod: actors, shots, lines, music and what starts it.',
+     'arguments': [{'name': 'what', 'description': 'What happens in the scene', 'required': True},
+                   {'name': 'place', 'description': 'Where it happens', 'required': False}]},
     {'name': 'make_spell', 'title': 'Make a spell',
      'description': 'A spell with a magic effect of the mod\'s own (teleport, summon, Lua of your own...).',
      'arguments': [{'name': 'what', 'description': 'What the spell does', 'required': True}]},
@@ -295,6 +330,14 @@ def _prompt(name, args):
         text = ('Fix the Lua script "%s" of my mod, open in Morrowind Workshop.%s\n\nRead it with lua_read_script and the game\'s '
                 'errors for it with lua_game_errors; check functions with openmw_lua_api; save the fixed script with '
                 'lua_write_script. Tell me what was wrong.' % (a.get('name', ''), (' In the game: ' + a['problem']) if a.get('problem') else ''))
+    elif name == 'make_scene':
+        text = ('Make a cutscene for my mod, open in Morrowind Workshop: %s%s\n\nCall workshop_status, then scene_format. Find the '
+                'place with find_places and the people in it with scene_actors (animations=true); use their refs and only '
+                'animation groups they have. Plan the shots (a wide one to start, close-ups on whoever speaks), the lines '
+                'with who says them, fades, and the end (controls back; a quest stage if I asked). Check it with '
+                'scene_check and keep it with scene_write; set what starts it with scene_trigger if I said. Then tell me '
+                'in a few words what happens, and that Save writes it and Play here shows it.'
+                % (a.get('what', ''), ('\nWhere: ' + a['place']) if a.get('place') else ''))
     elif name == 'make_spell':
         text = ('Make a spell for my mod, open in Morrowind Workshop: %s\n\nUse a magic effect of the mod\'s own: magic_effects_info '
                 'for its parts, save_magic_effect, then create_spell (give it to the player or a seller if I said so). Use '
@@ -445,6 +488,53 @@ class Agent:
         import luascripts
         self._lua()
         return luascripts.delete(self.db, name)
+
+    # ----- scenes (scenes.py plays them; bridge.py keeps and checks them)
+    def x_scene_format(self):
+        import scenes
+        return {'format': scenes.FORMAT, 'scene_player': scenes.VERSION,
+                'note': 'Positions in game units (Z up); the scene\'s cell outdoors is the grid cell the action is in.'}
+
+    def x_scenes_list(self):
+        import bridge
+        self._lua()
+        return {'scenes': bridge.scenes(self.db)}
+
+    def x_scene_read(self, scene):
+        import bridge
+        return bridge.get_scene(self.db, scene)
+
+    def x_scene_actors(self, place, animations=False):
+        import bridge
+        import scenes
+        key = (place or '').strip()
+        if ('CELL', key) not in self.db.by_key and ('CELL', key.lower()) in self.db.by_key:
+            key = key.lower()
+        out = scenes.place_actors(self.db, bridge.cell_key(key))
+        if animations:
+            for a in out[:40]:
+                ri = self.db.resolve_id(a['id'])
+                a['animations'] = [g['group'] for g in scenes.anim_groups(self.db, ri)] if ri is not None else []
+        return {'place': key, 'actors': out, 'player': {'key': 'player', 'note': 'the player is always the actor "player"'}}
+
+    def x_scene_animations(self, id):
+        import scenes
+        ri = self.db.resolve_id(id or '')
+        if ri is None:
+            raise EditError('Nothing has the id "%s".' % id)
+        return {'id': id, 'groups': scenes.anim_groups(self.db, ri)}
+
+    def x_scene_check(self, scene):
+        import bridge
+        return {'problems': bridge.check_scene(self.db, scene)}
+
+    def x_scene_write(self, scene):
+        import bridge
+        return bridge.put_scene(self.db, scene)
+
+    def x_scene_trigger(self, scene, trigger=None):
+        import bridge
+        return bridge.set_trigger(self.db, scene, trigger)
 
     def x_lua_check(self, text, kind):
         import lua_check

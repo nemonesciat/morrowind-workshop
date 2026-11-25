@@ -133,7 +133,10 @@ place, place, move and remove things, records, characters, dialogue and quests, 
 Lua with OpenMW's own list of its Lua, magic effects and spells, recent changes, undoing its own last change), and it
 can find and run any other action of the Workshop's: towns, castles, dungeons, land, populating, grass, regions,
 sounds, items, the release zip and the rest. Agents that offer them also get ready-made requests: *write a Lua
-script*, *fix a Lua script*, *make a spell*.
+script*, *fix a Lua script*, *make a spell*, *make a cutscene*. An agent can make scenes ("Fargoth welcomes the
+player outside the Census office, a close-up on him, then the camera pulls back"): it finds the people of the
+place and the animations they have, writes the scene, and sets what starts it. Open it under **🎬 Scenes** to see
+or change it.
 
 Some things stay yours: opening, switching or deleting mods, backups and files, starting the game, your settings and
 load order, windows opening on your screen, and undoing your own changes.

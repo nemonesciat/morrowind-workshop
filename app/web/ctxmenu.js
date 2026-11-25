@@ -15,6 +15,8 @@ const CM_GROUPS = [
   ['This door', '🚪', [/^go where it leads/i, /^pick where you arrive…$/i, /^pick where you arrive, in the other view/i, /^make it lead somewhere/i,
     /lead elsewhere in this place/i, /^link (with|to a door)/i, /^open where it leads in a second view/i, /^open where it leads in a second window/i]],
   ['This person', '🧍', [/^dialogue/i, /^edit (character|creature)/i, /^test setup/i]],
+  ['Scene', '🎬', [/^new scene here/i, /^scene with /i, /^scene when the player comes through/i, /^add .* to the scene$/i, /^the scene starts here/i,
+    / stands here$/i, /^camera here, looking at/i]],
   ['Dress it', '🪄', [/^dress (this|again)/i, /^fill with books/i, /^add one thing/i]],
   ['Look and open', '👁', [/^look at/i, /^open its window/i, /^open its record/i, /^edit it in /i, /^pin it/i, /^where it.s used/i]],
   ['Edit', '✎', [/^copy$/i, /^paste/i, /^duplicate/i, /^save as a prefab/i, /record of its own/i, /^undo my changes/i, /^bring back/i, /^delete/i]],
@@ -37,7 +39,7 @@ const CM_GROUPS = [
 const CM_MORE = ['More', '…'];
 // (which group an entry belongs to is tried in this order, the narrow ones first: "Dress everything in the
 // room" is the room's, not "Dress it"; "Copy the lighting" the place's, not Edit's Copy)
-const CM_TRY = ['This room', 'This place', 'This door', 'This person', 'Dress it', 'What it does', 'Secret entrance', 'Build', 'Looks and sound',
+const CM_TRY = ['Scene', 'This room', 'This place', 'This door', 'This person', 'Dress it', 'What it does', 'Secret entrance', 'Build', 'Looks and sound',
   'Look and open', 'Move and place', 'Replace and select', 'Edit', 'View'];
 // what a kind of thing is right-clicked for most, first match wins
 const CM_QUICK = {

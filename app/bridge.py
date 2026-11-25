@@ -575,6 +575,10 @@ def put_scene(db, sc):
     old = (p.scenes or {}).get(sid) or {}
     if 'trigger' not in sc and old.get('trigger'):
         sc = dict(sc, trigger=old['trigger'])            # (what starts it is the user's choice, made in the Workshop)
+    tr = sc.get('trigger')
+    if isinstance(tr, dict) and tr.get('kind') == 'dialogue':
+        # (the scene maker's "After a line of dialogue": a global of its own that the line sets)
+        sc = dict(sc, trigger={'kind': 'global', 'name': scene_global(db, sid), 'value': 1, 'once': tr.get('once', True), 'from': 'dialogue'})
     p.scenes = dict(p.scenes or {})
     p.scenes[sid] = sc
     import scenes as _sc
@@ -584,7 +588,21 @@ def put_scene(db, sc):
 
 
 TRIGGERS = {'area': 'the player comes near a spot', 'quest': 'a quest reaches a stage',
-            'global': 'a global variable is set (a dialogue result or MWScript: set <name> to 1)'}
+            'global': 'a global variable is set (a dialogue result or MWScript: set <name> to 1)',
+            'dialogue': 'a line of dialogue says so'}
+
+
+def scene_global(db, sid):
+    """The global variable a line of dialogue sets to start a scene (made in the mod when missing)."""
+    import struct
+    from project import join_subs, zs
+    p = db.project
+    gv = ('ws' + p.lua_slug()[:12] + '_' + re.sub(r'[^a-z0-9_]', '', sid.lower()))[:31]
+    if db.resolve_id(gv) is None:
+        p.set_record('GLOB', gv.lower(), 0, join_subs([('NAME', zs(gv)), ('FNAM', b's'), ('FLTV', struct.pack('<f', 0.0))]),
+                     created=True)
+        db.sync_project()
+    return gv
 
 
 def set_trigger(db, sid, tr):
@@ -595,6 +613,9 @@ def set_trigger(db, sid, tr):
     sc = (p.scenes or {}).get(sid or '')
     if sc is None:
         raise EditError('No scene "%s" in this mod.' % sid)
+    if tr and tr.get('kind') == 'dialogue':
+        # (a line's result sets it: "set <global> to 1"; the Dialogue page writes that line, scenes.js)
+        tr = {'kind': 'global', 'name': scene_global(db, sid), 'value': 1, 'once': tr.get('once', True), 'from': 'dialogue'}
     if tr:
         k = tr.get('kind')
         if k not in TRIGGERS:
@@ -608,12 +629,12 @@ def set_trigger(db, sid, tr):
                 raise EditError('Name the global variable.')
             if db.resolve_id(str(tr['name'])) is None:
                 raise EditError('There is no global variable "%s": make it under Rules › Global variables first.' % tr['name'])
-        tr = {k2: v for k2, v in tr.items() if k2 in ('kind', 'center', 'radius', 'cell', 'once', 'quest', 'stage', 'name', 'value')}
+        tr = {k2: v for k2, v in tr.items() if k2 in ('kind', 'center', 'radius', 'cell', 'once', 'quest', 'stage', 'name', 'value', 'from')}
     p.scenes = dict(p.scenes)
     p.scenes[sid] = {k2: v for k2, v in sc.items() if k2 != 'trigger'}
     if tr:
         p.scenes[sid]['trigger'] = tr
-    editing.commit(db, ('Scene "%s" starts when %s' % (sc.get('name') or sid, TRIGGERS[tr['kind']])) if tr
+    editing.commit(db, ('Scene "%s" starts when %s' % (sc.get('name') or sid, TRIGGERS['dialogue' if tr.get('from') == 'dialogue' else tr['kind']])) if tr
                    else 'Scene "%s" starts only when asked' % (sc.get('name') or sid))
     return {'scene': sid, 'trigger': tr or None}
 

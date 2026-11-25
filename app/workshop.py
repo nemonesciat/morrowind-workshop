@@ -1697,6 +1697,24 @@ class Handler(BaseHTTPRequestHandler):
                 import bridge
                 self._json({'scenes': bridge.scenes(db) if db.project else [], 'lua_ok': bool(db.project and db.project.lua_allowed()),
                             'triggers': bridge.TRIGGERS})
+            elif u.path == '/api/scenes/voicelen':
+                # (a voice file's length, so a scene's line lasts as long as it is spoken: scenes.js)
+                import scenes as _scn
+                self._json({'secs': _scn.sound_length(db, q.get('path'))})
+            elif u.path in ('/api/scenes/get', '/api/scenes/actors', '/api/scenes/anims'):
+                # the scene maker (web/scenes.js): one scene whole; the people and creatures of a place; what an actor can play
+                import bridge
+                import scenes as _scn
+                try:
+                    if u.path == '/api/scenes/get':
+                        self._json(bridge.get_scene(db, q.get('scene')))
+                    elif u.path == '/api/scenes/actors':
+                        self._json({'actors': _scn.place_actors(db, bridge.cell_key(json.loads(q['cell']) if q.get('cell', '').startswith('[') else q.get('cell')))})
+                    else:
+                        ri = db.resolve_id(q.get('id') or '')
+                        self._json({'groups': _scn.anim_groups(db, ri) if ri is not None else []})
+                except editing.EditError as e:
+                    self._json({'error': str(e)}, 400)
             elif u.path == '/api/bridge/asks':
                 # (programs asking to connect, for the window's Allow: bridge.py; and those connected)
                 import bridge
@@ -2010,7 +2028,7 @@ class Handler(BaseHTTPRequestHandler):
                     link.teleport(key, x, y, z, yaw)
                     return self._json({'ok': True, 'place': name})
                 verb, args = body.get('verb'), [a for a in (body.get('args') or []) if a is not None]
-                need = {'journal': 2, 'stage': 2, 'finish': 2, 'reset': 1, 'global': 2, 'give': 2, 'take': 2, 'topic': 1}
+                need = {'journal': 2, 'stage': 2, 'finish': 2, 'reset': 1, 'global': 2, 'give': 2, 'take': 2, 'topic': 1, 'scene': 2}
                 if verb not in need or len(args) < need[verb] or not str(args[0]).strip():
                     return self._json({'error': 'Unknown or incomplete test command.'}, 400)
                 if verb in ('give', 'take') and db.resolve_id(str(args[0]).strip()) is None:
@@ -3161,6 +3179,12 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/scenes/trigger':
                     import bridge
                     return self._json(bridge.set_trigger(db, body.get('scene'), body.get('trigger')))
+                if u.path in ('/api/scenes/save', '/api/scenes/check'):
+                    # (the scene maker's Save and Check: as a connected program's scene, checked, with Undo)
+                    import bridge
+                    if u.path == '/api/scenes/check':
+                        return self._json({'problems': bridge.check_scene(db, body.get('scene'))})
+                    return self._json(bridge.put_scene(db, body.get('scene')))
                 if u.path == '/api/scenes/delete':
                     import bridge
                     return self._json(bridge.drop_scene(db, body.get('scene')))

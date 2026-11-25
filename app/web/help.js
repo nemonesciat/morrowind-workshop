@@ -34,6 +34,7 @@ const GUIDES = [
   {file: 'openmw-052.md', title: 'What OpenMW 0.52 adds', what: 'Your own skills, attributes, weathers, traps, loot rules and list additions; magic effects that burst, strike, glow and act where the bolt strikes.'},
   {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
   {file: 'scripts-and-game-rules.md', title: 'Scripts and game rules', what: 'MWScript and Lua, global variables, game settings, factions, classes, races and the rest.'},
+  {file: 'making-cutscenes.md', title: 'Your first cutscene', what: 'A scene step by step: people on their spots, shots, lines, preview, and trying it in the game.'},
   {file: 'coding-with-ai.md', title: 'Coding with AI', what: 'Lua, effects and dialogue written by a model on your PC, and coding agents (Claude Code, Codex…) on your mod.'},
   {file: 'playing-and-testing.md', title: 'Playing and testing', what: 'Play here, playing as your own character, test setups, the live link, the OpenMW menu.'},
   {file: 'sharing-your-mod.md', title: 'Sharing your mod', what: 'My mod, Get ready to share, Health check, Load order, merging, .esp files, building together, backups.'},
@@ -194,6 +195,7 @@ function renderGuide(){
 
   <div class="cgrid home-cards">
     ${card('tour', '🏠', 'Guided · about 2 minutes', 'Build your first house', 'Lay out a few rooms, let the Workshop build and furnish them from the game\'s own pieces, then look round it in 3D.')}
+    ${card('scenetour', '🎬', 'Guided · about 5 minutes', 'Your first cutscene', 'Someone greets the player: put them on their spots, frame the shots, write the line, preview it, then try it in the game.')}
     ${card('world', '🗺', 'World map', 'Open a place', 'Any town, house or cave of your game, in 2D or 3D. Move things, drag new ones in, furnish rooms, then Play here.')}
     ${card('create', '⚒', 'Create', 'Make something new', 'A house, a dungeon or ruin, a person, a spell, a book, or weapons and armour from the Forge, each one change you can undo.')}
     ${card('browse', '🔎', 'Browse', 'Find anything', 'Search every record in your load order by name, ID, dialogue or model, and open it to see and change it.')}
@@ -293,6 +295,7 @@ function renderGuide(){
   w.querySelectorAll('[data-home]').forEach(b => b.onclick = () => {
     const k = b.dataset.home;
     if (k === 'tour') coachHouse();
+    else if (k === 'scenetour' && typeof coachScene === 'function') coachScene();
     else if (k === 'world') showView('world');
     else if (k === 'create') showView('createv');
     else if (k === 'new052') rcOpenKind('happens');

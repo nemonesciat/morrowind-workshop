@@ -42,8 +42,9 @@ const COACH_STEPS = [
    last: true},
 ];
 
-function coachHouse(){
+function coachHouse(steps){
   coachEnd();
+  COACH.steps = steps || COACH_STEPS;     // (another tour's steps: the first cutscene, scenes.js)
   COACH.on = true; COACH.n = -1; COACH.skipped = 0;
   const css = document.createElement('style'); css.id = 'coach-css';
   css.textContent = `
@@ -78,12 +79,12 @@ function coachHouse(){
 }
 
 function coachNext(){
-  for (COACH.n++; COACH.n < COACH_STEPS.length; COACH.n++){
-    const s = COACH_STEPS[COACH.n];
+  for (COACH.n++; COACH.n < COACH.steps.length; COACH.n++){
+    const s = COACH.steps[COACH.n];
     if (!(s.skip && s.skip())) break;
     COACH.skipped++;                     // (a step already done, like having a mod open, isn't counted)
   }
-  const s = COACH_STEPS[COACH.n];
+  const s = COACH.steps[COACH.n];
   if (!s) return coachEnd(true);
   // (only on coming to the step: back to it after a stopped build keeps what it noted then. Noting the place again
   // there took the new house, opened a moment before its map came, for the old one: stuck on 5 of 8, 2026-10-27)
@@ -91,7 +92,7 @@ function coachNext(){
   COACH.again = false;
   COACH.busy = false;
   COACH.seen = null;                   // (what it points at is scrolled into view once it's there)
-  const shown = COACH.n + 1 - COACH.skipped, all = COACH_STEPS.length - COACH.skipped;
+  const shown = COACH.n + 1 - COACH.skipped, all = COACH.steps.length - COACH.skipped;
   COACH.tip.innerHTML = `<b>${esc(s.title)}</b><div>${esc(s.text)}</div>
     <div class="foot"><span class="msg">${shown} of ${all}</span>
       ${s.last ? '<button class="btn sm primary" data-coach="end">Done</button>' : `<button class="btn sm" data-coach="skip">Skip the tour</button>${s.next ? '<button class="btn sm primary" data-coach="next">Next</button>' : ''}`}</div>`;
@@ -100,7 +101,7 @@ function coachNext(){
 
 function coachTick(){
   if (!COACH.on) return;
-  const s = COACH_STEPS[COACH.n];
+  const s = COACH.steps[COACH.n];
   if (s && s.done && s.done()) return coachNext();
   if (s && s.busy) coachBusy(s, s.busy());
   coachPlace();
@@ -110,7 +111,7 @@ function coachTick(){
 function coachBusy(s, on){
   if (on === !!COACH.busy && !on) return;
   COACH.busy = on;
-  const shown = COACH.n + 1 - COACH.skipped, all = COACH_STEPS.length - COACH.skipped;
+  const shown = COACH.n + 1 - COACH.skipped, all = COACH.steps.length - COACH.skipped;
   if (!on){
     // (the page went on to the World map: built, and the house is opening; keep saying so until it has)
     if (!pageOn('createv')){ COACH.busy = true; return; }
@@ -126,7 +127,7 @@ function coachBusy(s, on){
 // nothing to point at, or what it points at not on screen, the tip sits low in the middle)
 function coachPlace(){
   if (!COACH.on) return;
-  const s = COACH_STEPS[COACH.n]; if (!s) return;
+  const s = COACH.steps[COACH.n]; if (!s) return;
   // (while it works: no ring on the button, and the tip low in the middle, clear of the page's own note)
   const el = COACH.busy ? null : s.at && s.at(), tip = COACH.tip, ring = COACH.ring;
   if (el && el !== COACH.seen && el.offsetParent !== null){ COACH.seen = el; el.scrollIntoView({block: 'nearest'}); }
@@ -166,5 +167,6 @@ function coachEnd(finished){
   COACH.on = false; clearInterval(COACH.timer);
   window.removeEventListener('resize', coachPlace);
   for (const el of [COACH.ring, COACH.tip, $('#coach-css')]) if (el) el.remove();
-  if (finished) toast('That\'s the tour. Home (the logo, top left) has it again any time.');
+  if (finished) toast(COACH.steps === COACH_STEPS ? 'That\'s the tour. Home (the logo, top left) has it again any time.'
+    : 'That\'s your first cutscene. Home (the logo, top left) has this tour again any time.');
 }

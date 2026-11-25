@@ -271,13 +271,25 @@ function dRenderQuest(){
     $('#q-stages').innerHTML = D.qstages.map((s, n) => `<div class="qstage" data-qs="${n}"><input class="inp" type="number" value="${s.index}" data-qf="index" title="Stage number">
       <textarea class="inp" data-qf="text" placeholder="What the player writes in their journal, e.g. 'Fenas asked me to find her ring.'">${esc(s.text)}</textarea>
       <div class="qside"><label title="The quest is complete at this stage"><input type="checkbox" data-qf="finished" ${s.finished ? 'checked' : ''}> Finished</label>
-      <button class="btn sm" data-ai="stage" title="Suggest with AI (a model on this PC: Settings › AI)">✦</button><button class="btn sm danger" data-qdel title="Remove stage">✕</button></div></div>`).join('')
+      <button class="btn sm" data-ai="stage" title="Suggest with AI (a model on this PC: Settings › AI)">✦</button><button class="btn sm" data-qscene title="Play a scene when the quest reaches this stage">🎬</button><button class="btn sm danger" data-qdel title="Remove stage">✕</button></div></div>`).join('')
       || '<div class="msg">No stages yet.</div>';
     $('#q-stages').querySelectorAll('[data-qf]').forEach(el => el.oninput = el.onchange = () => {
       const s = D.qstages[+el.closest('[data-qs]').dataset.qs], f = el.dataset.qf;
       s[f] = f === 'finished' ? el.checked : f === 'index' ? +el.value : el.value;
     });
     $('#q-stages').querySelectorAll('[data-qdel]').forEach(b => b.onclick = () => { D.qstages.splice(+b.closest('[data-qs]').dataset.qs, 1); drawStages(); });
+    // (a scene that plays at this stage: picked from the mod's scenes, its start set to the stage; scenes.js)
+    $('#q-stages').querySelectorAll('[data-qscene]').forEach(b => b.onclick = async () => {
+      const st = D.qstages[+b.closest('[data-qs]').dataset.qs];
+      let l = [];
+      try { l = (await api('/api/scenes')).scenes || []; } catch (e){}
+      const items = l.length ? l.map(x => ({label: '🎬 ' + x.name, act: async () => {
+        try { await post('/api/scenes/trigger', {scene: x.scene, trigger: {kind: 'quest', quest: q.id, stage: st.index, once: true}}); afterChange(); toast(`"${x.name}" plays when ${q.id} reaches stage ${st.index}.`); }
+        catch (e){ toast(e.message, true); }
+      }})) : [{label: 'No scenes yet: Scripts › 🎬 Scenes makes one', disabled: true}];
+      if (typeof scnNew === 'function') items.push('-', {label: '+ A new scene for this stage…', act: () => toast('Open the place on the World map, right-click the ground › 🎬 New scene here › A quest reaches a stage.')});
+      pnlMenu(b, items);
+    });
     $('#q-stages').querySelectorAll('[data-ai="stage"]').forEach(b => b.onclick = () => {
       const n = +b.closest('[data-qs]').dataset.qs, ta = b.closest('[data-qs]').querySelector('textarea');
       aiDraft({kind: 'journal', quest: q.key, current: ta.value}, b, v => { ta.value = v; D.qstages[n].text = v; });
@@ -381,7 +393,8 @@ async function dEditLine(topicKey, line, isNew){
     <label>Then do <span class="msg">(result script: runs after the line is said)</span></label>
     <div class="dquick"><select class="inp" id="le-act"><option value="">Add an action…</option><option value="journal">Set a quest stage</option><option value="give">Give the player an item</option>
       <option value="take">Take an item from the player</option><option value="gold">Give gold</option><option value="topic">Add a topic for the player</option>
-      <option value="choice">Offer a choice</option><option value="disp">Change disposition</option><option value="bye">End the conversation</option></select>
+      <option value="choice">Offer a choice</option><option value="disp">Change disposition</option><option value="bye">End the conversation</option>
+      <option value="scene">🎬 Play a scene</option></select>
       <input class="inp" id="le-a1" style="display:none"><input class="inp" id="le-a2" type="number" style="display:none;max-width:90px"><button class="btn sm" id="le-aadd" style="display:none">Add</button></div>
     <textarea class="inp code" id="le-res" style="min-height:70px" placeholder="e.g. Journal &quot;MyMod_LostRing&quot; 10">${esc(L.result || '')}</textarea>
     <label class="msg" id="le-choicewrap" style="display:none;margin-top:6px"><input type="checkbox" id="le-mkans" checked> Also add an answer line for each choice (above this line)</label>
@@ -423,17 +436,34 @@ async function dEditLine(topicKey, line, isNew){
   // quick actions for the result script
   const act = $('#le-act'), a1 = $('#le-a1'), a2 = $('#le-a2'), aadd = $('#le-aadd'), res = $('#le-res');
   const ACT = {journal: ['quest ID', 'stage', true], give: ['item ID', 'how many', true], take: ['item ID', 'how many', true], gold: [null, 'amount', true],
-               topic: ['topic', null, true], choice: ['answers, separated by |  (e.g. Yes, I will | Not now)', null, true], disp: [null, 'change (+/-)', true], bye: [null, null, false]};
+               topic: ['topic', null, true], choice: ['answers, separated by |  (e.g. Yes, I will | Not now)', null, true], disp: [null, 'change (+/-)', true], bye: [null, null, false],
+               scene: ['scene', null, true]};
   act.onchange = () => {
     const a = ACT[act.value];
     a1.style.display = a && a[0] ? '' : 'none'; a1.placeholder = a && a[0] || ''; a1.value = act.value === 'journal' ? ((L.conds.find(c => c.kind === 'journal') || {}).name || (D.mode === 'quest' ? D.data.id : '')) : '';
-    if (act.value === 'journal') a1.setAttribute('list', 'dl-quests'); else a1.removeAttribute('list');
+    if (act.value === 'journal') a1.setAttribute('list', 'dl-quests'); else if (act.value === 'scene') a1.setAttribute('list', 'dl-scenes'); else a1.removeAttribute('list');
+    if (act.value === 'scene'){
+      // (the mod's scenes to pick from: the line sets the scene's own global, and the scene starts after it; scenes.js)
+      if (!$('#dl-scenes')){ const dl = document.createElement('datalist'); dl.id = 'dl-scenes'; document.body.appendChild(dl); }
+      api('/api/scenes').then(r => { $('#dl-scenes').innerHTML = (r.scenes || []).map(x => `<option value="${esc(x.scene)}">${esc(x.name)}</option>`).join('');
+        if (!(r.scenes || []).length) toast('Your mod has no scenes yet: Scripts › 🎬 Scenes makes one.', true); }).catch(() => {});
+    }
     a2.style.display = a && a[1] ? '' : 'none'; a2.placeholder = a && a[1] || ''; a2.value = act.value === 'give' || act.value === 'take' ? 1 : '';
     aadd.style.display = a ? '' : 'none';
     if (act.value === 'bye') aadd.onclick();
   };
-  aadd.onclick = () => {
+  aadd.onclick = async () => {
     const v1 = a1.value.trim(), v2 = a2.value.trim();
+    if (act.value === 'scene'){
+      if (!v1) return toast('Pick the scene.', true);
+      try {
+        const t = await post('/api/scenes/trigger', {scene: v1, trigger: {kind: 'dialogue', once: true}});
+        res.value = (res.value.trim() ? res.value.trimEnd() + '\n' : '') + `set ${t.trigger.name} to 1`;
+        act.value = ''; act.onchange(); res.oninput(); afterChange();
+        toast('The scene plays after this line (once it is saved).');
+      } catch (e){ toast(e.message, true); }
+      return;
+    }
     const line = {journal: `Journal "${v1}" ${v2 || 10}`, give: `Player->AddItem "${v1}" ${v2 || 1}`, take: `Player->RemoveItem "${v1}" ${v2 || 1}`,
                   gold: `Player->AddItem "gold_001" ${v2 || 10}`, topic: `AddTopic "${v1}"`, disp: `ModDisposition ${v2 || 10}`, bye: 'Goodbye',
                   choice: 'Choice ' + v1.split('|').map(s => s.trim()).filter(Boolean).map((s, n) => `"${s.replace(/"/g, "'")}" ${n + 1}`).join(' ')}[act.value];
