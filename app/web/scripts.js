@@ -15,9 +15,10 @@ async function renderScripts(){
       <div class="dd"><input class="inp" id="s-find" placeholder="Find a script… (e.g. LocalState)" autocomplete="off"><div class="ddlist" id="s-find-l"></div></div>
       <h3>In my mod</h3><div id="s-mine"></div>
       <h3>Lua scripts (OpenMW)</h3><div id="s-lua"></div>
-      <h3>Scenes</h3><div id="s-scenes"></div>
+      <h3 class="scn-h" style="cursor:pointer" title="Cutscenes in your mod: what starts each one">🎬 Scenes</h3><div id="s-scenes"></div>
       <h3>Shared numbers and rules</h3><div class="drow" data-srules="global"><span>🌐 Global variables</span></div><div class="drow" data-srules="gmst"><span>⚙ Game settings</span></div>`;
     side.querySelectorAll('[data-srules]').forEach(r => r.onclick = () => ruShow(r.dataset.srules));
+    side.querySelector('.scn-h').onclick = () => scnOverview();
     ddSearch('s-find', 'SCPT', r => sOpen(r.id));
     $('#s-new').onclick = () => sNew();
     side.addEventListener('click', e => { const r = e.target.closest('[data-sopen]'); if (r) sOpen(r.dataset.sopen); });
@@ -39,13 +40,14 @@ function sWelcome(){
     <div class="cgrid">
       <div class="ccard" data-sw="new"><div style="font-size:26px">➕</div><b>Write a new script</b><div class="msg">Start from a ready-made example: a door that stays barred, an item that moves a quest on, a timer…</div></div>
       <div class="ccard" data-sw="find"><div style="font-size:26px">🔎</div><b>Look at existing scripts</b><div class="msg">See how the base game does things, or change one for your mod (the original stays safe).</div></div>
+      <div class="ccard" data-sw="scenes"><div style="font-size:26px">🎬</div><b>Scenes</b><div class="msg">Cutscenes in your mod, and what starts each one in the game.</div></div>
     </div>
     <div class="card msg" style="line-height:1.7"><b style="color:var(--text)">Three kinds of scripts</b><br>
       <b>On an object or character</b>: runs while they're nearby.<br>
       <b>Global</b>: runs everywhere, once started with <code>StartScript</code>.<br>
       <b>Start script</b>: a global one that runs from the start of the game.</div></div>`;
   $('#smain').querySelectorAll('[data-sw]').forEach(c => c.onclick = () => {
-    if (c.dataset.sw === 'new') sNew(); else if (c.dataset.sw === 'find') $('#s-find').focus();
+    if (c.dataset.sw === 'new') sNew(); else if (c.dataset.sw === 'find') $('#s-find').focus(); else if (c.dataset.sw === 'scenes') scnOverview();
   });
 }
 

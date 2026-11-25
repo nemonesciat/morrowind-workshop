@@ -14,6 +14,28 @@ async function scnMine(){
   box.querySelectorAll('[data-scnopen]').forEach(r => r.onclick = () => scnOpen(r.dataset.scnopen));
 }
 
+// from the Scripts and Dialogue menus, the Scripts start page and the side list's heading
+async function scnShow(){
+  if (typeof pageOn === 'function' && !pageOn('scripts')) showView('scripts');
+  await scnMine();
+  scnOverview();
+}
+
+function scnOverview(){
+  const l = (SCN.list && SCN.list.scenes) || [];
+  SCN.open = null; SC.id = null; if (typeof LU !== 'undefined'){ LU.name = null; LU.data = null; }
+  const when = s => !s.trigger ? 'when another script asks' : {area: 'when the player comes near a spot', quest: 'when a quest reaches a stage', global: 'when a global variable is set'}[s.trigger.kind] || '';
+  $('#smain').innerHTML = `<div class="wrap" style="max-width:760px"><h1>🎬 Scenes${typeof guideLink === 'function' ? guideLink('scripts-and-game-rules.md', 'Scenes') : ''}</h1>
+    <p class="msg" title="Shots, actors and their animations, spoken lines, music, fades and videos. Made in a modding program connected to the Workshop; the Workshop plays them in the game.">Cutscenes in your mod. Pick one to choose what starts it.</p>
+    ${l.length ? `<div class="cgrid">${l.map(s => `<div class="ccard" data-scnov="${esc(s.scene)}"><div style="font-size:22px">🎬</div><b>${esc(s.name)}</b>
+        <div class="msg">${s.length || 0} s · ${s.actors} actor${s.actors === 1 ? '' : 's'} · ${esc(when(s))}</div></div>`).join('')}</div>`
+      : `<div class="card msg" style="line-height:1.7">No scenes yet. A modding program connected to the Workshop sends them here
+        (<a href="#" id="scn-conn">Settings › Connected programs</a>).</div>`}</div>`;
+  $('#smain').querySelectorAll('[data-scnov]').forEach(c => c.onclick = () => scnOpen(c.dataset.scnov));
+  const a = $('#scn-conn'); if (a) a.onclick = e => { e.preventDefault(); if (typeof vwOpen === 'function') vwOpen('settings'); else if (typeof renderSettings === 'function') showView('settings'); };
+  scnMine();
+}
+
 function scnOpen(id){
   const s = ((SCN.list && SCN.list.scenes) || []).find(x => x.scene === id);
   if (!s) return;

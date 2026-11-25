@@ -1,7 +1,7 @@
 # Morrowind Workshop bridge: for programs that work with the Workshop's open mod
 
 *For the authors of modding programs (first the OpenMW Suite for Blender and Maya) and their coding agents. Bridge
-API 1, Workshop 2.9.8 and later. Nothing here is for the Workshop's own users.*
+API 1, Workshop 2.9.8 and later (records, land and object details: 2.9.9). Nothing here is for the Workshop's own users.*
 
 ## How it works
 
@@ -104,6 +104,49 @@ POST /bridge/delete  {"cell": [-2, -9], "ref": {"file": "morrowind.esm", "index"
 - `pos` may be `[x, y, z]`. A new object's `z` may be `null`: it is set down on what is under it.
 - Moving or deleting an object of the game or of another mod works the same way. The game's original stays as it
   is, and the mod records the change.
+
+### Records, land and path grids (Workshop 2.9.9)
+
+```
+POST /bridge/record         {"type": "NPC_", "id": "mi_flima", "flags": 0, "subs": [["NAME", "<base64>"], ["FNAM", "<base64>"], ...]}
+  -> {"type": "NPC_", "key": "mi_flima", "made": true}
+POST /bridge/record/delete  {"type": "NPC_", "id": "mi_flima"}
+```
+
+- **Any record, sent as your program writes it.** `subs` is the record's subrecords in order, each as its
+  four-letter tag and its bytes in base64 (no record header). The Workshop keeps it as the mod's version:
+  - one the mod didn't have is **made**;
+  - one the game or a master has is **overridden**.
+  Each send is one change with Undo.
+- **Types taken:** `ACTI ALCH APPA ARMO BODY BOOK BSGN CLAS CLOT CONT CREA DOOR ENCH FACT GLOB INGR LAND LEVC LEVI LIGH
+  LOCK LTEX MISC NPC_ PGRD PROB RACE REGN REPA SCPT SNDG SOUN SPEL STAT WEAP`.
+- **The record's key:**
+  - Most records go by their `NAME`. `id` must match it.
+  - **LAND** (terrain): the record's own `INTV` says which cell, so leave `id` out. Send it whole, with `VHGT`
+    heights, `VTEX` texture paint, `VCLR` vertex colours, `VNML` and `WNAM`, as the game writes it.
+  - **PGRD** (path grid): `id` is the cell (`[x, y]` or an interior's name).
+- **New things together:** send a new record **before** placing it (an NPC Maker character, an Object Creation
+  item, Build's doors and lights). Then `/bridge/place` can use its id at once.
+- **`record/delete`** takes back the mod's version. A record it made is removed; one it changed goes back to the
+  game's. For LAND, `id` is `[x, y]`.
+- **Path grids without bytes:** `POST /bridge/action {"action": "/api/paths/save", "args": {"cell": "#x,y" or an
+  interior's name in lower case, "pts": [[x, y, z], ...], "edges": [[a, b], ...]}}`. Outdoors, points are world
+  positions.
+
+### An object's details (Workshop 2.9.9)
+
+```
+POST /bridge/ref_fields  {"cell": [-2, -9], "ref": {"file": "my mod.omwaddon", "index": 14000017},
+                          "lock": 40, "key": "key_mi_chest", "trap": "", "owner": "mi_flima", "faction": "", "rank": 0,
+                          "global": "", "soul": "", "uses": null, "charge": null,
+                          "door": {"cell": "Seyda Neen, Census and Excise Office", "pos": [x, y, z, rx, ry, rz]}}
+```
+
+- **Fields work as in the Workshop's own object window.** Leave one out and it stays as it is; `""` or `0` clears
+  it. Names are checked: the owner must be an NPC, the key a misc item, the trap a spell, and so on.
+- **`door`** sets where a door leads: `pos` in degrees, and `cell` an interior's name (leave it out for outdoors).
+  `"door": null` makes it lead nowhere.
+- Works on objects of the mod and of the game. Each call is one change with Undo.
 
 ### Files
 

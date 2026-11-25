@@ -72,11 +72,13 @@ const NAV_MENU = {
   dialog: () => [
     {label: '+ New quest', act: () => navGo('dialog', '#d-newquest')},
     {label: '+ New topic', act: () => navGo('dialog', '#d-newtopic')},
-    {label: 'Open a character\'s conversation…', act: () => navGo('dialog', '#d-npc')}, '-',
+    {label: 'Open a character\'s conversation…', act: () => navGo('dialog', '#d-npc')},
+    {label: '🎬 Scenes (cutscenes)', act: () => scnShow()}, '-',
     ...[['mine', 'Lines in my mod'], ['4', 'Quests'], ['0', 'Topics'], ['2', 'Greetings']].map(([k, l]) => ({label: l, act: () => navGo('dialog', `[data-dk="${k}"]`)}))],
   scripts: () => [
     {label: '+ New script', act: () => navGo('scripts', '#s-new')},
-    {label: 'Open a script…', act: () => navGo('scripts', '#s-find')}, '-',
+    {label: 'Open a script…', act: () => navGo('scripts', '#s-find')},
+    {label: '🎬 Scenes', act: () => scnShow()}, '-',
     {label: '🌐 Global variables', act: () => ruShow('global')},
     {label: '⚙ Game settings', act: () => ruShow('gmst')}],
   rules: () => RU_TABS.map(([k, l]) => ({label: l, act: () => ruShow(k)})),

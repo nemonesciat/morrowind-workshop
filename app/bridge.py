@@ -320,6 +320,123 @@ def delete(db, body):
     return {'ref': _as_ref(rk), 'cell': key, 'deleted': True}
 
 
+RECORD_TAGS = {'ACTI', 'ALCH', 'APPA', 'ARMO', 'BODY', 'BOOK', 'BSGN', 'CLAS', 'CLOT', 'CONT', 'CREA', 'DOOR', 'ENCH',
+               'FACT', 'GLOB', 'INGR', 'LAND', 'LEVC', 'LEVI', 'LIGH', 'LOCK', 'LTEX', 'MISC', 'NPC_', 'PGRD', 'PROB',
+               'RACE', 'REGN', 'REPA', 'SCPT', 'SNDG', 'SOUN', 'SPEL', 'STAT', 'WEAP'}
+
+
+def _record_key(tag, rid, subs):
+    """The Workshop's key for a record: its ID in lower case; a LAND's "x,y" (from INTV); a PGRD's cell key."""
+    import struct
+    if tag == 'LAND':
+        d = next((d for t, d in subs if t == 'INTV'), None)
+        if not d or len(d) < 8:
+            raise EditError('A LAND record needs its INTV (the cell\'s x and y).')
+        x, y = struct.unpack_from('<ii', d)
+        return '%d,%d' % (x, y)
+    if tag == 'PGRD':
+        return cell_key(rid)
+    from project import zstr
+    name = next((zstr(d) for t, d in subs if t == 'NAME'), '')
+    if not name:
+        raise EditError('A %s record needs its NAME.' % tag)
+    if rid and str(rid).lower() != name.lower():
+        raise EditError('"id" is %s but the record\'s NAME is %s.' % (rid, name))
+    return name.lower()
+
+
+def put_record(db, body):
+    """A record as the program writes it: {"type": "NPC_", "id": "mi_flima", "flags": 0, "subs": [["NAME", base64], ...]}.
+    For LAND (the cell's heights, texture paint, vertex colours) the INTV says which cell; for PGRD "id" is the cell
+    ([x, y] or an interior's name). Replaces the mod's own version of the record, or overrides the game's."""
+    import base64
+    from project import join_subs
+    p = _need_mod(db)
+    tag = str(body.get('type') or '').upper()
+    if tag not in RECORD_TAGS:
+        raise EditError('"type" is one of: %s.' % ' '.join(sorted(RECORD_TAGS)))
+    raw = body.get('subs')
+    if not isinstance(raw, list) or not raw:
+        raise EditError('"subs" is the record\'s subrecords: [["NAME", "<base64>"], ...], in order.')
+    subs = []
+    for s in raw:
+        if not (isinstance(s, (list, tuple)) and len(s) == 2 and isinstance(s[0], str) and len(s[0]) == 4):
+            raise EditError('Each subrecord is ["TAG", "<base64>"].')
+        try:
+            subs.append((s[0], base64.b64decode(s[1] or '', validate=True)))
+        except Exception:
+            raise EditError('Subrecord %s is not base64.' % s[0])
+    key = _record_key(tag, body.get('id'), subs)
+    game = any(v not in db.dead and db.recs[v][3] != db.proj_pidx for v in db.by_key.get((tag, key), []))
+    had = (tag + '|' + key) in p.records
+    p.set_record(tag, key, int(body.get('flags') or 0) & ~0x20, join_subs(subs), created=not game)
+    db.sync_project()
+    label = {'LAND': 'the land of cell (%s)' % key, 'PGRD': 'the path grid of %s' % key}.get(tag, '%s "%s"' % (tag, body.get('id') or key))
+    editing.commit(db, ('Changed %s' if (had or game) else 'Made %s') % label)
+    return {'type': tag, 'key': key, 'made': not (had or game)}
+
+
+def drop_record(db, body):
+    """Take back the mod's version of a record: one it made is removed, one it changed goes back to the game's."""
+    p = _need_mod(db)
+    tag = str(body.get('type') or '').upper()
+    key = cell_key(body.get('id')) if tag == 'PGRD' else str(body.get('id') or '').lower()
+    if tag == 'LAND' and isinstance(body.get('id'), (list, tuple)):
+        key = '%d,%d' % (int(body['id'][0]), int(body['id'][1]))
+    if (tag + '|' + key) not in p.records:
+        raise EditError('The mod has no %s "%s".' % (tag, key))
+    p.remove_record(tag, key)
+    db.sync_project()
+    editing.commit(db, 'Took back %s "%s"' % (tag, key))
+    return {'type': tag, 'key': key, 'removed': True}
+
+
+def ref_fields(db, body):
+    """An object's details beyond where it stands: {"cell", "ref", "owner", "faction", "rank", "global", "soul", "lock",
+    "key", "trap", "uses", "charge"} (as the Workshop's own object window has them; fields left out stay as they are)
+    and "door": {"cell": [x, y] or an interior's name, "pos": [x, y, z, rx, ry, rz]} (degrees) or null for none."""
+    import math
+    import struct
+    import refprops
+    from project import zs
+    _need_mod(db)
+    key = cell_key(body.get('cell'))
+    rk = ref_key(body.get('ref'))
+    fields = {k: body[k] for k in ('owner', 'faction', 'rank', 'global', 'soul', 'lock', 'key', 'trap', 'uses', 'charge')
+              if k in body}
+    changed = False
+    if fields:
+        now = refprops.read(db, key, rk)
+        refprops.save(db, key, rk, dict(now or {}, **fields))
+        changed = True
+    if 'door' in body:
+        c, refs = editing._cell(db, key)
+        ref = refs.get(rk)
+        if not ref:
+            raise EditError('That object is no longer in this cell.')
+        subs = [(t, d) for t, d in ref['subs'] if t not in ('DODT', 'DNAM')]
+        dr = body.get('door')
+        if dr:
+            pos = [float(v) for v in (dr.get('pos') or [])]
+            if len(pos) not in (3, 6):
+                raise EditError('"door": {"cell", "pos": [x, y, z, rx, ry, rz]}.')
+            pos = (pos + [0, 0, 0])[:6]
+            pos = pos[:3] + [math.radians(v) for v in pos[3:]]
+            # (after the owner, before the lock and DATA, as the game writes refs: refprops.save's order)
+            at = next((i for i, (t, _d) in enumerate(subs) if t in ('FLTV', 'KNAM', 'TNAM', 'UNAM', 'DATA')), len(subs))
+            add = [('DODT', struct.pack('<6f', *pos))]
+            dc = dr.get('cell')
+            if isinstance(dc, str) and dc.strip():
+                add.append(('DNAM', zs(dc.strip())))
+            subs[at:at] = add
+        editing._store(c, rk, ref['origin'], ref['idx'], subs)
+        editing.commit(db, 'Set where a door leads in %s' % editing.cell_label(db, key))
+        changed = True
+    if not changed:
+        raise EditError('Nothing to change: give the fields, or "door".')
+    return {'ref': _as_ref(rk), 'cell': key}
+
+
 def take_file(db, body):
     """A file from this PC into the mod's folder, under the path the game will look for it ("to": meshes/...).
     Files aren't held for Save: they go in at once, as the Library's do; a file already there is kept unless
@@ -680,6 +797,12 @@ def http(handler, db, lock, method):
                     out = delete(db, body)
                 elif path == '/file':
                     out = take_file(db, body)
+                elif path == '/record':
+                    out = put_record(db, body)
+                elif path == '/record/delete':
+                    out = drop_record(db, body)
+                elif path == '/ref_fields':
+                    out = ref_fields(db, body)
                 elif path == '/scene':
                     out = put_scene(db, body.get('scene') if isinstance(body.get('scene'), dict) else body)
                 elif path == '/scene/delete':
