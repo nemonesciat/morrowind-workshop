@@ -516,6 +516,7 @@ def object_bounds(db, ri):
 
 
 _LITE = {}          # land record index -> (heights, vertex colours), for the zoomed-out map
+_COARSE = {}        # the same at every 16th point, for the map zoomed out over a whole land
 
 
 def land_after(db, key):
@@ -541,13 +542,14 @@ def land_after(db, key):
 
 
 def lands_overview(db, x0, y0, x1, y1, step):
-    """Ground of many cells at once for the 2D map, every step-th point (1, 2, 4 or 8):
+    """Ground of many cells at once for the 2D map, every step-th point (1, 2, 4, 8 or 16):
     {"gx,gy": {"n": points per side, "h": heights, "c": base64 colours, "name": place name}}."""
-    step = step if step in (1, 2, 4, 8) else 1
+    step = step if step in (1, 2, 4, 8, 16) else 1
     idx = list(range(0, 65, step))
     n = len(idx)
     if getattr(db, '_lite_recs', None) is not db.recs:
         _LITE.clear()
+        _COARSE.clear()
         db._lite_recs = db.recs
     out = {}
     for gy in range(y0, y1 + 1):
@@ -560,6 +562,24 @@ def lands_overview(db, x0, y0, x1, y1, step):
             # place: keyed by its bytes too, or the 2D map showed the ground as first drawn; PIN2, 2026-10-28)
             if db.recs[ri][3] == getattr(db, 'proj_pidx', None):
                 ri = (ri, zlib.crc32(db.files[db.recs[ri][3]].record_at(db.recs[ri][4])[2]))
+            if step == 16:
+                # (the whole of a big land at once, zoomed far out: a 5 x 5 of each cell, kept apart from the
+                # detailed ones so thousands of cells never push those out)
+                got = _COARSE.get(ri)
+                if got is None:
+                    L = land(db, gx, gy)
+                    if not L.get('exists'):
+                        continue
+                    info = cell_info(db, '#%d,%d' % (gx, gy))
+                    H, C = L['h'], base64.b64decode(L['c']) if L.get('c') else None
+                    got = _COARSE[ri] = (
+                        [H[y * 65 + x] for y in idx for x in idx],
+                        base64.b64encode(bytes(b for y in idx for x in idx for b in C[(y * 65 + x) * 3:(y * 65 + x) * 3 + 3])).decode('ascii') if C else None,
+                        (info or {}).get('name') or '')
+                    if len(_COARSE) > 40000:
+                        _COARSE.pop(next(iter(_COARSE)))
+                out['%d,%d' % (gx, gy)] = {'n': n, 'h': got[0], 'c': got[1], 'name': got[2]}
+                continue
             full = _LITE.get(ri)
             if full is None:
                 L = land(db, gx, gy)

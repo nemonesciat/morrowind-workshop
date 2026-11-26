@@ -2589,7 +2589,7 @@ function fitCell(m){
 // objects only for cells near the middle once they're big enough on screen to see.
 const MAP_OBJECTS_PX = 90;        // a cell must be at least this wide on screen to load its objects
 const MAP_OBJECTS_R = 4;          // ...and at most this many cells from the middle
-function mapStep(){ const px = CELL * W.cam.z; return px >= 130 ? 1 : px >= 65 ? 2 : px >= 30 ? 4 : 8; }
+function mapStep(){ const px = CELL * W.cam.z; return px >= 130 ? 1 : px >= 65 ? 2 : px >= 30 ? 4 : 16; }
 function viewCells(margin){
   if (!W.w) sizeMap();
   if (!W.w || !W.h || !(W.cam.z > 0)){        // (map not on screen yet, or squeezed flat: just the cells around the middle)
@@ -2603,7 +2603,9 @@ async function loadAround(){
   // the 3D view goes by its camera, not the 2D zoom: full detail and objects in the cells around it
   const in3d = V3.on, d3 = in3d ? v3Reach() : 1;      // (the 3D view's View distance: cells each way)
   const step = in3d ? 1 : mapStep(), cx = Math.floor(W.cam.x / CELL), cy = Math.floor(W.cam.y / CELL);
-  const R = in3d ? d3 : step >= 4 ? 26 : 9;  // (the server takes at most ~400 detailed or ~3000 coarse cells at once)
+  // (the server takes at most ~400 detailed or ~3000 coarse cells at once; zoomed far out, a 5 x 5 of each cell
+  // reaches over the whole of a big land, the mainland mods' too)
+  const R = in3d ? d3 : step >= 16 ? 150 : step >= 4 ? 26 : 9;
   const objR = in3d ? d3 : MAP_OBJECTS_R;
   let [x0, y0, x1, y1] = in3d ? [cx - d3, cy - d3, cx + d3, cy + d3] : viewCells(1);
   // (in 3D, the objects of cells well behind the view distance are let go again, so a long flight
@@ -2622,10 +2624,14 @@ async function loadAround(){
     for (let x = x0; x <= x1; x++){ const L = W.lands[x + ',' + y]; if (!L || (!L.none && L.step > step)){ if (a === null) a = x; b = x; } }
     if (a !== null) rows.push([y, a, b]);
   }
-  rows.sort((p, q) => Math.abs(p[0] - cy) - Math.abs(q[0] - cy));
-  const band = step >= 4 ? 8 : 3;
-  for (let i = 0; i < rows.length; i += band){
-    const part = rows.slice(i, i + band), ry0 = Math.min(...part.map(r => r[0])), ry1 = Math.max(...part.map(r => r[0]));
+  // (bands of neighbouring rows, those nearest the middle first: a band of rows from both sides of the middle
+  // spanned all between them, past what the server takes once the map reached far out)
+  const band = step >= 4 ? 8 : 3, parts = [];
+  for (const side of [rows.filter(r => r[0] >= cy), rows.filter(r => r[0] < cy).reverse()])
+    for (let i = 0; i < side.length; i += band) parts.push(side.slice(i, i + band));
+  parts.sort((p, q) => Math.abs(p[0][0] - cy) - Math.abs(q[0][0] - cy));
+  for (const part of parts){
+    const ry0 = Math.min(...part.map(r => r[0])), ry1 = Math.max(...part.map(r => r[0]));
     const rx0 = Math.min(...part.map(r => r[1])), rx1 = Math.max(...part.map(r => r[2]));
     const key = `L${rx0},${ry0},${rx1},${ry1},${step}`;
     if (W.loading.has(key)) continue;
@@ -3012,7 +3018,7 @@ function setMode(m, data){
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const [wx, wy] = toWorld(e.offsetX, e.offsetY);
-  W.cam.z = Math.max(0.004, Math.min(5, W.cam.z * (e.deltaY < 0 ? 1.18 : 1 / 1.18)));
+  W.cam.z = Math.max(0.0005, Math.min(5, W.cam.z * (e.deltaY < 0 ? 1.18 : 1 / 1.18)));
   const [nx, ny] = toWorld(e.offsetX, e.offsetY);
   W.cam.x += wx - nx; W.cam.y += wy - ny; drawMap();
   if (W.ext) recentre();                       // zooming shows more (or fewer) cells
@@ -3335,7 +3341,7 @@ document.querySelectorAll('#mapnav button').forEach(b => b.onclick = () => {
   if (W.ext){ W.cam.x += dx * CELL; W.cam.y += dy * CELL; drawMap(); recentre(); }
   else { W.cam.x += dx * 600 / W.cam.z * 0.3; W.cam.y += dy * 600 / W.cam.z * 0.3; drawMap(); }
 });
-document.querySelectorAll('.mapzoom button').forEach(b => b.onclick = () => { W.cam.z = Math.max(0.004, Math.min(5, W.cam.z * +b.dataset.z)); drawMap(); if (W.ext) recentre(); });
+document.querySelectorAll('.mapzoom button').forEach(b => b.onclick = () => { W.cam.z = Math.max(0.0005, Math.min(5, W.cam.z * +b.dataset.z)); drawMap(); if (W.ext) recentre(); });
 async function playHere(body){
   if (LINK.connected){
     // the game is already running: just move the player there

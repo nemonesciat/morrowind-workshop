@@ -1994,6 +1994,13 @@ function v3LandEyedrop(at){
 // ----- camera and mouse -----
 function v3CamWorld(){ return [V3.pos.x + V3.origin[0], V3.pos.y + V3.origin[1], V3.pos.z + V3.origin[2]]; }
 function v3CamCell(){ const [x, y] = v3CamWorld(); return [Math.floor(x / CELL), Math.floor(y / CELL)]; }
+// (outdoors, the wheel and the move keys go faster the higher the camera is over the ground or water: as near
+// the ground as ever, but a big land like the whole of Tamriel is crossed from up high; a tester, 2026-11-26)
+function v3HighBoost(){
+  if (!W.ext || !V3.pos) return 1;
+  const g = v3GroundAt(V3.pos.x, V3.pos.y), h = V3.pos.z - Math.max(0, g == null ? 0 : g);
+  return Math.max(1, Math.min(40, h / 3000));
+}
 function v3Dir(){ return new THREE.Vector3(Math.sin(V3.yaw) * Math.cos(V3.pitch), Math.cos(V3.yaw) * Math.cos(V3.pitch), Math.sin(V3.pitch)); }
 function v3Typing(e){ const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
 
@@ -2112,7 +2119,7 @@ function v3Bind(el){
       if (W.mode === 'group'){ W.groupPlace.yaw = G.yaw; groupHint(); } else v3PlaceHint();
       return;
     }
-    V3.pos.addScaledVector(v3Dir(), (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 600 : 160));
+    V3.pos.addScaledVector(v3Dir(), (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 600 : 160) * v3HighBoost());
   }, {passive: false});
   // double-click an object: its window (objwin.js); on nothing: look at what's selected
   el.addEventListener('dblclick', e => {
@@ -3237,7 +3244,7 @@ function v3Loop(){
     for (const k of 'wasdqe') if (V3.keys[k] && V3.keyAt && V3.lastKey === k && now_ - (V3.keyAt[k] || 0) > 700) V3.keys[k] = false;
     if (V3.sprint && !V3.keys[V3.sprint]) V3.sprint = false;
     // (a double-tapped move key: three times as fast, every direction alike, until that key is let go)
-    const sp = (V3.keys.shift ? 2600 : 700) * (V3.sprint ? 3 : 1) * dt, d = v3Dir(), flat = new THREE.Vector3(d.x, d.y, 0).normalize(),
+    const sp = (V3.keys.shift ? 2600 : 700) * (V3.sprint ? 3 : 1) * v3HighBoost() * dt, d = v3Dir(), flat = new THREE.Vector3(d.x, d.y, 0).normalize(),
           right = new THREE.Vector3(flat.y, -flat.x, 0);
     if (V3.keys.w) V3.pos.addScaledVector(d, sp);
     if (V3.keys.s) V3.pos.addScaledVector(d, -sp);
