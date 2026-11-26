@@ -106,11 +106,12 @@ const EMO_ICON = {
   '🪟': 'window', '✂': 'scissors', '📊': 'chart', '🪙': 'coin', '💰': 'coin', '🗑': 'trash', '🕯': 'candle', '🕘': 'clock', '⏳': 'clock',
   '☀': 'sun', '🌦': 'cloudsun', '⛅': 'cloudsun', '☁': 'cloud', '🌫': 'fog', '🌧': 'rain', '⛈': 'storm', '🌋': 'ash', '☣': 'blight', '🌨': 'snow', '❄': 'snow',
   '🥚': 'egg', '✋': 'hand', '🖐': 'hand', '➕': 'plus', '⭐': 'star',
+  '🎬': 'film', '📖': 'books', '⚔': 'sword',
 };
 
 // (the colour pictographs, and the few older signs browsers draw in colour too; not the plain marks the pages
 // use as text, ✕ ✓ ✦ ▶ ↶ ▾, which take the text's colour already)
-const EMO_RE = /(?:[\u{1F300}-\u{1FAFF}]|[☀☁☣⚒⚙⚠⚡⛅⏳⛈✂✋✏✨❄➕⭐])️?/gu;
+const EMO_RE = /(?:[\u{1F300}-\u{1FAFF}]|[☀☁☣⚒⚔⚙⚠⚡⛅⏳⛈✂✋✏✨❄➕⭐])️?/gu;
 const ICON_SVG = name => `<svg class="wi" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 // (in these an emoji is only taken out: a list box can't hold a drawing, and code there is code)
 const ICON_SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE', 'svg', 'SVG', 'CANVAS', 'TITLE']);

@@ -246,7 +246,8 @@ function dRenderQuest(){
   const q = D.data;
   D.qstages = D.qstages && D.qstagesFor === q.key ? D.qstages : q.stages.map(s => ({...s}));
   D.qstagesFor = q.key;
-  const qtabs = `<div class="cvtabs">${[['stages', '📜 Stages'], ['board', '🧩 Board'], ['flow', '🗺 Flow: who moves it on']].map(([k, t]) => `<button data-qtab="${k}" class="${CV.qtab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+  const qtabs = `<div class="cvtabs">${[['stages', '📜 Stages'], ['board', '🧩 Board'], ['flow', '🗺 Flow: who moves it on']].map(([k, t]) => `<button data-qtab="${k}" class="${CV.qtab === k ? 'on' : ''}">${t}</button>`).join('')}
+    <button class="btn sm" data-qonmap="${esc(q.key)}" style="margin-left:auto" title="The quest maker under the 3D view: its steps where they happen, and right-click to add more">🧩 Work on it on the map</button></div>`;
   if (CV.qtab === 'flow' || CV.qtab === 'board'){
     $('#dmain').innerHTML = `<div class="dwrap cvwide"><div class="dhead"><div><div class="dt-type">Quest</div><h2>📜 ${esc(q.title || q.id)}</h2><div class="msg">Quest ID <b>${esc(q.id)}</b></div></div></div>
       ${qtabs}<div id="q-test"></div><div id="q-flow"></div><div id="q-board"></div></div>`;

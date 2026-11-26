@@ -17,10 +17,10 @@ import editing
 import mwscript
 from editing import EditError
 
-VERBS = ('talk', 'meet', 'bring', 'show', 'kill', 'read', 'open', 'use', 'take', 'enter', 'wait', 'approach')
+VERBS = ('talk', 'meet', 'bring', 'show', 'kill', 'read', 'open', 'use', 'take', 'enter', 'wait', 'approach', 'reach', 'after')
 LINE_VERBS = ('talk', 'meet', 'bring', 'show')
 THING_VERBS = {'read': 'OnActivate', 'open': 'OnActivate', 'use': 'OnActivate', 'take': 'OnPCAdd'}
-WATCH_VERBS = ('kill', 'enter', 'wait', 'approach')       # (kill through the watcher's dead count: no script on the victim)
+WATCH_VERBS = ('kill', 'enter', 'wait', 'approach', 'reach', 'after')       # (kill through the watcher's dead count: no script on the victim)
 GREETING = 'greeting 5'                       # (the game's quest greetings go here, over the lore greetings below)
 
 
@@ -96,6 +96,9 @@ def _line(db, q, mv):
     line = {'actor': who, 'text': (mv.get('say') or '').strip(), 'result': '\n'.join(res), 'conds': conds,
             'disp': 0, 'rank': -1, 'sex': -1, 'pcrank': -1}
     inam = dialogue.save_line(db, tkey, line, {'top': True})
+    if verb != 'meet':
+        # (the player has to know the topic to ask about it: taught when the quest reaches the stage this starts from)
+        _watch(db, q, {'verb': 'learn', 'topic': mv.get('topic') or tkey, 'from': mv.get('from') or 0, 'to': mv['to']})
     return {'via': 'line', 'topic': tkey, 'inam': inam}
 
 
@@ -123,10 +126,25 @@ def _thing(db, q, mv):
     if frm:
         inner = '\t\tif ( GetJournalIndex "%s" >= %d )\n%s\n\t\tendif' % (q['id'], frm, '\n'.join('\t' + s for s in inner.split('\n')))
     act = '\tActivate\n' if verb in ('read', 'open', 'use') else ''        # (the book still opens, the door still opens)
-    text = 'begin %s\n\nshort done\n\nif ( %s == 1 )\n\tif ( done == 0 )\n%s\n\tendif\n%sendif\n\nend\n' % (sid, ev, inner, act)
+    # (OnPCAdd is a variable the game sets when the player picks the thing up, and only if the script declares it,
+    #  as the game's own CharGen_ring_keley does; OnActivate is a function and needs nothing)
+    decl = 'short done\n' + ('short OnPCAdd\n' if ev == 'OnPCAdd' else '')
+    text = 'begin %s\n\n%s\nif ( %s == 1 )\n\tif ( done == 0 )\n%s\n\tendif\n%sendif\n\nend\n' % (sid, decl, ev, inner, act)
     mwscript.save(db, sid, text, create=True, save=False)
     mwscript.attach(db, sid, target)
     return {'via': 'script', 'script': sid}
+
+
+def reach_block(q, cell, cname, c, r, to):
+    """The watcher's lines for a spot to reach (inside its stage test): the player in the place and within r of c.
+    The comment line is where the map reads the spot back (questmap.SPOT_RX)."""
+    c = [float(v) for v in c] + [0.0] * (3 - len(c))
+    r = max(50, min(5000, int(r)))
+    return ('\t; at a spot: %s|%d|%d|%d|%d -> %d\n\tif ( GetPCCell "%s" == 1 )\n\t\tset qrx to player->GetPos X\n\t\tset qry to player->GetPos Y\n'
+            '\t\tset qrx to qrx %s\n\t\tset qry to qry %s\n\t\tif ( ( ( qrx * qrx ) + ( qry * qry ) ) < %d )\n\t\t\tJournal "%s" %d\n\t\tendif\n\tendif'
+            % (cell, c[0], c[1], c[2], r, to, cname.replace('"', ''),
+               # (no "- -10900": MWScript reads one sign)
+               ('- %d' % c[0]) if c[0] >= 0 else ('+ %d' % -c[0]), ('- %d' % c[1]) if c[1] >= 0 else ('+ %d' % -c[1]), r * r, q['id'], to))
 
 
 def _watch(db, q, mv):
@@ -137,7 +155,16 @@ def _watch(db, q, mv):
     sid = (db.project.quests.get(q['key'], {}) or {}).get('watch')
     if sid and mwscript._winner(db, sid) is None:
         sid = None
-    if verb == 'kill':
+    if verb == 'learn':
+        # (the topic a talk, bring or show step needs: the player knows it once the quest stands at the stage the
+        #  step starts from; Morrowind lists only the topics the player knows)
+        t = (mv.get('topic') or '').replace('"', '').strip()
+        if sid:
+            have = mwscript.read(db, sid)['text']
+            if re.search(r'(?im)^\s*; teaches topic: %s -> %d\s*$' % (re.escape(t), frm), have):
+                return {'via': 'script', 'script': sid}
+        block = '\t; teaches topic: %s -> %d\n\tAddTopic "%s"' % (t, frm, t)
+    elif verb == 'kill':
         who = (mv.get('who') or mv.get('thing') or '').strip()
         if not who or db.resolve_id(who) is None:
             raise EditError('Say who dies.')
@@ -155,12 +182,42 @@ def _watch(db, q, mv):
         if not who or db.resolve_id(who) is None:
             raise EditError('Say who or what the player comes near.')
         block = '\tif ( "%s"->GetDistance player < %d )\n\t\tJournal "%s" %d\n\tendif' % (who, int(mv.get('dist') or 400), q['id'], to)
+    elif verb == 'after':
+        # (another quest reaching a stage moves this one on: quests strung together, from place to place; the comment
+        #  line is where the map reads it back, questmap.AFTER_RX)
+        other = (mv.get('quest') or '').strip()
+        try:
+            ostage = int(mv.get('stage'))
+        except (TypeError, ValueError):
+            raise EditError('Say which stage of the other quest.')
+        if not other:
+            raise EditError('Pick the other quest.')
+        oq = dialogue.quest(db, other.lower())
+        if oq['key'] == q['key']:
+            raise EditError('Pick another quest than this one.')
+        block = '\t; after quest: %s|%d -> %d\n\tif ( GetJournalIndex "%s" >= %d )\n\t\tJournal "%s" %d\n\tendif' % (
+            oq['id'], ostage, to, oq['id'], ostage, q['id'], to)
+    elif verb == 'reach':
+        # (a spot on the map with a ring round it: the player within the ring, in that place; the comment line is
+        #  where the map reads the spot back, questmap.SPOT_RX)
+        try:
+            c = [float(v) for v in (mv.get('center') or [])][:3]
+            assert len(c) >= 2
+        except (TypeError, ValueError, AssertionError):
+            raise EditError('Pick the spot the player reaches.')
+        c = (c + [0.0])[:3]
+        r = max(50, min(5000, int(float(mv.get('radius') or 300))))
+        cell, cname = str(mv.get('cell') or '').strip(), str(mv.get('cellname') or '').strip()
+        if not cell or not cname:
+            raise EditError('Say which place the spot is in.')
+        block = ('float qrx\nfloat qry', reach_block(q, cell, cname, c, r, to))
     else:
         days = max(1, int(mv.get('days') or 1))
+        # (the day the stage was reached, and a flag that it was counted: the day itself can be 0 on the first day)
         var = 'w%d' % frm
-        block = ('\tif ( %s == 0 )\n\t\tset %s to DaysPassed\n\telseif ( DaysPassed >= ( %s + %d ) )\n\t\tJournal "%s" %d\n\tendif'
-                 % (var, var, var, days, q['id'], to))
-        block = ('float ' + var, block)
+        block = ('\tif ( %ss == 0 )\n\t\tset %s to DaysPassed\n\t\tset %ss to 1\n\telseif ( DaysPassed >= ( %s + %d ) )\n\t\tJournal "%s" %d\n\tendif'
+                 % (var, var, var, var, days, q['id'], to))
+        block = ('float %s\nshort %ss' % (var, var), block)
     if sid is None:
         sid = _sid(db, '%s_watch' % q['id'][:20])
         text = 'begin %s\n\n; the quest "%s": what the game watches for while it is under way\n\nend\n' % (sid, q['id'])
@@ -172,6 +229,8 @@ def _watch(db, q, mv):
     if isinstance(block, tuple):
         decl, block = block
     guard = '\nif ( GetJournalIndex "%s" == %d )\n%s\nendif\n' % (q['id'], frm, block)
+    # (variables declared once: a second spot to reach shares them)
+    decl = '\n'.join(d for d in decl.split('\n') if d and not re.search(r'(?im)^\s*' + re.escape(d.strip()) + r'\s*$', text))
     if decl:
         text = re.sub(r'(?im)^(begin[^\n]*\n)', lambda m: m.group(1) + '\n' + decl + '\n', text, count=1)
     text = re.sub(r'(?im)^\s*end\s*$', lambda m: guard + '\nend', text, count=1) if re.search(r'(?im)^\s*end\s*$', text) else text + guard + '\nend\n'
@@ -183,6 +242,34 @@ def _watch(db, q, mv):
     qq = db.project.quests.setdefault(q['key'], {})
     qq['watch'] = sid
     return {'via': 'script', 'script': sid}
+
+
+def heal(db):
+    """Quest steps written before 2.9.13 that wait for the player to pick a thing up: their script tested OnPCAdd
+    without declaring it, so the game never set it and the quest never moved. Each such script of the mod gets the
+    declaration (one change, "Fixed …"), before the mod is saved. Only scripts the quest maker wrote are touched:
+    their shape is its own (done, OnPCAdd, a Journal)."""
+    p = db.project
+    if p is None:
+        return 0
+    fixed = []
+    rx = re.compile(r'(?is)^begin\s+(\S+)\s*\n\s*short done\s*\n\s*if \( OnPCAdd == 1 \)\s*\n\s*if \( done == 0 \).*?Journal ".*?\bend\s*$')
+    for key, rec in list(p.records.items()):
+        if not key.startswith('SCPT|'):
+            continue
+        try:
+            text = mwscript.read(db, key.split('|', 1)[1])['text']
+        except Exception:
+            continue
+        if not rx.match(text.strip()) or re.search(r'(?im)^\s*short\s+onpcadd\b', text):
+            continue
+        new = re.sub(r'(?im)^(\s*short done\s*\n)', lambda m: m.group(1) + 'short OnPCAdd\n', text, count=1)
+        mwscript.save(db, key.split('|', 1)[1], new, create=False, save=False)
+        fixed.append(key.split('|', 1)[1])
+    if fixed:
+        editing.commit(db, 'Fixed %d quest script%s: picking the thing up now moves the quest (%s)' % (
+            len(fixed), '' if len(fixed) == 1 else 's', ', '.join(fixed[:4])))
+    return len(fixed)
 
 
 def add_move(db, qkey, mv):

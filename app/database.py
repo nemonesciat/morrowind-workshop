@@ -362,7 +362,7 @@ class Database:
                 if sub.lower() not in ('meshes', 'icons', 'textures', 'sound'):
                     continue
                 root_len = len(d) + 1
-                is_mesh = sub.lower() in ('meshes', 'textures', 'sound')     # (sounds too, to play them)
+                is_mesh = sub.lower() in ('meshes', 'textures', 'sound', 'icons')     # (sounds too, to play them; icons for the person card)
                 for root, _dirs, fnames in osplat.walk(os.path.join(d, sub)):     # (linked folders too)
                     rel = root[root_len:].replace('\\', '/').lower()
                     for fn in fnames:
@@ -383,7 +383,7 @@ class Database:
                 lst = [e[0] for e in entries]
                 assets.update(lst)
                 for name, off, size in entries:
-                    if name.startswith(('meshes/', 'textures/', 'sound/')):
+                    if name.startswith(('meshes/', 'textures/', 'sound/', 'icons/')):
                         self.meshes.packed[name] = (p, off, size)
                 self.asset_sources.append({'kind': 'archive', 'path': p, 'files': len(lst)})
             except Exception as e:
@@ -1073,10 +1073,13 @@ class Database:
             matches.append(i)
         if terms:
             q1 = terms[0]
+            qa = ' '.join(terms)       # (the whole box: an ID with a space in it, "sc_paper plain", first)
 
             def rank(i):
                 rid = recs[i][1].lower()
                 nm = (recs[i][2] or '').lower()
+                if rid == qa or nm == qa:
+                    return -1
                 if rid == q1 or nm == q1:
                     return 0
                 if rid.startswith(q1) or nm.startswith(q1):

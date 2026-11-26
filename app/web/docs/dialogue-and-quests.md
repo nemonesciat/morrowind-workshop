@@ -93,6 +93,86 @@ own watcher script, started with the game, which looks while the quest stands at
 a script is left alone: add the stage to that script in Scripts instead. Every move is one change in My mod, so Undo
 takes the whole of it back.
 
+### Quests on the map
+
+Make and grow a quest where it happens, in the 3D view.
+
+- **Opening it:** the **🧩** button on the 3D view's bar (it shows the quest you are working on), **🧩 Work on
+  it on the map** on a quest's page in Dialogue, or Ctrl+K › *Quest maker on the map*.
+- **Any quest:** the quest's name at the top of the quest maker opens a picker:
+  - ☆ pinned quests first, then the recent ones and your mod's;
+  - type to search every quest: the game's and other mods' too;
+  - ☆ pins one, and pins are kept with your mod.
+
+  Continuing the game's or another mod's quest puts what you add into your mod. A note says so, and for another
+  mod's quest it reminds you to load your mod after that one.
+
+- **Start one by right-clicking:**
+  - a person › 🧩 **Quest given by…**;
+  - a thing › 🧩 **Quest that begins when the player finds it / reads it…**;
+  - the ground › 🧩 **Quest that begins here…**.
+
+  The **quest maker** opens under the 3D view. Give the quest a title and the first journal line, then **Begin
+  the quest**.
+- **Add what happens next**, by right-clicking again:
+  - a person › 🧩 **Next: talk to / bring something to / kill…**;
+  - a thing › 🧩 **Next: take / read / open / use it**;
+  - a door › 🧩 **Next: go into…**;
+  - the ground › 🧩 **Next: reach this spot**, which draws a ring the player has to walk into;
+  - the ground › 🧩 **Put a quest item here…**, which places a copy of the item of the quest's own, so only that
+    one counts.
+
+  The **Next:** entries add to the quest you are working on, its name shown beside them, whether the quest maker is
+  open or not. **🧩 Next step of another quest…** asks which quest first, from the same picker. A right-click
+  guesses the kind of step; the form's first box changes it.
+- **Linking quests:** 🔗 **After another quest**: this quest begins, or moves on, when another reaches a stage.
+  Pick the quest and the stage from its own journal lines.
+  The buttons under **What happens next?** do the same, with search fields for people, items and places, and the
+  people of the place as chips to pick.
+- **Each step adds its stage**, with the journal line you write, as **one Undo**.
+- **The route:** each stage is a row with its journal line (edit it in place) and the steps that reach it. 📍 takes
+  the 3D view there.
+  - In 3D the steps are numbered pins, joined in the order of their stages.
+  - A stage nothing leads to is marked ⚠, and one nothing leads on from is marked ⛔.
+- **Changing it:**
+  - ✕ beside a step takes it out; its stage stays, marked ⚠, until another step reaches it or you take the stage out.
+  - A ring's number box sets how near the player must come. Drag the ring's middle in 3D to move it.
+  - Point at a stage for **＋ way here** (another way to reach it) and **＋ from here** (a fork: a step that starts
+    there, as for two endings).
+  - Each of these is one Undo. A step that can't be written (a thing that already runs a script of its own) is
+    refused with the reason and leaves nothing behind.
+- **Topics:** a talk, bring or show step teaches the player its topic when the quest reaches the stage it starts
+  from, so the player can ask about it.
+- **Quest items:** **Put a quest item here** places a copy of the item of the quest's own, so taking any other copy
+  doesn't count. If the original runs a script of its own, the copy leaves it off.
+- **Where it goes:** under the title, the places its steps happen in, in the order of the stages, each with 📍.
+  **Next place ›** takes the map to the next one.
+- **🧩 Board** opens the whole quest on its Board.
+
+## A person's card
+
+Right-click a person in the 3D view for **💬 Say something…**, **👤 About…**, **🎒 Gear and wares**, **🪙 Trade
+and services** and **🧭 Travel**. Each one opens the person's card under the 3D view, at its own tab.
+**Dialogue page** and **Character page** at the top open the full pages.
+
+- **💬 Talk:** what they say now, then your own lines by kind. **Say something** adds one:
+  - 👋 a greeting, 💬 a topic (made if it's new, and taught to the player), or 👥 a rumour;
+  - **When:** always, once, at a quest's stage, if the player carries something, or between two hours;
+  - **Two answers:** the player picks one, and they reply to each, then nothing, goodbye, or give an item.
+
+  ✕ beside a line takes it out.
+- **🎒 Gear:** what they wear, by slot, and what they carry, as the game's icons. Click one for its count, ✕ and
+  ↻ restocks (it comes back after it is sold). **+ Add an item** searches every item.
+- **🪙 Trade:** what they buy and sell, their services (training, spells, repairs…), and their barter gold. The
+  game picks these from the class; **Choose them myself** sets them by hand.
+- **🧭 Travel:** where they take travellers. Right-click the ground › **🧭 Travel from … to here** adds a place.
+- **🧩 Quests:** their quests, and a quick job: 📦 fetch, 📜 deliver, 🔍 find, 🗡 hunt or 👥 meet. Right-clicking
+  a person or the ground while the form is open fills it in (**🧩 Job: deliver to…**, **Job: it lies here**).
+  **Write the quest** makes it whole, and the quest maker opens on it.
+- **📦 Contents:** right-click a container for the same grid of what it holds.
+
+Each change is one Undo. **⚠ in N places**: the person (or container) stands in more than one place, and a change reaches every one.
+
 ## Testing in the running game
 
 While the game runs from the Workshop (see *Playing and testing*), the Dialogue page has a **test panel**:

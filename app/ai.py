@@ -207,7 +207,7 @@ TOOLS = [
                        'errors nothing is saved and the problems come back to fix. Optionally put it on an object or '
                        'character (attach_to = their ID) or make it run from the start of the game. Object scripts '
                        'usually begin with: if ( MenuMode == 1 ) return endif. Declare every variable (short/long/'
-                       'float) at the top. Use OnActivate / OnPCAdd / OnDeath to react, Journal / GetJournalIndex for '
+                       'float) at the top. Use OnActivate / OnPCAdd (declare short OnPCAdd first) / OnDeath to react, Journal / GetJournalIndex for '
                        'quests, Enable/Disable to show and hide things.',
         'input_schema': {'type': 'object', 'properties': {
             'id': {'type': 'string', 'description': 'Script ID: letters, numbers and _ only, at most 31 characters.'},

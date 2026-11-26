@@ -2964,7 +2964,7 @@ function v3Tools(){
         <label title="After a move, rest it on what's below"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label></div></span>
     <button class="btn sm" data-v3="floor" title="Set it down on what's below (End)">⤓ Drop down</button>
     <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">🧲 Physics</button></div>
-    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">✚ Create</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">🎨 Style</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
+    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">✚ Create</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">🎨 Style</button><button class="btn sm ${typeof QM !== 'undefined' && QM.dock ? 'primary' : ''}" data-v3="quests" title="The quest maker: quests where they happen. Right-click a person, a thing or the ground for quest steps">🧩 ${typeof qmBarLabel === 'function' ? esc(qmBarLabel()) : 'Quests'}</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
     ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Build out piece by piece from open edges">⬚ Extend</button>` : ''}
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">💡 Game light</button>
     <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">👁 View ▾</button>
@@ -2998,6 +2998,7 @@ function v3Tools(){
     // the dialog, which scales the spacing too)
     else if (a === 'scale'){ if (W.multi.size > 1 && typeof qolScale === 'function'){ qolScale(); return; } V3.mode = 'scale'; V3.tilt = false; v3ApplyMode(); v3Tools(); }
     else if (a === 'floor') v3DropToFloor();
+    else if (a === 'quests' && typeof qmToggle === 'function') qmToggle();
     else if (a === 'physics' && typeof phToggle === 'function') phToggle(!PH.on);
     else if (a === 'land') v3LandToggle(!V3.landOpen);
     else if (a === 'extend' && typeof extendMode === 'function') extendMode(!EXM.on, W.key);

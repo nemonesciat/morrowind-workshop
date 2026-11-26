@@ -675,6 +675,14 @@ def check(db, text, script_id=''):
         ctx.msg(len(lines), 'error', 'The script never ends: add "end" on the last line.')
         for s in stack:
             ctx.msg(s[1], 'error', 'This "%s" is never closed with "%s".' % (s[0], 'endif' if s[0] == 'if' else 'endwhile'))
+    # (OnPCAdd, OnPCDrop, OnPCEquip, OnPCSoulGemUse and OnPCRepair are variables the game sets only in a script that
+    #  declares them, as its own scripts do: "short OnPCAdd ; auto set by code". Undeclared, they stay 0 for ever)
+    for n, ln in enumerate(lines, 1):
+        for m in re.finditer(r'(?i)\b(OnPCAdd|OnPCDrop|OnPCEquip|OnPCSoulGemUse|OnPCRepair)\b', ln.split(';')[0]):
+            nm = m.group(1)
+            if nm.lower() not in ctx.locals and not re.match(r'(?i)\s*short\s', ln):
+                ctx.msg(n, 'warning', '%s works only when the script declares it: add "short %s" at the top. Without it, it never becomes 1.' % (nm, nm))
+                break
     ctx.msgs.sort(key=lambda m: (m['line'], {'error': 0, 'warning': 1, 'info': 2}[m['sev']]))
     return {'messages': ctx.msgs, 'locals': ctx.order, 'name': begin_name,
             'errors': sum(1 for m in ctx.msgs if m['sev'] == 'error')}
@@ -853,7 +861,7 @@ TEMPLATES = [
     ('Do something when used', 'Attach to a door, lever or object. Runs when the player activates it.',
      'begin {id}\n\nif ( OnActivate == 1 )\n\tMessageBox "It doesn\'t budge."\n\t; Activate   ; uncomment to also do the normal thing (open, pick up…)\nendif\n\nend\n'),
     ('Picked up: advance a quest', 'Attach to an item. When the player picks it up, the quest moves on.',
-     'begin {id}\n\nshort done\n\nif ( done == 0 )\n\tif ( OnPCAdd == 1 )\n\t\tJournal "MyQuest" 20\n\t\tset done to 1\n\tendif\nendif\n\nend\n'),
+     'begin {id}\n\nshort done\nshort OnPCAdd\n\nif ( done == 0 )\n\tif ( OnPCAdd == 1 )\n\t\tJournal "MyQuest" 20\n\t\tset done to 1\n\tendif\nendif\n\nend\n'),
     ('Door locked until a quest stage', 'Attach to a door. It stays shut until the quest reaches a stage.',
      'begin {id}\n\nif ( OnActivate == 1 )\n\tif ( GetJournalIndex "MyQuest" >= 30 )\n\t\tActivate\n\telse\n\t\tMessageBox "The door is barred from the other side."\n\tendif\nendif\n\nend\n'),
     ('Timer (global script)', 'Start it with StartScript; it waits, does something, then stops itself.',

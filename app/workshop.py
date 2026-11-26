@@ -1108,6 +1108,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'reference': mwscript.reference(), 'templates': mwscript.templates(), 'mine': mwscript.my_scripts(db)})
             elif u.path == '/api/npc':
                 self._json(npc.read(db, q.get('id', '')))
+            elif u.path == '/api/person/contents':
+                import person
+                try:
+                    self._json(person.contents(db, q.get('id', '')))
+                except editing.EditError as e:
+                    self._json({'error': str(e)}, 400)
+            elif u.path in ('/api/person', '/api/person/icon'):
+                # the person card (person.py): everything about one person; an item's icon as a PNG
+                import person
+                if u.path == '/api/person':
+                    try:
+                        self._json(person.card(db, q.get('id', '')))
+                    except editing.EditError as e:
+                        self._json({'error': str(e)}, 400)
+                else:
+                    png = person.icon_png(db, q.get('id', ''))
+                    if not png:
+                        return self._json({'error': 'no icon'}, 404)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/png')
+                    self.send_header('Content-Length', str(len(png)))
+                    self.send_header('Cache-Control', 'max-age=3600')
+                    self.end_headers()
+                    self.wfile.write(png)
             elif u.path == '/api/npc/options':
                 self._json(npc.options(db))
             elif u.path == '/api/npc/calc':
@@ -1292,6 +1316,17 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == '/api/quest/board':
                 import questboard
                 self._json(questboard.board(db, q['key']))
+            elif u.path == '/api/quest/every':
+                # the quest maker's picker: every quest in the load order, the pinned ones marked
+                import questmap
+                self._json({'quests': questmap.every(db), 'pinned': questmap.pinned(db)})
+            elif u.path in ('/api/quest/map', '/api/quest/mine'):
+                # the quest maker under the 3D view (questmap.py): a quest's stages and steps with where they happen
+                import questmap
+                try:
+                    self._json(questmap.overview(db, q['key'], q.get('near') or None) if u.path == '/api/quest/map' else {'quests': questmap.mine(db)})
+                except editing.EditError as e:
+                    self._json({'error': str(e)}, 400)
             elif u.path == '/api/quest/list':
                 import questboard
                 self._json({'quests': questboard.quests(db, q.get('mine') == '1')})
@@ -2187,6 +2222,12 @@ class Handler(BaseHTTPRequestHandler):
                         editing.busy_with(), 'Undo' if 'undo' in u.path or 'revert' in u.path else 'Redo' if 'redo' in u.path else 'switching mods')}, 409)
                 if u.path == '/api/save':
                     # File > Save (Ctrl+S): the changes held in memory into the mod and its plugin (editing.save)
+                    # (quest scripts an older Workshop wrote wrong are put right first: the fix reaches mods already made)
+                    try:
+                        import questmake
+                        questmake.heal(db)
+                    except Exception as e:
+                        print('quest scripts not checked:', e)
                     return self._json(editing.save(db))
                 if u.path == '/api/unsaved/recover':
                     return self._json(recover_unsaved())
@@ -2376,6 +2417,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(mwscript.check(db, body.get('text') or '', body.get('id') or ''))
                 if u.path == '/api/script/save':
                     return self._json(mwscript.save(db, body.get('id'), body.get('text') or '', bool(body.get('create'))))
+                if u.path in ('/api/person/save', '/api/person/say', '/api/person/unsay', '/api/person/job', '/api/person/contents/save'):
+                    # the person card: wares, services, travel; a line in plain terms; a whole job; a container's
+                    # contents (each one Undo)
+                    import person
+                    if u.path == '/api/person/contents/save':
+                        return self._json(person.save_contents(db, body['id'], body.get('items') or []))
+                    if u.path == '/api/person/save':
+                        return self._json(person.save(db, body['id'], body.get('change') or {}))
+                    if u.path == '/api/person/say':
+                        return self._json(person.say_line(db, body))
+                    if u.path == '/api/person/unsay':
+                        return self._json(person.remove_line(db, body['topic'], body['inam']))
+                    return self._json(person.job(db, body))
                 if u.path == '/api/npc/save':
                     return self._json(npc.save(db, body['id'], body['data']))
                 if u.path == '/api/settle':
@@ -3015,6 +3069,22 @@ class Handler(BaseHTTPRequestHandler):
                     # the quest Board: one move (what the player does to reach a stage), written as the game writes it
                     import questmake
                     return self._json(questmake.add_move(db, body['key'], body.get('move') or {}))
+                if u.path == '/api/quest/pinmap':
+                    # ☆ a quest pinned in this mod, to work on from the map
+                    import questmap
+                    return self._json(questmap.pin(db, body.get('key'), bool(body.get('on'))))
+                if u.path in ('/api/quest/unstep', '/api/quest/unstage', '/api/quest/ring'):
+                    # the quest maker: a step or a stage taken out, a spot to reach moved or resized (each one Undo)
+                    import questmap
+                    if u.path == '/api/quest/unstep':
+                        return self._json(questmap.remove_step(db, body.get('key'), body.get('step') or {}))
+                    if u.path == '/api/quest/unstage':
+                        return self._json(questmap.remove_stage(db, body.get('key'), int(body.get('index'))))
+                    return self._json(questmap.move_ring(db, body.get('key'), int(body.get('to')), body.get('center'), body.get('radius')))
+                if u.path == '/api/quest/step':
+                    # the quest maker on the map: a quest begun, or its next stage with the step that reaches it, one Undo
+                    import questmap
+                    return self._json(questmap.step(db, body))
                 if u.path == '/api/quest/stage':
                     import questmake
                     return self._json(questmake.add_stage(db, body['key'], int(body['index']), body.get('text') or '', bool(body.get('finished'))))

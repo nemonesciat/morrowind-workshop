@@ -29,7 +29,7 @@ const GUIDES = [
   {file: 'shaping-the-land.md', title: 'Shaping the land', what: 'The Ground brush, land shaping over many cells (coasts, ridges, rivers, rock), height maps, and recipes.'},
   {file: 'sky-regions-and-weather.md', title: 'Sky, regions and weather', what: 'Regions and painting them, weather and sounds, previewing the sky and time of day.'},
   {file: 'people-and-creatures.md', title: 'People and creatures', what: 'New people, the Characters page, Populate a place, leveled lists, teaching spells.'},
-  {file: 'dialogue-and-quests.md', title: 'Dialogue and quests', what: 'How the game picks a line, conditions, the conversation builder and map, quests, testing.'},
+  {file: 'dialogue-and-quests.md', title: 'Dialogue and quests', what: 'How the game picks a line, conditions, the conversation builder and map, quests (on the Board and on the map), a person’s card (lines, gear, trade, travel, jobs), testing.'},
   {file: 'items-spells-and-the-forge.md', title: 'Items, spells and the Forge', what: 'New items and books, the item editor, weapons and armour from the Forge and into the world, spells, your own magic effects.'},
   {file: 'openmw-052.md', title: 'What OpenMW 0.52 adds', what: 'Your own skills, attributes, weathers, traps, loot rules and list additions; magic effects that burst, strike, glow and act where the bolt strikes.'},
   {file: 'library-and-assets.md', title: 'Library and assets', what: 'Your own models, pictures and sounds, retexturing, Blender, animations, packs.'},
