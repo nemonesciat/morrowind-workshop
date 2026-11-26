@@ -82,7 +82,11 @@ pieces as you move them (several selected snap as one), and **Land on surfaces**
 | 💬 Dialogue, 👤 Edit character | For people and creatures. |
 | Undo | For something your mod changed: back to how the game has it. |
 
-Double-click a thing in 3D for its window: its record and its placement together.
+Double-click a thing (or right-click › **🗂 Its card**) for its card, under the view or **⧉** in a window you can move,
+size or dock. Its tabs depend on what it is: **📋 Details** (its record and where it stands, owner, lock, key, trap; Save
+is one Undo), **🚪 Leads to** for a door, **📦 Contents** for a container, **⚡ Does** (when it's used, opened or read; a
+trap; a secret way), **🎨 Look** (model, textures, sound, swap), **🪄 Dress** and **🧱 Build** where they apply, and
+**📅 Day** for a creature. With the card open, selecting something else moves the card on to it.
 
 **Doors** have **Leads to**: search a place to make the door lead there (tick **Make the door at the other end
 lead back here**). The arrival spot is chosen for you, just in front of the door there on the side with floor. To

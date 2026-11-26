@@ -1187,6 +1187,10 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print('sea floor:', e)
                 self._json(landsurvey.landmap(db))
+            elif u.path == '/api/schedule':
+                # a person's week: blocks of hours on chosen days at spots (schedule.py)
+                import schedule
+                self._json(schedule.get(db, q.get('id', '')))
             elif u.path == '/api/land/tints':
                 # the ground colours kept with this mod for the Tint brush (a tester, 2026-11-26)
                 self._json({'tints': ((db.project.land or {}).get('tints') or []) if db.project else []})
@@ -1777,8 +1781,15 @@ class Handler(BaseHTTPRequestHandler):
                         'can_undo': bool(e.get('diff')) and not e.get('undone'),
                         'parent': parent.get(e.get('id')), 'inside': sizes.get(e.get('id'), 0), 'op': e.get('op')}
                        for e in (p.log[-500:] if p else [])]
+                path = editing.plugin_path(db) if p else None
+                saved = None
+                try:
+                    # (the mod's own file, written by Save only; the plugin is written again as the Workshop opens it)
+                    saved = os.path.getmtime(p.path) if p and os.path.isfile(p.path) else None
+                except OSError:
+                    pass
                 self._json({'project': db.project_summary(), 'log': log,
-                            'changes': changes_list() if p else [], 'path': editing.plugin_path(db) if p else None})
+                            'changes': changes_list() if p else [], 'path': path, 'saved': saved})
             else:
                 self._json({'error': 'not found'}, 404)
         except editing.Unsaved as e:
@@ -2233,10 +2244,19 @@ class Handler(BaseHTTPRequestHandler):
                         questmake.heal(db)
                     except Exception as e:
                         print('quest scripts not checked:', e)
+                    try:
+                        import myrecords
+                        myrecords.heal(db)          # (a skill with no school written as "None": myrecords.heal)
+                    except Exception as e:
+                        print('records script not checked:', e)
                     return self._json(editing.save(db))
                 if u.path == '/api/unsaved/recover':
                     return self._json(recover_unsaved())
                 if u.path == '/api/unsaved/discard':
+                    # (from the recovery prompt, with changes made since it came up: those are kept, and only the old
+                    # copy is let go; "Throw them away" threw the newer work out with it, an audit 2026-11-26)
+                    if body.get('old_only') and editing.unsaved(db):
+                        return self._json({'ok': True, 'reload': False, 'kept': True})
                     return self._json({'ok': True, 'reload': throw_away_unsaved()})
                 if u.path == '/api/doors/face':
                     # (Health check's "Set them at their doors": every made door's arrival at its partner's face)
@@ -3109,6 +3129,9 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/roll/cancel':
                     import rollinside
                     return self._json(rollinside.cancel(db, body.get('cell', ''), body.get('ref', '')))
+                if u.path == '/api/schedule/save':
+                    import schedule
+                    return self._json(schedule.save(db, body.get('id', ''), body.get('blocks') or [], body.get('home', '')))
                 if u.path == '/api/land/newtex':
                     return self._json(landscape.new_texture(db, body.get('file', ''), body.get('name', '')))
                 if u.path == '/api/land/tints':

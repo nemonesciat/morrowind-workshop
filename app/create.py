@@ -668,6 +668,8 @@ def book_html(text):
 
 def create_book(db, o):
     editing._require_project(db)
+    import items
+    items._give_check(db, o.get('give_to'), 'item')
     title = (o.get('title') or '').strip()
     if not title:
         raise EditError('Give it a title.')

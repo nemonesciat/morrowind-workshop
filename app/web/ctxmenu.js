@@ -20,7 +20,7 @@ const CM_GROUPS = [
     / stands here$/i, /^camera here, looking at/i, / walks here$/i, /^an effect here$/i]],
   ['Quest', '🧩', [/^next: /i, /^put a quest item here/i, /^next step of/i, /^a job from/i, /^job: /i, /^quest given by/i, /^quest that begins/i]],
   ['Dress it', '🪄', [/^dress (this|again)/i, /^fill with books/i, /^add one thing/i]],
-  ['Look and open', '👁', [/^contents$/i, /^look at/i, /^open its window/i, /^open its record/i, /^edit it in /i, /^pin it/i, /^where it.s used/i]],
+  ['Look and open', '👁', [/^contents$/i, /^look at/i, /^(open its window|its card)/i, /^open its record/i, /^edit it in /i, /^pin it/i, /^where it.s used/i]],
   ['Edit', '✎', [/^copy$/i, /^paste/i, /^duplicate/i, /^save as a prefab/i, /record of its own/i, /^undo my changes/i, /^bring back/i, /^delete/i]],
   ['Move and place', '⟳', [/^turn 90°$/i, /^turn 90° the other way/i, /^tilt/i, /^scale/i, /^align/i, /^set it down/i, /^settle (it|them|everything on it)\b/i,
     /^send a copy to the other view/i, /^move it to the other view/i]],
@@ -45,15 +45,15 @@ const CM_TRY = ['Quest', 'Scene', 'This room', 'This place', 'This door', 'This 
   'Look and open', 'Move and place', 'Replace and select', 'Edit', 'View'];
 // what a kind of thing is right-clicked for most, first match wins
 const CM_QUICK = {
-  DOOR: [/go where it leads/i, /open its window/i, /^look at/i],
+  DOOR: [/go where it leads/i, /(open its window|its card)/i, /^look at/i],
   NPC_: [/^about /i, /^say something/i, /^dialogue/i],
-  CREA: [/^dialogue/i, /edit creature/i, /open its window/i],
+  CREA: [/^dialogue/i, /edit creature/i, /(open its window|its card)/i],
   furniture: [/^contents$/i, /dress (this|again)/i, /fill with books/i, /add one thing/i, /settle everything/i],
-  item: [/^settle it/i, /^copy$/i, /open its window/i],
+  item: [/^settle it/i, /^copy$/i, /(open its window|its card)/i],
   piece: [/^fix here/i, /^add a room through/i, /^other pieces that fit/i],
   group: [/^copy$/i, /settle them/i, /^turn 90°$/i],
   spot: [/^paste/i, /^create here/i, /^settle what/i],
-  thing: [/^contents$/i, /^look at/i, /open its window/i, /^copy$/i],
+  thing: [/^contents$/i, /^look at/i, /(open its window|its card)/i, /^copy$/i],
 };
 const CM_KEY = 'ws-menu-recent';
 

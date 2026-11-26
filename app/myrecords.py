@@ -806,6 +806,10 @@ def delete(db, kind, rid):
 
 # ------------------------------------------------------------------ the scripts
 def _lua(v):
+    # (nothing is nil: a skill with no school of magic came out "None", a string, and OpenMW refused the whole
+    # records script at load, "bad argument #1 to 'pairs'"; an audit 2026-11-26)
+    if v is None:
+        return 'nil'
     if isinstance(v, bool):
         return 'true' if v else 'false'
     if isinstance(v, (int, float)):
@@ -816,6 +820,16 @@ def _lua(v):
         return '{ %s }' % ', '.join('[%s] = %s' % (_lua(str(k)), _lua(x)) for k, x in v.items())
     import myeffects
     return myeffects.lua_str(v)          # (Lua has no \u escapes: control characters as \ddd too)
+
+
+def heal(db):
+    """Save: a records script written while nothing came out as the string "None" written again from its own data, so
+    mods made before the fix load in the game (no Undo step: the same records, read right)."""
+    s = _script(db, SCRIPT)
+    if s and '= "None"' in (s.get('text') or ''):
+        _write(db, raw(db))
+        return True
+    return False
 
 
 def _put(db, name, kind, text, first=False):

@@ -89,7 +89,8 @@ async function ruMyEffects(){
   const has = S.summary && S.summary.project;
   let mine = [];
   if (has){ try { MX.data = await api('/api/myeffects'); mine = MX.data.effects || []; } catch (e){ /* (listed without them) */ } }
-  if (RU.tab !== 'effect') return;
+  // (the page may have been drawn again while the list loaded: then this box is no longer in it)
+  if (RU.tab !== 'effect' || !box.isConnected) return;
   box.innerHTML = `<h3 style="margin:0 0 6px">Your own effects</h3>
     ${mine.length ? `<div class="rugrid">${mine.map(e => `<button class="drow" data-myeff="${esc(e.id)}"><span>${esc(e.name || e.id)}</span><small>${esc(e.id)}</small></button>`).join('')}</div>`
       : `<div class="msg">${has ? 'None yet.' : 'Start a mod first.'}</div>`}
@@ -99,8 +100,8 @@ async function ruMyEffects(){
     const e = mine.find(x => x.id === b.dataset.myeff);
     MX.sel = e.id; MX.form = JSON.parse(JSON.stringify(e)); showView('myeff');
   });
-  $('#ru-neweff').onclick = () => { MX.form = null; showView('myeff'); };
-  $('#ru-mymod').onclick = e => { e.preventDefault(); showView('mymod'); };
+  box.querySelector('#ru-neweff').onclick = () => { MX.form = null; showView('myeff'); };
+  box.querySelector('#ru-mymod').onclick = e => { e.preventDefault(); showView('mymod'); };
 }
 async function ruOpen(id){
   if (RU.data && JSON.stringify(RU.data) !== RU.orig && !confirm('Leave your unsaved changes?')) return;

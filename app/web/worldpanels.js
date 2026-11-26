@@ -27,6 +27,7 @@ function worldPanelsInit(){
     onFull: on => { const b = $('#w-full'); if (b){ b.classList.toggle('on', on); b.title = on ? 'Back from full view' : 'Full view: only the map or 3D, its buttons and windows'; } },
   });
   if (typeof olPanels === 'function') olPanels();      // (Object lists: objlists.js)
+  if (typeof pcPanels === 'function') pcPanels();      // (a person's or container's card in a window: person.js)
   const scan = it => { if (typeof v3ThumbScan === 'function') v3ThumbScan(it.el); };
   PNL.define('world', 'place', {title: 'Place', cls: 'wside', onShow: scan});
   PNL.define('world', 'sel', {title: 'Selected', cls: 'wside', onShow: scan,

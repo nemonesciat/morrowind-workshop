@@ -258,13 +258,71 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .toast{cursor:pointer}
 .setupbtns{display:flex;gap:8px;justify-content:center;margin:16px 0}
 .guide{max-width:900px;line-height:1.65}
+/* (Home: the tours take the room there is, four or five across on a wide screen; the reading parts keep their width) */
+#guidewrap{max-width:1260px}
+#guidewrap .home-hero,#guidewrap .home-guide{max-width:900px}
 .guide h2{font-family:Cinzel,serif;color:var(--gold2);font-weight:600;font-size:19px;margin:26px 0 8px}
 .home-hero h1{margin-bottom:4px}
 .home-hero .lead{max-width:720px}
 .home-proj{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 22px}
 .cgrid.home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));max-width:1080px}
 .home-cards .ccard{display:flex;flex-direction:column;gap:2px;min-height:150px}
-.home-cards .ccard[data-home="tour"]{border-color:color-mix(in srgb,var(--gold) 60%,var(--line))}
+.home-cards .ccard[data-tour="house"]{border-color:color-mix(in srgb,var(--gold) 60%,var(--line))}
+.home-jump{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-width:1160px;margin:18px 0 14px}
+.hj{display:grid;grid-template-columns:30px 1fr;grid-template-rows:auto auto;column-gap:10px;align-items:center;padding:11px 13px;text-align:left;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);font:inherit;min-width:0}
+.hj:hover{border-color:var(--gold);background:var(--hover)}
+.hj .ic{grid-row:1/3;font-size:22px;color:var(--gold2);line-height:1}
+.hj b{font-family:Cinzel,serif;color:var(--gold2);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hj .msg{font-size:12px;line-height:1.35}
+@media (max-width:860px){.home-jump{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.home-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,.9fr);gap:8px;max-width:1160px;margin-bottom:18px}
+@media (max-width:1100px){.home-row{grid-template-columns:1fr 1fr}.home-row > :first-child{grid-column:1/-1}}
+.home-box{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--panel);min-width:0}
+.home-box h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;justify-content:space-between}
+.home-box .home-places{margin:0}
+.home-new052{margin:10px 0 0}
+.home-tip p{margin:0;line-height:1.45}
+.home-box .home-tip{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+.home-tipnav{display:flex;gap:4px;text-transform:none;letter-spacing:0}
+.home-tipnav .btn{padding:0 9px;font-size:15px;line-height:18px}
+.home-keys{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;align-items:center;font-size:12.5px}
+.home-keys kbd{justify-self:start}
+.home-tours{max-width:1160px;margin-bottom:10px}
+.home-row3{grid-template-columns:minmax(0,1fr) minmax(0,1.25fr)}
+.home-stack{display:grid;gap:8px;align-content:start;min-width:0}
+.home-row3 .home-keys{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr)}
+@media (max-width:1100px){.home-row3{grid-template-columns:1fr}.home-row2{grid-template-columns:1fr 1fr}.home-row2 > :first-child{grid-column:auto}}
+.home-row2{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
+.home-row2 h3 .msg{text-transform:none;letter-spacing:0;font-size:11.5px}
+.home-modline{margin:0 0 8px}
+.home-warn{color:var(--amber)}
+.home-ok{color:var(--green)}
+.home-kinds{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted);margin-bottom:10px}
+.home-kinds b{color:var(--text);font-weight:600}
+.home-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.home-ktabs{display:flex;gap:2px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
+.home-ktabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);font:inherit;font-size:12px;padding:3px 8px 5px;cursor:pointer}
+.home-ktabs button.on{color:var(--gold2);border-bottom-color:var(--gold)}
+.home-allkeys{margin-top:10px}
+.home-tours > summary{display:flex;align-items:center;gap:12px;cursor:pointer;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.home-tours > summary .ht-t{font-family:Cinzel,serif;color:var(--gold2);font-size:19px}
+.home-tours > summary .btn{margin-left:auto}
+.tourlist{display:grid;grid-template-columns:1fr;max-width:1160px;border-top:1px solid var(--line)}
+.tourrow{display:grid;grid-template-columns:20px 26px 250px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 6px;background:none;border:0;
+  border-bottom:1px solid var(--line);color:var(--text);text-align:left;cursor:pointer;font:inherit;min-width:0}
+.tourrow:hover{background:var(--hover)}
+.tourrow .ic{font-size:18px;color:var(--gold2);line-height:1}
+.tourrow b{font-family:Cinzel,serif;color:var(--gold2);font-size:14.5px;white-space:nowrap}
+.tourrow .msg{font-size:12.5px;line-height:1.35}
+.tourrow .tr-k{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);white-space:nowrap}
+.tourrow .tr-box{width:16px;height:16px;border:1px solid var(--faint);border-radius:3px;display:grid;place-items:center;font-size:12px;line-height:1;color:var(--bg,#111)}
+.tourrow.tour-done .tr-box{background:var(--gold2);border-color:var(--gold2);font-weight:700}
+.tourrow.tour-done .msg{color:var(--faint)}
+.tourrow[data-tour="house"] b::after{content:' · start here';font-family:inherit;font-size:11px;color:var(--muted)}
+.tour-h{margin:22px 0 8px;display:flex;align-items:baseline;gap:10px}
+.tour-h .msg{font-size:12.5px;font-family:inherit;letter-spacing:0;text-transform:none}
+.home-go{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 6px}
 .home-places{display:flex;gap:6px;flex-wrap:wrap;max-width:900px}
 .home-onstart{display:flex;gap:6px;align-items:center;margin:22px 0 6px}
 .home-guide{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
@@ -825,6 +883,7 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
         <button data-help="settings"><b>Settings</b><small>OpenMW's folder, AI, backups.</small></button>
         <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
         <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
+        <button data-help="tours"><b>All tours…</b><small>Every guided tour, step by step over the real buttons, ticked when done.</small></button>
         <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
         <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
         <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="filebtn" title="New, open, save, earlier versions, your mods">📁<span class="tl"> File</span> ▾</button><div class="omwmenu filemenu" id="filemenu"></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
@@ -1693,6 +1752,8 @@ $('#detail').addEventListener('input', e => {
 // window has no "on", so a page that checked only "on" called showView again and again and froze the Workshop)
 function pageOn(v){ const e = $('#' + v); return !!e && (e.classList.contains('on') || (typeof vwHosting === 'function' && vwHosting(v))); }
 function showView(v){
+  // (full view hides the bar at the top: another page with it hidden would leave no way back; panels.js PNL.full)
+  if (v !== 'world' && typeof PNL !== 'undefined' && PNL.spaces.world && PNL.spaces.world.full) PNL.full('world', false);
   if (v !== 'createv' && typeof PL !== 'undefined' && PL && PL.paint) PL.paint = null;     // (the planner's tile mode ends with the page)
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === v));
@@ -2169,7 +2230,7 @@ function recoveryOffer(rec){
     catch (e){ q('#rc-err').textContent = e.message; }
   };
   q('#rc-drop').onclick = async () => {
-    try { await post0('/api/unsaved/discard', {}); bg.remove(); toast('Thrown away. Your mod is as you last saved it.'); }
+    try { const r = await post0('/api/unsaved/discard', {old_only: true}); bg.remove(); toast(r.kept ? 'The old changes are let go; what you have done since is kept.' : 'Thrown away. Your mod is as you last saved it.'); }
     catch (e){ q('#rc-err').textContent = e.message; }
   };
 }
@@ -5487,6 +5548,7 @@ poll();
 <script src="/web/stamp.js"></script>
 <script src="/web/refprops.js"></script>
 <script src="/web/objwin.js"></script>
+<script src="/web/thingcard.js"></script>
 <script src="/web/comfort.js"></script>
 <script src="/web/ctxmenu.js"></script>
 <script src="/web/secretdoor.js"></script>
@@ -5525,6 +5587,7 @@ poll();
 <script src="/web/arrive.js"></script>
 <script src="/web/opentool.js"></script>
 <script src="/web/coach.js"></script>
+<script src="/web/tours.js"></script>
 <script src="/web/icons.js"></script>
 <script>
 // (a part of the page that didn't come, the Workshop too busy to send it: loaded again, once, instead of a page that

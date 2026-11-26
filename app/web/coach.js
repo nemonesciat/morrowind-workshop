@@ -42,9 +42,11 @@ const COACH_STEPS = [
    last: true},
 ];
 
-function coachHouse(steps){
+// (stay: a single pointer from Home's tips, on the page it went to; tours start from Home)
+function coachHouse(steps, id, stay){
   coachEnd();
-  COACH.steps = steps || COACH_STEPS;     // (another tour's steps: the first cutscene, scenes.js)
+  COACH.steps = steps || COACH_STEPS;     // (another tour's steps: the first cutscene, scenes.js; the Home page's tours, tours.js)
+  COACH.id = id || (steps ? null : 'house');
   COACH.on = true; COACH.n = -1; COACH.skipped = 0;
   const css = document.createElement('style'); css.id = 'coach-css';
   css.textContent = `
@@ -64,14 +66,16 @@ function coachHouse(steps){
   document.body.append(COACH.ring, COACH.tip);
   COACH.tip.addEventListener('click', e => {
     const b = e.target.closest('[data-coach]'); if (!b) return;
-    if (b.dataset.coach === 'skip' || b.dataset.coach === 'end') coachEnd();
+    if (b.dataset.coach === 'skip') coachEnd();
+    else if (b.dataset.coach === 'end') coachEnd(true);          // (Done on the last step: the tour is finished, and ticked)
     else coachNext();
   });
   // (on the World map the pages come up as windows over it, stacked; the tour's buttons hid behind them and
   // pageOn counted a Create window under the Home one as open. The tour runs on the pages, as it was written: the
   // windows are closed, nothing in them is lost, 2026-11-04)
   if (typeof VW !== 'undefined' && typeof vwClose === 'function') for (const v of Object.keys(VW.wins)) vwClose(v);
-  if (typeof VW !== 'undefined'){ VW.nav = true; try { showView('guide'); } finally { VW.nav = false; } }
+  if (stay);
+  else if (typeof VW !== 'undefined'){ VW.nav = true; try { showView('guide'); } finally { VW.nav = false; } }
   else showView('guide');
   coachNext();
   COACH.timer = setInterval(coachTick, 250);
@@ -167,6 +171,8 @@ function coachEnd(finished){
   COACH.on = false; clearInterval(COACH.timer);
   window.removeEventListener('resize', coachPlace);
   for (const el of [COACH.ring, COACH.tip, $('#coach-css')]) if (el) el.remove();
-  if (finished) toast(COACH.steps === COACH_STEPS ? 'That\'s the tour. Home (the logo, top left) has it again any time.'
-    : 'That\'s your first cutscene. Home (the logo, top left) has this tour again any time.');
+  if (finished){
+    if (typeof tourMark === 'function') tourMark(COACH.id || (COACH.steps === COACH_STEPS ? 'house' : null));
+    toast('That\'s the tour. Home (the logo, top left) has every tour, ticked when done.');
+  }
 }

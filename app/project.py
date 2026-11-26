@@ -154,10 +154,23 @@ def load_settings():
 def write_json(path, obj, **kw):
     """A JSON file written whole or not at all (a copy beside it, then put in its place): a Workshop closed or killed
     mid-write left a half file, and the settings, a prefab or a plan in it were gone (2026-11-02 audit)."""
-    tmp = path + '.tmp'
+    # its own copy per write: two saves at once (the page sends settings in pairs) fought over one .tmp, and
+    # Windows refused the move while the other held it (audit 2026-11-26); a scanner holding the file a moment too
+    tmp = '%s.%d.%d.tmp' % (path, os.getpid(), threading.get_ident())
     with open(tmp, 'w', encoding='utf-8') as f:
         f.write(json.dumps(obj, **kw))
-    os.replace(tmp, path)
+    for i in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 19:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.05)
 
 
 def save_settings(s):

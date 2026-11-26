@@ -513,6 +513,8 @@ def _rename_uses(db, old, new):
 
 # ------------------------------------------------------------------ the scripts
 def _lua(v):
+    if v is None:
+        return 'nil'      # (not the string "None": myrecords had that, 2026-11-26)
     if isinstance(v, bool):
         return 'true' if v else 'false'
     if isinstance(v, (int, float)):

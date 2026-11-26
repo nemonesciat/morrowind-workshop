@@ -153,7 +153,13 @@ Make and grow a quest where it happens, in the 3D view.
 
 Right-click a person in the 3D view for **💬 Dialogue**, **💬 Say something…**, **👤 About…**, **🎒 Gear and wares**, **🪙 Trade
 and services** and **🧭 Travel**. Each one opens the person's card under the 3D view, at its own tab.
-**Dialogue page** and **Character page** at the top open the full pages.
+**Dialogue page** and **Character page** at the top open the full pages. **⧉** puts the card in a window.
+
+**📅 Day** gives them a week: blocks of hours on chosen days, each at a spot (in their own place or another), standing
+there or wandering about it. **＋ Block here** adds one at the middle of the view, or right-click a spot › **📅 … is
+here…**. In the game they walk to the spot at the hour; when it is in another place they walk out through the door that
+leads there while you watch, and whoever is due where you go in is there already. A week replaces their daily routine
+from Populate. Creatures can have one too.
 
 - **💬 Talk:** what they say now, their own lines by kind, then **They answer**: every topic they know, with the
   line they'd say and where it comes from (their class, race, this place, everyone). ＋ gives them their own line on

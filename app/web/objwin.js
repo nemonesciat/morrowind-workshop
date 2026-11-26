@@ -14,6 +14,8 @@ function owCss(){
   const c = document.createElement('style'); c.id = 'ow-css';
   c.textContent = `
   .owin{position:absolute;z-index:41;width:min(740px,calc(100% - 24px));max-height:calc(100% - 24px);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 14px 44px #000b;overflow:hidden;font-size:13px}
+  .owin.owembed{position:static;width:auto;max-height:none;box-shadow:none;border:0;border-radius:0;background:transparent}
+  .owin.owembed .owhead{display:none}
   .owhead{display:flex;align-items:center;gap:10px;padding:7px 8px 7px 12px;background:var(--bg3-b);border-bottom:1px solid var(--line);cursor:grab;user-select:none;flex:none}
   .owhead:active{cursor:grabbing}
   .owhead .owtitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
@@ -49,7 +51,13 @@ const owRef = () => (OW.cell && findRef(OW.cell, OW.k)) || OW.ref;
 const owName = () => { const r = owRef(); return r ? (r.name || r.id) : ''; };
 
 // ---------------------------------------------------------------- open, close, where it sits
-async function owOpen(cell, k, quiet){
+// (2026-11-26: a thing's card holds this form in its 📋 Details tab, under the view or in a window; every way that
+// opened the window opens the card, at Details)
+function owOpen(cell, k, quiet){
+  if (typeof tcOpen === 'function' && !OW.embedding) return tcOpen(cell, k, quiet ? null : 'details', quiet);   // (following the selection: the tab stays)
+  return owOpenRaw(cell, k, quiet);
+}
+async function owOpenRaw(cell, k, quiet){
   if (!cfWorldOn()) showView('world');
   const r = findRef(cell, k);
   if (!r){ if (!quiet) toast('That object isn\'t here any more.', true); return; }
@@ -67,7 +75,10 @@ async function owOpen(cell, k, quiet){
 function owClose(){
   if (!OW.el) return;
   if (OW.picking) owPickCancel();
+  // (in a card: Cancel puts the form back as it was saved, and the card stays)
+  const host = OW.host, cell = OW.cell, k = OW.k;
   OW.el.remove(); OW.el = null; OW.cell = OW.k = null; OW.rec = OW.props = OW.door = OW.cont = null;
+  if (host && host.isConnected && cell){ OW.embedding = true; try { owOpenRaw(cell, k, true); } finally { OW.embedding = false; } }
 }
 function owMake(){
   if (OW.el && OW.el.isConnected) return;
@@ -77,7 +88,7 @@ function owMake(){
       <button class="btn sm" id="ow-close" title="Close (Esc)">✕</button></div>
     <div class="owbody"><div class="owcol" id="ow-rec"></div><div class="owcol" id="ow-ref"></div></div>
     <div class="owfoot"><span class="msg" id="ow-msg"></span><button class="btn sm primary" id="ow-save" title="Keep the record and the placed object's changes, as one Undo step">Save</button><button class="btn sm" id="ow-cancel" title="Drop the edits and close">Cancel</button></div>`;
-  $('#world .mapwrap').appendChild(el);
+  if (OW.host){ el.classList.add('owembed'); OW.host.appendChild(el); } else $('#world .mapwrap').appendChild(el);
   OW.el = el;
   el.querySelector('#ow-close').onclick = () => owClose();
   el.querySelector('#ow-cancel').onclick = () => owClose();
@@ -108,6 +119,7 @@ function owMake(){
 // where it sits: where it was left, kept inside the view (near the top right the first time)
 function owPlace(){
   const el = OW.el, box = $('#world .mapwrap'); if (!el || !box) return;
+  if (OW.host){ el.classList.toggle('narrow', (OW.host.clientWidth || 800) < 640); return; }
   const bw = box.clientWidth, bh = box.clientHeight;
   el.classList.toggle('narrow', bw < 760);
   const w = el.offsetWidth, h = el.offsetHeight;
@@ -512,7 +524,7 @@ $('#world').addEventListener('dblclick', e => {
 });
 // Esc: the arrival pick, an open list, then the window itself
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || !OW.el) return;
+  if (e.key !== 'Escape' || !OW.el || OW.host) return;
   if (OW.picking){ if (W.mode === 'arrive'){ e.preventDefault(); e.stopPropagation(); owPickCancel(); } return; }
   if (OW.el.style.display === 'none' || document.querySelector('.modal-bg, .pmenu')) return;
   if (typeof vwToolBusy === 'function' && vwToolBusy()) return;   // (a tool at work ends first: viewwin.js)

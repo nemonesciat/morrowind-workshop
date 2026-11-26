@@ -451,6 +451,10 @@ def one_room_home(rows, area, area_f, rng):
             tail.append((kind, want * scale / max(area_f, 0.01), where))
     # (the bed, the table and its seats, the chest, then the stores, then the rest: the stores laid last found every wall
     # taken by a cupboard, a shelf and a bench, and a shack of six tiles kept none of its sacks and barrels)
+    # (the whole home in one room sleeps there too: a living room's set has no bed, and the guided first house, one
+    # "Main room", came out a dining room that Check place called a home with no bed; an audit, 2026-11-26)
+    if not any(r[0] in ('bed', 'bedroll') for r in out):
+        out.insert(0, ('bed', 1, 'wall'))
     first = [r for r in out + tail if r[0] in ('bed', 'bedroll', 'table', 'chair', 'chest', 'fire')]
     stores = [r for r in out + tail if r[0] in ('sack', 'barrel', 'crate', 'urn', 'basket')]
     rest = [r for r in out + tail if r not in first and r not in stores]

@@ -38,11 +38,13 @@ const PCD = {kind: null, id: null, d: null, tab: 'talk', form: {kind: 'topic', w
     .pck .pc-tog .e{font-size:18px} .pck .pc-tog.on{border-color:var(--gold);color:var(--gold2);background:var(--hover)}
     .pck .pc-figure{display:grid;grid-template-columns:repeat(3,46px);gap:5px;align-content:start}
     @container (max-width: 720px){ .pck .pc-cols{grid-template-columns:minmax(0,1fr)} }
-    #pc-body{container-type:inline-size}`;
+    #pc-body{container-type:inline-size}
+    #pc-dock.pc-win{position:static;height:100%!important;box-shadow:none;border-top:0}
+    #pc-dock.pc-win .pc-grip{display:none}`;
   document.head.appendChild(st);
 })();
 
-const PC_TABS = [['talk', '💬', 'Talk'], ['gear', '🎒', 'Gear'], ['trade', '🪙', 'Trade'], ['travel', '🧭', 'Travel'], ['quests', '🧩', 'Quests']];
+const PC_TABS = [['talk', '💬', 'Talk'], ['day', '📅', 'Day'], ['gear', '🎒', 'Gear'], ['trade', '🪙', 'Trade'], ['travel', '🧭', 'Travel'], ['quests', '🧩', 'Quests']];
 // (only signs the Workshop's own icon set draws: icons.js EMO_ICON)
 const PC_SVC_ICON = {'Weapons': '🗡', 'Armor': '🛡', 'Clothing': '👤', 'Books': '📚', 'Ingredients': '🌿', 'Lockpicks': '🔓', 'Probes': '🗝', 'Lights': '🕯',
   'Apparatus': '⚙', 'Repair items': '⚒', 'Miscellaneous': '📦', 'Potions': '🧪', 'Magic items': '✨', 'Sells spells': '🪄', 'Training': '🎓',
@@ -65,16 +67,22 @@ async function pcOpen(id, tab, more){
   if (typeof QM !== 'undefined' && QM.dock && typeof qmClose === 'function') qmClose();
   if (typeof pageOn === 'function' && !pageOn('world')) showView('world');
   if (PCD.id !== id || PCD.kind !== 'npc'){ PCD.form = {kind: 'topic', when: {}}; PCD.job = null; PCD.sel = null; }
-  PCD.kind = 'npc'; PCD.id = id; PCD.tab = tab || PCD.tab || 'talk';
+  PCD.kind = 'npc'; PCD.id = id; PCD.tab = tab || PCD.tab || 'talk'; PCD.ref = null; PCD.tabs = null;
   Object.assign(PCD, more || {});
+  // (the person placed here, for the 📋 Details tab: the one asked about, or the one selected)
+  if (!PCD.ref && W.sel){ const s_ = findRef(W.sel.cell, W.sel.k); if (s_ && s_.id.toLowerCase() === String(id).toLowerCase()) PCD.ref = {cell: W.sel.cell, k: W.sel.k}; }
   if (!PCD.opts){ try { PCD.opts = await api('/api/npc/options'); } catch (e){ PCD.opts = {services: []}; } }
   pcDock();
   await pcLoad();
 }
-async function pcOpenCont(id){
+async function pcOpenCont(id, ref, tab){
   if (typeof needProject === 'function' && !await needProject()) return;
   if (typeof QM !== 'undefined' && QM.dock && typeof qmClose === 'function') qmClose();
-  PCD.kind = 'cont'; PCD.id = id; PCD.sel = null;
+  PCD.kind = 'cont'; PCD.id = id; PCD.sel = null; PCD.ref = ref || null;
+  // (a container's card: its contents, and the tabs any placed thing has: thingcard.js)
+  const r = ref && findRef(ref.cell, ref.k);
+  PCD.tabs = r && typeof tcTabsFor === 'function' ? tcTabsFor('CONT', tcItems(ref.cell, r), ['contents', '📦', 'Contents']) : [['contents', '📦', 'Contents']];
+  PCD.tab = PCD.tabs.some(t => t[0] === tab) ? tab : 'contents';
   pcDock();
   await pcLoad();
 }
@@ -90,7 +98,7 @@ function pcDock(){
   if (!d){
     d = document.createElement('div'); d.id = 'pc-dock';
     d.innerHTML = `<div class="pc-bar"><span class="pc-grip" title="Drag to make it taller or shorter">⋯</span><b id="pc-title"></b><span class="pc-sub" id="pc-sub"></span>
-      <span style="flex:1"></span><span id="pc-more"></span><button class="btn sm" id="pc-close" title="Close">✕</button></div>
+      <span style="flex:1"></span><span id="pc-more"></span><button class="btn sm" id="pc-float" title="Into a window you can move, size or dock at a side (and back under the view)">⧉</button><button class="btn sm" id="pc-close" title="Close">✕</button></div>
       <div class="pc-tabs" id="pc-tabs"></div><div id="pc-body"></div>`;
     wrap.appendChild(d);
     const grip = d.querySelector('.pc-grip');
@@ -102,30 +110,73 @@ function pcDock(){
     };
     try { const h = +localStorage.getItem('ws-pch'); if (h) d.style.height = h + 'px'; } catch (e){}
     d.querySelector('#pc-close').onclick = () => pcClose();
+    d.querySelector('#pc-float').onclick = () => { PCD.floating = !PCD.floating; try { localStorage.setItem('ws-pc-float', PCD.floating ? '1' : ''); } catch (e){} pcPlace(); };
   }
   d.style.display = '';
+  pcPlace();
 }
-function pcClose(){ const d = $('#pc-dock'); if (d) d.style.display = 'none'; PCD.kind = null; PCD.job = null; }
+// under the view, or in a window of the panels (a user's ask, 2026-11-26: "it should be possible to undock the character
+// sheet, container sheet etc into a window"); the card itself is moved, so nothing in it is lost on the way
+if (PCD.floating == null){ try { PCD.floating = !!localStorage.getItem('ws-pc-float'); } catch (e){ PCD.floating = false; } }
+function pcPlace(){
+  const d = $('#pc-dock'); if (!d) return;
+  const wrap = document.querySelector('#world .mapwrap');
+  if (PCD.floating && typeof PNL !== 'undefined' && PNL.spaces.world && PNL.spaces.world.types.card){
+    PNL.show('world', 'card');
+    const body = PNL.body('world', 'card');
+    if (body && d.parentNode !== body){ body.appendChild(d); }
+    d.classList.add('pc-win');
+    PNL.retitle('world', 'card');
+  } else {
+    if (wrap && d.parentNode !== wrap) wrap.appendChild(d);
+    d.classList.remove('pc-win');
+    if (typeof PNL !== 'undefined' && PNL.spaces.world && PNL.isOpen('world', 'card')){ PCD.closingWin = true; PNL.close('world', 'card'); PCD.closingWin = false; }
+  }
+  const b = d.querySelector('#pc-float'); if (b){ b.classList.toggle('primary', !!PCD.floating); b.title = PCD.floating ? 'Back under the view' : 'Into a window you can move, size or dock at a side'; }
+  if (typeof v3Resize === 'function') setTimeout(v3Resize, 0);
+}
+function pcClose(){
+  const d = $('#pc-dock'); if (d) d.style.display = 'none'; PCD.kind = null; PCD.job = null;
+  // (back under the view first: closing the window takes what is in it out of the page)
+  const wrap = document.querySelector('#world .mapwrap'); if (d && wrap && d.parentNode !== wrap) wrap.appendChild(d);
+  if (PCD.floating && typeof PNL !== 'undefined' && PNL.spaces.world && PNL.isOpen('world', 'card')){ PCD.closingWin = true; PNL.close('world', 'card'); PCD.closingWin = false; }
+}
+// the window, one of the World map's panels (worldpanels.js calls this)
+function pcPanels(){
+  PNL.define('world', 'card', {title: 'Card', icon: '🧍', home: 'float', w: 760, h: 480, hidden: true,
+    titleFor: () => PCD.d ? (PCD.d.name || PCD.d.id) : 'Card',
+    onClose: () => { if (!PCD.closingWin){ const d = $('#pc-dock'); if (d){ d.style.display = 'none'; const wrap = document.querySelector('#world .mapwrap'); if (wrap) wrap.appendChild(d); } PCD.kind = null; PCD.job = null; } }});
+}
 
 function pcRender(){
   const d = PCD.d; if (!d) return;
-  const cont = PCD.kind === 'cont';
-  $('#pc-title').textContent = (cont ? '📦 ' : '🧍 ') + (d.name || d.id);
-  $('#pc-sub').textContent = cont ? d.id : [d.race, d.cls, (d.places && d.places[0] && d.places[0].name) || ''].filter(Boolean).join(' · ');
+  const cont = PCD.kind === 'cont', npc = PCD.kind === 'npc', thing = PCD.kind === 'thing';
+  $('#pc-title').textContent = (cont ? '📦 ' : npc ? '🧍 ' : (typeof tcIcon === 'function' ? tcIcon(d.type) : '🗂') + ' ') + (d.name || d.id);
+  if (PCD.floating && typeof PNL !== 'undefined' && PNL.spaces.world) PNL.retitle('world', 'card');
+  $('#pc-sub').textContent = cont || thing ? [thing ? (S.typeLabels && S.typeLabels[d.type]) || d.type : '', d.id].filter(Boolean).join(' · ')
+    : [d.race, d.cls, (d.places && d.places[0] && d.places[0].name) || ''].filter(Boolean).join(' · ');
   const copies = d.copies > 1 ? `<span class="pc-chip" style="cursor:default" title="Their ${cont ? 'contents' : 'lines, wares and services'} belong to every copy: changing them here changes all ${d.copies}">⚠ in ${d.copies} places</span>` : '';
-  $('#pc-more').innerHTML = copies + (cont ? '' : `<button class="btn sm" id="pc-dlg" title="All their dialogue, on the Dialogue page">💬 Dialogue page</button>
+  $('#pc-more').innerHTML = copies + (!npc ? '' : `<button class="btn sm" id="pc-dlg" title="All their dialogue, on the Dialogue page">💬 Dialogue page</button>
     <button class="btn sm" id="pc-char" title="Every detail of them, on the character page">👤 Character page</button>`);
+  // (a person's tabs, and 📋 Details when the person placed here is known; a container's and a thing's: thingcard.js)
+  const list = npc ? PC_TABS.concat(PCD.ref ? [['details', '📋', 'Details']] : []) : (PCD.tabs || [['contents', '📦', 'Contents']]);
+  if (!list.some(t => t[0] === PCD.tab)) PCD.tab = list[0][0];
   const tabs = $('#pc-tabs');
-  tabs.style.display = cont ? 'none' : '';
-  tabs.innerHTML = PC_TABS.map(([k, e, t]) => `<div class="pc-tab ${PCD.tab === k ? 'on' : ''}" data-pctab="${k}"><span class="pc-e">${e}</span>${t}</div>`).join('');
+  tabs.style.display = list.length > 1 ? '' : 'none';
+  tabs.innerHTML = list.map(([k, e, t]) => `<div class="pc-tab ${PCD.tab === k ? 'on' : ''}" data-pctab="${k}"><span class="pc-e">${e}</span>${t}</div>`).join('');
   tabs.querySelectorAll('[data-pctab]').forEach(t => t.onclick = () => { PCD.tab = t.dataset.pctab; pcRender(); });
-  if (!cont){
+  if (npc){
     $('#pc-dlg').onclick = () => { if (typeof openCharacterDialogue === 'function') openCharacterDialogue(d.id); };
     $('#pc-char').onclick = () => { if (typeof cOpen === 'function') cOpen(d.id); else if (typeof selAction === 'function') selAction('char'); };
   }
   const body = $('#pc-body');
-  body.innerHTML = `<div class="pck">${cont ? pcGearPane(true) : {talk: pcTalkPane, gear: () => pcGearPane(false), trade: pcTradePane, travel: pcTravelPane, quests: pcQuestPane}[PCD.tab]()}</div>`;
-  ({talk: pcTalkBind, gear: pcGearBind, trade: pcTradeBind, travel: pcTravelBind, quests: pcQuestBind})[cont ? 'gear' : PCD.tab](body);
+  const panes = {talk: pcTalkPane, day: pcDayPane, gear: () => pcGearPane(false), trade: pcTradePane, travel: pcTravelPane, quests: pcQuestPane,
+    contents: () => pcGearPane(true), details: () => tcDetailsPane()};
+  const binds = {talk: pcTalkBind, day: pcDayBind, gear: pcGearBind, trade: pcTradeBind, travel: pcTravelBind, quests: pcQuestBind, contents: pcGearBind,
+    details: b => tcDetailsBind(b)};
+  const t = PCD.tab;
+  body.innerHTML = `<div class="pck">${panes[t] ? panes[t]() : tcGroupPane(t)}</div>`;
+  (binds[t] || tcGroupBind)(body);
 }
 
 // ----- 💬 Talk: what they say now, their lines, + a line
@@ -294,6 +345,105 @@ function pcTradeBind(b){
 }
 
 // ----- 🧭 Travel: where they take travellers (right-click a spot on the map to add one)
+// ----- 📅 Day: their week, blocks of hours on chosen days at spots (schedule.py; the game keeps them to it)
+const PC_WEEK = [1, 2, 3, 4, 5, 6, 0];          // (Morndas first, as the game's calendar reads; 0 is Sundas)
+const PC_BLOCK_COL = ['#c9a45c', '#7fa6c9', '#9bc47f', '#c98a7f', '#b08fd0', '#d0b97f', '#7fc9b9', '#c97fae'];
+function pcHour(h){ const m = Math.round((h % 1) * 60); return Math.floor(h) + ':' + String(m).padStart(2, '0'); }
+function pcPlaceName(b){ return b.place || 'Outdoors' + (b.pos ? ' (' + Math.floor(b.pos[0] / 8192) + ', ' + Math.floor(b.pos[1] / 8192) + ')' : ''); }
+function pcDayPane(){
+  const W_ = PCD.week;
+  if (!W_ || W_.id.toLowerCase() !== String(PCD.id).toLowerCase()){
+    api('/api/schedule?id=' + encodeURIComponent(PCD.id)).then(r => { PCD.week = r; PCD.wsel = null; if (PCD.tab === 'day') pcRender(); }).catch(e => toast(e.message, true));
+    return '<div class="msg"><span class="spin"></span>Reading their week…</div>';
+  }
+  if (!W_.lua) return '<div class="msg">A week runs as OpenMW Lua: save your mod as an .omwaddon to give them one.</div>';
+  const days = W_.days, bl = W_.blocks;
+  // the week: a column a day, the hours down it, each block a bar
+  const H = 168, col = (b, i) => PC_BLOCK_COL[i % PC_BLOCK_COL.length];
+  const bars = d => bl.map((b, i) => {
+    const segs = [];
+    if (b.from < b.to){ if (b.days.includes(d)) segs.push([b.from, b.to]); }
+    else { if (b.days.includes(d)) segs.push([b.from, 24]); if (b.days.includes((d + 6) % 7)) segs.push([0, b.to]); }
+    return segs.map(([a, z]) => `<div data-pcwb="${i}" title="${esc(pcHour(b.from) + '–' + pcHour(b.to) + ' · ' + pcPlaceName(b) + (b.act === 'wander' ? ' · wanders ' + b.wander : ''))}"
+      style="position:absolute;left:2px;right:2px;top:${a / 24 * H}px;height:${Math.max(3, (z - a) / 24 * H)}px;background:${col(b, i)};opacity:${PCD.wsel === i ? 1 : .72};
+      border-radius:3px;cursor:pointer;${PCD.wsel === i ? 'outline:2px solid var(--gold2);' : ''}overflow:hidden;font-size:10px;color:#111;padding:0 2px;line-height:12px">${esc(b.place ? b.place.split(',').pop().trim() : 'Outdoors')}</div>`).join('');
+  }).join('');
+  const grid = `<div style="display:grid;grid-template-columns:34px repeat(7,minmax(0,1fr));gap:3px;align-items:start">
+    <div></div>${PC_WEEK.map(d => `<div class="pc-k" style="margin:0;text-align:center">${esc(days[d].slice(0, 3))}</div>`).join('')}
+    <div style="position:relative;height:${H}px;font-size:10px;color:var(--faint)">${[0, 6, 12, 18].map(h => `<div style="position:absolute;top:${h / 24 * H - 5}px;right:3px">${h}:00</div>`).join('')}</div>
+    ${PC_WEEK.map(d => `<div style="position:relative;height:${H}px;background:#ffffff08;border-radius:4px">${bars(d)}</div>`).join('')}</div>`;
+  const row = (b, i) => `<div class="pc-ln" data-pcwrow="${i}" style="flex-wrap:wrap;${PCD.wsel === i ? 'background:var(--hover);' : ''}">
+      <span style="width:10px;height:10px;border-radius:2px;background:${col(b, i)};flex:none"></span>
+      ${PC_WEEK.map(d => `<span class="pc-chip ${b.days.includes(d) ? 'on' : ''}" data-pcwday="${i}:${d}" title="${esc(days[d])}">${esc(days[d].slice(0, 2))}</span>`).join('')}
+      <input class="inp" data-pcwf="${i}:from" value="${pcHour(b.from)}" style="width:52px" title="From (hours, as 8 or 8:30)">–<input class="inp" data-pcwf="${i}:to" value="${pcHour(b.to)}" style="width:52px" title="Until">
+      <span class="pc-t" title="${esc(pcPlaceName(b))}">📍 ${esc(pcPlaceName(b))}</span>
+      <select class="inp" data-pcwf="${i}:act"><option value="stand" ${b.act === 'stand' ? 'selected' : ''}>Stand</option><option value="wander" ${b.act === 'wander' ? 'selected' : ''}>Wander</option></select>
+      ${b.act === 'wander' ? `<input class="inp" data-pcwf="${i}:wander" value="${b.wander}" style="width:54px" title="How far they wander (128 is a few steps)">` : ''}
+      <button class="btn sm" data-pcwhere="${i}" title="Here: the spot in the middle of the view, facing you">📍 Here</button>
+      <button class="btn sm" data-pcwgo="${i}" title="Go there">Go</button><button class="btn sm" data-pcwrm="${i}" title="Take it out">✕</button></div>`;
+  return `${grid}
+    <div class="pc-row" style="margin-top:8px"><button class="btn sm" id="pc-wadd" title="A block at the spot in the middle of the view, 8:00 to 17:00 every day">＋ Block here</button>
+      <span class="msg">Or right-click a spot › 📅 ${esc(W_.name)} is here…${W_.routine ? ' · this week replaces their daily routine from Populate' : ''}</span></div>
+    ${bl.map(row).join('') || '<div class="msg">No week yet: out of their blocks, they keep to what the game gives them.</div>'}`;
+}
+// the spot for a block: the middle of the view (3D) or of the map, facing the camera; the place open now
+function pcWeekSpot(at){
+  const interior = W.info && W.info.interior;
+  let pos = at, facing = 0;
+  if (!pos && typeof V3 !== 'undefined' && V3.on && typeof v3LookGround === 'function'){
+    const g = v3LookGround(); pos = [g.x + V3.origin[0], g.y + V3.origin[1], g.z + V3.origin[2]];
+  }
+  if (!pos) pos = [W.cam.x, W.cam.y, 0];
+  if (typeof V3 !== 'undefined' && V3.on) facing = Math.atan2(Math.sin(V3.yaw + Math.PI), Math.cos(V3.yaw + Math.PI));
+  return {place: interior ? (W.info.name || W.key) : '', pos: pos.slice(0, 3), facing};
+}
+async function pcWeekSave(blocks, msg){
+  try {
+    PCD.week = await post('/api/schedule/save', {id: PCD.week.id, blocks, home: PCD.week.home || ''});
+    afterChange(); pcRender(); if (msg) toast(msg);
+  } catch (e){ toast(e.message, true); pcRender(); }
+}
+function pcHourOf(v){ const m = String(v).trim().match(/^(\d{1,2})(?:[:.](\d{1,2}))?$/); return m ? +m[1] + (m[2] ? +m[2] / (m[2].length === 1 ? 10 : 60) : 0) : NaN; }
+async function pcDayAdd(at){
+  if (!PCD.week) return;
+  const sp = pcWeekSpot(at);
+  const blocks = PCD.week.blocks.concat([{days: [0, 1, 2, 3, 4, 5, 6], from: 8, to: 17, act: 'stand', wander: 0, ...sp}]);
+  PCD.wsel = blocks.length - 1;
+  await pcWeekSave(blocks, 'A block added, 8:00 to 17:00 every day. Undo takes it back.');
+}
+function pcDayBind(b){
+  const W_ = PCD.week; if (!W_ || !W_.blocks) return;
+  const copy = () => JSON.parse(JSON.stringify(W_.blocks));
+  b.querySelectorAll('[data-pcwb]').forEach(x => x.onclick = () => { PCD.wsel = +x.dataset.pcwb; pcRender(); });
+  b.querySelectorAll('[data-pcwrow]').forEach(x => x.onclick = e => { if (e.target === x || e.target.classList.contains('pc-t')){ PCD.wsel = +x.dataset.pcwrow; pcRender(); } });
+  b.querySelectorAll('[data-pcwday]').forEach(x => x.onclick = () => {
+    const [i, d] = x.dataset.pcwday.split(':').map(Number), bl = copy();
+    bl[i].days = bl[i].days.includes(d) ? bl[i].days.filter(v => v !== d) : bl[i].days.concat([d]);
+    if (!bl[i].days.length) return toast('A block needs at least one day.', true);
+    PCD.wsel = i; pcWeekSave(bl);
+  });
+  b.querySelectorAll('[data-pcwf]').forEach(x => x.onchange = () => {
+    const [i, f] = x.dataset.pcwf.split(':'), bl = copy(), n = +i;
+    if (f === 'from' || f === 'to'){ const h = pcHourOf(x.value); if (!(h >= 0 && h <= 24)) return toast('Give the hour as 8 or 8:30.', true); bl[n][f] = h; }
+    else if (f === 'wander') bl[n].wander = Math.max(0, Math.min(2048, +x.value || 0));
+    else { bl[n].act = x.value; if (x.value === 'wander' && !bl[n].wander) bl[n].wander = 256; }
+    PCD.wsel = n; pcWeekSave(bl);
+  });
+  b.querySelectorAll('[data-pcwhere]').forEach(x => x.onclick = () => {
+    const i = +x.dataset.pcwhere, bl = copy(); Object.assign(bl[i], pcWeekSpot()); PCD.wsel = i;
+    pcWeekSave(bl, 'They are at that spot then.');
+  });
+  b.querySelectorAll('[data-pcwrm]').forEach(x => x.onclick = () => { const bl = copy(); bl.splice(+x.dataset.pcwrm, 1); PCD.wsel = null; pcWeekSave(bl, 'Block taken out. Undo brings it back.'); });
+  b.querySelectorAll('[data-pcwgo]').forEach(x => x.onclick = async () => {
+    const bk = W_.blocks[+x.dataset.pcwgo];
+    const key = bk.place ? bk.place.toLowerCase() : (typeof cellKeyAt === 'function' ? cellKeyAt(bk.pos[0], bk.pos[1]) : null);
+    if (key && key !== W.key && typeof worldOpen === 'function') await worldOpen(key);
+    if (typeof V3 !== 'undefined' && V3.on && typeof v3Focus === 'function'){ v3Focus({k: null, p: bk.pos}); if (typeof v3Loop === 'function') v3Loop(); }
+    else { W.cam.x = bk.pos[0]; W.cam.y = bk.pos[1]; drawMap(); }
+  });
+  const add = b.querySelector('#pc-wadd'); if (add) add.onclick = () => pcDayAdd();
+}
+
 function pcTravelPane(){
   const d = PCD.d;
   return `<div class="pc-k" style="margin-top:0">Takes travellers to</div>
@@ -391,10 +541,18 @@ function pcMenu(e, hit, at){
   } else if (r && r.type === 'CREA' && PCD.kind === 'npc' && PCD.job && PCD.job.kind === 'hunt'){
     out.push({label: `🧩 Job: hunt ${r.name || r.id}`, act: () => { pcJobRead(); PCD.job.target = r.id; pcDock(); pcRender(); }});
   } else if (r && r.type === 'CONT'){
-    out.push({label: '📦 Contents', act: () => pcOpenCont(r.id)});
+    out.push({label: '📦 Contents', act: () => pcOpenCont(r.id, {cell: hit[0], k: r.k})});
   }
+  const creaCard = PCD.kind === 'thing' && PCD.d && PCD.d.type === 'CREA';
+  if (spot && !r && creaCard)
+    out.push({label: `📅 ${PCD.d.name} is here…`, act: async () => { PCD.tab = 'day'; pcDock(); if (!PCD.week || PCD.week.id.toLowerCase() !== String(PCD.id).toLowerCase()) PCD.week = await api('/api/schedule?id=' + encodeURIComponent(PCD.id)); pcDayAdd(spot); }});
   if (spot && !r && PCD.kind === 'npc' && PCD.d){
     out.push({label: `🧭 Travel from ${PCD.d.name} to here`, act: () => pcTravelHere(spot)});
+    out.push({label: `📅 ${PCD.d.name} is here…`, act: async () => {
+      PCD.tab = 'day'; pcDock();
+      if (!PCD.week || PCD.week.id.toLowerCase() !== String(PCD.id).toLowerCase()) PCD.week = await api('/api/schedule?id=' + encodeURIComponent(PCD.id));
+      pcDayAdd(spot);
+    }});
     if (PCD.job && PCD.job.kind === 'find'){
       const ck = typeof cellKeyAt === 'function' && W.key.startsWith('#') ? cellKeyAt(spot[0], spot[1]) : W.key;
       out.push({label: '🧩 Job: it lies here', act: () => { pcJobRead(); PCD.job.spot = {cell: ck, pos: spot.slice(0, 3)}; pcDock(); pcRender(); }});

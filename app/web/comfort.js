@@ -80,7 +80,7 @@ const CF_ACT = [
     if (V3.on){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); } else centerOn(r);
   }},
   {id: 'turn90', label: 'Turn what\'s selected 90°', keys: [], world: true, run: () => W.sel ? groupDo('turn') : false},
-  {id: 'objwin', label: 'Open the window of what\'s selected (record and placement)', keys: [], world: true, run: () => W.sel && typeof owOpen === 'function' ? owOpen(W.sel.cell, W.sel.k) : false},
+  {id: 'objwin', label: 'Open the card of what\'s selected (details, what it does, its looks)', keys: [], world: true, run: () => W.sel && typeof owOpen === 'function' ? owOpen(W.sel.cell, W.sel.k) : false},
   {id: 'move', label: '3D: move handles', keys: ['G', '1'], blender: ['1'], v3: true, run: () => cfMode('translate')},
   {id: 'rotate', label: '3D: turn handles', keys: ['R', '2'], blender: ['2'], v3: true, run: () => cfMode('rotate')},
   {id: 'grab', label: '3D: move what\'s selected with the mouse', keys: [], blender: ['G'], v3: true, run: () => v3GrabStart('grab')},
@@ -330,7 +330,7 @@ function cfMenuAt(e, hit, at, locked, opt){
     else if (!same) selectRef(ck, r.k);
     head(r.name || r.id);
     items.push({label: '⌖ Look at it', act: () => cfRun('focus')});
-    if (typeof owOpen === 'function') items.push({label: '🪟 Open its window', act: () => owOpen(ck, r.k)});
+    if (typeof owOpen === 'function') items.push({label: '🗂 Its card', title: 'Everything about it in one card: details, what it does, its looks; under the view or ⧉ in a window', act: () => owOpen(ck, r.k)});
     items.push({label: '📌 Pin it in its own panel', act: () => wpPin(ck, r)});
     // (its own page to work on it in, when its kind has one: Browse's record is a finder, not a workbench)
     const tool_ = typeof otTool === 'function' && r.ri != null ? otTool(r.type) : null;

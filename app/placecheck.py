@@ -304,7 +304,10 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
         # (not a weapon or a shield hung up on the wall: its box, a bow's or a staff's laid along the wall and
         # tilted, reads as standing into it; the game's own hung arms came out "into the wall" 26 times in 171)
         hung_arms = x['type'] in ('WEAP', 'ARMO') and bottom > fl + 50
-        if big and not candle and not hung_arms and fam not in ('shelf', 'rug', 'plant') and not IN_WALL_OK.search(low) and not hearthsurvey.built_piece(low):
+        # (a light up a wall is mounted on it: the Dwemer tube lamps, a ruin's lamps; not "through" the wall, not
+        # "on nothing". The Workshop's own Dwemer dungeon came out with 17 such faults, an audit 2026-11-26)
+        wall_light = x['type'] == 'LIGH' and bottom > fl + 50 and not HANG_LIGHT.search(low) and _wall_dist(bx, faces, T) <= 40
+        if big and not candle and not hung_arms and not wall_light and fam not in ('shelf', 'rug', 'plant') and not IN_WALL_OK.search(low) and not hearthsurvey.built_piece(low):
             for s, face, tx, ty in faces:
                 if s in 'NS' and not (bx[0] < tx + T / 2 - 8 and bx[3] > tx - T / 2 + 8 and abs(x['p'][1] - ty) < T / 2 + 8):
                     continue
@@ -356,7 +359,7 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
                 elif fam == 'chair' and bottom > fl + 10 and (h is None or h[0] - 8 > 10):
                     out.append(_issue('floating', x, '%s is raised %.0f off the floor' % (x.get('name') or x['id'], bottom - fl), room,
                                       [_move(x, 0, 0, -(h[0] - 8 if h is not None else bottom - fl), 'Set it down'), _remove(x)]))
-            elif x['type'] == 'LIGH' and not HANG_LIGHT.search(low) and 'sconce' not in low:
+            elif x['type'] == 'LIGH' and not HANG_LIGHT.search(low) and 'sconce' not in low and not wall_light:
                 h = sc.nearest((cx, cy, bottom + 8), (0.0, 0.0, -1.0), 300)
                 under = [o for o in around if o is not x and o['_box'] and o['_box'][0] - 12 <= x['p'][0] <= o['_box'][3] + 12
                          and o['_box'][1] - 12 <= x['p'][1] <= o['_box'][4] + 12 and abs(o['_box'][5] - bottom) < 30]
@@ -424,6 +427,8 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
             near = [t for t in sit_at if _gap(t['_box'], bx) < (200 if t['_fam'] == 'counter' else 70)]
             if not near and room['purpose'] in SEAT_ROOMS and _wall_dist(bx, faces, T) <= 40:
                 near = [x]                                      # (a hall's chair against the wall)
+            if not near and 'prayer' in low:
+                near = [x]                                      # (a prayer stool stands alone, at a shrine or on its own)
             if not near:
                 out.append(_issue('chair', x, '%s has nothing to sit at' % (x.get('name') or x['id']), room, [_remove(x)]))
         # --- hung on nothing
@@ -461,7 +466,8 @@ def _room_issues(db, info, room, refs, arch, sc, storey, hearths=(), rough=False
             out.append(_issue('window', x, '%s hangs over the window' % (x.get('name') or x['id']), room, [_remove(x)]))
         # --- tableware, a book, food or a tool on a bare floor
         # (not a smith's things round the anvil: the game spills them there round 38% of its anvils; themesurvey)
-        if x['type'] in ('MISC', 'BOOK', 'INGR', 'ALCH', 'APPA', 'PROB', 'REPA', 'LOCK') and bottom < fl + 12 and not _under(x, around, above=60) \
+        # (not in caves, camps and ruins: what lies about on their floors is the place's own)
+        if not rough and x['type'] in ('MISC', 'BOOK', 'INGR', 'ALCH', 'APPA', 'PROB', 'REPA', 'LOCK') and bottom < fl + 12 and not _under(x, around, above=60) \
                 and not re.search(r'basket|sack|bundle_|rug|mat_|cushion|pillow|log|firewood|bucket|pail|crate|barrel|urn|pot_0|skull|bone', low) \
                 and not ((x['type'] == 'REPA' or themesurvey.SMITH_THING.search(low)) and any(
                     themesurvey.ANVIL.search(o['id'].lower()) and math.hypot(o['p'][0] - x['p'][0], o['p'][1] - x['p'][1]) <= themesurvey.SPILL_REACH + 20

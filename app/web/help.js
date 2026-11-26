@@ -16,6 +16,7 @@ $('#helpmenu').addEventListener('click', e => {
   else if (a === 'about') aboutModal();
   else if (a === 'learning') docModal('how-the-workshop-learns.md');
   else if (a === 'guides') guidesModal();
+  else if (a === 'tours' && typeof toursModal === 'function') toursModal();
 });
 
 // ----- guides: how to do things, to read when you want to (no walkthrough). Each is a paper in web/docs, opened
@@ -178,6 +179,105 @@ function helpGo(view){ return `<button class="btn sm" data-gview="${view}">Open 
 // underneath (Help > Getting started comes here too)
 function homeStart(){ try { return localStorage.getItem('ws-start') !== 'browse'; } catch (e){ return true; } }
 function homeStartSet(on){ try { localStorage.setItem('ws-start', on ? 'home' : 'browse'); } catch (e){} }
+// the pages a builder goes to most, as cards at the top of Home (the user, 2026-11-26: a landing page for all
+// things, the tours below and not in the way)
+const HOME_JUMP = [
+  ['world', '🗺', 'World map', 'Places in 2D and 3D'],
+  ['createv', '⚒', 'Create', 'Houses, people, items, spells'],
+  ['browse', '🔎', 'Browse', 'Search every record in your game'],
+  ['chars', '👤', 'Characters', 'People and creatures'],
+  ['dialog', '💬', 'Dialogue', 'Topics, greetings and quests'],
+  ['mymod', '📦', 'My mod', 'What it holds; check it and pack it'],
+  ['plugins', '🧩', 'Load order', 'Switch plugins on and off, reorder'],
+  ['settings', '⚙', 'Settings', 'Game folders, looks, AI, backups']];
+// one tip at a time, ‹ › to page them; Show me goes where a tip's button is and points at it (go: the page, at: what
+// to point at) or does it (run)
+const HOME_WORLD = () => { showView('world'); if (typeof PNL !== 'undefined' && PNL.spaces.world) PNL.show('world', 'place'); };
+const HOME_TIPS = [
+  {t: 'Right-click anything on the map, in 3D or in a list for what you can do with it.'},
+  {t: 'Ctrl+K finds any command, page, panel, place or record.', run: () => cfPalette()},
+  {t: 'Double-click a person, a door or any thing in the view to open its card; ⧉ undocks the card into a window.'},
+  {t: 'F1 on something shows where it\'s used: the places, people, scripts and dialogue that name it.'},
+  {t: 'H hides what\'s selected, Shift+H everything else, Alt+H shows it all again.'},
+  {t: 'Select a door and press Enter to go through it; Alt+← comes back.'},
+  {t: 'Ctrl+H replaces every one of an object with another.'},
+  {t: '▤ Panels › 📋 Object list holds every kind of thing; with ✚ Place on, each click puts down another copy until Esc.', go: () => showView('world'), at: '#w-panels'},
+  {t: 'Your changes are marked on the map: green new, gold changed, a red ✕ where you took something out.'},
+  {t: 'Drag a panel\'s tab to dock it anywhere; ▤ Panels has ready-made layouts and keeps your own.', go: () => showView('world'), at: '#w-panels'},
+  {t: '📅 Day on a person\'s card gives them a week: where they are at each hour.'},
+  {t: '▶ OpenMW starts the game with your mod and the live link; Play here, by a place on the World map, starts it right there.', at: '#omwbtn'},
+  {t: 'File › Save a version keeps the mod as it is now; Earlier versions brings one back.', at: '#filebtn'},
+  {t: 'Right-click a wall or a bookcase → Make it a hidden door.'},
+  {t: '3D snaps to the top or an isometric corner; ⛶ gives the view the whole window.', go: () => showView('world'), at: '[data-view3d="1"]'},
+  {t: 'Every guided tour, the ones not on Home too, is in Help › All tours.', at: '#helpbtn'},
+  {t: 'Settings › Appearance has themes and your own colours.', go: () => showView('settings')}];
+let HOME_TIP = Math.floor(Math.random() * HOME_TIPS.length);
+function homeTipShow(){
+  const tip = HOME_TIPS[HOME_TIP];
+  if (tip.run) return tip.run();
+  if (tip.go) tip.go();
+  if (tip.at) setTimeout(() => coachHouse([{at: () => $(tip.at), title: 'Here', text: tip.t, last: true}], null, true), 250);
+}
+// Keys: a tab per place, read from the shortcuts themselves (your own keys, if you changed them)
+let HOME_KTAB = 'any';
+const HOME_KEYNAME = k => k.replace(/Arrow(Up|Down|Left|Right)/g, (m, d) => ({Up: '↑', Down: '↓', Left: '←', Right: '→'})[d]).replace(/PageUp/, 'PgUp').replace(/PageDown/, 'PgDn');
+const HOME_KEYSAY = {'Esc': 'Stop, or clear the selection', 'Double-click': 'Open its card', 'Shift + click': 'Add to the selection',
+  'Right-click': 'What you can do with it', 'X  Y  Z': 'Keep to one axis while moving', 'Drag on empty space': 'Draw a box to select'};
+function homeKeysHtml(){
+  const short = l => l.replace(/\s*\(.*?\)/g, '').replace(/^3D: /, '').replace(/what's selected/g, 'it').replace(/^./, c => c.toUpperCase());
+  const act = id => { const a = (typeof CF_ACT !== 'undefined' ? CF_ACT : []).find(x => x.id === id); const k = a ? cfKeysOf(a) : []; return k.length ? [HOME_KEYNAME(k[0]), short(a.label)] : null; };
+  const fixed = re => (typeof CF_FIXED !== 'undefined' ? CF_FIXED : []).filter(r => re.test(r[1]) && !(r[0] === 'Middle-drag' && cfMouse())).map(r => [r[0] === 'Drag on empty space' ? 'Drag' : r[0], HOME_KEYSAY[r[0]] || short(r[1])]);
+  const rows = {
+    any: [act('palette'), act('save'), act('undo'), act('redo'), act('search'), act('open'), ['F1', 'Where it\'s used'], act('keys')],
+    world: [...fixed(/^(?!3D)/), act('delete'), act('copy'), act('paste'), act('dup'), act('focus'), act('favs'),
+      ['↑ ↓ ← →', 'Nudge it'], ['PgUp / PgDn', 'Raise or lower it'], [', / .', 'Turn it'], ['H', 'Hide it'], ['Enter', 'Through a door']],
+    v3: [...fixed(/^3D/), act('move'), act('rotate'), act('scalehandles'), act('drop')]}[HOME_KTAB].filter(Boolean);
+  return `<div class="home-ktabs">${[['any', 'Everywhere'], ['world', 'World map'], ['v3', '3D view']].map(([k, t]) =>
+      `<button class="${HOME_KTAB === k ? 'on' : ''}" data-ktab="${k}">${t}</button>`).join('')}</div>
+    <div class="home-keys">${rows.map(([k, t]) => `<kbd>${esc(k)}</kbd><span>${esc(t)}</span>`).join('')}</div>
+    <button class="btn sm home-allkeys" data-home="keys">All shortcuts, and change them…</button>`;
+}
+const HOME_KINDS = {CELL: 'places', NPC_: 'people', CREA: 'creatures', DIAL: 'topics', INFO: 'lines', SCPT: 'scripts', LAND: 'ground', BOOK: 'books',
+  WEAP: 'weapons', ARMO: 'armour', CLOT: 'clothes', MISC: 'items', SPEL: 'spells', CONT: 'containers', DOOR: 'doors', STAT: 'statics', LIGH: 'lights',
+  ACTI: 'activators', LEVI: 'loot lists', LEVC: 'creature lists', ALCH: 'potions', INGR: 'ingredients', ENCH: 'enchantments', FACT: 'factions', CLAS: 'classes',
+  REGN: 'regions', GLOB: 'globals', GMST: 'game settings', SOUN: 'sounds', MGEF: 'effects', SKIL: 'skills', PGRD: 'paths', QUST: 'quests',
+  SSCR: 'start scripts', BSGN: 'birthsigns', RACE: 'races', LTEX: 'ground textures', BODY: 'body parts', REPA: 'repair tools', APPA: 'apparatus',
+  LOCK: 'lockpicks', PROB: 'probes', SNDG: 'creature sounds'};
+// filled in after Home is drawn: what your mod holds, when it was saved, your other mods, the game
+async function homeFill(){
+  const w = $('#guidewrap'); if (!w) return;
+  const kinds = w.querySelector('#home-kinds');
+  if (kinds) try {
+    const pr = await api('/api/project'), n = {};
+    (pr.changes || []).forEach(c => { n[c.type] = (n[c.type] || 0) + 1; });
+    const top = Object.entries(n).sort((a, b) => b[1] - a[1]);
+    kinds.innerHTML = top.length ? top.slice(0, 8).map(([t, k]) => `<span><b>${k}</b> ${esc(HOME_KINDS[t] || t.toLowerCase())}</span>`).join('')
+      + (top.length > 8 ? `<span class="msg">+${top.length - 8} more kinds</span>` : '') : '<span class="msg">Nothing in it yet.</span>';
+    const sv = w.querySelector('#home-saved');
+    if (sv && pr.saved) sv.textContent = 'saved ' + homeAgo(pr.saved);
+  } catch (e){ kinds.innerHTML = ''; }
+  const rec = w.querySelector('#home-recent');
+  if (rec) try {
+    const list = ((await api('/api/mods/recent')).mods || []).slice(0, 4);
+    rec.innerHTML = list.length ? list.map(m => `<button class="btn sm" data-recent="${esc(m.name)}" title="Last worked on ${esc(m.modified)}">${esc(m.name)}</button>`).join('')
+      : '<span class="msg">Your other mods show here.</span>';
+    rec.querySelectorAll('[data-recent]').forEach(b => b.onclick = () => fileSwitch(b.dataset.recent));
+  } catch (e){ rec.innerHTML = ''; }
+  const gm = w.querySelector('#home-game');
+  if (gm) try {
+    const o = await api('/api/openmw');
+    gm.innerHTML = !o.found ? '<span class="msg">OpenMW isn\'t found yet: ▶ OpenMW at the top shows where to get it.</span>'
+      : LINK.connected ? '<span class="home-ok">● Running, linked: your changes show in the game.</span>'
+      : o.running ? '<span class="msg">Running, but not started from the Workshop, so not linked.</span>'
+      : '<span class="msg">Not running.</span>';
+  } catch (e){ gm.innerHTML = ''; }
+}
+function homeAgo(t){
+  const s = Math.max(0, Date.now() / 1000 - t);
+  return s < 90 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago'
+    : new Date(t * 1000).toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
+}
+function homeToursOpen(){ try { return localStorage.getItem('ws-home-tours') !== 'shut'; } catch (e){ return true; } }
 function renderGuide(){
   const s = S.summary || {}, p = s.project;
   try { post('/api/settings', {guide_seen: true}); } catch (e) {}
@@ -193,16 +293,36 @@ function renderGuide(){
       : `<button class="btn primary" id="home-new">＋ Start a mod</button><span class="msg">Give it a name. Save (${HELP_KEY('Ctrl+S')}) writes your work into it, and Undo (${HELP_KEY('Ctrl+Z')}) takes anything back.</span>`}</div>
   </div>
 
-  <div class="cgrid home-cards">
-    ${card('tour', '🏠', 'Guided · about 2 minutes', 'Build your first house', 'Lay out a few rooms, let the Workshop build and furnish them from the game\'s own pieces, then look round it in 3D.')}
-    ${card('scenetour', '🎬', 'Guided · about 5 minutes', 'Your first cutscene', 'Someone greets the player: put them on their spots, frame the shots, write the line, preview it, then try it in the game.')}
-    ${card('world', '🗺', 'World map', 'Open a place', 'Any town, house or cave of your game, in 2D or 3D. Move things, drag new ones in, furnish rooms, then Play here.')}
-    ${card('create', '⚒', 'Create', 'Make something new', 'A house, a dungeon or ruin, a person, a spell, a book, or weapons and armour from the Forge, each one change you can undo.')}
-    ${card('browse', '🔎', 'Browse', 'Find anything', 'Search every record in your load order by name, ID, dialogue or model, and open it to see and change it.')}
-    ${card('new052', '✨', 'New with OpenMW 0.52', 'New skills, weathers and more', 'Start from an example: a Fishing skill, Piety with its shrines and books, an aurora, a cursed chest. Then change it your way.')}
+  <div class="home-jump">${HOME_JUMP.map(([v, ic, t, m]) => `<button class="hj" ${v === 'browse' ? 'data-home="browse"' : `data-gview="${v}"`} title="${esc(m)}">
+    <span class="ic">${ic}</span><b>${t}</b><span class="msg">${m}</span></button>`).join('')}</div>
+
+  ${p ? `<div class="home-row home-row2">
+    <div class="home-box"><h3>Your mod <span class="msg" id="home-saved"></span></h3>
+      <p class="home-modline"><b>${esc(p.name)}</b> · ${p.changes} change${p.changes === 1 ? '' : 's'}${p.unsaved ? ' · <span class="home-warn">not saved yet</span>' : ''}${p.masters && p.masters.length ? ` · needs ${p.masters.length} other file${p.masters.length === 1 ? '' : 's'}` : ''}</p>
+      <div class="home-kinds" id="home-kinds"><span class="msg">Counting…</span></div>
+      <div class="home-acts">${p.unsaved ? '<button class="btn sm primary" data-home="save">💾 Save</button>' : ''}<button class="btn sm" data-home="verify">🩺 Check it</button>
+        <button class="btn sm" data-gview="release">📦 Get ready to share</button><button class="btn sm" data-home="versions">🕘 Earlier versions</button></div></div>
+    <div class="home-box"><h3>The game</h3><div id="home-game"><span class="msg">…</span></div>
+      <div class="home-acts"><button class="btn sm primary" data-home="startgame">▶ Start the game</button><button class="btn sm" data-home="playhere">Play here…</button></div>
+      <h3 style="margin-top:12px">Your other mods</h3><div class="home-places" id="home-recent"><span class="msg">…</span></div></div>
+  </div>` : ''}
+
+  <div class="home-row home-row3"><div class="home-stack">
+    <div class="home-box"><h3>Where you were lately</h3>
+      ${places.length ? `<div class="home-places">${places.map((pl, n) => `<button class="btn sm" data-homeplace="${n}">${pl.interior ? '🏠' : '🌄'} ${esc(pl.name)}</button>`).join('')}</div>`
+        : '<p class="msg">Places you open on the World map show here.</p>'}
+      <p class="msg home-new052"><button class="btn sm" data-home="new052">✨ New with OpenMW 0.52</button> skills, weathers, events in plain words</p>
+    <div class="home-tip"><h3>Tip <span class="home-tipnav"><button class="btn sm" data-tip="-1" title="The tip before">‹</button><button class="btn sm" data-tip="1" title="Next tip">›</button></span></h3>
+      <p id="home-tiptext">${esc(HOME_TIPS[HOME_TIP].t)}</p>
+      <div class="home-acts"><button class="btn sm" id="home-showme" ${HOME_TIPS[HOME_TIP].at || HOME_TIPS[HOME_TIP].go || HOME_TIPS[HOME_TIP].run ? '' : 'hidden'}>Show me</button></div></div></div></div>
+    <div class="home-box" id="home-keybox"><h3>Keys</h3>${homeKeysHtml()}</div>
   </div>
 
-  ${places.length ? `<h2>Where you were lately</h2><div class="home-places">${places.map((pl, n) => `<button class="btn sm" data-homeplace="${n}">${pl.interior ? '🏠' : '🌄'} ${esc(pl.name)}</button>`).join('')}</div>` : ''}
+  ${typeof tourHubHtml === 'function' ? (() => {
+    const done = tourDone(), left = TOUR_HOME.filter(id => !done.includes(id)), nx = TOURS.find(t => t.id === left[0]);
+    return `<details class="home-tours" ${homeToursOpen() ? 'open' : ''}><summary><span class="ht-t">Guided tours</span>
+      <span class="msg">${TOUR_HOME.length - left.length} of ${TOUR_HOME.length} done · each points at the real buttons, one step at a time</span>
+      ${nx ? `<button class="btn sm" data-tour="${nx.id}">▸ Next: ${esc(nx.title)}</button>` : ''}</summary>${tourHubHtml()}</details>`; })() : ''}
 
   <label class="msg home-onstart"><input type="checkbox" id="g-onstart" ${homeStart() ? 'checked' : ''}> Open on this page when the Workshop starts</label>
 
@@ -292,6 +412,17 @@ function renderGuide(){
   $('#g-onstart').onchange = e => homeStartSet(e.target.checked);
   const nw = $('#home-new'); if (nw) nw.onclick = () => projectModal();
   const sw = $('#home-switch'); if (sw) sw.onclick = () => projectModal();
+  if (typeof tourHubBind === 'function') tourHubBind(w);
+  w.querySelectorAll('[data-tip]').forEach(b => b.onclick = () => {
+    HOME_TIP = (HOME_TIP + +b.dataset.tip + HOME_TIPS.length) % HOME_TIPS.length; const tip = HOME_TIPS[HOME_TIP];
+    $('#home-tiptext').textContent = tip.t; $('#home-showme').hidden = !(tip.at || tip.go || tip.run); });
+  $('#home-showme').onclick = homeTipShow;
+  const kb = $('#home-keybox');
+  kb.addEventListener('click', e => { if (e.target.closest('[data-home="keys"]')) return cfKeysModal(); const t = e.target.closest('[data-ktab]'); if (!t) return; HOME_KTAB = t.dataset.ktab; kb.innerHTML = '<h3>Keys</h3>' + homeKeysHtml(); });
+  homeFill();
+  const ht = w.querySelector('.home-tours');
+  if (ht) ht.querySelector('summary [data-tour]')?.addEventListener('click', e => e.preventDefault());
+  if (ht) ht.ontoggle = () => { try { localStorage.setItem('ws-home-tours', ht.open ? 'open' : 'shut'); } catch (e){} };
   w.querySelectorAll('[data-home]').forEach(b => b.onclick = () => {
     const k = b.dataset.home;
     if (k === 'tour') coachHouse();
@@ -299,6 +430,12 @@ function renderGuide(){
     else if (k === 'world') showView('world');
     else if (k === 'create') showView('createv');
     else if (k === 'new052') rcOpenKind('happens');
+    else if (k === 'keys') cfKeysModal();
+    else if (k === 'save') fileSave().then(() => renderGuide()).catch(() => {});
+    else if (k === 'versions') versionsModal();
+    else if (k === 'verify'){ showView('health'); setTimeout(() => { const g = $('#verify-go'); if (g) g.click(); }, 400); }
+    else if (k === 'startgame') gameStart('/api/openmw/start', {mode: 'menu'}).then(ok => { if (ok) toast('Starting OpenMW…'); });
+    else if (k === 'playhere') HOME_WORLD();
     else { showView('browse'); $('#q').focus(); }
   });
   w.querySelectorAll('[data-homeplace]').forEach(b => b.onclick = () => { showView('world'); wpPlaceOpen(+b.dataset.homeplace); });

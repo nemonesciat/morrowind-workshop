@@ -236,6 +236,7 @@ def create_item(db, d):
     """d: {template (record index), id, name, stats: {label: value}, effects: [...] (potions),
     enchant: {type, charge, effects} or None, keep_script: bool, give_to: NPC/container id}."""
     _require_project(db)
+    _give_check(db, d.get('give_to'), 'item')
     ti = int(d['template'])
     tr = db.recs[ti]
     tag = tr[0]
@@ -300,6 +301,7 @@ def create_spell(db, d):
     """d: {id, name, type (0-5), effects: [...], cost (None = work it out), always_succeeds, player_starts,
     give_to: NPC id}."""
     _require_project(db)
+    _give_check(db, d.get('give_to'), 'spell')
     new_id = _check_new_id(db, 'SPEL', d.get('id'))
     name = (d.get('name') or '').strip()
     if not name:
@@ -320,11 +322,12 @@ def create_spell(db, d):
     return {'id': new_id, 'i': db.overlay[('SPEL', new_id.lower())], 'cost': cost, 'given': gave}
 
 
-def _give(db, who, thing, kind):
-    """Add an item to an NPC's or container's inventory, or a spell to an NPC's spells. Returns their name."""
+def _give_check(db, who, kind):
+    """The record a thing can be given to (its index), None for nobody; refused before anything is made, so a
+    bad name leaves nothing behind (an audit, 2026-11-26: the spell was made though the giving was refused)."""
     who = (who or '').strip()
     if not who:
-        return ''
+        return None
     ri = db.resolve_id(who)
     if ri is None:
         raise EditError('No character or container called "%s".' % who)
@@ -333,6 +336,15 @@ def _give(db, who, thing, kind):
         raise EditError('Spells can only be given to characters and creatures.')
     if kind == 'item' and r[0] not in ('NPC_', 'CREA', 'CONT'):
         raise EditError('Items can be given to characters, creatures and containers.')
+    return ri
+
+
+def _give(db, who, thing, kind):
+    """Add an item to an NPC's or container's inventory, or a spell to an NPC's spells. Returns their name."""
+    ri = _give_check(db, who, kind)
+    if ri is None:
+        return ''
+    r = db.recs[ri]
     _t, flags, data = db.files[r[3]].record_at(r[4])
     subs = [(t, bytes(v)) for t, v in iter_subrecords(data)]
     if kind == 'spell':
