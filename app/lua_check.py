@@ -210,6 +210,12 @@ def check(text, kind='GLOBAL'):
             out.append({'line': line, 'level': 'warning', 'text': msg, 'api': True})
     except Exception as e:
         print('Lua API check skipped:', e)
+    # (OpenMW's Lua may move to Luau, which has no goto: a warning now, so scripts keep working then)
+    for k, v, line in toks:
+        if (k == 'name' and v == 'goto') or (k == 'op' and v == '::'):
+            out.append({'line': line, 'level': 'warning', 'text': 'goto and ::labels:: may stop working in a coming OpenMW '
+                                                                  '(its Lua is moving to Luau). An if or a loop does the same.'})
+            break
     if toks and not any(k == 'name' and v == 'return' for k, v, _l in toks):
         out.append({'line': toks[-1][2], 'level': 'warning', 'text': 'The script never returns a table, so OpenMW has nothing to run '
                                                                      '(end it with: return { engineHandlers = { ... } }).'})

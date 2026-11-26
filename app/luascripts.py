@@ -214,7 +214,8 @@ def save(db, name, o):
                               'CLAS', 'FACT', 'RACE', 'BSGN', 'SOUN', 'LTEX', 'LAND', 'PGRD', 'BODY', 'SNDG', 'LEVI', 'LEVC'):
             raise EditError('"%s" is not something in the world, so a script can\'t run on it.' % a)
         attach.append(db.recs[ri][1])
-    new = {'name': s['name'], 'kind': kind, 'attach': attach, 'text': o.get('text', s.get('text', ''))}
+    # (a byte-order mark from a pasted or imported file: Luau, which OpenMW's Lua may move to, won't load a script with one)
+    new = {'name': s['name'], 'kind': kind, 'attach': attach, 'text': (o.get('text', s.get('text', '')) or '').lstrip('\ufeff')}
     new_name = o.get('rename')
     if new_name:
         key = _check_name(new_name)

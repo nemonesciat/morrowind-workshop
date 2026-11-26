@@ -58,6 +58,9 @@ function tbApply(){
   if (sw && !sw.querySelector('.tb-grip')) sw.insertAdjacentHTML('afterbegin', tbGrip());
   $('#world').classList.toggle('tb-locked', !!TB.locked);
   const A = tbArea(); if (!A || !A.clientWidth) return;        // (another page is showing: done when it's back)
+  // (the 3D buttons start just past the Map / 3D switch, however wide it is: it grew a full view button)
+  const t3 = $('#v3tools');
+  if (t3 && sw && sw.offsetWidth) t3.style.left = (sw.classList.contains('tb-placed') ? 12 : sw.offsetLeft + sw.offsetWidth + 10) + 'px';
   for (const g of tbGroups()){
     const p = TB.pos[tbKey(g)];
     if (p) tbPlace(g, p); else tbFree(g);

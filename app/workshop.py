@@ -1138,6 +1138,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(npc.autocalc(db, q.get('race', ''), q.get('cls', ''), int(q.get('level') or 1), q.get('female') == '1'))
             elif u.path == '/api/land/textures':
                 self._json(landscape.textures(db))
+            elif u.path == '/api/land/pictures':
+                self._json(landscape.pictures(db, q.get('q', '')))
             elif u.path == '/api/style/regions':
                 # the regions' own palettes, for the Style palette's tabs (regionpal.py)
                 import regionpal
@@ -1185,6 +1187,9 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print('sea floor:', e)
                 self._json(landsurvey.landmap(db))
+            elif u.path == '/api/land/tints':
+                # the ground colours kept with this mod for the Tint brush (a tester, 2026-11-26)
+                self._json({'tints': ((db.project.land or {}).get('tints') or []) if db.project else []})
             elif u.path == '/api/land/shadeinfo':
                 # what the game's shading near this cell is like (landshade.py)
                 import landshade
@@ -3104,6 +3109,22 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == '/api/roll/cancel':
                     import rollinside
                     return self._json(rollinside.cancel(db, body.get('cell', ''), body.get('ref', '')))
+                if u.path == '/api/land/newtex':
+                    return self._json(landscape.new_texture(db, body.get('file', ''), body.get('name', '')))
+                if u.path == '/api/land/tints':
+                    editing._require_project(db)
+                    import re as _re
+                    # (six slots; an empty one keeps its place)
+                    keep = []
+                    for t in (body.get('tints') or [])[:6]:
+                        c = str((t or {}).get('c') or '').lower()
+                        ok = bool(_re.match(r'^#[0-9a-f]{6}$', c))
+                        keep.append({'c': c if ok else '', 'n': str((t or {}).get('n') or '').strip()[:24] if ok else ''})
+                    while keep and not keep[-1]['c']:
+                        keep.pop()
+                    db.project.land['tints'] = keep
+                    db.project.save()
+                    return self._json({'tints': keep})
                 if u.path == '/api/quest/pin':
                     import questmake
                     return self._json(questmake.pin(db, body['key'], body.get('ids') or []))

@@ -1585,13 +1585,16 @@ async function v3LandPanel(){
       <div class="v3lrow"><button class="btn sm ${B.texAuto ? 'primary' : ''}" id="v3lauto" title="Paint each patch with the texture the region's land has at its slope, height and shore. Roads and paving stay">✨ Auto</button>
         ${B.texAuto ? `<label title="Whose land the textures follow: the cell's own region, or another region's, on this land as it is">Like <select id="v3llike" class="inp" style="width:auto;max-width:160px"><option value="">this region</option></select></label>` : `<button class="btn sm ${V3.landPick === 'paint' ? 'primary' : ''}" data-lpick="paint" title="Eyedropper: click the ground to paint with its texture (or Shift+click it any time)">💧 Pick</button>`}</div>
       ${B.texAuto ? '' : `<div class="v3lcur">${B.tex ? `<img data-swatch="${esc(B.tex.path)}"> <span>${esc(B.tex.id || 'Default ground')}</span>` : '<span class="faint">Pick a texture below, or from the ground</span>'}</div>
-      <input id="v3lq" placeholder="Search textures…" value="${esc(V3.landQ || '')}">
+      <div class="v3lrow" style="gap:4px"><input id="v3lq" placeholder="Search textures…" value="${esc(V3.landQ || '')}" style="flex:1">
+        <button class="btn sm ${V3.newTex ? 'primary' : ''}" id="v3lnew" title="A new ground texture from a picture in your data folders (your own: Library › Add first)">＋ New</button></div>
+      <div id="v3lnewbox" style="display:${V3.newTex ? 'block' : 'none'}"></div>
       <div id="v3lgrid"></div>`}
     </div>
     <div id="v3lscat" style="display:${B.tool === 'scatter' ? 'block' : 'none'}"></div>
     <div id="v3ltint" style="display:${B.tool === 'tint' ? 'block' : 'none'}">
       <label class="v3lrow">Colour <input type="color" id="v3lcol" value="${esc(B.tint || '#b4a078')}">
         <button class="btn sm ${V3.landPick === 'tint' ? 'primary' : ''}" data-lpick="tint" title="Eyedropper: click the ground to take its colour (or Shift+click it any time)">💧 Pick</button></label>
+      <div class="v3lrow" id="v3ltints" style="flex-wrap:wrap;gap:3px"></div>
       <div class="faint" style="margin:8px 0 4px"><b>Shade automatically</b>, the way the game shades the ground near here:</div>
       <div class="v3lrow"><button class="btn sm" data-shade="seams" title="Darken or tint where two textures meet, by as much as the game does at that pair, so the join doesn't show as a hard edge">Where textures meet</button>
         <button class="btn sm" data-shade="texture" title="Give each texture the tint the game gives it near here (grass, roads, rock...), blended as the textures blend">By texture</button>
@@ -1633,6 +1636,8 @@ async function v3LandPanel(){
     } else {
       if (!V3.landTex) V3.landTex = await api('/api/land/textures');
       const q = $('#v3lq'); q.oninput = () => { V3.landQ = q.value; v3LandGrid(); };
+      const nb = $('#v3lnew'); if (nb) nb.onclick = () => { V3.newTex = !V3.newTex; v3LandPanel(); };
+      if (V3.newTex) v3NewTexBox();
       v3LandGrid();
     }
   }
@@ -1644,6 +1649,7 @@ async function v3LandPanel(){
 async function v3TintPanel(){
   const B = V3.land;
   $('#v3lcol').oninput = e => { B.tint = e.target.value; v3LandSave(); };
+  v3TintSwatches();
   $('#v3lshade9').onchange = e => { B.shade9 = e.target.checked; v3LandSave(); };
   $('#v3lshadek').oninput = e => { B.shadeK = +e.target.value; e.target.nextElementSibling.textContent = B.shadeK + '%'; v3LandSave(); };
   document.querySelectorAll('[data-shade]').forEach(b => b.onclick = async () => {
@@ -1666,7 +1672,7 @@ async function v3TintPanel(){
     try { V3.shadeInfo = await api(`/api/land/shadeinfo?gx=${cx}&gy=${cy}`); V3.shadeInfo.key = key; } catch (e){ box.textContent = ''; return; }
   }
   const I = V3.shadeInfo; if (!I.exists || !$('#v3lshadeinfo')) return;
-  const sw = rgb => `<span style="display:inline-block;width:12px;height:12px;border:1px solid #0006;vertical-align:-2px;background:rgb(${rgb.join(',')})"></span>`;
+  const sw = rgb => `<span data-tintpick="#${rgb.map(n => n.toString(16).padStart(2, '0')).join('')}" title="Use this colour" style="display:inline-block;width:12px;height:12px;border:1px solid #0006;vertical-align:-2px;cursor:pointer;background:rgb(${rgb.join(',')})"></span>`;
   const short = t => esc((t || 'default').replace(/^.*[\\/]/, '').replace(/\.(dds|tga|bmp)$/i, ''));
   const dark = I.seams.filter(s => s.learnt).map(s => Math.round((1 - (s.k[0] + s.k[1] + s.k[2]) / 3) * 100));
   $('#v3lshadeinfo').innerHTML = `Learnt from ${I.cells} cells nearby. ${I.tints.length ? 'Here: ' + I.tints.slice(0, 6).map(t => `${sw(t.rgb)} ${short(t.tex)}`).join(' · ') : ''}
@@ -1674,6 +1680,49 @@ async function v3TintPanel(){
 }
 // ----- scattering what grows in the region
 // (the regions with land of their own to learn from, fetched once; the cell's own region first)
+// Six colour slots beside the Tint brush's colour, kept with the mod: click a filled one to use it, an empty one (+)
+// to keep the colour in the box there; right-click one to replace it with the box's colour, name it or clear it.
+// Pick and Shift+click are as ever (a tester, 2026-11-26: "six boxes that I could just click to change the color
+// and switch between ... without removing helpful features like Pick Color from the Map")
+const V3_TINT_SLOTS = 6;
+function v3TintUse(c){
+  V3.land.tint = c; v3LandSave();
+  const box = $('#v3lcol'); if (box) box.value = c;
+  v3TintSwatches();
+}
+async function v3TintSwatches(){
+  const box = $('#v3ltints'); if (!box) return;
+  const pk = (S.summary && S.summary.project && S.summary.project.name) || '';
+  if (!V3.tints || V3.tints.for !== pk){
+    try { V3.tints = {for: pk, list: (await api('/api/land/tints')).tints || []}; } catch (e){ V3.tints = {for: pk, list: []}; }
+  }
+  const slots = Array.from({length: V3_TINT_SLOTS}, (_x, i) => V3.tints.list[i] && V3.tints.list[i].c ? V3.tints.list[i] : null);
+  const cur = (V3.land.tint || '').toLowerCase();
+  box.innerHTML = slots.map((t, i) => t
+    ? `<button class="btn sm" data-tslot="${i}" title="${esc(t.n ? t.n + ' (' + t.c + ')' : t.c)}. Right-click: replace, name or clear"
+        style="width:24px;height:24px;padding:0;background:${t.c};${t.c === cur ? 'outline:2px solid var(--gold2);outline-offset:1px;' : ''}"></button>`
+    : `<button class="btn sm" data-tslot="${i}" title="Keep the colour in the box here" style="width:24px;height:24px;padding:0;color:var(--faint)">+</button>`).join('');
+  const save = async () => {
+    if (!await needProject()) return;
+    const list = slots.map(t => t ? {c: t.c, n: t.n || ''} : {c: '', n: ''});
+    try { V3.tints.list = (await post('/api/land/tints', {tints: list})).tints; } catch (e){ toast(e.message, true); }
+    v3TintSwatches();
+  };
+  const boxCol = () => ($('#v3lcol').value || '').toLowerCase();
+  box.querySelectorAll('[data-tslot]').forEach(b => {
+    const i = +b.dataset.tslot;
+    b.onclick = () => { if (slots[i]) v3TintUse(slots[i].c); else { slots[i] = {c: boxCol(), n: ''}; save(); } };
+    b.oncontextmenu = e => {
+      e.preventDefault();
+      const items = [{label: 'Replace with the colour in the box', act: () => { slots[i] = {c: boxCol(), n: slots[i] ? slots[i].n : ''}; save(); }}];
+      if (slots[i]) items.push({label: 'Name it…', act: async () => { const n = await askText('A name for this colour:', slots[i].n || ''); if (n != null){ slots[i].n = n.trim().slice(0, 24); save(); } }},
+                               {label: 'Clear', act: () => { slots[i] = null; save(); }});
+      pnlMenu({x: e.clientX, y: e.clientY}, items);
+    };
+  });
+  const info = $('#v3lshadeinfo');
+  if (info) info.onclick = e => { const s_ = e.target.closest('[data-tintpick]'); if (s_) v3TintUse(s_.dataset.tintpick); };
+}
 function v3ScatRegionOpts(S_){
   const here = (S_.own || S_.region || '').toLowerCase(), want = (V3.land && V3.land.scatRegion) || '';
   const cap = r => r.replace(/\b\w/g, c => c.toUpperCase());
@@ -1961,6 +2010,45 @@ function v3LandGrid(){
   });
   v3SwatchScan(g);
 }
+// A new ground texture from a picture: search the pictures that are no ground texture yet, pick one, name it
+// (a tester, 2026-11-26). It is the mod's own, painted with like any other, and one Undo.
+async function v3NewTexBox(){
+  const box = $('#v3lnewbox'); if (!box) return;
+  const N = V3.newTexQ || (V3.newTexQ = {q: '', pick: null});
+  box.innerHTML = `<div class="v3lrow" style="gap:4px"><input id="v3lnq" placeholder="Find a picture…" value="${esc(N.q)}" style="flex:1"></div>
+    <div id="v3lngrid" class="faint"><span class="spin"></span></div>
+    <div class="v3lrow" style="gap:4px"><input id="v3lnname" class="inp" placeholder="Name" maxlength="31" style="flex:1" value="${esc(N.name || '')}">
+      <button class="btn sm primary" id="v3lnadd" ${N.pick ? '' : 'disabled'}>Add</button></div>`;
+  const q = $('#v3lnq');
+  q.oninput = () => { N.q = q.value; clearTimeout(V3.newTexT); V3.newTexT = setTimeout(grid, 250); };
+  $('#v3lnname').oninput = e => { N.name = e.target.value; };
+  $('#v3lnadd').onclick = async () => {
+    if (!N.pick || !await needProject()) return;
+    try {
+      const r = await post('/api/land/newtex', {file: N.pick.file, name: N.name || ''});
+      toast(`Added the ground texture ${r.id}. Paint with it.`);
+      V3.landTex = await api('/api/land/textures');
+      V3.land.tex = {id: r.id, path: r.path}; V3.land.texAuto = false; v3LandSave();
+      V3.newTex = false; V3.newTexQ = null; afterChange(); v3LandPanel();
+    } catch (e){ toast(e.message, true); }
+  };
+  async function grid(){
+    const g = $('#v3lngrid'); if (!g) return;
+    let r; try { r = await api('/api/land/pictures?q=' + encodeURIComponent(N.q)); } catch (e){ g.textContent = e.message; return; }
+    g.className = '';
+    g.innerHTML = r.pictures.map(t => `<button class="v3lt ${N.pick && N.pick.path === t.path ? 'on' : ''}" data-np="${esc(t.path)}" title="${esc(t.file)}"><img data-swatch="${esc(t.path)}"><span>${esc(t.file.replace(/^.*\\/, '').replace(/\.[a-z]+$/i, ''))}</span></button>`).join('')
+      + (r.more ? `<div class="faint">…and ${r.more} more. Type to narrow it down.</div>` : '') + (!r.pictures.length ? '<div class="faint">No pictures match.</div>' : '');
+    g.querySelectorAll('[data-np]').forEach(b => b.onclick = () => {
+      N.pick = r.pictures.find(x => x.path === b.dataset.np);
+      if (!N.name) N.name = N.pick.file.replace(/^.*\\/, '').replace(/\.[a-z]+$/i, '');
+      g.querySelectorAll('.v3lt').forEach(x => x.classList.toggle('on', x === b));
+      const nm = $('#v3lnname'); if (nm && !nm.value) nm.value = N.name;
+      $('#v3lnadd').disabled = false;
+    });
+    v3SwatchScan(g);
+  }
+  grid();
+}
 // small pictures of ground textures (drawn with WebGL, since the browser can't show .dds files)
 const SWATCH = {};
 function v3SwatchScan(root){
@@ -2118,6 +2206,16 @@ function v3Bind(el){
         drag.around = pv; drag.local = [off.dot(right), off.dot(up), off.dot(d)]; drag.far = off.length();
       }
     }
+    // (Classic editor: a press on a thing; on one not selected yet, it is selected there and then, so one drag
+    // picks it up. The drag itself starts once the mouse has moved: a plain click or right-click is as ever)
+    if (typeof cfMouse === 'function' && cfMouse() === 'classic' && (e.button === 0 || e.button === 2) && !e.altKey && !e.shiftKey && !W.mode && !(V3.tc && V3.tc.axis)){
+      const h = v3Pick(e, false);
+      if (h && h.obj){
+        const same = W.sel && W.sel.cell === h.obj.ck && W.sel.k === h.obj.k;
+        if (!same && e.button === 0){ v3Click(e); drag.clicked = true; }
+        if (same || e.button === 0) drag.classic = true;
+      }
+    }
     // drawing a box to select: drag from an empty spot (or anywhere with Shift)
     if (e.button === 0 && !e.altKey && !W.mode){
       const h = e.shiftKey ? null : v3Pick(e, false);
@@ -2147,6 +2245,20 @@ function v3Bind(el){
     }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
+    if (drag.classic){
+      // (tried again as the mouse moves on: a thing just selected gets its handles a moment later)
+      if (drag.moved && !V3.grab && !drag.started){
+        V3.over = true; V3.lastMouse = {clientX: drag.x, clientY: drag.y};
+        const held = V3.held || {}, spin = drag.b === 2;
+        if (v3GrabStart(spin ? 'spin' : 'grab', true)){
+          drag.started = true;
+          V3.grab.classic = true;
+          V3.grab.on = spin ? (held.x ? 'x' : held.y ? 'y' : 'z') : (held.z ? 'z' : 'xy');
+          v3GrabMove(e);
+        }
+      }
+      return;                              // (the thing moves, not the view: v3GrabMove follows the mouse)
+    }
     if (drag.box){ if (drag.moved) v3BoxDraw(drag, e); return; }
     if (drag.b === 2 || (drag.b === 0 && drag.alt && !drag.pivot)){
       if (!drag.moved) return;
@@ -2174,6 +2286,7 @@ function v3Bind(el){
   });
   window.addEventListener('mouseup', e => {
     const D = drag; drag = null;
+    if (D && D.classic && V3.grab && V3.grab.classic){ v3GrabDone(); return; }      // (Classic editor: let go, set down)
     if (D && D.stroke){ V3.strokeEv = null; v3StrokeEnd(); return; }
     if (D && D.box && D.moved){ v3BoxEnd(D, e); return; }
     v3BoxHide();
@@ -2187,7 +2300,7 @@ function v3Bind(el){
       cfMenuAt(e, h && h.obj ? [h.obj.ck, h.obj.r] : null, h2 && h2.world, h && h.locked && h2 && h2.obj ? [h2.obj.ck, h2.obj.r] : null);
       return;
     }
-    if (!D || !V3.on || D.moved || D.b !== 0 || e.target !== el) return;
+    if (!D || !V3.on || D.moved || D.b !== 0 || e.target !== el || D.clicked) return;
     v3Click(e);
   });
   el.addEventListener('wheel', e => {
@@ -2248,6 +2361,8 @@ function v3Bind(el){
     }
     if (e.key === 'Shift') V3.keys.shift = true;
     if (e.key === 'Escape') V3.keys = {};
+    // (held X, Y or Z: the axis a Classic editor drag works on)
+    if (['KeyX', 'KeyY', 'KeyZ'].includes(e.code) && !e.ctrlKey && !e.metaKey) (V3.held = V3.held || {})[e.code.slice(3).toLowerCase()] = true;
     // (the number pad as in Blender: 7 from above, 1 the isometric corners in turn, 5 Flat on and off)
     if (!e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat){
       if (e.code === 'Numpad7'){ e.preventDefault(); v3ViewSnap('top'); return; }
@@ -2267,12 +2382,13 @@ function v3Bind(el){
   // letting go of a key always stops it (heard first, before anything else can swallow it)
   window.addEventListener('keyup', e => {
     const mv = v3MoveKey(e); if (mv) V3.keys[mv] = false;
+    if (V3.held && ['KeyX', 'KeyY', 'KeyZ'].includes(e.code)) V3.held[e.code.slice(3).toLowerCase()] = false;
     if (mv){ if (V3.sprint === mv) V3.sprint = false; (V3.upAt = V3.upAt || {})[mv] = performance.now(); }
     const k = (e.key || '').toLowerCase(); if (k.length === 1 && V3.keys[k]) V3.keys[k] = false;     // (a key event with no name: a controller's)
     if (e.key === 'Shift') V3.keys.shift = false;
     if (e.key === 'Meta' || e.key === 'OS') V3.keys = {};   // (the Windows key: the Start menu eats the rest)
   }, true);
-  const stop = () => { V3.keys = {}; };
+  const stop = () => { V3.keys = {}; V3.held = {}; };
   window.addEventListener('blur', stop);
   document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
   // (the keyboard itself said a key is no longer down, e.g. Shift seen up on a mouse move)
@@ -2877,7 +2993,7 @@ window.addEventListener('keydown', e => {
 // key again frees it. Moving is along the floor unless an axis says otherwise; Ctrl sets one thing on what is under
 // the mouse. Turning is about the up axis, or the one picked. It is a drag like the handles' own (v3DragStart,
 // v3Snap, v3DragEnd), so the snapping, the steps, the saving and Undo are theirs.
-function v3GrabStart(kind){
+function v3GrabStart(kind, quiet){
   if (!V3.on || !V3.tc || !V3.tc.object || V3.tc.dragging || V3.grab || W.mode || !V3.over || !V3.lastMouse) return false;
   if (typeof PH !== 'undefined' && PH.on) return false;
   if (W.multi.size > 1 && V3.tc.object !== V3.pivot) return false;
@@ -2888,7 +3004,7 @@ function v3GrabStart(kind){
   const D = V3.drag;
   if (!D){ V3.grab = null; V3.tc.dragging = false; return false; }
   if (!D.group){ const b = new THREE.Box3().setFromObject(D.o.g); if (!b.isEmpty()) V3.grab.foot = D.start.z - b.min.z; }
-  toast(kind === 'spin' ? 'Turning: click to set, Esc to cancel. X Y Z: the axis.' : 'Moving: click to set down, Esc to cancel. X Y Z: one axis.');
+  if (!quiet) toast(kind === 'spin' ? 'Turning: click to set, Esc to cancel. X Y Z: the axis.' : 'Moving: click to set down, Esc to cancel. X Y Z: one axis.');
   return true;
 }
 // where the mouse's ray meets the plane through p0 with normal n; null when it runs along the plane or far off
@@ -3235,7 +3351,6 @@ function v3GridTick(t){
     V3.plane.rotation.z = G.wall ? G.yaw - Math.PI / 2 : G.yaw;
     V3.fine = V3.plane;
     V3.gridGroup.add(V3.plane);
-    V3.borders = v3GridLines(CELL * Math.max(6, cellsN), Math.max(6, cellsN), 0xffb347, 0.85); V3.gridGroup.add(V3.borders);
   }
   // reach out along its own lines to under the camera, a whole number of the bright lines at a time
   const big = step * 4, c = Math.cos(G.yaw), s = Math.sin(G.yaw);
@@ -3256,8 +3371,39 @@ function v3GridTick(t){
   V3.gridGroup.visible = true;
   V3.plane.visible = !!V3.view.grid;
   const snap = (v, o, s_) => Math.round((v + o) / s_) * s_ - o;
-  V3.borders.visible = !!(V3.view.cells && W.ext);
-  V3.borders.position.set(snap(cam.x, V3.origin[0], CELL), snap(cam.y, V3.origin[1], CELL), (G.wall ? pz : pz) + 2);
+  v3CellBorders(t);
+}
+// The cell borders lie on the ground, as in the old editor: each loaded cell's edges along its own height
+// points (every 128 units, the ground's own corners), over the sea at the water. A flat sheet at one height
+// floated over hills and sank into valleys, and seemed to shift as the view moved (a tester, 2026-11-26).
+function v3CellBorders(t){
+  const show = !!(V3.view.cells && W.ext);
+  if (!V3.borders){ V3.borders = new THREE.LineSegments(new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({color: 0xffb347, transparent: true, opacity: 0.85})); V3.borders.renderOrder = 5; V3.gridGroup.add(V3.borders); }
+  if (V3.borders.parent !== V3.gridGroup){ V3.gridGroup.add(V3.borders); V3.bordersSig = null; }    // (the grid's rebuild clears its group)
+  V3.borders.visible = show;
+  if (!show) return;
+  const keys = Object.keys(V3.lands), sig = keys.length + '|' + V3.origin.join(',');
+  if (V3.bordersSig === sig && t - (V3.bordersT || 0) < 1500) return;       // (again now and then: the ground may be reshaped)
+  V3.bordersSig = sig; V3.bordersT = t;
+  const pts = [], ox = V3.origin[0], oy = V3.origin[1], oz = V3.origin[2], lift = 6;
+  const have = new Set(keys.filter(k => V3.lands[k] && V3.lands[k].L));
+  const hAt = (L, i, j) => (L && L.h ? Math.max(L.h[j * 65 + i], 0) : 0) + lift - oz;
+  for (const k of have){
+    const L = V3.lands[k].L, [gx, gy] = k.split(',').map(Number), x0 = gx * CELL - ox, y0 = gy * CELL - oy;
+    // (its south and west edges always; its north and east ones where no loaded cell draws them)
+    const edges = [[0, 0, 1, 0], [0, 0, 0, 1]];
+    if (!have.has(gx + ',' + (gy + 1))) edges.push([0, 64, 1, 0]);
+    if (!have.has((gx + 1) + ',' + gy)) edges.push([64, 0, 0, 1]);
+    for (const [i0, j0, di, dj] of edges)
+      for (let n = 0; n < 64; n++){
+        const a = [i0 + di * n, j0 + dj * n], b = [i0 + di * (n + 1), j0 + dj * (n + 1)];
+        pts.push(x0 + a[0] * 128, y0 + a[1] * 128, hAt(L, a[0], a[1]), x0 + b[0] * 128, y0 + b[1] * 128, hAt(L, b[0], b[1]));
+      }
+  }
+  const g = V3.borders.geometry;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.computeBoundingSphere();
 }
 
 // ----- drawing -----

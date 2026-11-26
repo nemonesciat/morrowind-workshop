@@ -580,7 +580,7 @@ class Assistant:
         phase = {'land': 'once, as the effect lands on them', 'second': 'once a second while the effect lasts',
                  'end': 'once, as the effect ends'}.get(req.get('when'), 'once, as the effect lands on them')
         prompt = '\n'.join([
-            'Write OpenMW Lua (OpenMW 0.51, Lua 5.1 / LuaJIT) for a custom Morrowind magic effect.',
+            'Write OpenMW Lua (OpenMW 0.51, Lua 5.1 / LuaJIT) for a custom Morrowind magic effect. Do not use goto.',
             'The code is the BODY of a function(ctx) in a local script attached to the actor the effect is on. It runs %s.' % phase,
             'Effect: %s. %s' % (req.get('name') or 'a custom effect', req.get('description') or ''),
             'What this step should do: ' + (req.get('brief') or ''),
@@ -694,7 +694,7 @@ class Assistant:
         api_map = self._api_map(mods)
         facts = self._facts(brief)
         prompt = '\n'.join(x for x in [
-            'Write an OpenMW Lua script (OpenMW 0.50 or newer, Lua 5.1 / LuaJIT) for a Morrowind mod.',
+            'Write an OpenMW Lua script (OpenMW 0.50 or newer, Lua 5.1 / LuaJIT) for a Morrowind mod. Do not use goto.',
             'What it should do: ' + brief,
             facts,
             ('The script as it is now (change it as asked, keep the rest):\n' + cur) if cur else '',

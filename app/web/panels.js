@@ -21,6 +21,15 @@ function pnlCss(){
   .pdock[data-dock=right]{border-left:1px solid var(--line)}
   .pdock[data-dock=bottom]{flex-direction:row;border-top:1px solid var(--line)}
   .pdock:empty{display:none}
+  .pdock.phid{display:none!important}
+  .pedges{position:absolute;inset:0;pointer-events:none;z-index:30}
+  .pedge{position:absolute;pointer-events:auto;background:var(--panel);border:1px solid var(--line2);color:var(--gold2);cursor:pointer;font-size:12px;line-height:1;padding:0;opacity:.85;box-shadow:0 2px 8px #0008}
+  .pedge:hover{opacity:1;color:var(--gold2);border-color:var(--gold)}
+  .pedge.l{left:0;top:50%;width:16px;height:64px;margin-top:-32px;border-left:0;border-radius:0 6px 6px 0}
+  .pedge.r{right:0;top:50%;width:16px;height:64px;margin-top:-32px;border-right:0;border-radius:6px 0 0 6px}
+  .pedge.b{bottom:0;left:50%;width:64px;height:16px;margin-left:-32px;border-bottom:0;border-radius:6px 6px 0 0}
+  body.pfull .app > header{display:none!important}
+  body.pfull .app{grid-template-rows:1fr!important}
   .pfloat{position:absolute;inset:0;pointer-events:none;z-index:40}
   .pgroup{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);position:relative}
   .pdock .pgroup{flex:1 1 0}
@@ -90,6 +99,9 @@ PNL.space = function(name, root, main, opts){
   center.appendChild(main); center.appendChild(bottom);
   root.appendChild(right); root.appendChild(fl); root.appendChild(drop);
   sp.els = {left, right, bottom, center, float: fl, drop, main};
+  // (a dock can be folded away and back by the tab at the view's edge; what is in it stays: a tester, 2026-11-26)
+  try { sp.hide = JSON.parse(localStorage.getItem('ws-panels-hide-' + name) || '{}') || {}; } catch (e){ sp.hide = {}; }
+  const edges = document.createElement('div'); edges.className = 'pedges'; main.appendChild(edges); sp.els.edges = edges;
   PNL.spaces[name] = sp;
   if (window.ResizeObserver){
     let pend = false;
@@ -165,6 +177,7 @@ function pnlDraw(sp){
     const dock = E[d];
     dock.innerHTML = '';
     const gs = L[d].groups;
+    dock.classList.toggle('phid', !!(sp.full || (sp.hide || {})[d]));
     if (!gs.length){ dock.style.width = dock.style.height = ''; continue; }
     // (on a small screen the docks give way, so the middle keeps some room: .pcenter's own minimum width
     // makes the docks shrink; a fixed 36% cap with both docks open undid a wider record on every redraw)
@@ -198,6 +211,7 @@ function pnlDraw(sp){
     E.float.appendChild(el);
   });
   pnlClampFloats(sp);
+  pnlEdges(sp);
   // bodies of closed panels are left out of the page (their drawing finds nothing to draw into)
   for (const it of Object.values(sp.inst)) if (!pnlWhere(sp, it.id) && it.el.parentNode) it.el.remove();
   pnlSave(sp);
@@ -453,11 +467,22 @@ PNL.show = function(space, id){
   const fresh = !sp.inst[id];
   const it = pnlMake(sp, id); if (!it) return null;
   if (fresh && id.indexOf('~') < 0 && sp.types[it.type].render) sp.types[it.type].render(it);
+  // (in full view a panel comes up floating over the view: docked, it would stay out of sight; a dock folded
+  // away is unfolded to show what is asked for in it)
+  if (w && w.where !== 'float' && sp.full){
+    w.group.tabs = w.group.tabs.filter(t => t !== id);
+    if (w.group.on === id) w.group.on = w.group.tabs[0];
+    if (!w.group.tabs.length) w.list.splice(w.list.indexOf(w.group), 1);
+    w = null;
+  }
+  if (w && w.where !== 'float' && sp.hide && sp.hide[w.where]) PNL.dockToggle(space, w.where, true);
   if (!w){
     const t = sp.types[it.type], L = sp.layout, R = sp.root.getBoundingClientRect();
-    if (t.home === 'float' || !['left', 'right', 'bottom'].includes(t.home)){
+    if (t.home === 'float' || !['left', 'right', 'bottom'].includes(t.home) || sp.full || (sp.hide || {})[t.home]){
       const n = L.floats.length;
-      L.floats.push({tabs: [id], on: id, x: Math.max(20, R.width / 2 - 180 + n * 24), y: 60 + n * 24, w: t.w || 360, h: Math.max(180, Math.min(t.h || 480, R.height - 80))});   // (never a sliver: shown while its view was hidden, a float came out 120 tall)
+      // (a docked panel shown in full view or a folded dock floats on its own side, so two don't land on each other)
+      const fw = t.w || 360, side = t.home === 'left' ? 16 + n * 24 : t.home === 'right' ? R.width - fw - 16 - n * 24 : R.width / 2 - 180 + n * 24;
+      L.floats.push({tabs: [id], on: id, x: Math.max(20, side), y: 60 + n * 24, w: fw, h: Math.max(180, Math.min(t.h || 480, R.height - 80))});   // (never a sliver: shown while its view was hidden, a float came out 120 tall)
     } else {
       const d = L[t.home];
       if (d.groups.length) { d.groups[0].tabs.push(id); d.groups[0].on = id; }
@@ -526,6 +551,35 @@ PNL.saveLayout = function(space, name){
 PNL.deleteLayout = function(space, name){
   const mine = PNL.layouts(space); delete mine[name];
   try { localStorage.setItem('ws-layouts-' + space, JSON.stringify(mine)); } catch (e){}
+};
+
+// the tabs at the view's edges that fold a dock away and bring it back (none in full view, and none for an empty dock)
+function pnlEdges(sp){
+  const E = sp.els;
+  if (!E.edges) return;
+  if (E.edges.parentNode !== E.main) E.main.appendChild(E.edges);
+  const name = {left: 'left', right: 'right', bottom: 'bottom'}, arrow = {left: ['◂', '▸'], right: ['▸', '◂'], bottom: ['▾', '▴']};
+  E.edges.innerHTML = sp.full ? '' : ['left', 'right', 'bottom'].filter(d => sp.layout[d].groups.length).map(d => {
+    const hid = !!(sp.hide || {})[d];
+    return `<button class="pedge ${d[0]}" data-pedge="${d}" title="${hid ? 'Show' : 'Hide'} the ${name[d]} panels">${arrow[d][hid ? 1 : 0]}</button>`;
+  }).join('');
+  E.edges.querySelectorAll('[data-pedge]').forEach(b => b.onclick = e => { e.stopPropagation(); PNL.dockToggle(sp.name, b.dataset.pedge); });
+}
+PNL.dockToggle = function(space, d, on){
+  const sp = PNL.spaces[space];
+  sp.hide = sp.hide || {};
+  sp.hide[d] = on === undefined ? !sp.hide[d] : !on;
+  try { localStorage.setItem('ws-panels-hide-' + space, JSON.stringify(sp.hide)); } catch (e){}
+  pnlDraw(sp);
+};
+// full view: the middle is the whole window, with only floating windows and the view's own buttons over it
+PNL.full = function(space, on){
+  const sp = PNL.spaces[space];
+  sp.full = on === undefined ? !sp.full : !!on;
+  document.body.classList.toggle('pfull', sp.full);
+  pnlDraw(sp);
+  if (sp.opts.onFull) sp.opts.onFull(sp.full);
+  return sp.full;
 };
 
 // the menu of every panel there is, and the layouts (for a "Windows" button)

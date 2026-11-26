@@ -89,6 +89,7 @@ const CF_ACT = [
   {id: 'drop', label: '3D: set it down on what\'s below', keys: ['End'], v3: true, run: () => v3DropToFloor()},
   {id: 'view3d', label: 'Switch between the flat map and 3D', keys: [], world: true, run: () => { const b = document.querySelector(`[data-view3d="${V3.on ? 0 : 1}"]`); if (b) b.click(); }},
   {id: 'panels', label: 'Panels and layouts menu', keys: [], world: true, run: () => PNL.windowsMenu('world', $('#w-panels'))},
+  {id: 'fullview', label: 'Full view: only the map or 3D, its buttons and windows (again: back)', keys: [], world: true, run: () => PNL.full('world')},
   {id: 'fixit', label: 'Find gaps in this place', keys: [], world: true, run: () => W.info && W.info.interior ? fixitOpen(W.info.key) : toast('Open an interior first.')},
   {id: 'check', label: 'Check this place (what\'s wrong with the furnishing)', keys: [], world: true, run: () => W.info && W.info.interior ? placecheckOpen(W.info.key) : toast('Open an interior first.')},
   {id: 'play', label: 'Play here (pick a spot)', keys: [], world: true, run: () => W.key ? setMode('play') : toast('Open a place first.')},
@@ -125,12 +126,16 @@ const cfKeysOf = a => CF.user[a.id] || (a.blender && cfMouse() === 'blender' ? a
 // it (the middle button circles, with Shift it slides, with Ctrl it moves in and out). Chosen in the Keyboard
 // shortcuts window; world3d.js and bench.js ask here.
 function cfMouse(){
-  if (CF.mouse == null){ let s = ''; try { s = localStorage.getItem('ws-mouse') || ''; } catch (e){} CF.mouse = s === 'blender' ? 'blender' : ''; }
+  if (CF.mouse == null){ let s = ''; try { s = localStorage.getItem('ws-mouse') || ''; } catch (e){} CF.mouse = s === 'blender' || s === 'classic' ? s : ''; }
   return CF.mouse;
 }
 // (the 3D view's own list of controls says what the middle button does now)
 function cfMouseHelp(){ document.querySelectorAll('.v3help-mid').forEach(x => { x.textContent = cfMouse() === 'blender' ? 'circle (Shift: slide, Ctrl: in and out)' : 'slide'; }); }
 setTimeout(cfMouseHelp, 0);
+// (Classic editor: drag what's selected to slide it over the ground, Z + drag to raise or lower it, right-drag it to
+// turn it, X or Y + right-drag to tilt it; a tester used to the old editor, 2026-11-26)
+const CF_CLASSIC = [['Drag the selected', '3D: slide it over the ground'], ['Z + drag the selected', '3D: raise or lower it'],
+                    ['Right-drag the selected', '3D: turn it'], ['X or Y + right-drag the selected', '3D: tilt it']];
 const CF_BLENDER = [['Middle-drag', '3D: circle around what\'s selected, or what\'s under the mouse'], ['Shift + middle-drag', '3D: slide the view'],
                     ['Ctrl + middle-drag', '3D: move in and out (slower near things)']];
 
@@ -181,15 +186,15 @@ function cfKeysModal(){
   const draw = () => {
     bg.innerHTML = `<div class="modal" style="width:min(640px,94vw);max-height:88vh;overflow:auto"><h2>Keyboard shortcuts</h2>
       <table class="cf-keys" style="width:100%;border-collapse:collapse;margin:6px 0 12px"><tr><td>3D controls</td>
-        <td><select id="cf-mouse" style="width:auto" title="Blender: middle-drag circles, Shift + middle-drag slides, Ctrl + middle-drag moves in and out; G and R move and turn what's selected with the mouse"><option value="">Workshop</option><option value="blender" ${cfMouse() === 'blender' ? 'selected' : ''}>Blender</option></select></td></tr></table>
+        <td><select id="cf-mouse" style="width:auto" title="Blender: middle-drag circles, Shift + middle-drag slides, Ctrl + middle-drag moves in and out; G and R move and turn what's selected with the mouse"><option value="">Workshop</option><option value="blender" ${cfMouse() === 'blender' ? 'selected' : ''}>Blender</option><option value="classic" ${cfMouse() === 'classic' ? 'selected' : ''} title="Drag the selected thing to slide it, Z + drag to raise it, right-drag to turn it">Classic editor</option></select></td></tr></table>
       <div class="msg">Click <b>+</b> and press the keys you want. A key can only do one thing, so giving it to something else takes it from where it was.</div>
       <table class="cf-keys" style="width:100%;border-collapse:collapse;margin-top:10px">${CF_ACT.map(a => `<tr><td>${esc(a.label)}${a.world ? ' <span class="msg">(World map)</span>' : ''}</td>
         <td>${cfKeysOf(a).map(k => `<kbd class="cf">${esc(k)}<button data-kdel="${a.id}|${esc(k)}" title="Remove">✕</button></kbd>`).join('')}<button class="btn sm" data-kadd="${a.id}" style="margin-left:6px" title="Add a key">+</button></td></tr>`).join('')}</table>
       <h3 style="margin-top:18px">Always the same</h3>
-      <table class="cf-keys" style="width:100%;border-collapse:collapse">${(cfMouse() === 'blender' ? CF_FIXED.flatMap(r => r[0] === 'Middle-drag' ? CF_BLENDER : [r]) : CF_FIXED).map(([k, t]) => `<tr><td>${esc(t)}</td><td><kbd class="cf">${esc(k)}</kbd></td></tr>`).join('')}</table>
+      <table class="cf-keys" style="width:100%;border-collapse:collapse">${(cfMouse() === 'blender' ? CF_FIXED.flatMap(r => r[0] === 'Middle-drag' ? CF_BLENDER : [r]) : cfMouse() === 'classic' ? CF_CLASSIC.concat(CF_FIXED) : CF_FIXED).map(([k, t]) => `<tr><td>${esc(t)}</td><td><kbd class="cf">${esc(k)}</kbd></td></tr>`).join('')}</table>
       <div class="foot"><button class="btn" id="cf-kreset">Back to the usual keys</button><button class="btn primary" id="cf-kclose">Done</button></div></div>`;
     bg.querySelector('#cf-kclose').onclick = close;
-    bg.querySelector('#cf-mouse').onchange = e => { CF.mouse = e.target.value === 'blender' ? 'blender' : ''; try { localStorage.setItem('ws-mouse', CF.mouse); } catch (x){} cfMouseHelp(); draw(); };
+    bg.querySelector('#cf-mouse').onchange = e => { CF.mouse = ['blender', 'classic'].includes(e.target.value) ? e.target.value : ''; try { localStorage.setItem('ws-mouse', CF.mouse); } catch (x){} cfMouseHelp(); draw(); };
     bg.querySelector('#cf-kreset').onclick = () => { CF.user = {}; cfSaveKeys(); draw(); toast('Shortcuts are back to the usual keys.'); };
     bg.querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => {
       const [id, k] = b.dataset.kdel.split('|'), a = CF_ACT.find(x => x.id === id);

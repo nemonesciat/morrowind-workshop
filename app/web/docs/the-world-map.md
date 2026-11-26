@@ -34,6 +34,10 @@ the place. **+ −** at the bottom right zoom.
 and **R** move and turn what's selected with the mouse (**X**, **Y**, **Z** keep it to one axis; click sets it down,
 Esc puts it back). Without that choice, give those two a key of your own there.
 
+Used to the old editor? **3D controls: Classic editor** there: drag what's selected to slide it over the ground,
+**Z** + drag to raise or lower it, right-drag it to turn it (**X** or **Y** + right-drag to tilt it). A drag on
+something not selected yet picks it up; a click still selects and a right-click still opens the menu.
+
 ## Selecting
 
 - **Click** a thing to select it. **Shift+click** adds or takes one away.
@@ -121,7 +125,13 @@ group anywhere later.
 | Sky | Region, weather and time of day outdoors; an interior's lighting. See *Sky, regions and weather*. |
 | Land | Land shaping and height maps. See *Shaping the land*. |
 | Paths | The walking paths people and creatures follow. |
+| 📋 Object list | Everything that can go into a place, one kind at a time (Static, Door, Light, NPC, Creature, Weapon…, or All): ID, name, how often the game uses it, its mod. Click a column to sort, **Mine** for your mod's own. Drag a row onto the map or the 3D view, or double-click it to place it; right-click for its record or a list of its own. Open several, one kind each. |
 | Library, Prefabs, Places, Recent changes, Find gaps, Check this place, 3D controls | Open them from **▤ Panels**. |
+
+**Layout: Lists** (in **▤ Panels**) puts the Object list on the left, the place's Objects below and Selected on the
+right. The small tabs at the view's edges (◂ ▸ ▾) fold a side away and back. **⛶** beside **▤ Panels** gives the map
+or 3D the whole window: only its buttons and the windows you open stay, floating over it; **⛶** again brings
+everything back.
 
 ## Your changes
 

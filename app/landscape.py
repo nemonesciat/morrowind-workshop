@@ -74,6 +74,63 @@ def textures(db):
     return out
 
 
+# ----- new ground textures from pictures in the data folders (a tester, 2026-11-26: "I wasn't able to add new
+# ground textures. I first had to create a plugin in CS.")
+_PIC_EXT = ('.dds', '.tga', '.bmp', '.png', '.jpg')
+
+
+def pictures(db, q='', limit=80):
+    """Pictures under textures/ that are no ground texture yet, matching the words of q: [{file, path}], file as
+    the ground texture names it (inside textures, backslashes), path as the data folders have it."""
+    used = {t.lower().rsplit('.', 1)[0].replace('\\', '/') for (_r, t) in _ltex_all(db).values()}
+    words = [w for w in (q or '').lower().split() if w]
+    m = db.meshes
+    best = {}
+    for rel in list(m.loose) + list(m.packed):
+        if not rel.startswith('textures/') or not rel.endswith(_PIC_EXT):
+            continue
+        inner = rel[9:]
+        base = inner.rsplit('.', 1)[0]
+        if base in used or base.startswith(('menu_', 'cursor', 'levelup/', 'bookart/', 'scroll', 'tx_menubook')):
+            continue
+        if words and not all(w in inner for w in words):
+            continue
+        if base not in best or rel.endswith('.dds'):
+            best[base] = rel
+    out = []
+    for base in sorted(best, key=lambda b: (b.count('/'), b))[:limit]:
+        rel = best[base]
+        out.append({'file': rel[9:].replace('/', '\\'), 'path': rel})
+    return {'pictures': out, 'more': max(0, len(best) - limit)}
+
+
+def new_texture(db, file, name):
+    """A ground texture of this mod's own from a picture in the data folders: {id, file, path}."""
+    _require_project(db)
+    path = db.meshes.texture_path(file or '')
+    if not path:
+        raise EditError('There is no picture "%s" in the data folders.' % file)
+    rid = re.sub(r'\s+', ' ', (name or '').strip())[:31]
+    if not rid:
+        rid = re.sub(r'\.[a-z]+$', '', path.rsplit('/', 1)[-1], flags=re.I)[:31]
+    taken = {r.lower() for (r, _t) in _ltex_all(db).values()}
+    if rid.lower() in taken:
+        raise EditError('There is already a ground texture called "%s".' % rid)
+    p = db.project
+    mine = []
+    for k, rec in list(__import__('project').quiet(p.records)):
+        if k.startswith('LTEX|'):
+            for st, sd in iter_subrecords(unb64(rec['data'])):
+                if st == 'INTV':
+                    mine.append(struct.unpack_from('<i', sd)[0])
+    idx = max(mine, default=-1) + 1
+    tex = path[9:].replace('/', '\\')
+    p.set_record('LTEX', rid.lower(), 0, join_subs([('NAME', zs(rid)), ('INTV', struct.pack('<i', idx)), ('DATA', zs(tex))]),
+                 created=True)
+    commit(db, 'Added the ground texture "%s"' % rid)
+    return {'id': rid, 'file': tex, 'path': path}
+
+
 def read(db, gx, gy):
     """{'exists', 'h': 65*65 heights, 't': 16*16 ground textures as LTEX ids ('' = default), 'tex': {id: path}}."""
     w = _winner(db, gx, gy)

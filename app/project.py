@@ -769,7 +769,7 @@ class Project:
                 now = myeffects.actor_now(self.lua)
                 if now and now != s.get('text'):
                     s['text'] = now
-            out[path] = myeffects.own_events(s.get('text') or '', self.lua_slug())
+            out[path] = myeffects.own_events((s.get('text') or '').lstrip('\ufeff'), self.lua_slug())
             ids = [i.strip().lower() for i in s.get('attach') or [] if i.strip()]
             if ids:
                 lines.append('CUSTOM: ' + path)

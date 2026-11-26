@@ -11,6 +11,10 @@ const WP_PRESETS = {
                  left: {size: 300, groups: []}, bottom: {size: 220, groups: []}, floats: []},
   'Two sides': {left: {size: 300, groups: [{tabs: ['place', 'library'], on: 'place', grow: 1}, {tabs: ['places'], on: 'places', grow: 0.5}]},
                 right: {size: 330, groups: [{tabs: ['sel', 'objs', 'sky', 'land', 'paths'], on: 'sel', grow: 1}]}, bottom: {size: 200, groups: []}, floats: []},
+  // (lists of everything there is to place on the left, the place's own things below, what's selected on the right)
+  'Lists': {left: {size: 380, groups: [{tabs: ['olist'], on: 'olist', grow: 1}]},
+            right: {size: 320, groups: [{tabs: ['sel', 'place', 'sky', 'land', 'paths'], on: 'sel', grow: 1}]},
+            bottom: {size: 200, groups: [{tabs: ['objs'], on: 'objs', grow: 1}]}, floats: []},
   'Big view': {left: {size: 300, groups: []}, right: {size: 340, groups: []}, bottom: {size: 220, groups: []},
                floats: [{tabs: ['place', 'objs'], on: 'place', x: 16, y: 56, w: 330, h: 420}, {tabs: ['sel'], on: 'sel', x: -16, y: 56, w: 320, h: 380}]},
 };
@@ -20,7 +24,9 @@ function worldPanelsInit(){
   PNL.space('world', $('#world'), $('#world .mapwrap'), {
     presets: WP_PRESETS, start: 'Building',
     onResize: () => { if ($('#world').classList.contains('on')){ sizeMap(); drawMap(); if (typeof V3 !== 'undefined' && V3.on) v3Resize(); } },
+    onFull: on => { const b = $('#w-full'); if (b){ b.classList.toggle('on', on); b.title = on ? 'Back from full view' : 'Full view: only the map or 3D, its buttons and windows'; } },
   });
+  if (typeof olPanels === 'function') olPanels();      // (Object lists: objlists.js)
   const scan = it => { if (typeof v3ThumbScan === 'function') v3ThumbScan(it.el); };
   PNL.define('world', 'place', {title: 'Place', cls: 'wside', onShow: scan});
   PNL.define('world', 'sel', {title: 'Selected', cls: 'wside', onShow: scan,
@@ -83,6 +89,10 @@ function worldPanelsInit(){
     const k = document.createElement('button'); k.id = 'w-lockb'; k.className = 'flatonly';
     k.onclick = e => { e.stopPropagation(); lockToggle(); };
     sw.appendChild(s); sw.appendChild(k);
+    // (full view: the map or 3D is the whole window; the panels' edge tabs fold one side at a time)
+    const f = document.createElement('button'); f.id = 'w-full'; f.title = 'Full view: only the map or 3D, its buttons and windows'; f.textContent = '⛶';
+    f.onclick = e => { e.stopPropagation(); PNL.full('world'); };
+    sw.appendChild(f);
     lockSync();
     if (typeof V3 !== 'undefined' && V3.on) sw.querySelectorAll('.flatonly').forEach(x => x.style.display = 'none');
   }

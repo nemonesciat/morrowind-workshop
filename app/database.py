@@ -1113,7 +1113,7 @@ class Database:
         lst = self.versions(i)
         return {'i': i, 'type': r[0], 'id': r[1], 'name': r[2], 'plugin': self.plugins[r[3]]['name'],
                 'extra': r[5], 'versions': len(lst), 'deleted': bool(r[6] & 0x20),
-                'mine': r[3] == self.proj_pidx}
+                'mine': r[3] == self.proj_pidx, 'uses': len(self.used_in.get(r[1].lower(), ()))}   # (places, people and lists it is in)
 
     def record(self, i):
         from decode import decode_record
