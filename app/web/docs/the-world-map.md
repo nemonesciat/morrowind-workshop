@@ -138,7 +138,7 @@ group anywhere later.
 | Button | What it does |
 |---|---|
 | 💡 Game light | Lit: the game's own lighting. Off: bright, even light to work by. |
-| 👁 View ▾ | Grid (at the move step, or **At the selection**, **Turned to it**), cell borders, wireframe, field of view; outdoors the ground, water, sky and how far cells load. |
+| 👁 View ▾ | **Top** and the four isometric corners (◤ ◥ ◣ ◢; again turns round; **Free** or turning the camera lets go), **Flat** for no perspective (number pad 7, 1 and 5 as in Blender); grid (at the move step, or **At the selection**, **Turned to it**), cell borders, wireframe, field of view; outdoors the ground, water, sky, **Fog** and how far cells load. |
 | ☑ Show | The Show window: what's shown, floors, your changes, hidden things. |
 | 🔒 Lock walls | Lit: walls and buildings can't be picked or moved by accident. |
 | ⛰ Ground | Outdoors: shape and paint the ground. See *Shaping the land*. |

@@ -2641,6 +2641,7 @@ async function loadAround(){
         const k = x + ',' + y, L = got[k], old = W.lands[k];
         if (old && !old.none && old.step <= step) continue;           // (a finer one arrived meanwhile)
         W.lands[k] = L ? {h: L.h, n: L.n, step, name: L.name, img: landImage(L)} : {none: true, step};
+        W.landsVer = (W.landsVer || 0) + 1;
       }
       drawMap();
     }).catch(() => {}).finally(() => W.loading.delete(key)));
@@ -2677,6 +2678,7 @@ async function loadAround(){
   if (!in3d) for (const k of Object.keys(W.lands)){ const [x, y] = k.split(',').map(Number); if (x < x0 - 8 || x > x1 + 8 || y < y0 - 8 || y > y1 + 8) delete W.lands[k]; }
   // (in 3D too, the ground well past the view distance: a long flight kept every cell's heights and picture)
   else for (const k of Object.keys(W.lands)){ const [x, y] = k.split(',').map(Number); if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) > d3 + 8) delete W.lands[k]; }
+  W.landsVer = (W.landsVer || 0) + 1;
   await Promise.all(jobs);
 }
 const STOPS = [[-1, [112,108,72]], [250, [98,100,64]], [1200, [104,94,68]], [2600, [124,118,104]], [4500, [176,172,164]]];
@@ -2767,6 +2769,49 @@ function selectionRefs(){
   const r = W.sel && findRef(W.sel.cell, W.sel.k);
   return r ? [[W.sel.cell, r]] : [];
 }
+// Zoomed far out, the ground is drawn in tiles of 16 x 16 cells, each made once and kept until a cell in it
+// changes: thousands of small pictures every frame made dragging over a whole big land crawl (a tester, 2026-11-26)
+const FAR_TILE_PX = 30, FAR_TILE = 16, FAR_PX = 8;
+W.farTiles = new Map();
+// (what the map's land is now: the same key, nothing to work out again)
+function landsKey(){ return [W.lands, W.landsVer || 0, W.landsPrev ? Object.keys(W.landsPrev).length : 0]; }
+function landsSame(a){ const b = landsKey(); return !!a && a[0] === b[0] && a[1] === b[1] && a[2] === b[2]; }
+function drawFarLands(all, z){
+  const M = W.farMemo;
+  // (each time the land changes, a new generation: a tile is checked against its cells once per generation)
+  if (!M || !landsSame(M.key)) W.farMemo = {key: landsKey(), groups: farGroups(all()), gen: (M ? M.gen : 0) + 1};
+  const {groups, gen} = W.farMemo;
+  const span = FAR_TILE * CELL * z;
+  for (const [tk, list] of groups){
+    const [tx, ty] = tk.split(',').map(Number), [sx, sy] = toScreen(tx * FAR_TILE * CELL, (ty + 1) * FAR_TILE * CELL);
+    if (sx > W.w || sy > W.h || sx + span < 0 || sy + span < 0) continue;
+    let t = W.farTiles.get(tk);
+    if (t && t.gen !== gen && t.n === list.length && list.every(([gx, gy, L]) => t.has.get(gx + ',' + gy) === L)) t.gen = gen;
+    if (!t || t.gen !== gen){
+      const c = (t && t.c) || document.createElement('canvas'), S = FAR_TILE * FAR_PX;
+      c.width = c.height = S;
+      const x2 = c.getContext('2d'); x2.imageSmoothingEnabled = true;
+      const has = new Map();
+      for (const [gx, gy, L] of list){
+        const size = FAR_PX * (1 + 1 / ((L.n || 65) - 1));
+        x2.drawImage(L.img, (gx - tx * FAR_TILE) * FAR_PX, (FAR_TILE - 1 - (gy - ty * FAR_TILE)) * FAR_PX, size, size);
+        has.set(gx + ',' + gy, L);
+      }
+      W.farTiles.set(tk, t = {c, has, n: list.length, gen});
+    }
+    g.drawImage(t.c, sx, sy, span, span);
+  }
+}
+function farGroups(all){
+  const groups = new Map();
+  for (const e of all){
+    if (!e[1].img) continue;
+    const [gx, gy] = e[0].split(',').map(Number), tk = Math.floor(gx / FAR_TILE) + ',' + Math.floor(gy / FAR_TILE);
+    let a = groups.get(tk); if (!a) groups.set(tk, a = []);
+    a.push([gx, gy, e[1]]);
+  }
+  return groups;
+}
 function drawMap(){
   if (V3.on){ v3Refresh(); return; }
   if (!W.w) sizeMap();
@@ -2781,7 +2826,9 @@ function drawMap(){
       if (L && (L.img || L.none)){ delete W.landsPrev[k]; return false; }
       return true;
     }) : [];
-    for (const [k, L] of prev.concat(Object.entries(W.lands))){
+    const all = () => prev.concat(Object.entries(W.lands));
+    if (CELL * z < FAR_TILE_PX) drawFarLands(all, z);
+    else for (const [k, L] of all()){
       if (!L.img) continue;
       const [gx, gy] = k.split(',').map(Number);
       const [sx, sy] = toScreen(gx * CELL, (gy + 1) * CELL), size = (CELL + CELL / ((L.n || 65) - 1)) * z;
@@ -2800,15 +2847,19 @@ function drawMap(){
           g.strokeRect(sx, sy, CELL * z, CELL * z);
         }
       }
-      const places = {};
-      for (const [k, L] of Object.entries(W.lands)){
-        if (!L.name) continue;
-        const [gx, gy] = k.split(',').map(Number), p = places[L.name] || (places[L.name] = [0, 0, 0]);
-        p[0] += gx + 0.5; p[1] += gy + 0.5; p[2]++;
+      // (where each place's name goes, worked out again only when the land changed)
+      if (!W.placesMemo || !landsSame(W.placesMemo.key)){
+        const places = {};
+        for (const [k, L] of Object.entries(W.lands)){
+          if (!L.name) continue;
+          const [gx, gy] = k.split(',').map(Number), p = places[L.name] || (places[L.name] = [0, 0, 0]);
+          p[0] += gx + 0.5; p[1] += gy + 0.5; p[2]++;
+        }
+        W.placesMemo = {key: landsKey(), list: Object.entries(places).sort((a, b) => b[1][2] - a[1][2])};
       }
       g.font = (CELL * z < 50 ? '11px' : '12.5px') + ' Inter, sans-serif'; g.textAlign = 'center';
       const taken = [];                          // bigger places first; skip a name that would overlap one
-      for (const [name, p] of Object.entries(places).sort((a, b) => b[1][2] - a[1][2])){
+      for (const [name, p] of W.placesMemo.list){
         const [sx, sy] = toScreen(p[0] / p[2] * CELL, p[1] / p[2] * CELL);
         if (sx < -100 || sy < -20 || sx > W.w + 100 || sy > W.h + 20) continue;
         const w = g.measureText(name).width / 2 + 4, box = [sx - w, sy - 13, sx + w, sy + 4];
@@ -3338,7 +3389,8 @@ document.querySelectorAll('#mapnav button').forEach(b => b.onclick = () => {
   if (!W.key) return;
   if (b.dataset.d === 'c'){ fitCell(W.info); drawMap(); return; }
   const [dx, dy] = b.dataset.d.split(',').map(Number);
-  if (W.ext){ W.cam.x += dx * CELL; W.cam.y += dy * CELL; drawMap(); recentre(); }
+  // (outdoors a third of the view in whole cells, a cell at least: one cell a click was a crawl zoomed far out)
+  if (W.ext){ const n = Math.max(1, Math.round((dx ? W.w : W.h) / 3 / (CELL * W.cam.z))); W.cam.x += dx * n * CELL; W.cam.y += dy * n * CELL; drawMap(); recentre(); }
   else { W.cam.x += dx * 600 / W.cam.z * 0.3; W.cam.y += dy * 600 / W.cam.z * 0.3; drawMap(); }
 });
 document.querySelectorAll('.mapzoom button').forEach(b => b.onclick = () => { W.cam.z = Math.max(0.0005, Math.min(5, W.cam.z * +b.dataset.z)); drawMap(); if (W.ext) recentre(); });

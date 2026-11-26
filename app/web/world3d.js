@@ -285,7 +285,7 @@ function v3ApplyLighting(){
   V3.sun.color.copy(c(L.sun)); V3.sun.intensity = 0.55;
   V3.hemi.color.copy(c(L.sun)); V3.hemi.groundColor.copy(c(L.ambient)); V3.hemi.intensity = 0.12;
   const far = 700 + (1 - Math.min(1, Math.max(0, L.density))) * 9000;
-  V3.scene.fog = new T.Fog(c(L.fog), far * 0.15, far);
+  V3.scene.fog = V3.flat ? null : new T.Fog(c(L.fog), far * 0.15, far);
   V3.scene.background = c(L.fog);
   v3PointLights(1);
 }
@@ -367,6 +367,12 @@ function v3ApplyWeather(){
     V3.sun.position.set(0.6, -0.8, 1.5);
     V3.sun.intensity = w.sun; V3.hemi.intensity = w.hemi;
     V3.sun.color.set(w.tint || 0xfff0d8); V3.hemi.color.set(w.tint || 0xfff4e0);
+  }
+  // (Fog off in View: no haze at all, and the camera sees as far as the land is loaded; a tester, 2026-11-26)
+  if (V3.view.fog === false || V3.flat){
+    V3.scene.fog = null;
+    const far2 = Math.max(far, (v3Reach() + 2) * CELL * 1.5);
+    if (V3.camera.far !== far2){ V3.camera.far = far2; V3.camera.updateProjectionMatrix(); }
   }
   V3.hemiBase = V3.hemi.intensity;
   v3SkyApply();
@@ -1993,13 +1999,82 @@ function v3LandEyedrop(at){
 
 // ----- camera and mouse -----
 function v3CamWorld(){ return [V3.pos.x + V3.origin[0], V3.pos.y + V3.origin[1], V3.pos.z + V3.origin[2]]; }
-function v3CamCell(){ const [x, y] = v3CamWorld(); return [Math.floor(x / CELL), Math.floor(y / CELL)]; }
+function v3CamCell(){
+  // (in Flat the camera stands cells back from what it shows: the land loads round the middle of the view)
+  if (V3.flat && V3.origin){ const p = v3LookGround(); return [Math.floor((p.x + V3.origin[0]) / CELL), Math.floor((p.y + V3.origin[1]) / CELL)]; }
+  const [x, y] = v3CamWorld(); return [Math.floor(x / CELL), Math.floor(y / CELL)];
+}
 // (outdoors, the wheel and the move keys go faster the higher the camera is over the ground or water: as near
 // the ground as ever, but a big land like the whole of Tamriel is crossed from up high; a tester, 2026-11-26)
 function v3HighBoost(){
   if (!W.ext || !V3.pos) return 1;
   const g = v3GroundAt(V3.pos.x, V3.pos.y), h = V3.pos.z - Math.max(0, g == null ? 0 : g);
   return Math.max(1, Math.min(40, h / 3000));
+}
+// ----- camera views: Top and the four isometric corners, and Flat (no perspective) -----
+// (a tester, 2026-11-26: fixed views of a big land. A snapped view keeps its angle while the view is slid, moved
+// or zoomed; turning the camera lets it go. Flat is a 5° lens far back, so picking and dragging work as ever)
+const V3_ISO = -Math.atan(1 / Math.SQRT2), V3_FLAT_FOV = 5;
+const V3_SNAPS = {top: [0, -1.5], ne: [-0.75 * Math.PI, V3_ISO], se: [-0.25 * Math.PI, V3_ISO], sw: [0.25 * Math.PI, V3_ISO], nw: [0.75 * Math.PI, V3_ISO]};
+const V3_CORNERS = ['ne', 'se', 'sw', 'nw'];
+// the ground (or water, or floor) at the middle of the view
+function v3LookGround(){
+  const d = v3Dir();
+  if (!W.ext){
+    // (indoors: the floor or whatever is in the middle of the view, picked at most five times a second)
+    const t = performance.now();
+    if (!V3.lg || t - V3.lg.t > 200){
+      const b = V3.renderer && V3.renderer.domElement.getBoundingClientRect();
+      const h = b && v3Pick({clientX: b.left + b.width / 2, clientY: b.top + b.height / 2}, true);
+      V3.lg = {t, off: h && h.point ? V3.pos.distanceTo(h.point) : 600};
+    }
+    return V3.pos.clone().addScaledVector(d, V3.lg.off);
+  }
+  if (d.z > -0.05) return V3.pos.clone().addScaledVector(d, 3000);
+  let gz = 0, p = null;
+  for (let i = 0; i < 3; i++){
+    p = V3.pos.clone().addScaledVector(d, Math.max(50, (V3.pos.z - gz) / -d.z));
+    const g = v3GroundAt(p.x, p.y); gz = Math.max(0, g == null ? 0 : g);
+  }
+  return p;
+}
+function v3CentrePivot(){
+  const b = V3.renderer && V3.renderer.domElement.getBoundingClientRect();
+  const h = b && v3Pick({clientX: b.left + b.width / 2, clientY: b.top + b.height / 2}, true);
+  return h && h.point ? h.point.clone() : v3LookGround();
+}
+function v3ViewSnap(kind){
+  if (!V3.camera) return;
+  if (kind === 'free'){ V3.camSnap = null; v3Tools(); return; }
+  if (kind === 'corner' || (kind === V3.camSnap && V3_CORNERS.includes(kind))) kind = V3_CORNERS[(V3_CORNERS.indexOf(V3.camSnap) + 1) % 4];
+  const pv = v3CentrePivot(), dist = Math.max(V3.flat ? 8000 : 800, V3.pos.distanceTo(pv));
+  [V3.yaw, V3.pitch] = V3_SNAPS[kind];
+  V3.pos.copy(pv).addScaledVector(v3Dir(), -dist);
+  V3.camSnap = kind;
+  v3Tools();
+}
+function v3Unsnap(){ if (V3.camSnap){ V3.camSnap = null; if (V3.viewOpen) v3Tools(); } }
+function v3FlatSet(on){
+  if (!V3.camera || !!V3.flat === on) return;
+  const pv = v3CentrePivot(), dist = V3.pos.distanceTo(pv), wide = V3.fov || 60;
+  const k = on ? Math.tan(wide * Math.PI / 360) / Math.tan(V3_FLAT_FOV * Math.PI / 360) : Math.tan(V3_FLAT_FOV * Math.PI / 360) / Math.tan(wide * Math.PI / 360);
+  V3.flat = on;
+  V3.camera.fov = on ? V3_FLAT_FOV : wide;
+  V3.pos.copy(pv).addScaledVector(v3Dir(), -dist * k);
+  if (!on){ V3.camera.near = 4; V3.camera.updateProjectionMatrix(); }
+  v3ApplyLighting();                         // (no fog in Flat: the camera stands far back)
+  v3FlatClip();
+  if (W.ext) loadAround();
+  v3Tools();
+}
+// (Flat: the near and far ends of what is drawn follow how far back the camera stands)
+function v3FlatClip(){
+  if (!V3.flat || !V3.camera) return;
+  const dist = V3.pos.distanceTo(v3LookGround());
+  const near = Math.max(4, dist * 0.2), far = Math.max(40000, dist + ((W.ext ? v3Reach() : 2) + 2) * CELL * 1.5);
+  if (Math.abs(V3.camera.near - near) > near * 0.05 || Math.abs(V3.camera.far - far) > far * 0.05){
+    V3.camera.near = near; V3.camera.far = far; V3.camera.updateProjectionMatrix();
+  }
 }
 function v3Dir(){ return new THREE.Vector3(Math.sin(V3.yaw) * Math.cos(V3.pitch), Math.cos(V3.yaw) * Math.cos(V3.pitch), Math.sin(V3.pitch)); }
 function v3Typing(e){ const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
@@ -2031,6 +2106,8 @@ function v3Bind(el){
       return;
     }
     drag = {b: e.button, x: e.clientX, y: e.clientY, yaw: V3.yaw, pitch: V3.pitch, pos: V3.pos.clone(), moved: false, alt: e.altKey};
+    // (sliding a snapped or Flat view: the ground follows the mouse, however far back the camera is)
+    drag.panK = (V3.flat || V3.camSnap) ? V3.pos.distanceTo(v3LookGround()) * 2 * Math.tan(V3.camera.fov * Math.PI / 360) / Math.max(1, el.clientHeight) : 2.2;
     // (the mouse as Blender has it, chosen under Keyboard shortcuts: the middle button circles, with Shift it slides
     // the view, with Ctrl it moves in and out. Where what it circles stands in the view is kept, so nothing jumps)
     if (e.button === 1 && typeof cfMouse === 'function' && cfMouse() === 'blender'){
@@ -2072,12 +2149,16 @@ function v3Bind(el){
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
     if (drag.box){ if (drag.moved) v3BoxDraw(drag, e); return; }
     if (drag.b === 2 || (drag.b === 0 && drag.alt && !drag.pivot)){
+      if (!drag.moved) return;
+      v3Unsnap();
       V3.yaw = drag.yaw + dx * 0.005; V3.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch - dy * 0.005));
     } else if (drag.b === 0 && drag.pivot){
       // Alt + drag: circle around the selected object
+      v3Unsnap();
       V3.yaw = drag.yaw + dx * 0.006; V3.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch - dy * 0.006));
       V3.pos.copy(drag.pivot).addScaledVector(v3Dir(), -drag.dist);
     } else if (drag.b === 1 && drag.mm === 'orbit'){
+      v3Unsnap();
       V3.yaw = drag.yaw + dx * 0.006; V3.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch - dy * 0.006));
       const d = v3Dir(), right = new THREE.Vector3(d.y, -d.x, 0).normalize(), up = new THREE.Vector3().crossVectors(right, d), L = drag.local;
       V3.pos.copy(drag.around).addScaledVector(right, -L[0]).addScaledVector(up, -L[1]).addScaledVector(d, -L[2]);
@@ -2087,7 +2168,7 @@ function v3Bind(el){
       V3.pos.copy(drag.pos).addScaledVector(v3Dir(), Math.min(-dy * k, Math.max(0, drag.local[2] - 16)));
     } else if (drag.b === 1){
       const d = v3Dir(), right = new THREE.Vector3(d.y, -d.x, 0).normalize(), up = new THREE.Vector3().crossVectors(right, d);
-      const k = 2.2;
+      const k = drag.panK || 2.2;
       V3.pos.copy(drag.pos).addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
     }
   });
@@ -2119,7 +2200,8 @@ function v3Bind(el){
       if (W.mode === 'group'){ W.groupPlace.yaw = G.yaw; groupHint(); } else v3PlaceHint();
       return;
     }
-    V3.pos.addScaledVector(v3Dir(), (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 600 : 160) * v3HighBoost());
+    const step = V3.flat ? Math.max(160, V3.pos.distanceTo(v3LookGround()) * (e.shiftKey ? 0.3 : 0.12)) : (e.shiftKey ? 600 : 160) * v3HighBoost();
+    V3.pos.addScaledVector(v3Dir(), (e.deltaY < 0 ? 1 : -1) * step);
   }, {passive: false});
   // double-click an object: its window (objwin.js); on nothing: look at what's selected
   el.addEventListener('dblclick', e => {
@@ -2166,6 +2248,12 @@ function v3Bind(el){
     }
     if (e.key === 'Shift') V3.keys.shift = true;
     if (e.key === 'Escape') V3.keys = {};
+    // (the number pad as in Blender: 7 from above, 1 the isometric corners in turn, 5 Flat on and off)
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat){
+      if (e.code === 'Numpad7'){ e.preventDefault(); v3ViewSnap('top'); return; }
+      if (e.code === 'Numpad1'){ e.preventDefault(); v3ViewSnap('corner'); return; }
+      if (e.code === 'Numpad5'){ e.preventDefault(); v3FlatSet(!V3.flat); return; }
+    }
     // (Move/Turn, look at it and set it down are shortcuts you can change: see comfort.js)
     // (Esc with a ramp begun gives the ramp up and keeps the ground tools open; Backspace takes its last point back)
     if (e.key === 'Escape' && V3.landOpen && V3.ramp && V3.ramp.pts.length){ v3RampClear(); return; }
@@ -2976,6 +3064,12 @@ function v3Tools(){
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">💡 Game light</button>
     <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">👁 View ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
+        <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+          <button class="btn sm ${V3.camSnap === 'top' ? 'primary' : ''}" data-v3="camsnap" data-k="top" title="From above, north up (Num 7)">⬒ Top</button>
+          ${[['nw', '◤', 'north-west'], ['ne', '◥', 'north-east'], ['sw', '◣', 'south-west'], ['se', '◢', 'south-east']].map(([k, ic, n]) =>
+            `<button class="btn sm ${V3.camSnap === k ? 'primary' : ''}" data-v3="camsnap" data-k="${k}" title="Isometric, from the ${n}. Again: round to the next (Num 1)">${ic}</button>`).join('')}
+          <button class="btn sm ${V3.camSnap ? '' : 'primary'}" data-v3="camsnap" data-k="free" title="Turn freely again (turning the camera does too)">Free</button></div>
+        <label title="No perspective: far things as big as near ones (Num 5)"><input type="checkbox" id="v3flat" ${V3.flat ? 'checked' : ''}> Flat</label>
         <label title="Lines at the move step (128 when off)"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128}, bright every ${(V3.grid || 128) * 4})</span></label>
         <div class="v3gridrow" style="display:${V3.view.grid ? 'flex' : 'none'};gap:4px;flex-wrap:wrap;margin:2px 0 4px 20px">
           <button class="btn sm" data-v3="gridsel" title="Grid at the selection's base">📍 At the selection</button>
@@ -2989,6 +3083,7 @@ function v3Tools(){
         ${W.ext ? `<label><input type="checkbox" data-v3v="ground" ${V3.view.ground ? 'checked' : ''}> Ground</label>
         <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>
         <label title="The game's clouds, sun, stars and moons"><input type="checkbox" data-v3v="sky" ${V3.view.sky !== false ? 'checked' : ''}> Sky</label>
+        <label title="Off: no haze at all, to see far over the land"><input type="checkbox" data-v3v="fog" ${V3.view.fog !== false ? 'checked' : ''}> Fog</label>
         <label title="How many cells load round you; further is slower"
           style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
           <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
@@ -3019,6 +3114,7 @@ function v3Tools(){
     else if (a === 'pivotmenu'){ V3.pivotOpen = !V3.pivotOpen; V3.snapOpen = false; V3.viewOpen = false; v3Tools(); }
     else if (a === 'show') showToggle();
     else if (a === 'lock') lockToggle();
+    else if (a === 'camsnap') v3ViewSnap(b.dataset.k);
     else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; V3.pivotOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
     else if (a === 'gridturn') v3GridToSel(true);
@@ -3030,12 +3126,15 @@ function v3Tools(){
     V3.view[c.dataset.v3v] = c.checked;
     try { localStorage.setItem('ws-v3view', JSON.stringify(V3.view)); } catch (e) {}
     if (c.dataset.v3v === 'grid' || c.dataset.v3v === 'gridThrough'){ V3.gridFor = null; const row = t.querySelector('.v3gridrow'); if (row) row.style.display = V3.view.grid ? 'flex' : 'none'; }
+    if (c.dataset.v3v === 'fog') v3ApplyLighting();
     v3ApplyView();
   });
+  const vfl = $('#v3flat');
+  if (vfl) vfl.onchange = () => v3FlatSet(vfl.checked);
   const vd = $('#v3dist');
   if (vd){ vd.oninput = () => { $('#v3distv').textContent = V3_DISTS[+vd.value]; }; vd.onchange = () => v3SetDist(+vd.value); }
   const vf = $('#v3fov');
-  if (vf) vf.oninput = () => { V3.fov = +vf.value; $('#v3fovv').textContent = V3.fov + '°'; if (V3.camera){ V3.camera.fov = V3.fov; V3.camera.updateProjectionMatrix(); } try { localStorage.setItem('ws-fov', String(V3.fov)); } catch (e) {} };
+  if (vf) vf.oninput = () => { V3.fov = +vf.value; $('#v3fovv').textContent = V3.fov + '°'; if (V3.camera && !V3.flat){ V3.camera.fov = V3.fov; V3.camera.updateProjectionMatrix(); } try { localStorage.setItem('ws-fov', String(V3.fov)); } catch (e) {} };
   $('#v3grid').onchange = e => { V3.grid = +e.target.value; v3ApplyMode(); v3Tools(); V3.gridFor = null; };
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); v3Tools(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
@@ -3198,7 +3297,9 @@ window.addEventListener('pointerdown', e => {
   V3.lastClick = {el: (t.id ? '#' + t.id : (t.tagName || '?').toLowerCase()) + ' ' + String(t.title || t.textContent || '').trim().slice(0, 40), t: performance.now()};
 }, true);
 function v3LostCheck(){
-  const was = V3.seen, cw = v3CamWorld(), c = W.cells[W.key];
+  // (in Flat the camera stands far back on purpose: what is watched is the middle of the view)
+  const lg = V3.flat ? v3LookGround() : null;
+  const was = V3.seen, cw = lg ? [lg.x + V3.origin[0], lg.y + V3.origin[1], lg.z + V3.origin[2]] : v3CamWorld(), c = W.cells[W.key];
   V3.seen = {key: W.key, home: V3.homeFor, p: cw};
   if (!was || W.ext || !c || !c.refs || !c.refs.length || was.key !== W.key || was.home !== V3.homeFor) return;
   if (Math.hypot(cw[0] - was.p[0], cw[1] - was.p[1], cw[2] - was.p[2]) < 3000) return;
@@ -3209,7 +3310,8 @@ function v3LostCheck(){
   }
   const b = V3.box.b, out = p => [0, 1, 2].some(i => p[i] < b[i] - 6000 || p[i] > b[i + 3] + 6000);
   if (!out(cw) || out(was.p)) return;
-  V3.pos.set(was.p[0] - V3.origin[0], was.p[1] - V3.origin[1], was.p[2] - V3.origin[2]);
+  if (lg) V3.pos.add(new THREE.Vector3(was.p[0] - cw[0], was.p[1] - cw[1], was.p[2] - cw[2]));
+  else V3.pos.set(was.p[0] - V3.origin[0], was.p[1] - V3.origin[1], was.p[2] - V3.origin[2]);
   V3.seen.p = was.p;
   const now = performance.now(), ago = x => x ? ' ' + ((now - x.t) / 1000).toFixed(1) + ' s before' : '';
   const key = V3.lastDown ? V3.lastDown.k : 'none', click = V3.lastClick ? V3.lastClick.el : 'none';
@@ -3254,6 +3356,7 @@ function v3Loop(){
     if (V3.keys.q) V3.pos.z -= sp;
     V3.camera.position.copy(V3.pos);
     V3.camera.lookAt(V3.pos.clone().add(d));
+    v3FlatClip();
     if (typeof phTick === 'function') phTick(dt);          // (physics on: a step of the world; physics.js)
     if (typeof fxTick === 'function') fxTick(dt);          // (flames, smoke and sparks; particles3d.js)
     // (outdoors the sea at 0; an interior with water at its own height, the one being edited in the Sky panel as
@@ -3284,7 +3387,9 @@ function v3Loop(){
     // inside, 815, -2759 read as outdoors, and following it took you to cell 0, -1 first; the user, 2026-10-27)
     if (W.ext && V3.homeFor && V3.homeFor.startsWith('#') && t - v3CellCheck > 600){
       v3CellCheck = t;
-      const [x, y] = v3CamWorld();
+      // (in Flat, the place is the one in the middle of the view: the camera stands cells back from it)
+      const lg = V3.flat ? v3LookGround() : null;
+      const [x, y] = lg ? [lg.x + V3.origin[0], lg.y + V3.origin[1]] : v3CamWorld();
       if (cellKeyAt(x, y) !== W.key || Math.hypot(x - W.cam.x, y - W.cam.y) > CELL){ W.cam.x = x; W.cam.y = y; recentre(); }
       v3Terrain();
     }
