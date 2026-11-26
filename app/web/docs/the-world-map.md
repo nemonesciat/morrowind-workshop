@@ -133,6 +133,15 @@ right. The small tabs at the view's edges (◂ ▸ ▾) fold a side away and bac
 or 3D the whole window: only its buttons and the windows you open stay, floating over it; **⛶** again brings
 everything back.
 
+**✚ Place** in an Object list: a click on a row picks it up, a see-through copy follows the mouse in 3D, and each
+click puts one down (Esc, or the row again, stops). The wheel turns it (Shift: fine), **X** or **Y** + wheel tilts
+it, **Alt** + wheel sizes it, **Backspace** sets it straight; the next keeps the last turn, tilt and size. Tick
+**Lean with the ground** to stand it on the slope, **Random turn** to turn each its own way.
+
+To fine-tune what's selected: the **arrow keys** nudge it over the ground along the grid, the way you look,
+**Page Up**/**Page Down** raise and lower it, **,** and **.** turn it by the snap angle; **Shift** goes further. A run
+of nudges is one Undo. All of these keys can be changed under **Ctrl+/**.
+
 ## Your changes
 
 - On the map, your mod's changes are marked: **green** new, **gold** changed, a **red ✕** where you took something

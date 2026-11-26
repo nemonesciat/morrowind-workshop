@@ -892,6 +892,12 @@ function v3GhostMove(e){
   G.hit = h.world;
   G.g.position.set(h.point.x, h.point.y, h.point.z - G.minZ);
   G.g.rotation.set(0, 0, -G.yaw);
+  // (placing one thing: the stamp's tilt and size, and the ground's slope with Lean; stamp.js)
+  const ST = W.mode === 'place' && typeof stampNow === 'function' ? stampNow(h) : null;
+  G.rx = ST ? ST.rx : 0; G.ry = ST ? ST.ry : 0; G.s = ST ? ST.s : 1;
+  G.g.rotation.set(-G.rx, -G.ry, -G.yaw, 'XYZ');
+  G.g.scale.setScalar(G.s);
+  G.g.position.z = h.point.z - G.minZ * G.s;
   // (a building from the prefab workbench or Plan a prefab: shown as it will stand, on the lowest ground under its
   // ground floor, so the preview on the land is what the click puts down; prefabplan.js pfGroundZ)
   const P = W.groupPlace;
@@ -2306,6 +2312,7 @@ function v3Bind(el){
   el.addEventListener('wheel', e => {
     e.preventDefault();
     if ((W.mode === 'place' || W.mode === 'group') && V3.ghost){
+      if (typeof stampWheel === 'function' && stampWheel(e)) return;      // (X/Y + wheel tilts, Alt + wheel sizes: stamp.js)
       // placing: the wheel turns the preview (Shift: fine steps)
       const G = V3.ghost, step = (e.shiftKey ? 1 : 15) * Math.PI / 180;
       G.yaw = ((G.yaw + (e.deltaY < 0 ? step : -step)) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
@@ -2452,7 +2459,10 @@ function v3Click(e){
     const G = W.mode === 'place' && V3.ghost;
     const h = G && G.hit ? {world: G.hit} : v3Pick(e, true);
     if (!h || !h.world) return toast('Click on the ground, a floor or an object.');
-    if (W.mode === 'place') v3PlaceAt(W.placeId, W.placeName, h.world, G ? G.yaw : undefined);
+    if (W.mode === 'place'){
+      v3PlaceAt(W.placeId, W.placeName, h.world, G ? G.yaw : undefined, G ? {rx: G.rx || 0, ry: G.ry || 0, s: G.s || 1} : null);
+      if (typeof stampPlaced === 'function') stampPlaced();
+    }
     else { setMode(null); playHere({cell: cellKeyAt(h.world[0], h.world[1]), x: h.world[0], y: h.world[1], z: h.world[2] + 60, rz: 0}); }
     return;
   }
@@ -2515,7 +2525,7 @@ function v3BoxEnd(D, e){
 function v3PlaceHint(){
   if (W.mode !== 'place') return;
   const deg = V3.ghost ? Math.round(V3.ghost.yaw * 180 / Math.PI) : 0;
-  setBanner(`Placing <b>${esc(W.placeName)}</b>: point where it should go, <b>wheel</b> to turn it (${deg}°, Shift for fine steps), <b>click</b> to place. Esc to stop.`, 'place3d');
+  setBanner(`Placing <b>${esc(W.placeName)}</b>: <b>click</b> to place, <b>wheel</b> turns it (${deg}°, Shift: fine)${typeof stampHint === 'function' ? stampHint() : ''}. Esc to stop.`, 'place3d');
 }
 function v3Hover(e){
   if (!V3.on || V3.tc.dragging) return;
@@ -2549,13 +2559,14 @@ function v3Focus(r){
   else { V3.pos.set(r.p[0] - V3.origin[0], r.p[1] - V3.origin[1], r.p[2] - V3.origin[2]).addScaledVector(v3Dir(), -500); }
 }
 
-async function v3PlaceAt(id, name, world, yaw){
+async function v3PlaceAt(id, name, world, yaw, opt){
   if (!await needProject()) return;
   const ck = cellKeyAt(world[0], world[1]);
   // without a preview: face the camera, turned to whole 15° steps
   if (yaw === undefined) yaw = Math.round((V3.yaw + Math.PI) / (Math.PI / 12)) * (Math.PI / 12);
   if (typeof rememberRecent === 'function') rememberRecent(id, name);
-  const m = await refAction('/api/ref/place', {cell: ck, id, p: [world[0], world[1], world[2], 0, 0, yaw], surface: true}, ck, null, 'Placed ' + (name || id));
+  const o = opt || {};
+  const m = await refAction('/api/ref/place', {cell: ck, id, p: [world[0], world[1], world[2], o.rx || 0, o.ry || 0, yaw], s: o.s || 1, surface: true}, ck, null, 'Placed ' + (name || id));
   if (m && m.placed) selectRef(ck, m.placed);
 }
 

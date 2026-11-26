@@ -61,8 +61,11 @@ function olRender(it){
   const cols = [['id', 'ID'], ['name', 'Name'], ['uses', 'Used'], ['plugin', 'Mod']];
   el.innerHTML = `<div class="ol">
     <div class="ol-types">${OL_TYPES.map(([k, v]) => `<button data-olt="${k}" class="${st.type === k ? 'on' : ''}">${v}</button>`).join('')}</div>
-    <div class="ol-bar"><input class="inp" data-olq placeholder="Filter…" value="${esc(st.q || '')}">
+    <div class="ol-bar"><button class="btn sm ${STAMP.on ? 'primary' : ''}" data-olstamp title="On: a click on a row picks it up to place, one click each; off: drag a row, or double-click it">✚ Place</button>
+      <input class="inp" data-olq placeholder="Filter…" value="${esc(st.q || '')}">
       <label title="Only what your mod adds"><input type="checkbox" data-olmine ${st.mine ? 'checked' : ''}> Mine</label><span class="n" data-oln></span></div>
+    ${STAMP.on ? `<div class="ol-bar"><label title="Stand it on the slope of the ground"><input type="checkbox" data-olstampo="lean" ${STAMP.lean ? 'checked' : ''}> Lean with the ground</label>
+      <label title="Each one turned its own way"><input type="checkbox" data-olstampo="rand" ${STAMP.rand ? 'checked' : ''}> Random turn</label></div>` : ''}
     <div class="ol-head">${cols.map(([k, v]) => `<span data-ols="${k}" class="${(st.sort || '').replace('-', '') === k ? 'on' : ''}" title="Sort by ${v.toLowerCase()}">${v}${st.sort === k ? ' ▴' : st.sort === '-' + k ? ' ▾' : ''}</span>`).join('')}</div>
     <div class="ol-rows" data-olrows></div></div>`;
   el.querySelectorAll('[data-olt]').forEach(b => b.onclick = () => { st.type = b.dataset.olt; olKeep(it); PNL.retitle('world', it.id); olRender(it); });
@@ -71,6 +74,12 @@ function olRender(it){
     st.sort = k === 'uses' ? 'uses' : st.sort === k ? '-' + k : k;
     olKeep(it); olRender(it);
   });
+  el.querySelector('[data-olstamp]').onclick = () => {
+    STAMP.on = !STAMP.on; stampSave();
+    if (!STAMP.on && W.mode === 'place') setMode(null);
+    for (const x of PNL.all('world', 'olist')) olRender(x);
+  };
+  el.querySelectorAll('[data-olstampo]').forEach(c => c.onchange = () => { STAMP[c.dataset.olstampo] = c.checked; stampSave(); stampRedraw(); });
   const q = el.querySelector('[data-olq]');
   q.oninput = () => { st.q = q.value; olKeep(it); clearTimeout(it.olT); it.olT = setTimeout(() => olLoad(it, true), 220); };
   el.querySelector('[data-olmine]').onchange = e => { st.mine = e.target.checked; olKeep(it); olLoad(it, true); };
@@ -115,14 +124,19 @@ function olBind(it, rows){
   rows.querySelectorAll('[data-olr]:not([data-b])').forEach(row => {
     row.dataset.b = '1';
     const x = it.olRows[+row.dataset.olr];
-    row.onclick = () => { rows.querySelectorAll('.ol-r.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); };
+    row.onclick = () => {
+      const was = row.classList.contains('on');
+      rows.querySelectorAll('.ol-r.on').forEach(r => r.classList.remove('on')); row.classList.add('on');
+      // (✚ Place on: the click picks it up; again on the same row puts it down)
+      if (STAMP.on){ if (was && W.mode === 'place' && W.placeId === x.id){ setMode(null); row.classList.remove('on'); } else olPlace(x); }
+    };
     row.ondblclick = () => olPlace(x);
     row.ondragstart = e => {
       e.dataTransfer.setData('text/x-mw-id', x.id); e.dataTransfer.setData('text/x-mw-name', x.name || x.id);
       e.dataTransfer.effectAllowed = 'copy';
     };
     row.oncontextmenu = e => {
-      e.preventDefault(); row.onclick();
+      e.preventDefault(); rows.querySelectorAll('.ol-r.on').forEach(r => r.classList.remove('on')); row.classList.add('on');
       pnlMenu(row, [
         {label: '✚ Place it', act: () => olPlace(x)},
         {label: '📄 Open its record', act: () => openRecord(x.i)},
