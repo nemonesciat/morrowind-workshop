@@ -4350,7 +4350,7 @@ async function selAction(a){
   if (a === 'dress'){ if (!await needProject()) return; return dressPiece(W.sel.cell, sel.k, sel.name || sel.id); }
   if (a === 'addone'){ if (!await needProject()) return; return addOne(W.sel.cell, sel.k, sel.name || sel.id); }
   if (a === 'books'){ if (!await needProject()) return; return dressPiece(W.sel.cell, sel.k, sel.name || sel.id, true); }
-  if (a === 'talk') return openCharacterDialogue(sel.id);
+  if (a === 'talk') return (sel.type === 'NPC_' && typeof pcOpen === 'function') ? pcOpen(sel.id, 'talk') : openCharacterDialogue(sel.id);   // (a person: their card's Talk, on the map)
   if (a === 'char') return cOpen(sel.id);
   if (a === 'brush') return brAddTo(sel.id, sel.name).catch(e => toast(e.message, true));
   if (a === 'retex'){ if (!await needProject()) return; return libRetexture(sel).catch(e => toast(e.message, true)); }

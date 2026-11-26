@@ -81,8 +81,13 @@ def card(db, npc_id):
             s = tp.get('said') or {}
             if tp.get('key') == 'greeting':
                 says = s.get('text') or ''
-            elif s.get('text'):
-                topics.append({'topic': tp.get('id') or tp.get('key'), 'text': s['text']})
+            elif s.get('text') and tp.get('type') == 0:
+                # (what they answer now for each topic they know, wherever the line comes from: their own, their
+                #  faction's, class's, race's, the place's, or everyone's)
+                frm = ('theirs' if s.get('actor') else 'faction' if s.get('faction') else 'class' if s.get('cls')
+                       else 'race' if s.get('race') else 'place' if s.get('cell') else 'everyone')
+                topics.append({'topic': tp.get('id') or tp.get('key'), 'key': tp.get('key'), 'text': s['text'],
+                               'from': frm, 'n': tp.get('n') or 1})
     except Exception as e:
         print('person card: what they say:', e)
     lines, quests = [], []
@@ -106,7 +111,7 @@ def card(db, npc_id):
                 pass
     except Exception as e:
         print('person card: lines:', e)
-    o.update({'places': places, 'copies': len(places), 'says': says, 'answers': topics[:12], 'lines': lines, 'quests': quests})
+    o.update({'places': places, 'copies': len(places), 'says': says, 'answers': topics, 'lines': lines, 'quests': quests})
     return o
 
 

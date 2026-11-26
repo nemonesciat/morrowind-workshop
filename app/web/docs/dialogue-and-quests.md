@@ -151,11 +151,13 @@ Make and grow a quest where it happens, in the 3D view.
 
 ## A person's card
 
-Right-click a person in the 3D view for **💬 Say something…**, **👤 About…**, **🎒 Gear and wares**, **🪙 Trade
+Right-click a person in the 3D view for **💬 Dialogue**, **💬 Say something…**, **👤 About…**, **🎒 Gear and wares**, **🪙 Trade
 and services** and **🧭 Travel**. Each one opens the person's card under the 3D view, at its own tab.
 **Dialogue page** and **Character page** at the top open the full pages.
 
-- **💬 Talk:** what they say now, then your own lines by kind. **Say something** adds one:
+- **💬 Talk:** what they say now, their own lines by kind, then **They answer**: every topic they know, with the
+  line they'd say and where it comes from (their class, race, this place, everyone). ＋ gives them their own line on
+  that topic; ↗ opens the topic on the Dialogue page. **Say something** adds a line:
   - 👋 a greeting, 💬 a topic (made if it's new, and taught to the player), or 👥 a rumour;
   - **When:** always, once, at a quest's stage, if the player carries something, or between two hours;
   - **Two answers:** the player picks one, and they reply to each, then nothing, goodbye, or give an item.

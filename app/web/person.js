@@ -23,7 +23,7 @@ const PCD = {kind: null, id: null, d: null, tab: 'talk', form: {kind: 'topic', w
     .pck .pc-k{font-size:11px;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin:6px 0 3px}
     .pck .pc-says{font-family:var(--serif,inherit);font-style:italic;color:var(--text);margin:0 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     .pck .pc-ln{display:flex;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid var(--line);font-size:12.5px}
-    .pck .pc-ln .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pck .pc-ln .pc-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .pck .pc-chip{font-size:11px;padding:0 7px;border:1px solid var(--line2);border-radius:9px;color:var(--muted);white-space:nowrap;cursor:pointer}
     .pck .pc-chip.on{border-color:var(--gold);color:var(--gold2)}
     .pck .pc-box{border:1px solid var(--line2);border-radius:8px;padding:8px 10px;background:var(--panel2,var(--panel))}
@@ -135,10 +135,21 @@ function pcTalkPane(){
   const list = groups.map(([k, e, t]) => { const ls = d.lines.filter(l => l.kind === k); return ls.length ? `<div class="pc-k">${t}</div>` + ls.map(l =>
     `<div class="pc-ln" title="${esc(l.text)}"><span>${e}</span><span class="pc-t">${k === 'topic' ? `<b>${esc(l.topic)}:</b> ` : ''}${esc(l.text)}</span>${l.when ? `<span class="pc-chip" style="cursor:default">${esc(l.when)}</span>` : ''}
       ${l.mine ? `<button class="btn sm" data-pcunsay="${esc(l.tkey)}|${esc(l.inam)}" title="Take this line out">✕</button>` : ''}</div>`).join('') : ''; }).join('')
-    || '<div class="msg">No lines of their own yet: the game\'s general ones apply.</div>';
+    || '<div class="msg">None of their own yet.</div>';
+  // (every topic they answer now, wherever the line comes from; ＋ gives them their own line on it)
+  const FROM = {faction: 'their faction', 'class': d.cls || 'their class', race: d.race || 'their race', place: 'this place', everyone: 'everyone'};
+  const q = (PCD.tfind || '').toLowerCase();
+  const general = (d.answers || []).filter(a => a.from !== 'theirs');
+  const shown = general.filter(a => !q || a.topic.toLowerCase().includes(q) || a.text.toLowerCase().includes(q));
+  const answers = general.length ? `<div class="pc-row" style="margin:10px 0 3px"><span class="pc-k" style="margin:0;flex:1">They answer (${general.length})</span>
+      <input class="inp" id="pc-tfind" value="${esc(PCD.tfind || '')}" placeholder="Find a topic" style="width:130px"></div>` +
+    shown.map(a => `<div class="pc-ln" title="${esc(a.text)}"><span>💬</span><span class="pc-t"><b>${esc(a.topic)}:</b> ${esc(a.text)}</span>
+      <span class="pc-chip" style="cursor:default" title="The line said comes from the game's lines for ${esc(FROM[a.from] || a.from)}">${esc(FROM[a.from] || a.from)}</span>
+      <button class="btn sm" data-pcown="${esc(a.topic)}" title="Give them a line of their own on this topic">＋</button>
+      <button class="btn sm" data-pctopic="${esc(a.key)}" title="Every line of this topic, on the Dialogue page">↗</button></div>`).join('') : '';
   const ans = f.answers;
   return `${d.says ? `<p class="pc-says" title="What they greet the player with now">“${esc(d.says)}”</p>` : ''}
-  <div class="pc-cols"><div>${list}</div>
+  <div class="pc-cols"><div><div class="pc-k" style="margin-top:0">Their own lines</div>${list}${answers}</div>
   <div class="pc-box"><div class="pc-row"><b>Say something</b><span style="flex:1"></span>
       ${[['greeting', '👋 Greeting'], ['topic', '💬 Topic'], ['rumour', '👥 Rumour']].map(([k, t]) => `<button class="btn sm ${f.kind === k ? 'primary' : ''}" data-pckind="${k}">${t}</button>`).join('')}</div>
     ${f.kind === 'topic' ? `<div class="pc-row"><input class="inp" id="pcf-topic" value="${esc(f.topic || '')}" placeholder="the topic the player asks about" list="pcf-dl-topics" style="flex:1">
@@ -179,6 +190,13 @@ function pcTalkBind(b){
     try { await post('/api/person/unsay', {topic, inam}); afterChange(); toast('Line taken out: Undo puts it back.'); await pcLoad(); } catch (e){ toast(e.message, true); }
   });
   b.querySelectorAll('[data-pckind]').forEach(x => x.onclick = () => { pcTalkRead(); PCD.form.kind = x.dataset.pckind; pcRender(); });
+  const tf = b.querySelector('#pc-tfind');
+  if (tf) tf.oninput = () => { pcTalkRead(); PCD.tfind = tf.value; pcRender(); const n = $('#pc-tfind'); if (n){ n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+  b.querySelectorAll('[data-pcown]').forEach(x => x.onclick = () => {
+    pcTalkRead(); Object.assign(PCD.form, {kind: 'topic', topic: x.dataset.pcown}); pcRender();
+    const t = $('#pcf-text'); if (t){ t.scrollIntoView({block: 'nearest'}); t.focus(); }
+  });
+  b.querySelectorAll('[data-pctopic]').forEach(x => x.onclick = () => { showView('dialog'); if (typeof dOpen === 'function') dOpen('topic', x.dataset.pctopic); });
   b.querySelectorAll('[data-pcwhen]').forEach(x => x.onclick = () => {
     pcTalkRead(); const w = PCD.form.when, k = x.dataset.pcwhen;
     if (k === 'always'){ PCD.form.when = {}; return pcRender(); }
