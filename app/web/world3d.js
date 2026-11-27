@@ -2290,6 +2290,23 @@ function v3Bind(el){
       V3.pos.copy(drag.pos).addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
     }
   });
+  // (Classic editor: Shift held and the mouse moved with no button down circles the view round what's selected, as
+  // the old editor does; where it stands in the view is kept, so nothing jumps. A Nexus comment, 2026-11-26)
+  el.addEventListener('mousemove', e => {
+    if (drag || e.buttons || !e.shiftKey || !V3.on || typeof cfMouse !== 'function' || cfMouse() !== 'classic' || W.mode || V3.grab){ V3.shOrb = null; return; }
+    const T = THREE;
+    if (!V3.shOrb){
+      const pv = v3OrbitPivot(e), d = v3Dir(), right = new T.Vector3(d.y, -d.x, 0).normalize(), up = new T.Vector3().crossVectors(right, d), off = pv.clone().sub(V3.pos);
+      V3.shOrb = {x: e.clientX, y: e.clientY, yaw: V3.yaw, pitch: V3.pitch, around: pv, local: [off.dot(right), off.dot(up), off.dot(d)]};
+      return;
+    }
+    const O = V3.shOrb, dx = e.clientX - O.x, dy = e.clientY - O.y;
+    v3Unsnap();
+    V3.yaw = O.yaw + dx * 0.006; V3.pitch = Math.max(-1.5, Math.min(1.5, O.pitch - dy * 0.006));
+    const d = v3Dir(), right = new T.Vector3(d.y, -d.x, 0).normalize(), up = new T.Vector3().crossVectors(right, d), L = O.local;
+    V3.pos.copy(O.around).addScaledVector(right, -L[0]).addScaledVector(up, -L[1]).addScaledVector(d, -L[2]);
+  });
+  window.addEventListener('keyup', e => { if (e.key === 'Shift') V3.shOrb = null; });
   window.addEventListener('mouseup', e => {
     const D = drag; drag = null;
     if (D && D.classic && V3.grab && V3.grab.classic){ v3GrabDone(); return; }      // (Classic editor: let go, set down)

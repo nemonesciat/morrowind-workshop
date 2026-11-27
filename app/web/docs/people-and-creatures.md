@@ -11,8 +11,8 @@ dressed the way the game's own people of their race and class are:
 | Role | What they do |
 |---|---|
 | Townsperson | Wanders about and talks using the normal topics for their race and class. |
-| Quest character | Stays near where you put them and is **essential** (can't be killed), ready for your quest dialogue. |
-| Merchant | Stays put and trades; pick what they sell. |
+| Quest character | Stays near where you put them and is **essential** (the game warns that a quest can't go on if they die), ready for your quest dialogue. |
+| Merchant | Stays put and trades. **Sells** has the game's kinds (publican, smith, pawnbroker, healer and more), each with its class. **＋ Your own…** lets you tick what they deal in and, with a name, keep it on the list. **🛏 Rents beds** (ticked for a publican) lets them rent out the beds where they stand through the **Beds** topic, as at the game's inns: the player pays, and sleeping there is no crime until the next day. For beds put down later, right-click one › **🛏 Rent out beds…**. |
 | Guard | Wears the guard kit for their race and reacts to crimes. |
 
 Give them a name, race, sex, class, level and faction, and say where to place them (the World map's view, the

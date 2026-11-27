@@ -75,7 +75,7 @@ const CF_ACT = [
   {id: 'selall', label: 'Select everything you can see', keys: ['Ctrl+A'], world: true, run: () => cfSelectAll()},
   {id: 'samekind', label: 'Select all like the selected one', keys: [], world: true, run: () => { const r = cfSelRef(); if (!r) return false; cfSelectLike(r); }},
   {id: 'clearsel', label: 'Clear the selection', keys: [], world: true, run: () => { W.sel = null; W.multi.clear(); renderWside(); drawMap(); if (V3.on) v3Refresh(); }},
-  {id: 'focus', label: 'Look at what\'s selected', keys: ['F'], world: true, run: () => {
+  {id: 'focus', label: 'Look at what\'s selected', keys: ['F', 'T'], world: true, run: () => {
     const r = cfSelRef(); if (!r) return false;
     if (V3.on){ const o = V3.objs.get(W.sel.cell + '|' + W.sel.k); if (o) v3FocusObj(o.g); } else centerOn(r);
   }},
@@ -129,7 +129,9 @@ const CF_FIXED = [
 ];
 // (with Blender's controls chosen, the keys an action has there unless you gave it your own: G and R move and turn
 // with the mouse, and the handles keep 1 and 2)
-const cfKeysOf = a => CF.user[a.id] || (a.blender && cfMouse() === 'blender' ? a.blender : a.keys);
+// (a key the user gave another action is theirs: a default that is the same key steps aside, T for Look at, 2026-11-26)
+const cfKeysOf = a => CF.user[a.id] || (a.blender && cfMouse() === 'blender' ? a.blender : a.keys)
+  .filter(k => !Object.entries(CF.user).some(([id, ks]) => id !== a.id && Array.isArray(ks) && ks.includes(k)));
 // The mouse in the 3D views: '' as the Workshop has it (the middle button slides the view), 'blender' as Blender has
 // it (the middle button circles, with Shift it slides, with Ctrl it moves in and out). Chosen in the Keyboard
 // shortcuts window; world3d.js and bench.js ask here.
@@ -140,10 +142,27 @@ function cfMouse(){
 // (the 3D view's own list of controls says what the middle button does now)
 function cfMouseHelp(){ document.querySelectorAll('.v3help-mid').forEach(x => { x.textContent = cfMouse() === 'blender' ? 'circle (Shift: slide, Ctrl: in and out)' : 'slide'; }); }
 setTimeout(cfMouseHelp, 0);
+// (the mouse setting, picked from Home's Keys, Settings or the shortcuts window: the same three buttons everywhere)
+const CF_MICE = [['', 'Workshop', 'Right-drag looks around, middle-drag slides, Alt + drag circles what' + "'" + 's selected'],
+  ['blender', 'Blender', 'Middle-drag circles, Shift + middle-drag slides, Ctrl + middle-drag moves in and out; G and R move and turn with the mouse'],
+  ['classic', 'Classic editor', 'Drag the selected thing to slide it, Z + drag to raise it, right-drag to turn it, Shift + move the mouse to circle it, T to look at it']];
+function cfMouseSet(v){
+  CF.mouse = ['blender', 'classic'].includes(v) ? v : '';
+  try { localStorage.setItem('ws-mouse', CF.mouse); } catch (x){}
+  cfMouseHelp();
+  document.querySelectorAll('.cf-mice [data-mouse]').forEach(x => x.classList.toggle('on', x.dataset.mouse === CF.mouse));
+  document.dispatchEvent(new Event('ws-mouse'));
+}
+function cfMousePicker(){
+  return `<div class="home-ktabs cf-mice" title="How the mouse works in the 3D view">${CF_MICE.map(([v, t, tip]) =>
+    `<button data-mouse="${v}" class="${cfMouse() === v ? 'on' : ''}" title="${esc(tip)}">${t}</button>`).join('')}</div>`;
+}
+document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-mouse]'); if (b) cfMouseSet(b.dataset.mouse); });
 // (Classic editor: drag what's selected to slide it over the ground, Z + drag to raise or lower it, right-drag it to
 // turn it, X or Y + right-drag to tilt it; a tester used to the old editor, 2026-11-26)
 const CF_CLASSIC = [['Drag the selected', '3D: slide it over the ground'], ['Z + drag the selected', '3D: raise or lower it'],
-                    ['Right-drag the selected', '3D: turn it'], ['X or Y + right-drag the selected', '3D: tilt it']];
+                    ['Right-drag the selected', '3D: turn it'], ['X or Y + right-drag the selected', '3D: tilt it'],
+                    ['Shift + move the mouse', '3D: circle around what\'s selected']];
 const CF_BLENDER = [['Middle-drag', '3D: circle around what\'s selected, or what\'s under the mouse'], ['Shift + middle-drag', '3D: slide the view'],
                     ['Ctrl + middle-drag', '3D: move in and out (slower near things)']];
 
@@ -202,7 +221,7 @@ function cfKeysModal(){
       <table class="cf-keys" style="width:100%;border-collapse:collapse">${(cfMouse() === 'blender' ? CF_FIXED.flatMap(r => r[0] === 'Middle-drag' ? CF_BLENDER : [r]) : cfMouse() === 'classic' ? CF_CLASSIC.concat(CF_FIXED) : CF_FIXED).map(([k, t]) => `<tr><td>${esc(t)}</td><td><kbd class="cf">${esc(k)}</kbd></td></tr>`).join('')}</table>
       <div class="foot"><button class="btn" id="cf-kreset">Back to the usual keys</button><button class="btn primary" id="cf-kclose">Done</button></div></div>`;
     bg.querySelector('#cf-kclose').onclick = close;
-    bg.querySelector('#cf-mouse').onchange = e => { CF.mouse = ['blender', 'classic'].includes(e.target.value) ? e.target.value : ''; try { localStorage.setItem('ws-mouse', CF.mouse); } catch (x){} cfMouseHelp(); draw(); };
+    bg.querySelector('#cf-mouse').onchange = e => { cfMouseSet(e.target.value); draw(); };
     bg.querySelector('#cf-kreset').onclick = () => { CF.user = {}; cfSaveKeys(); draw(); toast('Shortcuts are back to the usual keys.'); };
     bg.querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => {
       const [id, k] = b.dataset.kdel.split('|'), a = CF_ACT.find(x => x.id === id);
@@ -332,6 +351,7 @@ function cfMenuAt(e, hit, at, locked, opt){
     items.push({label: '⌖ Look at it', act: () => cfRun('focus')});
     if (typeof owOpen === 'function') items.push({label: '🗂 Its card', title: 'Everything about it in one card: details, what it does, its looks; under the view or ⧉ in a window', act: () => owOpen(ck, r.k)});
     items.push({label: '📌 Pin it in its own panel', act: () => wpPin(ck, r)});
+    if (r.type === 'ACTI' && /bed/i.test(r.id || '')) items.push({label: '🛏 Rent out beds…', title: "A person here rents the beds in this place through the Beds topic, as at the game's inns", act: () => cfRentModal(ck)});
     // (its own page to work on it in, when its kind has one: Browse's record is a finder, not a workbench)
     const tool_ = typeof otTool === 'function' && r.ri != null ? otTool(r.type) : null;
     if (tool_) items.push({label: '✎ Edit it in ' + tool_.label, act: () => openTool(r.ri, r.type, r.id)});
@@ -719,3 +739,30 @@ function cfNoFill(root){
 cfNoFill(document.documentElement);
 new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) cfNoFill(n); })
   .observe(document.documentElement, {childList: true, subtree: true});
+
+
+// ---- 🛏 a person here rents out this place's beds (person.rent_beds: the Beds topic, a day's ownership)
+function cfRentModal(ck){
+  const c = W.cells[ck], ppl = c ? c.refs.filter(x => x.type === 'NPC_') : [];
+  if (!ppl.length) return toast('Put the person who rents them in this place first.', true);
+  document.querySelectorAll('#rent-bg').forEach(x => x.remove());
+  const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.id = 'rent-bg';
+  const seen = new Set(), who = ppl.filter(x => !seen.has(x.id.toLowerCase()) && seen.add(x.id.toLowerCase()));
+  bg.innerHTML = `<div class="modal" style="width:min(420px,94vw)"><h2>🛏 Rent out beds</h2>
+    <div class="frow"><label>Who</label><select class="inp" id="rent-who">${who.map(x => `<option value="${esc(x.id)}">${esc(x.name || x.id)}</option>`).join('')}</select>
+      <label>Price</label><div><input class="inp" id="rent-gold" type="number" min="1" value="10" style="width:80px"> gold a day</div></div>
+    <p class="msg">Every bed in this place becomes theirs to rent. Asking again changes the price.</p>
+    <div class="foot"><button class="btn" id="rent-no">Cancel</button><button class="btn primary" id="rent-go">Rent them out</button></div></div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  $('#rent-no').onclick = close;
+  $('#rent-go').onclick = async () => {
+    const nm = optTextOf('#rent-who');
+    try {
+      const r = await post('/api/person/rent', {who: $('#rent-who').value, price: +$('#rent-gold').value || 10, cell: ck});
+      close(); toast(r.beds ? `${r.beds} bed${r.beds > 1 ? 's' : ''} for rent from ${nm}.` : 'No beds here the game can sleep in.');
+      if (typeof refreshAfterEdits === 'function') refreshAfterEdits();
+    } catch (e){ toast(e.message, true); }
+  };
+}
+function optTextOf(sel){ const s = $(sel); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; }

@@ -27,7 +27,7 @@ the place. **+ −** at the bottom right zoom.
 | Wheel | Forward and back |
 | Middle-drag | Slide |
 | Alt+drag | Circle round the selection |
-| F | Look at what's selected |
+| F or T | Look at what's selected |
 
 **?** in the 3D toolbar (or the **⌨ 3D controls** panel) lists every control. Used to Blender? **Ctrl+/** has
 **3D controls: Blender**: middle-drag circles, Shift+middle-drag slides, Ctrl+middle-drag moves in and out, and **G**
@@ -37,6 +37,10 @@ Esc puts it back). Without that choice, give those two a key of your own there.
 Used to the old editor? **3D controls: Classic editor** there: drag what's selected to slide it over the ground,
 **Z** + drag to raise or lower it, right-drag it to turn it (**X** or **Y** + right-drag to tilt it). A drag on
 something not selected yet picks it up; a click still selects and a right-click still opens the menu.
+Hold **Shift** and move the mouse to circle around what's selected.
+
+The mouse setting is also on Home (under Keys) and in **Settings › Mouse in the 3D view**: Workshop, Blender or
+Classic editor, changed with one click.
 
 ## Selecting
 

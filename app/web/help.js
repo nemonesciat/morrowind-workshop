@@ -235,6 +235,7 @@ function homeKeysHtml(){
   return `<div class="home-ktabs">${[['any', 'Everywhere'], ['world', 'World map'], ['v3', '3D view']].map(([k, t]) =>
       `<button class="${HOME_KTAB === k ? 'on' : ''}" data-ktab="${k}">${t}</button>`).join('')}</div>
     <div class="home-keys">${rows.map(([k, t]) => `<kbd>${esc(k)}</kbd><span>${esc(t)}</span>`).join('')}</div>
+    <div class="home-mouse"><span class="msg">Mouse</span>${typeof cfMousePicker === 'function' ? cfMousePicker() : ''}</div>
     <button class="btn sm home-allkeys" data-home="keys">All shortcuts, and change them…</button>`;
 }
 const HOME_KINDS = {CELL: 'places', NPC_: 'people', CREA: 'creatures', DIAL: 'topics', INFO: 'lines', SCPT: 'scripts', LAND: 'ground', BOOK: 'books',
@@ -418,7 +419,8 @@ function renderGuide(){
     $('#home-tiptext').textContent = tip.t; $('#home-showme').hidden = !(tip.at || tip.go || tip.run); });
   $('#home-showme').onclick = homeTipShow;
   const kb = $('#home-keybox');
-  kb.addEventListener('click', e => { if (e.target.closest('[data-home="keys"]')) return cfKeysModal(); const t = e.target.closest('[data-ktab]'); if (!t) return; HOME_KTAB = t.dataset.ktab; kb.innerHTML = '<h3>Keys</h3>' + homeKeysHtml(); });
+  if (!window.homeMouseL) window.homeMouseL = document.addEventListener('ws-mouse', () => { const k = $('#home-keybox'); if (k) k.innerHTML = '<h3>Keys</h3>' + homeKeysHtml(); }) || true;
+  kb.addEventListener('click', e => { if (e.target.closest('[data-mouse]')) return; if (e.target.closest('[data-home="keys"]')) return cfKeysModal(); const t = e.target.closest('[data-ktab]'); if (!t) return; HOME_KTAB = t.dataset.ktab; kb.innerHTML = '<h3>Keys</h3>' + homeKeysHtml(); });
   homeFill();
   const ht = w.querySelector('.home-tours');
   if (ht) ht.querySelector('summary [data-tour]')?.addEventListener('click', e => e.preventDefault());
@@ -530,6 +532,9 @@ async function renderSettings(){
         <span><span class="msg">${fmtN(Math.round(b.size / 1024))} KB</span> <button class="btn sm" data-restore="${esc(b.file)}">Restore</button></span></div>`).join('')
         || '<div class="msg">None yet: the first is made a few minutes after you start working on it.</div>'}</div>` : '<p class="msg">Open a mod to see its backups.</p>'}
     <div class="actions"><button class="btn sm" data-open="backups">Open the backups folder</button></div></section>
+
+  <section class="card setsec"><h3>Mouse in the 3D view</h3>
+    ${typeof cfMousePicker === 'function' ? cfMousePicker() : ''}<p class="msg" style="margin-top:6px">Hover one to see what it does. You can change it any time.</p></section>
 
   <section class="card setsec"><h3>Starting up</h3>
     <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="st-guide" ${homeStart() ? 'checked' : ''}> Open on the Home page (unticked: on Browse). Click the logo at the top left to go Home any time.</label></section>

@@ -2442,7 +2442,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(mwscript.check(db, body.get('text') or '', body.get('id') or ''))
                 if u.path == '/api/script/save':
                     return self._json(mwscript.save(db, body.get('id'), body.get('text') or '', bool(body.get('create'))))
-                if u.path in ('/api/person/save', '/api/person/say', '/api/person/unsay', '/api/person/job', '/api/person/contents/save'):
+                if u.path in ('/api/person/save', '/api/person/say', '/api/person/unsay', '/api/person/job', '/api/person/contents/save', '/api/person/rent'):
                     # the person card: wares, services, travel; a line in plain terms; a whole job; a container's
                     # contents (each one Undo)
                     import person
@@ -2452,6 +2452,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(person.save(db, body['id'], body.get('change') or {}))
                     if u.path == '/api/person/say':
                         return self._json(person.say_line(db, body))
+                    if u.path == '/api/person/rent':
+                        return self._json(person.rent_beds(db, body))
                     if u.path == '/api/person/unsay':
                         return self._json(person.remove_line(db, body['topic'], body['inam']))
                     return self._json(person.job(db, body))

@@ -301,6 +301,7 @@ textarea.inp.code{font:12.5px/1.5 var(--mono);min-height:260px;white-space:pre}
 .home-kinds{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted);margin-bottom:10px}
 .home-kinds b{color:var(--text);font-weight:600}
 .home-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.home-mouse{display:flex;align-items:center;gap:8px;margin-top:8px}.home-mouse .home-ktabs{margin:0}
 .home-ktabs{display:flex;gap:2px;margin:-2px 0 8px;border-bottom:1px solid var(--line)}
 .home-ktabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);font:inherit;font-size:12px;padding:3px 8px 5px;cursor:pointer}
 .home-ktabs button.on{color:var(--gold2);border-bottom-color:var(--gold)}
@@ -4629,7 +4630,7 @@ async function showModel(box, query, scope){
 const CR = {opts: null, kind: null, items: [], idEdited: false};
 const ROLE_INFO = {
   townsperson: ['Townsperson', 'Wanders around, talks using the normal topics for their race and class.', 'Commoner'],
-  quest: ['Quest character', 'Stays near where you put them and is essential (can\'t be killed), ready for your quest dialogue.', 'Commoner'],
+  quest: ['Quest character', 'Stays near where you put them and is essential (the game warns if they die), ready for your quest dialogue.', 'Commoner'],
   merchant: ['Merchant', 'Stays put and trades. Pick what they sell below.', 'Commoner'],
   guard: ['Guard', 'Wears the guard kit for their race and reacts to crimes.', 'Guard'],
 };
@@ -4773,7 +4774,7 @@ function crWhat(){
   } else if (CR.kind === 'npc'){
     const role = radio('cr-role') || 'townsperson', name = val('cr-name');
     t = `<b>Create NPC</b> makes ${q(name) || 'a person'}: a ${radio('cr-sex') || 'male'} ${esc(optText('cr-race'))} ${esc(optText('cr-class'))}, level ${val('cr-level') || 5}, ` +
-        {townsperson: 'wandering about and talking like others of their kind', quest: 'staying put, essential, ready for your dialogue', merchant: `staying put and selling ${esc((val('cr-services') || 'general goods').toLowerCase())}`, guard: 'in their race\'s guard kit, reacting to crimes'}[role] +
+        {townsperson: 'wandering about and talking like others of their kind', quest: 'staying put, essential, ready for your dialogue', merchant: `staying put and dealing in ${esc(crSvcWords(crSvcFlags()) || 'nothing yet')}`, guard: 'in their race\'s guard kit, reacting to crimes'}[role] +
         (optText('cr-faction') && val('cr-faction') ? `, of the ${esc(optText('cr-faction'))}` : '') + (where ? `, placed ${where}` : ', not placed yet (place them from the World map or Characters)') + '. One Undo takes them back.';
   } else if (CR.kind === 'item'){
     const tpl = CR.itTplInfo, ench = $('#it-ench') && $('#it-ench').checked && tpl && tpl.can_enchant, give = val('it-give');
@@ -4795,6 +4796,65 @@ function crWhat(){
         (where ? `, placed ${where}${lock ? `, locked at ${lock}` : ''}${owner ? `, owned by ${esc(owner)}` : ''}` : `, not placed yet${lock || owner ? ' (the lock and owner apply when it is placed from here)' : ''}`) + '. One Undo takes it back.';
   }
   box.innerHTML = t;
+}
+// ---- what a new merchant deals in: the game's kinds (a publican, a smith…), the user's own, or ticks of their own
+function crKind(name){ return ((CR.opts || {}).merchant_kinds || []).find(k => k.name === name); }
+function crSvcFlags(){
+  const v = ($('#cr-services') || {}).value;
+  if (v === '__own') return [...document.querySelectorAll('[data-osvc]')].reduce((a, c) => c.checked ? a | +c.dataset.osvc : a, 0);
+  return (crKind(v) || {}).flags || 0;
+}
+function crSvcWords(f){ return ((CR.opts || {}).service_bits || []).filter(([, b]) => f & b).map(([n]) => n.toLowerCase()).join(', '); }
+function crSvcHtml(){
+  const ks = CR.opts.merchant_kinds || [], cur = crKind(CR.svc) ? CR.svc : 'General goods';
+  const opt = k => `<option value="${esc(k.name)}" ${k.name === cur ? 'selected' : ''}>${esc(k.name)}</option>`;
+  const mine = ks.filter(k => k.mine);
+  return `<select class="inp" id="cr-services">${ks.filter(k => !k.mine).map(opt).join('')}
+      ${mine.length ? `<optgroup label="Your own">${mine.map(opt).join('')}</optgroup>` : ''}<option value="__own">＋ Your own…</option></select>
+    <div class="hint" id="cr-svchint"></div>
+    <label class="msg" style="display:flex;gap:6px;align-items:center;margin-top:4px" title="Beds in the place they're put become theirs to rent through the Beds topic, as at the game's inns; sleeping in one is no crime until the day is over"><input type="checkbox" id="cr-rent" ${CR.svc === 'Publican (food and drink)' ? 'checked' : ''}> 🛏 Rents beds for <input class="inp" id="cr-rentgold" type="number" min="1" value="10" style="width:70px"> gold a day</label>
+    <div id="cr-own" hidden style="margin-top:6px"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:2px 10px">${(CR.opts.service_bits || []).map(([n, b]) =>
+      `<label class="msg"><input type="checkbox" data-osvc="${b}"> ${esc(n)}</label>`).join('')}</div>
+      <div style="display:flex;gap:6px;margin-top:6px"><input class="inp" id="cr-ownname" maxlength="40" placeholder="Name it to keep it, e.g. Fishmonger"><button class="btn sm" id="cr-ownsave" style="white-space:nowrap" title="Add it to this list for every mod, with the class picked above">Add to the list</button></div></div>`;
+}
+function crSvcBind(){
+  const s = $('#cr-services'), cls = $('#cr-class');
+  const show = () => {
+    const own = s.value === '__own', k = crKind(s.value);
+    $('#cr-own').hidden = !own;
+    const w = crSvcWords(crSvcFlags());
+    $('#cr-svchint').innerHTML = own ? 'Tick what they deal in.' : esc(w ? w[0].toUpperCase() + w.slice(1) : 'Nothing') +
+      (k && k.mine ? ` <a href="#" id="cr-owndel" title="Take it off this list">✕ Remove</a>` : '');
+    const del = $('#cr-owndel');
+    if (del) del.onclick = e => { e.preventDefault(); crSvcSave(CR.opts.merchant_kinds.filter(x => x.mine && x.name !== k.name), 'General goods'); };
+  };
+  s.onchange = () => {
+    CR.svc = s.value;
+    $('#cr-rent').checked = /^Publican/.test(s.value) || (crKind(s.value) || {}).class === 'Publican';
+    const k = crKind(s.value);
+    if (k && k.class && !CR.clsSet) cls.value = k.class;
+    show();
+  };
+  cls.addEventListener('change', () => { CR.clsSet = true; });
+  document.querySelectorAll('[data-osvc]').forEach(c => c.onchange = show);
+  $('#cr-ownsave').onclick = () => {
+    const n = $('#cr-ownname').value.trim(), f = crSvcFlags();
+    if (!n) return toast('Give it a name first.', true);
+    if (!f) return toast('Tick at least one thing they deal in.', true);
+    if (crKind(n) && !crKind(n).mine) return toast('The game has a kind by that name already.', true);
+    crSvcSave(CR.opts.merchant_kinds.filter(x => x.mine && x.name !== n).concat([{name: n, flags: f, class: cls.value, mine: true}]), n);
+  };
+  show();
+}
+async function crSvcSave(mine, pick){
+  try { await post('/api/settings', {merchant_kinds: mine.map(k => ({name: k.name, flags: k.flags, class: k.class}))}); }
+  catch (e){ return toast(e.message, true); }
+  CR.opts.merchant_kinds = CR.opts.merchant_kinds.filter(k => !k.mine).concat(mine);
+  CR.svc = pick;
+  const keep = {};
+  ['cr-name', 'cr-id', 'cr-class', 'cr-race'].forEach(id => { if ($('#' + id)) keep[id] = $('#' + id).value; });
+  await renderCreate(); for (const id in keep) if ($('#' + id)) $('#' + id).value = keep[id];
+  toast(mine.some(k => k.name === pick) ? `"${pick}" is on the list.` : 'Taken off the list.');
 }
 function sel(id, options, value){ return `<select class="inp" id="${id}">${options.map(o => { const [v, t] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(t)}</option>`; }).join('')}</select>`; }
 function formHtml(kind){
@@ -4846,9 +4906,9 @@ function formHtml(kind){
       <label>Name</label><div class="withbtn"><input class="inp" id="cr-name" placeholder="e.g. Dravos Helvi" maxlength="31"><button class="btn sm" id="cr-dice" title="A name in the manner of the game's own people of this race and sex: one of their first names with one of their family names, in a pairing no one has yet">🎲 Suggest</button></div>
       <label>Race</label>${sel('cr-race', o.races.map(r => [r.id, r.name]), race)}
       <label>Sex</label><div class="radios"><label><input type="radio" name="cr-sex" value="male" ${CR.sex !== 'female' ? 'checked' : ''}>Male</label><label><input type="radio" name="cr-sex" value="female" ${CR.sex === 'female' ? 'checked' : ''}>Female</label></div>
-      <label>Class</label>${sel('cr-class', o.classes.map(c => [c.id, c.name]), ROLE_INFO[role][2])}
+      <label>Class</label>${sel('cr-class', o.classes.map(c => [c.id, c.name]), role === 'merchant' ? (crKind(CR.svc) || {}).class || 'Commoner' : ROLE_INFO[role][2])}
       <div class="hint">The class sets their skills and what they talk about, and the clothes are borrowed from a person of the same race and class in the game.</div>
-      ${role === 'merchant' ? `<label>Sells</label>${sel('cr-services', o.services, 'General goods')}` : ''}
+      ${role === 'merchant' ? `<label>Sells</label><div>${crSvcHtml()}</div>` : ''}
       <label>Place it</label><div>${placeOptions(false)}</div>
       ${moreHtml('More: ID, level, faction and rank, gold, essential', `${idRow('name')}
         <label>Level</label><input class="inp" id="cr-level" type="number" min="1" max="100" value="${role === 'guard' ? 15 : 5}" style="max-width:100px">
@@ -4941,6 +5001,7 @@ function bindForm(){
     document.querySelectorAll('[name=cr-role]').forEach(r => r.onchange = () => { CR.role = r.value; const keep = name.value; renderCreate(); $('#cr-name').value = keep; $('#cr-name').oninput(); });
     document.querySelectorAll('[name=cr-sex]').forEach(r => r.onchange = () => { CR.sex = r.value; });
     $('#cr-race').onchange = () => { CR.race = $('#cr-race').value; };
+    if ($('#cr-services')) crSvcBind();
     const fa = $('#cr-faction'), rk = $('#cr-rank');
     fa.onchange = () => {
       const f = CR.opts.factions.find(x => x.id === fa.value);
@@ -5319,8 +5380,15 @@ async function createGo(){
     } else if (CR.kind === 'npc'){
       r = await post('/api/create/npc', {role: radio('cr-role'), name: val('cr-name'), id: val('cr-id'), race: val('cr-race'), sex: radio('cr-sex'),
         class: val('cr-class'), level: +val('cr-level'), faction: val('cr-faction'), rank: +val('cr-rank') || 0, services: val('cr-services'),
+        service_flags: val('cr-services') === '__own' ? crSvcFlags() : '',
         essential: $('#cr-ess').checked, gold: val('cr-gold') || '', place: placeValue()});
       label = val('cr-name');
+      if (radio('cr-role') === 'merchant' && $('#cr-rent') && $('#cr-rent').checked){
+        // (beds for rent, folded with the making into one Undo)
+        const rb = await post('/api/person/rent', {who: r.id, price: +val('cr-rentgold') || 10, cell: r.placed ? r.placed.cell : ''});
+        try { await post('/api/fold', {n: 2, note: `Created ${label} with beds for rent`}); } catch (e){}
+        r.rentNote = rb.beds ? `${rb.beds} bed${rb.beds > 1 ? 's' : ''} there for rent.` : 'No beds where they stand yet: put some there, then right-click them › 🛏 Rent out beds.';
+      }
     } else if (CR.kind === 'book'){
       r = await post('/api/create/book', {kind: radio('cr-bk'), title: val('cr-name'), id: val('cr-id'), text: val('cr-text'), value: val('cr-value'), give_to: val('bk-give'), place: val('bk-give') ? null : placeValue()});
       label = val('cr-name');
@@ -5349,10 +5417,10 @@ async function createGo(){
       toast('Created ' + label + ', given to ' + r.given + '.');
       openTool(r.i);
     } else if (CR.kind === 'npc' && !r.placed){
-      toast('Created ' + label + '. Fine-tune them here, then place them from the World map.');
+      toast('Created ' + label + '. Fine-tune them here, then place them from the World map.' + (r.rentNote ? ' ' + r.rentNote : ''));
       cOpen(r.id);
     } else if (r.placed){
-      toast('Created and placed ' + label + '. New things appear in game after restarting it with Play here.');
+      toast('Created and placed ' + label + '. ' + (r.rentNote ? r.rentNote + ' ' : '') + 'New things appear in game after restarting it with Play here.');
       showView('world'); await worldOpen(r.placed.cell); selectRef(r.placed.cell, r.placed.ref);
       const ref = findRef(r.placed.cell, r.placed.ref); if (ref) centerOn(ref);
     } else {

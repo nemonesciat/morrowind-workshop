@@ -337,15 +337,53 @@ def _insert_before_data(subs, extra):
 
 
 # ===================================================================== NPCs
-SERVICES = {
-    'General goods': 0x4 | 0x8 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x2000,
-    'Weapons & armor': 0x1 | 0x2 | 0x200 | 0x20000,
-    'Alchemist': 0x10 | 0x100 | 0x2000,
-    'Bookseller': 0x8,
-    'Clothier': 0x4,
-    'Enchanter & spells': 0x800 | 0x1000 | 0x8000 | 0x10000,
-    'Trainer': 0x4000,
-}
+# the kinds of merchant the game has, each as the game's own merchants of that class are: what they deal in (their
+# class's services, which the game's people of it keep: 110 of 115 publicans sell ingredients and potions, food and
+# drink) and the class, the first of these the game has (2026-11-26, a tester's publican)
+MERCHANT_KINDS = [
+    ('General goods', 0x369f, ('Trader Service', 'T_Glb_TraderService')),
+    ('Publican (food and drink)', 0x2010, ('Publican', 'T_Glb_Publican')),
+    ('Smith (weapons, armour, repairs)', 0x20203, ('Smith',)),
+    ('Pawnbroker (a bit of everything)', 0x37ff, ('Pawnbroker',)),
+    ('Alchemist', 0x2110, ('Alchemist Service', 'Apothecary Service')),
+    ('Healer', 0x2810, ('Healer Service',)),
+    ('Enchanter', 0x1140f, ('Enchanter Service',)),
+    ('Priest (spells, spellmaking)', 0xa818, ('Priest Service',)),
+    ('Mage (spells, spellmaking)', 0x8800, ('Mage Service',)),
+    ('Clothier', 0x4, ('Clothier',)),
+    ('Bookseller', 0x8, ('Bookseller', 'T_Glb_Bookseller')),
+    ('Baker', 0x10, ('T_Glb_Baker',)),
+    ('Fence (picks, probes, training)', 0x4060, ('Thief Service',)),
+    ('Wise woman', 0xa010, ('Wise Woman Service',)),
+    ('Trainer', 0x4000, ()),
+]
+SERVICES = {n: f for n, f, _c in MERCHANT_KINDS}
+# (the names before 2.9.19, which an outside tool or coding agent may still send)
+SERVICES.update({'Weapons & armor': 0x20203, 'Enchanter & spells': 0x19800})
+
+
+def _class_services(db, cls_i):
+    cldt = dict(iter_subrecords(_data(db, cls_i))).get('CLDT', b'')
+    return struct.unpack_from('<i', cldt, 56)[0] if len(cldt) >= 60 else 0
+
+
+def merchant_kinds(db):
+    """The game's merchant kinds with the class each takes here (only one the game has), then the user's own."""
+    out = []
+    for n, f, classes in MERCHANT_KINDS:
+        cls = ''
+        for c in classes:
+            ci = db.resolve_id(c)
+            if ci is not None and db.recs[ci][0] == 'CLAS':
+                cls = db.recs[ci][1]
+                break
+        if classes and not cls and n != 'General goods':
+            continue
+        out.append({'name': n, 'flags': f, 'class': cls})
+    import helpinfo
+    for k in helpinfo.load_settings().get('merchant_kinds') or []:
+        out.append({'name': k['name'], 'flags': k['flags'], 'class': k.get('class') or '', 'mine': True})
+    return out
 ROLES = {
     'townsperson': {'wander': 512, 'essential': False, 'gold': 25, 'alarm': 0, 'fight': 30},
     'quest': {'wander': 128, 'essential': True, 'gold': 50, 'alarm': 0, 'fight': 30},
@@ -394,7 +432,8 @@ def options(db):
             container_examples[kind] = {'id': db.recs[base][1], 'name': db.recs[base][2] or kind}
     return {'races': races, 'classes': classes, 'factions': factions,
             'styles': sorted(styles.items(), key=lambda s: -s[1]),
-            'services': list(SERVICES), 'roles': list(ROLES),
+            'services': [k['name'] for k in merchant_kinds(db)], 'merchant_kinds': merchant_kinds(db),
+            'service_bits': __import__('npc').SERVICE_BITS, 'roles': list(ROLES),
             'book_kinds': list(BOOK_KINDS), 'container_kinds': list(CONTAINER_KINDS),
             'book_examples': book_examples, 'container_examples': container_examples,
             'race_counts': _race_counts(db),
@@ -600,12 +639,32 @@ def create_npc(db, o):
     essential = o.get('essential')
     essential = rd['essential'] if essential is None else bool(essential)
     flags = 0x10 | 0x8 | (1 if female else 0) | (2 if essential else 0)
-    services = SERVICES.get(o.get('services') or 'General goods', 0) if role == 'merchant' else 0
+    services = 0
+    if role == 'merchant':
+        if o.get('service_flags') not in (None, ''):
+            services = int(o['service_flags']) & 0x3ffff
+        else:
+            kind = o.get('services') or 'General goods'
+            services = SERVICES.get(kind)
+            if services is None:
+                services = next((k['flags'] for k in merchant_kinds(db) if k['name'] == kind), SERVICES['General goods'])
     gold = int(o.get('gold') if o.get('gold') not in (None, '') else rd['gold'])
+    rank = max(0, min(9, rank)) if faction else 0
+    npdt = struct.pack('<hBBBxxxi', level, 50, 0, rank, gold)
+    if services & ~_class_services(db, cls_i):
+        # (the game gives a person with automatic stats the services of their class, not their own: a Commoner
+        # "alchemist" sold nothing. Their stats are written out as the automatic ones would be, so what they
+        # deal in is theirs; npc.py's Stats tab turns them back to automatic if the user likes)
+        import npc
+        st = npc.autocalc(db, race_id, cls, level, female)
+        if st:
+            flags &= ~0x10
+            npdt = struct.pack('<h8B27Bx3HBBBxi', level, *[min(255, v) for v in st['attributes']],
+                               *[min(255, v) for v in st['skills']], min(65535, st['health']),
+                               min(65535, st['magicka']), min(65535, st['fatigue']), 50, 0, rank, gold)
     subs = [('NAME', zs(new_id)), ('FNAM', zs(name)), ('RNAM', zs(race_id)), ('CNAM', zs(cls)),
             ('ANAM', zs(faction)), ('BNAM', zs(head)), ('KNAM', zs(hair)),
-            ('NPDT', struct.pack('<hBBBxxxi', level, 50, 0, max(0, min(9, rank)) if faction else 0, gold)),
-            ('FLAG', struct.pack('<i', flags))]
+            ('NPDT', npdt), ('FLAG', struct.pack('<i', flags))]
     for n, it in items[:12]:
         subs.append(('NPCO', struct.pack('<i', n) + it.encode(ENC, 'replace')[:31].ljust(32, b'\0')))
     subs.append(('AIDT', struct.pack('<BBBBBBBBi', 30, 0, rd['fight'], 30, rd['alarm'], 0, 0, 0, services)))

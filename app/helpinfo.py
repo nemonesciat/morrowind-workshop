@@ -278,6 +278,14 @@ def set_settings(body):
             s[k] = str(body.get(k) or '').strip()[:300]
     if body.get('openmw_reset'):
         s.pop('openmw_install', None)
+    # the user's own kinds of merchant (Create › NPC › Sells): a name, what they deal in, a class
+    if isinstance(body.get('merchant_kinds'), list):
+        kinds = []
+        for k in body['merchant_kinds'][:60]:
+            n = str((k or {}).get('name') or '').strip()[:40]
+            if n and n not in [x['name'] for x in kinds]:
+                kinds.append({'name': n, 'flags': int(k.get('flags') or 0) & 0x3ffff, 'class': str(k.get('class') or '')[:32]})
+        s['merchant_kinds'] = kinds
     # the picture editor textures open in (assets.py): a program on this PC, or '' for Windows' own choice
     if 'image_editor' in body:
         exe = (body.get('image_editor') or '').strip().strip('"')

@@ -149,7 +149,7 @@ function cWho(box){
       ${cField('Script', `<div class="dd"><input class="inp" id="c-script" value="${esc(d.script)}" placeholder="None" autocomplete="off"><div class="ddlist" id="c-script-l"></div></div>`,
         'A script that runs on this character, e.g. for a quest.' + (d.script ? ` <a href="#" id="c-openscript">Open it</a>` : ''))}
       <div class="cchecks">
-        <label title="The game won't let them die; players get a warning if they're needed for a quest"><input type="checkbox" data-cf="essential" ${d.essential ? 'checked' : ''}> Essential (can't be killed)</label>
+        <label title="They can still die; the game then tells the player a quest can't go on"><input type="checkbox" data-cf="essential" ${d.essential ? 'checked' : ''}> Essential (warns if they die)</label>
         <label title="Comes back some time after being killed (mostly for guards and creatures)"><input type="checkbox" data-cf="respawn" ${d.respawn ? 'checked' : ''}> Respawns</label>
         <label>Blood <select class="inp sm" data-cf="blood" data-num>${o.blood.map(([n, v]) => `<option value="${v}" ${v === d.blood ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       </div>
@@ -206,7 +206,7 @@ function cWhoCrea(box){
       <div class="cchecks grid">
         ${chk('walks', 'Walks', 'Moves on the ground')}${chk('swims', 'Swims', 'Can move in water (slaughterfish, dreugh)')}${chk('flies', 'Flies', 'Cliff racers, winged twilights')}
         ${chk('biped', 'Walks on two legs', 'Humanoid shape: can wear armor and clothes')}${chk('weapons', 'Uses weapons & shields', 'Equips the best weapon and shield it carries')}
-        ${chk('essential', 'Essential', "Can't be killed")}${chk('respawn', 'Respawns', 'Comes back some time after being killed')}</div>
+        ${chk('essential', 'Essential', "They can die; the game warns that a quest can't go on")}${chk('respawn', 'Respawns', 'Comes back some time after being killed')}</div>
       <label class="msg">Blood <select class="inp sm" data-cf="blood" data-num>${o.blood.map(([n, v]) => `<option value="${v}" ${v === d.blood ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       ${d.placed.length ? `<div class="cplaced"><b>Found in:</b> ${d.placed.map(p => `<a href="#" data-cplace="${esc(p.key)}">${esc(p.name)}</a>`).join(' · ')}</div>` : ''}
     </div>

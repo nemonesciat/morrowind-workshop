@@ -11,6 +11,7 @@ import editing
 import npc
 import questmap
 from editing import EditError
+from esm import iter_subrecords, zstr
 
 # ---------------------------------------------------------------- items: icons and where they're worn
 _ICONS = {}
@@ -349,6 +350,107 @@ def job(db, body):
                   'move': {'verb': 'talk', 'who': to, 'topic': topic, 'gives': reward, 'say': '%s sent you? Then you\'re welcome here.' % gname}})
         return {'key': r['key']}
     return questmap._one_change(db, 'A %s job from %s: "%s"' % (kind, gname, title), work)
+
+
+# ---------------------------------------------------------------- a bed for the night: the game's own way
+# (the game's publicans: a local "rent" set from the Beds topic, a script that sets a global for the rest of the
+# day, and beds owned by the publican with that global on them, so sleeping there is no crime; a tester's
+# publican, 2026-11-26. Our own lines, for any class, above the game's)
+RENT_LINES = {
+    'have': "Your bed is ready whenever you are.",
+    'offer': "A bed for the rest of the day is %d gold. Will you take it?",
+    'yes': "It's yours until tomorrow. Sleep well.",
+    'poor': "You haven't the gold for it, I'm afraid.",
+    'no': "As you like. Ask again if you change your mind.",
+}
+
+
+def _is_bed(db, rid):
+    ri = db.resolve_id(rid)
+    if ri is None or db.recs[ri][0] != 'ACTI':
+        return False
+    scri = next((zstr(d) for t, d in iter_subrecords(_subs_data(db, ri)) if t == 'SCRI'), '')
+    return scri.lower() == 'bed_standard'
+
+
+def _subs_data(db, ri):
+    r = db.recs[ri]
+    return db.files[r[3]].record_at(r[4])[2]
+
+
+def rent_beds(db, body):
+    """body: {'who', 'price', 'cell' (else where they stand)}. Their beds there are for rent through Beds. One Undo."""
+    import mwscript
+    import refprops
+    from project import join_subs, ref_info, zs
+    who = (body.get('who') or '').strip()
+    wi = db.resolve_id(who)
+    if wi is None or db.recs[wi][0] != 'NPC_':
+        raise EditError('Pick a person to rent the beds.')
+    who, wname = db.recs[wi][1], db.recs[wi][2] or db.recs[wi][1]
+    price = max(1, min(100000, int(body.get('price') or 10)))
+    base = re.sub(r'[^A-Za-z0-9_]', '_', who)[:24]
+    sid, gid = base + '_rent', base + '_bed'
+    have = next((zstr(d) for t, d in iter_subrecords(_subs_data(db, wi)) if t == 'SCRI'), '')
+    if have and have.lower() != sid.lower():
+        raise EditError('%s already has a script (%s), so beds can\'t be rented from them here.' % (who, have))
+    cells = [body['cell']] if body.get('cell') else [c['key'] for c in npc.placements(db, who)]
+
+    def work():
+        if db.resolve_id(gid) is None:
+            db.project.set_record('GLOB', gid.lower(), 0, join_subs([('NAME', zs(gid)), ('FNAM', b's'), ('FLTV', struct.pack('<f', 0.0))]), created=True)
+            db.sync_project()
+            editing.commit(db, 'A marker for beds rented from %s' % who)
+        text = ('begin %s\n\n; a bed for the night from this person (made by the Workshop): the Beds topic sets rent,\n'
+                '; and %s lets the player sleep in their beds until the day is over\nshort rent\nshort rentDay\n'
+                'short rentMonth\nshort told\n\nif ( told == 0 )\n\tAddTopic "Beds"\n\tset told to 1\nendif\n\n'
+                'if ( rent == 1 )\n\tif ( %s == 0 )\n\t\tset rentDay to Day\n\t\tset rentMonth to Month\n\t\tset %s to 1\n'
+                '\telseif ( Day != rentDay )\n\t\tset rent to 0\n\t\tset %s to 0\n\telseif ( Month != rentMonth )\n'
+                '\t\tset rent to 0\n\t\tset %s to 0\n\tendif\nendif\n\nend\n') % (sid, gid, gid, gid, gid, gid)
+        mwscript.save(db, sid, text, create=mwscript._winner(db, sid) is None, save=False)
+        editing.commit(db, 'A script for beds rented from %s' % who)
+        if not have:
+            mwscript.attach(db, sid, who)
+        tkey = 'beds'
+        if not dialogue._dial_versions(db, tkey):
+            dialogue.create_topic(db, 'Beds', 0)
+        # (lines of ours from before go: the price may have changed)
+        for _ii, x in dialogue.ordered_lines(db, tkey):
+            if x.get('actor', '').lower() == who.lower() and not x.get('deleted'):
+                dialogue.delete_line(db, tkey, x['inam'])
+        choice = _choice_func(db) or 50
+        rent = lambda v: {'kind': 'local', 'code': 'sX', 'op': '=', 'name': 'rent', 'value': v, 'float': False}
+        ch = lambda v: {'kind': 'function', 'func': choice, 'op': '=', 'value': v}
+        gold = lambda op: {'kind': 'item', 'op': op, 'name': 'Gold_001', 'value': price, 'float': False}
+        base_line = {'actor': who, 'disp': 0, 'rank': -1, 'sex': -1, 'pcrank': -1}
+        # (the bottom line first, each above the last: have, yes, poor, no, offer from the top)
+        for text_, conds, res in (
+                (RENT_LINES['offer'] % price, [rent(0)], 'Choice "Yes" 1 "No" 2'),
+                (RENT_LINES['no'], [ch(2)], ''),
+                (RENT_LINES['poor'], [ch(1), gold('<')], ''),
+                (RENT_LINES['yes'], [ch(1), gold('>=')], 'player->RemoveItem Gold_001 %d\nAddItem Gold_001 %d\nset rent to 1' % (price, price)),
+                (RENT_LINES['have'], [rent(1)], '')):
+            dialogue.save_line(db, tkey, dict(base_line, text=text_, conds=conds, result=res), {'top': True})
+        n = 0
+        for ck in cells:
+            try:
+                refs, _h = db.cell_refs(ck)
+            except Exception:
+                continue
+            for rk, ref in list(refs.items()):
+                rid = ref_info(ref['subs'])[0]
+                if not _is_bed(db, rid):
+                    continue
+                cur = refprops.read(db, ck, rk)
+                if cur['owner'] and cur['owner'].lower() != who.lower():
+                    continue                        # (someone else's bed stays theirs)
+                cur.update({'owner': who, 'global': gid})
+                refprops.save(db, ck, rk, cur, save=False)
+                n += 1
+        if n:
+            editing.commit(db, '%d beds rented from %s' % (n, who))
+        return {'beds': n, 'script': sid, 'global': gid}
+    return questmap._one_change(db, 'Beds for rent from %s, %d gold' % (wname, price), work)
 
 
 # ---------------------------------------------------------------- a container's contents, as icons
