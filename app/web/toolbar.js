@@ -46,6 +46,11 @@ function tbCss(){
   main.tb-dock.tb-words .vbar .v3grp > .btn.sm,main.tb-dock.tb-words .vbar .v3viewwrap > .btn.sm,main.tb-dock.tb-words .vbar-r button{flex-direction:column;height:46px;gap:3px;min-width:40px;padding:0 4px}
   main.tb-dock.tb-words .vbar .v3grp > .btn.sm .wi,main.tb-dock.tb-words .vbar .v3viewwrap > .btn.sm .wi,main.tb-dock.tb-words .vbar-r .wi{width:19px;height:19px}
   main.tb-dock.tb-words .vbar .tl{display:block;font-size:11px;line-height:1;white-space:nowrap}
+  /* (a menu's ▾ in the button's corner: on a line of its own it lifted Make, View and Pivot out of line with the rest) */
+  .vbar .btn.sm,.v3tools .btn.sm{position:relative}
+  main.tb-dock.tb-words .vbar .cv{position:absolute;left:calc(50% + 12px);top:9px;font-size:10px;line-height:1;color:var(--muted)}
+  main.tb-dock:not(.tb-words) .vbar .cv{font-size:9px;margin-left:1px}
+  .cv{display:inline-block}
   main.tb-dock .vbar .v3snapnow{font-size:11.5px;color:var(--text)}
   main.tb-dock .vbar .v3viewwrap:has(> [data-v3="snapmenu"]){display:none}
   main.tb-dock .vbar [data-v3="pivotmenu"] .v3snapnow{display:none}

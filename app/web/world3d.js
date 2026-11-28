@@ -3195,10 +3195,10 @@ function v3Tools(){
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">${I('turn', 'Turn')}</button>
     <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">${I('tilt', 'Tilt')}</button>
     <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">${I('scale', 'Scale')}</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.pivotOpen ? 'primary' : ''}" data-v3="pivotmenu" title="Pivot point: what several selected things turn, tilt and size about">${I('pivot', 'Pivot')} <span class="v3snapnow">${PIVOTS.find(p => p[0] === pivotMode())[2]}</span> ▾</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.pivotOpen ? 'primary' : ''}" data-v3="pivotmenu" title="Pivot point: what several selected things turn, tilt and size about">${I('pivot', 'Pivot')} <span class="v3snapnow">${PIVOTS.find(p => p[0] === pivotMode())[2]}</span><span class="cv">▾</span></button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.pivotOpen ? 'block' : 'none'}">${PIVOTS.map(([k, lab, , tip]) => `<label title="${tip}" style="justify-content:flex-start"><input type="radio" name="v3pivot" data-v3p="${k}" ${k === pivotMode() ? 'checked' : ''}> ${lab}</label>`).join('')}</div></span>
     <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">${I('axes', 'Axes')}</button></div>
-    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">${I('grid', 'Snap')} <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
+    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">${I('grid', 'Snap')} <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span><span class="cv">▾</span></button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
         <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
         <label title="Turn in steps">Turn in steps of <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label>
@@ -3211,7 +3211,7 @@ function v3Tools(){
     <button class="btn sm" data-v3="floor" title="Set it down on what's below (End)">${I('drop', 'Drop down')}</button>
     <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">${I('magnet', 'Physics')}</button></div>
     <div class="v3grp" data-grp="look">${grip}
-    <span class="v3viewwrap"><button class="btn sm ${V3.makeOpen ? 'primary' : ''}" data-v3="makemenu" title="Make and build: create something, the style palette, quests, ${W.ext ? 'the ground' : 'extending from open edges'}">${I('plus', 'Make')} ▾</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.makeOpen ? 'primary' : ''}" data-v3="makemenu" title="Make and build: create something, the style palette, quests, ${W.ext ? 'the ground' : 'extending from open edges'}">${I('plus', 'Make')}<span class="cv">▾</span></button>
       <div class="v3viewmenu v3panel v3make" style="display:${V3.makeOpen ? 'block' : 'none'}">
         <button class="v3row" data-v3="create">${wi('plus')}<span><b>Create something new…</b><small>A place, a person, an item, a spell</small></span></button>
         <button class="v3row" data-v3="style">${wi('palette')}<span><b>Style palette</b><small>Building pieces, furniture and decor by style</small></span></button>
@@ -3220,7 +3220,7 @@ function v3Tools(){
           : `<button class="v3row ${typeof EXM !== 'undefined' && EXM.on ? 'on' : ''}" data-v3="extend">${wi('extend')}<span><b>Extend</b><small>Build out piece by piece from open edges</small></span></button>`}
       </div></span>
     <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">${I('bulb', 'Light')}</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Camera, sky, fog, ground and water, field of view, view distance, grid">${I('eye', 'View')} ▾</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Camera, sky, fog, ground and water, field of view, view distance, grid">${I('eye', 'View')}<span class="cv">▾</span></button>
       <div class="v3viewmenu v3panel v3viewpanel" style="display:${V3.viewOpen ? 'block' : 'none'}"><div class="v3cols"><div class="v3col">
         <div class="v3sec"><h5>Camera</h5>
           <div class="v3btns">

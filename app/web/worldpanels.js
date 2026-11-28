@@ -96,7 +96,7 @@ function worldPanelsInit(){
     k.onclick = e => { e.stopPropagation(); lockToggle(); };
     sw.appendChild(s); sw.appendChild(k);
     // (full view: the map or 3D is the whole window; the panels' edge tabs fold one side at a time)
-    const f = document.createElement('button'); f.id = 'w-full'; f.title = 'Full view: only the map or 3D, its buttons and windows'; f.innerHTML = wpIc('full', '');
+    const f = document.createElement('button'); f.id = 'w-full'; f.title = 'Full view: only the map or 3D, its buttons and windows'; f.innerHTML = wpIc('full', 'Full view');
     f.onclick = e => { e.stopPropagation(); PNL.full('world'); };
     sw.appendChild(f);
     lockSync();
