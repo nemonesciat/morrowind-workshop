@@ -71,8 +71,10 @@ Every page's tools are **panels**.
 - **🧭 Minimap** (in ▤ Panels on the World map) shows where you are. In 3D it follows the camera, with an arrow
   for the way you face; indoors it shows your storey only. **Click** it to go there, **drag** to look around,
   **scroll** to zoom, and **📍** follows you again. The line under it names what the pointer is over.
-- The map's and 3D view's buttons are one bar over the view: point at one for its name, its key and what it
-  does. What doesn't fit in a narrow window goes under **⋯**. **View → Tool bar** (or Settings → Working, or a
+- The map's and 3D view's buttons are one bar across the window, over the side panels, each with its name
+  under it: point at one for its key and what it does. **＋ Make ▾** holds Create, Style palette, Quests and
+  Ground or Extend; **View ▾** the camera, sky, fog, field of view, view distance and grid, all in one panel.
+  In a very narrow window what doesn't fit goes under **⋯**. **View → Tool bar** (or Settings → Working, or a
   right-click on the bar) chooses **icons and words**, with each name under its icon, or **groups to drag
   about** by their grip **⋮⋮**, as before 3.0.
 

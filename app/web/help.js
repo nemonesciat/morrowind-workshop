@@ -36,6 +36,7 @@ topMenu('#viewbtn', 'viewmenu', () => {
     {label: 'Home', run: () => showView('guide')},
     {label: 'World map', run: () => showView('world')},
     world ? {label: 'Full view', tip: 'Only the map or 3D; ⛶ again brings the panels back', run: () => { const f = $('#w-full'); if (f) f.click(); }} : null,
+    world && typeof V3 !== 'undefined' && V3.on ? {label: '3D view: camera, sky, fog, grid, field of view…', tip: 'The View menu on the bar over the 3D view', run: () => { const b = document.querySelector('[data-v3="view"]'); if (b && !V3.viewOpen) b.click(); }} : null,
     jm && jm.style.display !== 'none' ? {label: 'Jump to my character', run: () => jm.click()} : null,
     '-',
     {label: typeof TB !== 'undefined' && TB.float ? 'Tool bar: dock the buttons' : 'Tool bar: float the buttons', tip: 'One bar over the view, or groups you drag about', run: () => tbSet('float', !TB.float)},

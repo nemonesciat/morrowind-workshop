@@ -89,7 +89,7 @@ async function v3Enable(on){
   $('#map').style.display = on ? 'none' : 'block';
   document.querySelectorAll('#mapnav, .mapzoom').forEach(e => e.style.display = on ? 'none' : '');
   $('#v3tools').style.display = on ? 'flex' : 'none';
-  document.querySelectorAll('#world .flatonly').forEach(e => e.style.display = on ? 'none' : '');   // (Show and the lock: on the 3D bar in 3D)
+  document.querySelectorAll('.flatonly').forEach(e => e.style.display = on ? 'none' : '');   // (Show and the lock: on the 3D bar in 3D)
   if (typeof tbApply === 'function') tbApply();          // (where you put the buttons, now they can be measured)
   document.querySelectorAll('[data-view3d]').forEach(b => b.classList.toggle('on', (b.dataset.view3d === '1') === on));
   try { localStorage.setItem('ws-3d', on ? '1' : '0'); } catch (e) {}
@@ -3190,13 +3190,14 @@ function v3Tools(){
   const grip = typeof tbGrip === 'function' ? tbGrip() : '';
   // (an icon and its word: the docked bar shows the icons, the tooltip names them; floating groups show both)
   const I = (n, w) => (typeof wsIcon === 'function' ? wsIcon(n) : '') + `<span class="tl"> ${w}</span>`;
+  const wi = n => typeof wsIcon === 'function' ? wsIcon(n) : '';
   t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">${I('move', 'Move')}</button>
     <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">${I('turn', 'Turn')}</button>
     <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">${I('tilt', 'Tilt')}</button>
     <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">${I('scale', 'Scale')}</button>
     <span class="v3viewwrap"><button class="btn sm ${V3.pivotOpen ? 'primary' : ''}" data-v3="pivotmenu" title="Pivot point: what several selected things turn, tilt and size about">${I('pivot', 'Pivot')} <span class="v3snapnow">${PIVOTS.find(p => p[0] === pivotMode())[2]}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.pivotOpen ? 'block' : 'none'}">${PIVOTS.map(([k, lab, , tip]) => `<label title="${tip}" style="justify-content:flex-start"><input type="radio" name="v3pivot" data-v3p="${k}" ${k === pivotMode() ? 'checked' : ''}> ${lab}</label>`).join('')}</div></span>
-    <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">${I('axes', 'World axes')}</button></div>
+    <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">${I('axes', 'Axes')}</button></div>
     <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">${I('grid', 'Snap')} <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
         <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
@@ -3209,42 +3210,57 @@ function v3Tools(){
     <button class="btn sm v3dock ${V3.rest ? 'primary' : ''}" data-v3="rest" title="Land on surfaces: after a move, rest it on what's below">${I('land', 'Land')}</button>
     <button class="btn sm" data-v3="floor" title="Set it down on what's below (End)">${I('drop', 'Drop down')}</button>
     <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">${I('magnet', 'Physics')}</button></div>
-    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">${I('plus', 'Create')}</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">${I('palette', 'Style')}</button><button class="btn sm ${typeof QM !== 'undefined' && QM.dock ? 'primary' : ''}" data-v3="quests" title="The quest maker: quests where they happen. Right-click a person, a thing or the ground for quest steps">${I('puzzle', typeof qmBarLabel === 'function' ? esc(qmBarLabel()) : 'Quests')}</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">${I('mountain', 'Ground')}</button>` : ''}
-    ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Build out piece by piece from open edges">${I('extend', 'Extend')}</button>` : ''}
-    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">${I('bulb', 'Game light')}</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">${I('eye', 'View')} ▾</button>
-      <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
-        <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
-          <button class="btn sm ${V3.camSnap === 'top' ? 'primary' : ''}" data-v3="camsnap" data-k="top" title="From above, north up (Num 7)">⬒ Top</button>
-          ${[['nw', '◤', 'north-west'], ['ne', '◥', 'north-east'], ['sw', '◣', 'south-west'], ['se', '◢', 'south-east']].map(([k, ic, n]) =>
-            `<button class="btn sm ${V3.camSnap === k ? 'primary' : ''}" data-v3="camsnap" data-k="${k}" title="Isometric, from the ${n}. Again: round to the next (Num 1)">${ic}</button>`).join('')}
-          <button class="btn sm ${V3.camSnap ? '' : 'primary'}" data-v3="camsnap" data-k="free" title="Turn freely again (turning the camera does too)">Free</button></div>
-        <label title="No perspective: far things as big as near ones (Num 5)"><input type="checkbox" id="v3flat" ${V3.flat ? 'checked' : ''}> Flat</label>
-        <label title="Lines at the move step (128 when off)"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">(${V3.grid || 128}, bright every ${(V3.grid || 128) * 4})</span></label>
-        <div class="v3gridrow" style="display:${V3.view.grid ? 'flex' : 'none'};gap:4px;flex-wrap:wrap;margin:2px 0 4px 20px">
-          <button class="btn sm" data-v3="gridsel" title="Grid at the selection's base">📍 At the selection</button>
-          <button class="btn sm" data-v3="gridturn" title="Grid at the selection, turned to match it">⟲ Turned to it</button>
-          <label style="display:block;width:100%" title="Show the grid through walls and floors"><input type="checkbox" data-v3v="gridThrough" ${V3.view.gridThrough ? 'checked' : ''}> through walls</label>
-          <span class="msg" style="width:100%">Or right-click a floor or wall: Put the grid here.</span></div>
-        ${W.ext ? `<label title="Where one cell ends and the next begins"><input type="checkbox" data-v3v="cells" ${V3.view.cells ? 'checked' : ''}> Cell borders</label>` : ''}
-        <label title="Show the triangles"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
-        <label title="How wide the view is (the game uses about 75°)" style="display:block;margin-top:6px">Field of view <b id="v3fovv">${V3.fov || 60}°</b>
-          <input type="range" id="v3fov" min="20" max="150" step="5" value="${V3.fov || 60}" style="width:100%"></label>
-        ${W.ext ? `<label><input type="checkbox" data-v3v="ground" ${V3.view.ground ? 'checked' : ''}> Ground</label>
-        <label><input type="checkbox" data-v3v="water" ${V3.view.water ? 'checked' : ''}> Water</label>
-        <label title="The game's clouds, sun, stars and moons"><input type="checkbox" data-v3v="sky" ${V3.view.sky !== false ? 'checked' : ''}> Sky</label>
-        <label title="Off: no haze at all, to see far over the land"><input type="checkbox" data-v3v="fog" ${V3.view.fog !== false ? 'checked' : ''}> Fog</label>
-        <label title="How many cells load round you; further is slower"
-          style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
-          <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
+    <div class="v3grp" data-grp="look">${grip}
+    <span class="v3viewwrap"><button class="btn sm ${V3.makeOpen ? 'primary' : ''}" data-v3="makemenu" title="Make and build: create something, the style palette, quests, ${W.ext ? 'the ground' : 'extending from open edges'}">${I('plus', 'Make')} ▾</button>
+      <div class="v3viewmenu v3panel v3make" style="display:${V3.makeOpen ? 'block' : 'none'}">
+        <button class="v3row" data-v3="create">${wi('plus')}<span><b>Create something new…</b><small>A place, a person, an item, a spell</small></span></button>
+        <button class="v3row" data-v3="style">${wi('palette')}<span><b>Style palette</b><small>Building pieces, furniture and decor by style</small></span></button>
+        <button class="v3row ${typeof QM !== 'undefined' && QM.dock ? 'on' : ''}" data-v3="quests">${wi('puzzle')}<span><b>${typeof qmBarLabel === 'function' ? esc(qmBarLabel()) : 'Quests'}</b><small>The quest maker, under the view</small></span></button>
+        ${W.ext ? `<button class="v3row ${V3.landOpen ? 'on' : ''}" data-v3="land">${wi('mountain')}<span><b>Ground</b><small>Shape and paint the land</small></span></button>`
+          : `<button class="v3row ${typeof EXM !== 'undefined' && EXM.on ? 'on' : ''}" data-v3="extend">${wi('extend')}<span><b>Extend</b><small>Build out piece by piece from open edges</small></span></button>`}
+      </div></span>
+    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">${I('bulb', 'Light')}</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Camera, sky, fog, ground and water, field of view, view distance, grid">${I('eye', 'View')} ▾</button>
+      <div class="v3viewmenu v3panel v3viewpanel" style="display:${V3.viewOpen ? 'block' : 'none'}"><div class="v3cols"><div class="v3col">
+        <div class="v3sec"><h5>Camera</h5>
+          <div class="v3btns">
+            <button class="btn sm ${V3.camSnap === 'top' ? 'primary' : ''}" data-v3="camsnap" data-k="top" title="From above, north up (Num 7)">Top</button>
+            ${[['nw', 'NW', 'north-west'], ['ne', 'NE', 'north-east'], ['sw', 'SW', 'south-west'], ['se', 'SE', 'south-east']].map(([k, ic, n]) =>
+              `<button class="btn sm ${V3.camSnap === k ? 'primary' : ''}" data-v3="camsnap" data-k="${k}" title="Isometric, from the ${n}. Again: round to the next (Num 1)">${ic}</button>`).join('')}
+            <button class="btn sm ${V3.camSnap ? '' : 'primary'}" data-v3="camsnap" data-k="free" title="Turn freely again (turning the camera does too)">Free</button>
+            <button class="btn sm" data-v3="home" title="Back to where the view started">${wi('target')} Start view</button></div>
+          <label title="No perspective: far things as big as near ones (Num 5)"><input type="checkbox" id="v3flat" ${V3.flat ? 'checked' : ''}> Flat (no perspective)</label>
+          <label class="v3slide" title="How wide the view is (the game uses about 75°)">Field of view <b id="v3fovv">${V3.fov || 60}°</b>
+            <input type="range" id="v3fov" min="20" max="150" step="5" value="${V3.fov || 60}"></label></div>
+        <div class="v3sec"><h5>Grid</h5>
+          <div class="v3ticks">
+            <label title="Lines at the move step (128 when off)"><input type="checkbox" data-v3v="grid" ${V3.view.grid ? 'checked' : ''}> Grid <span class="msg">${V3.grid || 128}</span></label>
+            <label title="Show the grid through walls and floors" class="${V3.view.grid ? '' : 'off'}"><input type="checkbox" data-v3v="gridThrough" ${V3.view.gridThrough ? 'checked' : ''} ${V3.view.grid ? '' : 'disabled'}> Through walls</label></div>
+          <div class="v3btns"><button class="btn sm" data-v3="gridsel" title="Grid at the selection's base" ${V3.view.grid ? '' : 'disabled'}>At the selection</button>
+            <button class="btn sm" data-v3="gridturn" title="Grid at the selection, turned to match it" ${V3.view.grid ? '' : 'disabled'}>Turned to it</button></div></div>
+        </div><div class="v3col">
+        <div class="v3sec"><h5>Shown${W.ext ? '' : ' <small>(sky, fog, ground and water: outdoors)</small>'}</h5>
+          <div class="v3ticks">
+            <label title="The game's clouds, sun, stars and moons" class="${W.ext ? '' : 'off'}"><input type="checkbox" data-v3v="sky" ${V3.view.sky !== false ? 'checked' : ''} ${W.ext ? '' : 'disabled'}> Sky</label>
+            <label title="Off: no haze at all, to see far over the land" class="${W.ext ? '' : 'off'}"><input type="checkbox" data-v3v="fog" ${V3.view.fog !== false ? 'checked' : ''} ${W.ext ? '' : 'disabled'}> Fog</label>
+            <label class="${W.ext ? '' : 'off'}"><input type="checkbox" data-v3v="ground" ${V3.view.ground !== false ? 'checked' : ''} ${W.ext ? '' : 'disabled'}> Ground</label>
+            <label class="${W.ext ? '' : 'off'}"><input type="checkbox" data-v3v="water" ${V3.view.water !== false ? 'checked' : ''} ${W.ext ? '' : 'disabled'}> Water</label>
+            <label title="Game lighting, or bright, even light"><input type="checkbox" data-v3l ${v3LightMode() === 'game' ? 'checked' : ''}> Game lighting</label>
+            <label title="Show the triangles"><input type="checkbox" data-v3v="wire" ${V3.view.wire ? 'checked' : ''}> Wireframe</label>
+            <label title="Where one cell ends and the next begins" class="${W.ext ? '' : 'off'}"><input type="checkbox" data-v3v="cells" ${V3.view.cells ? 'checked' : ''} ${W.ext ? '' : 'disabled'}> Cell borders</label></div>
+          <label class="v3slide ${W.ext ? '' : 'off'}" title="How many cells load round you; further is slower">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
+            <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" ${W.ext ? '' : 'disabled'}></label></div>
+        <div class="v3sec v3foot"><button class="btn sm" data-v3="help" title="How the mouse and keys work in the 3D view">${wi('help')} Controls: mouse and keys</button></div>
+        </div></div>
       </div></span>
     <button class="btn sm" data-v3="show" title="${SHOW_TIP}">${I('show', 'Show')}</button>
-    <button class="btn sm ${W.lockArch ? 'primary' : ''}" data-v3="lock" title="${lockTip()}">${I('lock', 'Lock walls')}</button>
-    <button class="btn sm" data-v3="home" title="Back to the start view">${I('target', 'Start view')}</button>
-    <button class="btn sm" data-v3="help" title="Controls">${I('help', 'Controls')}</button></div>`;
+    <button class="btn sm ${W.lockArch ? 'primary' : ''}" data-v3="lock" title="${lockTip()}">${I('lock', 'Lock walls')}</button></div>`;
   if (typeof tbApply === 'function') tbApply();
   t.querySelectorAll('[data-v3]').forEach(b => b.onclick = () => {
     const a = b.dataset.v3;
+    // (a row of the Make menu, Start view or Controls: the menu closes first; camera and grid buttons keep the View menu open)
+    if (b.closest('.v3make') || a === 'help' || a === 'home'){ V3.makeOpen = false; V3.viewOpen = false; setTimeout(() => v3Tools(), 0); }
+    if (a === 'makemenu'){ V3.makeOpen = !V3.makeOpen; V3.viewOpen = V3.snapOpen = V3.pivotOpen = false; v3Tools(); return; }
     if (a === 'translate' || a === 'rotate'){ V3.mode = a; v3ApplyMode(); v3Tools(); }
     // (sizing with the handles, the user 2026-10-29: "Scale" beside Move, Turn and Tilt. A group sizes through
     // the dialog, which scales the spacing too)
@@ -3260,8 +3276,8 @@ function v3Tools(){
     // (tilting turns: on, the turning handles with their two tilt rings)
     else if (a === 'tilt'){ V3.tilt = !V3.tilt; V3.mode = 'rotate'; v3ApplyMode(); v3Tools(); }
     else if (a === 'space'){ V3.space = V3.space === 'local' ? 'world' : 'local'; try { localStorage.setItem('ws-space', V3.space); } catch (e) {} v3ApplyMode(); v3Tools(); }
-    else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = false; V3.pivotOpen = false; v3Tools(); }
-    else if (a === 'pivotmenu'){ V3.pivotOpen = !V3.pivotOpen; V3.snapOpen = false; V3.viewOpen = false; v3Tools(); }
+    else if (a === 'view'){ V3.viewOpen = !V3.viewOpen; V3.snapOpen = V3.pivotOpen = V3.makeOpen = false; v3Tools(); }
+    else if (a === 'pivotmenu'){ V3.pivotOpen = !V3.pivotOpen; V3.snapOpen = V3.viewOpen = V3.makeOpen = false; v3Tools(); }
     else if (a === 'show') showToggle();
     else if (a === 'lock') lockToggle();
     else if (a === 'camsnap') v3ViewSnap(b.dataset.k);
@@ -3277,7 +3293,8 @@ function v3Tools(){
   t.querySelectorAll('[data-v3v]').forEach(c => c.onchange = () => {
     V3.view[c.dataset.v3v] = c.checked;
     try { localStorage.setItem('ws-v3view', JSON.stringify(V3.view)); } catch (e) {}
-    if (c.dataset.v3v === 'grid' || c.dataset.v3v === 'gridThrough'){ V3.gridFor = null; const row = t.querySelector('.v3gridrow'); if (row) row.style.display = V3.view.grid ? 'flex' : 'none'; }
+    if (c.dataset.v3v === 'grid' || c.dataset.v3v === 'gridThrough') V3.gridFor = null;
+    if (c.dataset.v3v === 'grid') setTimeout(() => v3Tools(), 0);     // (Through walls and the grid's buttons come on with it)
     if (c.dataset.v3v === 'fog') v3ApplyLighting();
     v3ApplyView();
   });
@@ -3291,6 +3308,7 @@ function v3Tools(){
   t.querySelectorAll('[data-q]').forEach(q => q.onchange = () => { if (q.dataset.q === 'grid'){ V3.grid = +q.value; V3.gridFor = null; } else V3.angle = +q.value; v3ApplyMode(); v3Tools(); });
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); v3Tools(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
+  t.querySelectorAll('[data-v3l]').forEach(c => c.onchange = () => { V3.lightMode = c.checked ? 'game' : 'bright'; try { localStorage.setItem('ws-light', V3.lightMode); } catch (x) {} v3ApplyLighting(); v3Tools(); });
   $('#v3rest').onchange = e => { V3.rest = e.target.checked; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} };
 }
 
@@ -3589,3 +3607,19 @@ function v3Loop(){
   };
   requestAnimationFrame(step);
 }
+
+// (Esc closes an open menu of the bar first)
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || typeof V3 === 'undefined' || !(V3.makeOpen || V3.viewOpen || V3.pivotOpen || V3.snapOpen)) return;
+  e.stopPropagation(); e.preventDefault();
+  V3.makeOpen = V3.viewOpen = V3.pivotOpen = V3.snapOpen = false; v3Tools();
+}, true);
+// (a click anywhere but in the bar's menus closes them: Make, View, Pivot, Snap)
+document.addEventListener('mousedown', e => {
+  if (typeof V3 === 'undefined' || !(V3.makeOpen || V3.viewOpen || V3.pivotOpen || V3.snapOpen)) return;
+  if (e.target.closest && e.target.closest('.v3viewwrap')) return;
+  // (hidden, not drawn again: drawing the bar now would swallow the click on the button pressed)
+  V3.makeOpen = V3.viewOpen = V3.pivotOpen = V3.snapOpen = false;
+  document.querySelectorAll('#v3tools .v3viewmenu').forEach(m => { m.style.display = 'none'; });
+  document.querySelectorAll('#v3tools [data-v3="view"], #v3tools [data-v3="makemenu"], #v3tools [data-v3="pivotmenu"], #v3tools [data-v3="snapmenu"]').forEach(x => x.classList.remove('primary'));
+}, true);

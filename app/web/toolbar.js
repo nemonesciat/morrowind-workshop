@@ -24,46 +24,74 @@ function tbCss(){
   .tb-dragging .tb-grip{cursor:grabbing}
   #world.tb-locked .tb-grip{display:none}
   .vbar{display:none}
-  #world.tb-dock{--tbh:${TB_BAR_H}px}
-  #world.tb-dock.tb-words{--tbh:${TB_BAR_H_WORDS}px}
-  #world.tb-dock .vbar{position:absolute;left:0;right:0;top:0;height:var(--tbh);display:flex;align-items:center;gap:4px;padding:0 6px;z-index:5;
+  main.tb-dock{--tbh:${TB_BAR_H}px}
+  main.tb-dock.tb-words{--tbh:${TB_BAR_H_WORDS}px}
+  main.tb-dock #world{top:var(--tbh)}
+  main.twdock .vbar{right:var(--tww,42%)}
+  main.tb-dock:has(#world.on) > .vbar{position:absolute;left:0;right:0;top:0;height:var(--tbh);display:flex;align-items:center;gap:4px;padding:0 6px;z-index:70;
     background:var(--panel);border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
-  #world.tb-dock #map{top:var(--tbh);height:calc(100% - var(--tbh))}
-  #world.tb-dock #v3wrap{top:var(--tbh)}
-  #world.tb-dock .tb-grip{display:none}
-  #world.tb-dock .vbar .viewsw{position:static;flex:none;z-index:auto}
-  #world.tb-dock .vbar .viewsw button{background:var(--panel2);padding:3px 11px;font-size:12px}
-  #world.tb-dock .vbar .viewsw button.on{background:var(--btn-primary)}
-  #world.tb-dock .vbar .v3tools{position:static;flex:1 1 auto;min-width:0;flex-wrap:nowrap;gap:0;pointer-events:auto;overflow:hidden}
-  #world.tb-dock .vbar .v3grp{gap:1px;padding:0 4px;border-left:1px solid var(--line2);flex:none}
-  #world.tb-dock .vbar .v3grp[data-grp="look"]{margin-left:auto}
-  #world.tb-dock .vbar .btn.sm,#world.tb-dock .vbar-r button{min-width:28px;height:28px;padding:0 5px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  main.tb-dock .vbar .tb-grip{display:none}
+  main.tb-dock .vbar .viewsw{position:static;flex:none;z-index:auto}
+  main.tb-dock .vbar .viewsw button{background:var(--panel2);padding:3px 11px;font-size:12px}
+  main.tb-dock .vbar .viewsw button.on{background:var(--btn-primary)}
+  main.tb-dock .vbar .v3tools{position:static;flex:1 1 auto;min-width:0;flex-wrap:nowrap;gap:0;pointer-events:auto;overflow:hidden}
+  main.tb-dock .vbar .v3grp{gap:1px;padding:0 4px;border-left:1px solid var(--line2);flex:none}
+  main.tb-dock .vbar .v3grp[data-grp="look"]{margin-left:auto}
+  main.tb-dock .vbar .btn.sm,main.tb-dock .vbar-r button{min-width:28px;height:28px;padding:0 5px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
     background:none;border:1px solid transparent;border-radius:5px;color:var(--muted);font-size:12px;cursor:pointer}
-  #world.tb-dock .vbar .btn.sm:hover,#world.tb-dock .vbar-r button:hover{background:var(--hover);color:var(--text)}
-  #world.tb-dock .vbar .btn.sm.primary,#world.tb-dock .vbar-r button.on{background:var(--sel);border-color:var(--goldline);color:var(--gold2)}
-  #world.tb-dock .vbar .wi{width:17px;height:17px;margin:0}
-  #world.tb-dock .vbar .tl{display:none}
-  #world.tb-dock.tb-words .vbar .btn.sm,#world.tb-dock.tb-words .vbar-r button{flex-direction:column;height:44px;gap:2px;min-width:36px;padding:0 4px}
-  #world.tb-dock.tb-words .vbar .tl{display:block;font-size:10px;line-height:1;white-space:nowrap}
-  #world.tb-dock .vbar .v3snapnow{font-size:11.5px;color:var(--text)}
-  #world.tb-dock .vbar .v3viewwrap:has(> [data-v3="snapmenu"]){display:none}
-  #world.tb-dock .vbar [data-v3="pivotmenu"] .v3snapnow{display:none}
-  #world.tb-dock .vbar .tb-over{display:none!important}
-  #world:not(.tb-dock) .v3dock{display:none}
+  main.tb-dock .vbar .btn.sm:hover,main.tb-dock .vbar-r button:hover{background:var(--hover);color:var(--text)}
+  main.tb-dock .vbar .btn.sm.primary,main.tb-dock .vbar-r button.on{background:var(--sel);border-color:var(--goldline);color:var(--gold2)}
+  main.tb-dock .vbar .wi{width:17px;height:17px;margin:0}
+  main.tb-dock .vbar .tl{display:none}
+  main.tb-dock.tb-words .vbar .v3grp > .btn.sm,main.tb-dock.tb-words .vbar .v3viewwrap > .btn.sm,main.tb-dock.tb-words .vbar-r button{flex-direction:column;height:46px;gap:3px;min-width:40px;padding:0 4px}
+  main.tb-dock.tb-words .vbar .v3grp > .btn.sm .wi,main.tb-dock.tb-words .vbar .v3viewwrap > .btn.sm .wi,main.tb-dock.tb-words .vbar-r .wi{width:19px;height:19px}
+  main.tb-dock.tb-words .vbar .tl{display:block;font-size:11px;line-height:1;white-space:nowrap}
+  main.tb-dock .vbar .v3snapnow{font-size:11.5px;color:var(--text)}
+  main.tb-dock .vbar .v3viewwrap:has(> [data-v3="snapmenu"]){display:none}
+  main.tb-dock .vbar [data-v3="pivotmenu"] .v3snapnow{display:none}
+  main.tb-dock .vbar .tb-over{display:none!important}
+  main:not(.tb-dock) .v3dock{display:none}
+  main.tb-dock .vbar .v3viewmenu{position:fixed;z-index:60;overflow:auto;white-space:normal}
+  .v3panel{padding:8px 10px!important}
+  .v3viewpanel{width:560px;max-width:calc(100vw - 12px)}
+  .v3panel .v3cols{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  .v3panel .v3col{min-width:0}
+  .v3panel .v3col .v3sec:last-child{border-bottom:0}
+  .v3panel .v3sec{padding:6px 0 8px;border-bottom:1px solid var(--line)}
+  .v3panel .v3sec:last-child{border-bottom:0;padding-bottom:2px}
+  .v3panel h5{margin:0 0 6px;font:600 10.5px Inter,sans-serif;letter-spacing:.09em;text-transform:uppercase;color:var(--gold)}
+  .v3panel h5 small{text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400}
+  .v3panel label{display:flex!important;align-items:center;gap:7px;padding:3px 2px!important;color:var(--text);font-size:12.5px;cursor:pointer;white-space:nowrap}
+  .v3panel label.off{opacity:.45;cursor:default}
+  .v3panel .v3ticks{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}
+  .v3panel .v3slide{display:grid!important;grid-template-columns:auto auto 1fr;gap:8px}
+  .v3panel .v3slide input{width:100%;min-width:90px}
+  .v3panel .v3btns{display:flex;gap:4px;flex-wrap:wrap;margin:2px 0 6px}
+  main.tb-dock .vbar .v3panel .btn.sm{flex-direction:row;height:28px;min-width:0;padding:0 9px;border:1px solid var(--line2);background:var(--panel2);color:var(--text)}
+  main.tb-dock .vbar .v3panel .btn.sm.primary{background:var(--btn-primary);color:var(--gold2)}
+  main.tb-dock .vbar .v3panel .btn.sm:disabled{opacity:.4}
+  .v3make{width:300px}
+  .v3panel .v3row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 8px;border:1px solid transparent;border-radius:7px;background:none;color:var(--text);cursor:pointer}
+  .v3panel .v3row:hover{background:var(--hover);border-color:var(--line2)}
+  .v3panel .v3row.on{border-color:var(--goldline);background:var(--sel)}
+  .v3panel .v3row .wi{width:20px;height:20px;color:var(--gold);flex:none}
+  .v3panel .v3row b{display:block;font-weight:500;font-size:13px}
+  .v3panel .v3row small{display:block;color:var(--muted);font-size:11.5px}
   .v3q{display:inline-flex;align-items:center;gap:3px;height:26px;padding:0 2px 0 6px;margin:0 1px;border:1px solid var(--line2);border-radius:5px;background:var(--deep);color:var(--faint)}
   .v3q .wi{width:14px!important;height:14px!important}
   .v3q select{background:transparent;border:0;color:var(--text);font:11.5px var(--mono);padding:0;cursor:pointer;width:auto;max-width:58px;min-width:0}
   .v3q select option{background:var(--panel)}
-  #world.tb-dock .vbar-r{display:flex;gap:1px;align-items:center;flex:none;padding-left:5px;border-left:1px solid var(--line2);margin-left:auto}
-  #world.tb-dock .v3tools[style*="flex"] ~ .vbar-r{margin-left:0}`;
+  main.tb-dock .vbar-r{display:flex;gap:1px;align-items:center;flex:none;padding-left:5px;border-left:1px solid var(--line2);margin-left:auto}
+  main.tb-dock .v3tools[style*="flex"] ~ .vbar-r{margin-left:0}`;
   document.head.appendChild(c);
 }
 
 function tbArea(){ return $('#world .mapwrap'); }
-const TB_BAR_H = 36, TB_BAR_H_WORDS = 52;                                  // (the docked bar's height: sizeMap leaves it to the bar)
+const TB_BAR_H = 36, TB_BAR_H_WORDS = 54;                                  // (the docked bar's height: sizeMap leaves it to the bar)
+if (TB.words === undefined) TB.words = true;          // (names under the icons, unless you chose icons only)
 function tbDocked(){ return !TB.float; }
 // (how much of the view's top the docked bar takes: sizeMap leaves it to the bar)
-function tbBarH(){ return !tbDocked() ? 0 : TB.words ? TB_BAR_H_WORDS : TB_BAR_H; }
+function tbBarH(){ return 0; }
 // the docked bar: Map | 3D, then the 3D tools, then Panels, Show, the lock and ⛶ at the right; floating, each back
 // where it was (the switch holds Panels, Show, the lock and ⛶)
 function tbDock(){
@@ -72,18 +100,20 @@ function tbDock(){
   if (!bar){
     bar = document.createElement('div'); bar.id = 'vbar'; bar.className = 'vbar';
     bar.innerHTML = '<div class="vbar-r" id="vbar-r"></div>';
-    A.insertBefore(bar, A.firstChild);
+    const M = document.querySelector('main'); M.insertBefore(bar, M.firstChild);
     bar.addEventListener('contextmenu', tbMenu);
   }
   const right = $('#vbar-r'), tail = ['w-panels', 'w-show', 'w-lockb', 'w-full'].map(id => document.getElementById(id)).filter(Boolean);
   const dock = tbDocked();
   $('#world').classList.toggle('tb-dock', dock);
+  document.querySelector('main').classList.toggle('tb-dock', dock);
   if (dock){
     if (sw.parentNode !== bar) bar.insertBefore(sw, right);
     if (t3.parentNode !== bar) bar.insertBefore(t3, right);
     for (const b of tail) if (b.parentNode !== right) right.appendChild(b);
   } else {
-    if (sw.parentNode !== A) A.insertBefore(sw, bar.nextSibling);
+    // (back over the map, after the 3D view, where they were before docking)
+    if (sw.parentNode !== A){ const v = $('#v3wrap'); A.insertBefore(sw, v && v.parentNode === A ? v.nextSibling : A.firstChild); }
     if (t3.parentNode !== A) A.insertBefore(t3, sw.nextSibling);
     for (const b of tail) if (b.parentNode !== sw) sw.appendChild(b);
   }
@@ -121,12 +151,13 @@ function tbApply(){
   if (sw && !sw.querySelector('.tb-grip')) sw.insertAdjacentHTML('afterbegin', tbGrip());
   $('#world').classList.toggle('tb-locked', !!TB.locked);
   $('#world').classList.toggle('tb-words', !!TB.words);
+  document.querySelector('main').classList.toggle('tb-words', !!TB.words);
   const docked0 = $('#world').classList.contains('tb-dock') + '|' + (TB.wordsDrawn || false);
   TB.wordsDrawn = !!TB.words;
   tbDock();
   // (docking or floating changes the room the map has: it is sized again)
   if (docked0 !== tbDocked() + '|' + !!TB.words && typeof sizeMap === 'function' && $('#world').classList.contains('on')){ sizeMap(); drawMap(); if (typeof V3 !== 'undefined' && V3.on) v3Resize(); }
-  if (tbDocked()){ for (const g of tbGroups()) tbFree(g); tbFit(); return; }
+  if (tbDocked()){ for (const g of tbGroups()) tbFree(g); tbFit(); tbMenusPlace(); return; }
   const A = tbArea(); if (!A || !A.clientWidth) return;        // (another page is showing: done when it's back)
   // (the 3D buttons start just past the Map / 3D switch, however wide it is: it grew a full view button)
   const t3 = $('#v3tools');
@@ -138,8 +169,23 @@ function tbApply(){
   }
 }
 
+// (docked: the bar's menus, View, Pivot and the rest, are cut off by the bar if they hang inside it; the user,
+// 2026-11-28, couldn't find the sky or the field of view in 3.0.0. Each open one is put on the window under its button,
+// kept on the screen, as tall as there is room for)
+function tbMenusPlace(){
+  if (!tbDocked()) return;
+  for (const m of document.querySelectorAll('#vbar .v3viewmenu')){
+    if (m.style.display === 'none'){ continue; }
+    const b = m.parentElement && m.parentElement.querySelector('button'); if (!b) continue;
+    const r = b.getBoundingClientRect(), w = Math.max(m.offsetWidth, 200);
+    m.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left)) + 'px';
+    m.style.top = (r.bottom + 4) + 'px';
+    m.style.maxHeight = Math.max(160, innerHeight - r.bottom - 14) + 'px';
+  }
+}
+addEventListener('resize', () => { if (typeof tbMenusPlace === 'function') tbMenusPlace(); });
 // (docked: a bar too long for the view puts its least used buttons, one by one, into ⋯ rather than wrap or cut off)
-const TB_OVER = ['help', 'home', 'extend', 'land', 'quests', 'style', 'create', 'physics', 'floor', 'tilt', 'rest', 'pieces', 'space', 'light', 'show'];
+const TB_OVER = ['physics', 'floor', 'tilt', 'rest', 'pieces', 'space', 'light', 'show'];   // (never View or Pivot: their menus open from the bar)
 function tbFit(){
   const t3 = $('#v3tools'); if (!t3) return;
   t3.querySelectorAll('.tb-over').forEach(b => b.classList.remove('tb-over'));
@@ -168,7 +214,7 @@ function tbFit(){
 function tbSet(k, v){
   TB[k] = !!v; tbSave(); tbApply();
   if (typeof V3 !== 'undefined' && V3.on && typeof v3Tools === 'function') v3Tools();
-  toast(k === 'float' ? (v ? 'The buttons float: drag a group by its grip ⋮⋮.' : 'The buttons are one bar over the view.') : (v ? 'Words beside the icons.' : 'Icons only: point at one for its name.'));
+  toast(k === 'float' ? (v ? 'The buttons float: drag a group by its grip ⋮⋮.' : 'The buttons are one bar over the view.') : (v ? 'Names under the icons.' : 'Icons only: point at one for its name.'));
 }
 function tbAuto(){ TB.pos = {}; tbSave(); tbApply(); toast('Buttons arranged in a row again.'); }
 
@@ -234,14 +280,14 @@ CF_ACT.push({id: 'tbauto', label: 'Arrange the buttons over the map automaticall
 const TB_TIP = {
   translate: ['Move', 'Drag the arrows to move what\'s selected.', 'move'], rotate: ['Turn', 'Drag the rings to turn what\'s selected.', 'rotate'],
   tilt: ['Tilt', 'Lean what\'s selected forwards or sideways.'], scale: ['Scale', 'Drag a handle to make it bigger or smaller, as the game sizes things (×0.5 to ×2).', 'scalehandles'],
-  pivotmenu: ['Pivot point', 'What several selected things turn, tilt and size about.'], space: ['World axes', ''],
+  pivotmenu: ['Pivot point', 'What several selected things turn, tilt and size about.'], makemenu: ['Make', 'Create something new, the style palette, quests, the ground or extending.'], space: ['World axes', ''],
   'q-grid': ['Move steps', 'Moves go in steps of this many units. Off: freely.'], 'q-angle': ['Turn steps', 'Turns go in steps of this angle. Off: freely.'],
   pieces: ['Snap to pieces', 'Line walls and floors up with the pieces beside them as you move them.'], rest: ['Land on surfaces', 'After a move, rest it on what\'s below.'],
   floor: ['Drop down', 'Set what\'s selected down on what\'s below.', 'drop'], physics: ['Physics', 'Let loose things fall and be pushed; keep the result or put them back.'],
   create: ['Create', 'Make something new: a place, a person, an item, a spell…'], style: ['Style palette', 'Building pieces, furniture and decor by style.'],
   quests: ['Quests', 'The quest maker: quests where they happen. Right-click a person, a thing or the ground for quest steps.'],
   land: ['Ground', 'Shape and paint the ground.'], extend: ['Extend', 'Build out piece by piece from the open edges.'],
-  light: ['Game light', ''], view: ['View', 'Camera views (top, isometric, flat), the grid, wireframe, field of view, fog and how far you see.'],
+  light: ['Game light', ''], view: ['View', 'Camera views, field of view; sky, fog, ground, water, wireframe; view distance; the grid; controls.'],
   show: ['Show', ''], lock: ['Lock walls', ''], home: ['Start view', 'Back to where the view started.'], help: ['Controls', 'How the mouse and keys work in the 3D view.'],
   'w-panels': ['Panels', 'Open, close and arrange the tools; ready-made layouts.'], 'w-show': ['Show', ''], 'w-lockb': ['Lock walls', ''],
   'w-full': ['Full view', 'Only the map or 3D, its buttons and windows. Again: everything back.', 'fullview'], 'vbar-more': ['More tools', 'The tools there\'s no room for on the bar.'],

@@ -100,7 +100,7 @@ function worldPanelsInit(){
     f.onclick = e => { e.stopPropagation(); PNL.full('world'); };
     sw.appendChild(f);
     lockSync();
-    if (typeof V3 !== 'undefined' && V3.on) sw.querySelectorAll('.flatonly').forEach(x => x.style.display = 'none');
+    if (typeof V3 !== 'undefined' && V3.on) document.querySelectorAll('.flatonly').forEach(x => x.style.display = 'none');
     if (typeof tbApply === 'function') tbApply();
   }
 }

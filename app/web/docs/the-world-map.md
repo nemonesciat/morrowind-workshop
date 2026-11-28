@@ -29,7 +29,7 @@ the place. **+ −** at the bottom right zoom.
 | Alt+drag | Circle round the selection |
 | F or T | Look at what's selected |
 
-**?** in the 3D toolbar (or the **⌨ 3D controls** panel) lists every control. Used to Blender? **Ctrl+/** has
+**View ▾ › Controls** on the 3D bar (or the **⌨ 3D controls** panel) lists every control. Used to Blender? **Ctrl+/** has
 **3D controls: Blender**: middle-drag circles, Shift+middle-drag slides, Ctrl+middle-drag moves in and out, and **G**
 and **R** move and turn what's selected with the mouse (**X**, **Y**, **Z** keep it to one axis; click sets it down,
 Esc puts it back). Without that choice, give those two a key of your own there.
@@ -164,12 +164,11 @@ of nudges is one Undo. All of these keys can be changed under **Ctrl+/**.
 
 | Button | What it does |
 |---|---|
-| 💡 Game light | Lit: the game's own lighting. Off: bright, even light to work by. |
-| 👁 View ▾ | **Top** and the four isometric corners (◤ ◥ ◣ ◢; again turns round; **Free** or turning the camera lets go), **Flat** for no perspective (number pad 7, 1 and 5 as in Blender); grid (at the move step, or **At the selection**, **Turned to it**), cell borders, wireframe, field of view; outdoors the ground, water, sky, **Fog** and how far cells load. |
+| ＋ Make ▾ | **Create something new**, the **Style palette**, **Quests** (the quest maker), and outdoors **Ground** (shape and paint the land, see *Shaping the land*) or indoors **Extend** (build out from open edges, see *Building interiors*). |
+| 💡 Light | Lit: the game's own lighting. Off: bright, even light to work by. |
+| 👁 View ▾ | One panel, all of it at once. **Camera**: **Top** and the four corners (NW, NE, SW, SE; again turns round; **Free** or turning the camera lets go), **Start view**, **Flat** for no perspective (number pad 7, 1 and 5 as in Blender), **Field of view**. **Shown**: sky, fog, ground and water (outdoors), game lighting, wireframe, cell borders, **View distance**. **Grid**: at the move step, through walls, **At the selection**, **Turned to it**. **Controls**: every mouse and key. Esc or a click elsewhere closes it. |
 | ☑ Show | The Show window: what's shown, floors, your changes, hidden things. |
 | 🔒 Lock walls | Lit: walls and buildings can't be picked or moved by accident. |
-| ⛰ Ground | Outdoors: shape and paint the ground. See *Shaping the land*. |
-| ⬚ Extend | Indoors: build out piece by piece from open edges. See *Building interiors*. |
 
 ## Walking paths
 
