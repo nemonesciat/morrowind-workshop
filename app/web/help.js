@@ -3,9 +3,47 @@
 
 // ----- the Help menu at the top
 // (one top-bar menu open at a time: opening one closes the others)
-function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu', 'learnmenu', 'filemenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
+function topMenusClose(except){ for (const id of ['helpmenu', 'omwmenu', 'learnmenu', 'filemenu', 'editmenu', 'viewmenu']){ const m = $('#' + id); if (m && id !== except) m.style.display = 'none'; } }
 $('#helpbtn').onclick = e => { e.stopPropagation(); topMenusClose('helpmenu'); const m = $('#helpmenu'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; };
 document.addEventListener('click', e => { if (!e.target.closest('#helpmenu')) $('#helpmenu').style.display = 'none'; });
+// Edit and View in the menu row (2.9.20): one line each, the key on the right, as File
+function topMenuKey(id){ try { const a = CF_ACT.find(x => x.id === id); return a ? (cfKeysOf(a)[0] || '') : ''; } catch (e){ return ''; } }
+function topMenu(btn, menu, items){
+  $(btn).onclick = e => {
+    e.stopPropagation(); topMenusClose(menu);
+    const m = $('#' + menu), show = m.style.display !== 'block';
+    const list = items().filter(Boolean);
+    m.innerHTML = list.map((it, n) => it === '-' ? '<hr>' : `<button data-tm="${n}"${it.off ? ' disabled' : ''}${it.tip ? ` title="${esc(it.tip)}"` : ''}>${esc(it.label)}<span class="k">${esc(it.key || '')}</span></button>`).join('');
+    m.querySelectorAll('[data-tm]').forEach(b => b.onclick = ev => { ev.stopPropagation(); m.style.display = 'none'; list[+b.dataset.tm].run(); });
+    m.style.display = show ? 'block' : 'none';
+  };
+  document.addEventListener('click', e => { if (!e.target.closest('#' + menu)) $('#' + menu).style.display = 'none'; });
+}
+topMenu('#editbtn', 'editmenu', () => {
+  const p = S.summary && S.summary.project, G = p && p.group;
+  return [
+    {label: p && p.undo_depth ? 'Undo ' + p.undo_note : 'Undo', key: topMenuKey('undo') || 'Ctrl+Z', off: !(p && p.undo_depth), run: () => doUndo()},
+    {label: p && p.redo_depth ? 'Redo ' + p.redo_note : 'Redo', key: topMenuKey('redo') || 'Ctrl+Y', off: !(p && p.redo_depth), run: () => doRedo()},
+    {label: G ? 'Close the group (' + G.changes + ')' : 'Group what comes next', off: !p, tip: 'What you do next becomes one Undo step', run: () => setGroup(!G)},
+    '-',
+    {label: 'Commands…', key: topMenuKey('palette'), run: () => cfPalette()},
+    {label: 'Search', key: '/', run: () => { const q = $('#q'); if (q) q.focus(); }},
+    {label: 'Keyboard shortcuts…', key: topMenuKey('keys'), run: () => cfKeysModal()}];
+});
+topMenu('#viewbtn', 'viewmenu', () => {
+  const world = $('#world') && $('#world').classList.contains('on'), jm = $('#jumpme');
+  return [
+    {label: 'Home', run: () => showView('guide')},
+    {label: 'World map', run: () => showView('world')},
+    world ? {label: 'Full view', tip: 'Only the map or 3D; ⛶ again brings the panels back', run: () => { const f = $('#w-full'); if (f) f.click(); }} : null,
+    jm && jm.style.display !== 'none' ? {label: 'Jump to my character', run: () => jm.click()} : null,
+    '-',
+    {label: typeof TB !== 'undefined' && TB.float ? 'Tool bar: dock the buttons' : 'Tool bar: float the buttons', tip: 'One bar over the view, or groups you drag about', run: () => tbSet('float', !TB.float)},
+    typeof TB !== 'undefined' && !TB.float ? {label: TB.words ? 'Tool bar: icons only' : 'Tool bar: icons and words', run: () => tbSet('words', !TB.words)} : null,
+    '-',
+    {label: 'Reload the game files', tip: 'Re-read openmw.cfg and every plugin', run: () => $('#reload').click()},
+    {label: 'Look and theme…', run: () => showView('settings')}];
+});
 $('#helpmenu').addEventListener('click', e => {
   const b = e.target.closest('[data-help]'); if (!b) return;
   $('#helpmenu').style.display = 'none';
@@ -177,8 +215,10 @@ function helpGo(view){ return `<button class="btn sm" data-gview="${view}">Open 
 
 // ----- Home: where the Workshop opens. What to do first, the places you were in lately, and the guide
 // underneath (Help > Getting started comes here too)
-function homeStart(){ try { return localStorage.getItem('ws-start') !== 'browse'; } catch (e){ return true; } }
-function homeStartSet(on){ try { localStorage.setItem('ws-start', on ? 'home' : 'browse'); } catch (e){} }
+// (where the Workshop opens: the World map with its card since 2.9.20, Home if ticked there, or Browse)
+function homeStartPage(){ try { return localStorage.getItem('ws-start') || 'world'; } catch (e){ return 'world'; } }
+function homeStart(){ return homeStartPage() === 'home'; }
+function homeStartSet(on){ try { localStorage.setItem('ws-start', on ? 'home' : 'world'); } catch (e){} }
 // the pages a builder goes to most, as cards at the top of Home (the user, 2026-11-26: a landing page for all
 // things, the tours below and not in the way)
 const HOME_JUMP = [
@@ -473,10 +513,13 @@ function mcpCcHtml(cc){
   if (!cc) return '';
   if (!cc.here) return `<span class="msg" style="flex:1">Claude Code isn't on this PC. Install the Claude app, open its Code tab once, then come back here.</span>
     <a class="btn sm" href="https://claude.ai/download" target="_blank" rel="noopener">Get the Claude app</a>`;
-  if (cc.connected === 'yes') return `<span class="msg" style="flex:1;color:var(--green)" title="Claude Code has this address for every folder. Its sessions started before connecting don't see it.">✓ Connected: start a new Claude Code session and ask it about your mod.</span>
-    <button class="btn sm" id="st-ccgo" title="Give Claude Code the address again">Connect again</button>`;
+  // (kept to some folders by the user: said so, and Connect again keeps it there)
+  const fl = cc.folders || [], fShort = fl.map(f => f.split(/[\\/]/).pop()).join(', '),
+    where = fl.length ? `Claude Code has this address only in ${fl.join('; ')}.` : 'Claude Code has this address for every folder.';
+  if (cc.connected === 'yes') return `<span class="msg" style="flex:1;color:var(--green)" title="${esc(where)} Its sessions started before connecting don't see it.">✓ Connected${fl.length ? ' in ' + esc(fShort) : ''}: start a new Claude Code session${fl.length ? ' there' : ''} and ask it about your mod.</span>
+    <button class="btn sm" id="st-ccgo" title="Give Claude Code the address again${fl.length ? ', in the same folders' : ''}">Connect again</button>`;
   return `${cc.connected === 'old' ? '<span class="msg" style="color:var(--red)" title="Its address has an earlier key, or another port">Claude Code has an old address.</span>' : ''}
-    <button class="btn primary sm" id="st-ccgo" title="Gives Claude Code the Workshop's address, for every folder: no terminal needed">Connect Claude Code</button>`;
+    <button class="btn primary sm" id="st-ccgo" title="Gives Claude Code the Workshop's address, ${fl.length ? 'in ' + esc(fl.join('; ')) : 'for every folder'}: no terminal needed">Connect Claude Code</button>`;
 }
 async function renderSettings(){
   const w = $('#settingswrap');
@@ -537,7 +580,7 @@ async function renderSettings(){
     ${typeof cfMousePicker === 'function' ? cfMousePicker() : ''}<p class="msg" style="margin-top:6px">Hover one to see what it does. You can change it any time.</p></section>
 
   <section class="card setsec"><h3>Starting up</h3>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="st-guide" ${homeStart() ? 'checked' : ''}> Open on the Home page (unticked: on Browse). Click the logo at the top left to go Home any time.</label></section>
+    <div class="setrow"><span title="The logo at the top left goes Home any time">Open on</span><select class="inp" id="st-guide" style="max-width:200px">${[['world', 'World map'], ['home', 'Home'], ['browse', 'Browse']].map(([v, t]) => `<option value="${v}"${homeStartPage() === v ? ' selected' : ''}>${t}</option>`).join('')}</select></div></section>
 
   <section class="card setsec"><h3>Folders</h3>
     <div class="setrow"><span>Your projects</span><span class="msg">${esc(st.projects_folder)}</span></div>
@@ -600,7 +643,7 @@ async function renderSettings(){
     try { const r = await post('/api/backups/clear', {keep: 3}); toast(`${r.gone} backup${r.gone === 1 ? '' : 's'} deleted.`); renderSettings(); }
     catch (e){ toast(e.message, true); }
   };
-  $('#st-guide').onchange = e => { homeStartSet(e.target.checked); toast('Saved.'); };
+  $('#st-guide').onchange = e => { try { localStorage.setItem('ws-start', e.target.value); } catch (x){} toast('Saved.'); };
   w.querySelectorAll('[data-open]').forEach(b => b.onclick = () => post('/api/open_place', {what: b.dataset.open}).catch(e => toast(e.message, true)));
   w.querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
     const f = b.dataset.restore;
@@ -658,7 +701,10 @@ async function aboutModal(){
   if (document.getElementById('ab-modal')) return;
   const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.id = 'ab-modal';
   // (the logo from the top left, at the window's top right)
-  const logo = document.querySelector('.brand svg.logo, .brand svg');
+  // (the whole logo, with WORKSHOP: the top left has only the gear and letters since 2.9.20)
+  const top = document.querySelector('.brand svg');
+  const logo = top ? {outerHTML: top.outerHTML.replace(/viewBox="[^"]*"/, 'viewBox="33 5 191 132.9"').replace('</svg>',
+    '<text class="lg-s" x="34" y="135.9" textLength="189" lengthAdjust="spacing">WORKSHOP</text></svg>')} : null;
   // (it floats in the free space right of the title and version, so the text keeps its own spacing)
   bg.innerHTML = `<div class="modal" style="width:min(680px,94vw);max-height:86vh;overflow:auto;position:relative">
     <div style="display:flex;gap:18px;align-items:flex-start"><div style="flex:1;min-width:0">
@@ -730,6 +776,7 @@ async function openFromLink(hash){
       const st = await api('/api/settings');
       if (location.hash.length > 1) await openFromLink(location.hash);
       else if (!st.guide_seen || homeStart()) showView('guide');
+      else if (homeStartPage() !== 'browse') showView('world');
       setTimeout(() => { if (typeof crPrefetch === 'function') crPrefetch(); }, 4000);
     } catch (e){ console.warn(e); }
   }, 700);

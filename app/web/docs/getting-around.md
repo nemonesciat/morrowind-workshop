@@ -25,7 +25,7 @@ your own.
 
 | Page | What it's for |
 |---|---|
-| Home (the logo) | Where to begin, a guided first house, the places you were lately. |
+| Home (the logo, or View → Home) | Where to begin, guided tours, your mod and the game. The Workshop opens on the World map, with a card for opening a place, your recent places, making a new one and your mod; Settings → Starting up → **Open on** picks Home or Browse instead. |
 | Browse | Every record in your game: search, read, change. |
 | World map | Places in 2D or 3D: build, place, furnish, shape the land, Play here. |
 | Create | Quick starts: a house, a dungeon, people, items, spells, books, loot lists, and the Forge. |
@@ -71,8 +71,10 @@ Every page's tools are **panels**.
 - **🧭 Minimap** (in ▤ Panels on the World map) shows where you are. In 3D it follows the camera, with an arrow
   for the way you face; indoors it shows your storey only. **Click** it to go there, **drag** to look around,
   **scroll** to zoom, and **📍** follows you again. The line under it names what the pointer is over.
-- Groups of buttons over the map have a grip **⋮⋮**: drag it to put the group where you like. Right-click a grip
-  to put them back in a row, or lock them.
+- The map's and 3D view's buttons are one bar over the view: point at one for its name, its key and what it
+  does. What doesn't fit in a narrow window goes under **⋯**. **View → Tool bar** (or Settings → Working, or a
+  right-click on the bar) chooses **icons and words**, with each name under its icon, or **groups to drag
+  about** by their grip **⋮⋮**, as before 3.0.
 
 ## Working faster
 

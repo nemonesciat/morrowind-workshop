@@ -93,6 +93,31 @@ const ICONS = {
   star: '<path d="m12 4 2.4 5 5.4.7-4 3.7 1 5.4L12 16.2 7.2 18.8l1-5.4-4-3.7 5.4-.7z"/>',
   hand: '<path d="M7 11.5V7a1.3 1.3 0 0 1 2.6 0v3.5M9.6 10V5.5a1.3 1.3 0 0 1 2.6 0V10M12.2 10V6.5a1.3 1.3 0 0 1 2.6 0v4M14.8 10.5V9a1.3 1.3 0 0 1 2.6 0v5a6 6 0 0 1-6 6h-.5A5.4 5.4 0 0 1 5.5 15V13a1.5 1.5 0 0 1 3 0"/>',
 };
+// the tools over the map and 3D view, one bar of icons (2.9.20: the plain signs they had, ✥ ⟳ ⊞, sat unevenly
+// once the words were gone)
+Object.assign(ICONS, {
+  move: '<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  turn: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 3.5V8h-4.5"/>',
+  tilt: '<path d="M8.2 19.5 4.6 8.6l9.5-3.1 3.6 10.9z"/><path d="M3 20.5h18"/>',
+  scale: '<path d="M5 19 19 5"/><path d="M13.5 5H19v5.5M10.5 19H5v-5.5"/>',
+  axes: '<path d="M12 13V3.5M12 13l7.6 4.3M12 13l-7.6 4.3"/><path d="m9.8 5.7 2.2-2.2 2.2 2.2"/>',
+  pivot: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="1.7"/>',
+  grid: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/>',
+  angle: '<path d="M4 19h16M4 19 15 6"/><path d="M10.5 19a6.5 6.5 0 0 0-1.9-4.6"/>',
+  pieces: '<rect x="3.5" y="8" width="8" height="8" rx="1"/><rect x="12.5" y="8" width="8" height="8" rx="1"/><path d="M12 4.5v2M12 17.5v2"/>',
+  land: '<rect x="8" y="8.5" width="8" height="8" rx="1"/><path d="M3 16.5h18M12 3v3"/>',
+  drop: '<rect x="8" y="3.5" width="8" height="7" rx="1"/><path d="M12 13v5M9.5 15.5 12 18l2.5-2.5M4 20.5h16"/>',
+  extend: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><path d="M12 9v6M9 12h6"/>',
+  show: '<rect x="4" y="4" width="7" height="7" rx="1"/><path d="m5.8 7.6 1.3 1.3 2.3-2.6"/><rect x="4" y="13" width="7" height="7" rx="1"/><path d="M14 7.5h6M14 16.5h6"/>',
+  target: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+  full: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
+  help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.6a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.6"/><circle cx="12" cy="16.9" r=".5"/>',
+  panels: '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M9 4.5v15M15 4.5v15"/>',
+  mountain: '<path d="M3 19 9.5 8l4 6.5 2.5-3.5L21 19z"/>',
+  eyeoff: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/><path d="M4 4l16 16"/>',
+});
+// an icon by name, for code that draws one itself (the 3D bar, the Objects list)
+function wsIcon(name){ return ICONS[name] ? `<svg class="wi" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>` : ''; }
 
 // which icon each emoji the pages write becomes (the same thing, the same icon)
 const EMO_ICON = {

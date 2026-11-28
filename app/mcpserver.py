@@ -1059,17 +1059,55 @@ def claude_cli():
     return None
 
 
+def _cc_entries(d):
+    """The Workshop's entries in Claude Code's settings: (the every-folder url or None, {folder: url}). A user may
+    keep it to some folders only (the user, 2026-11-27: every other project's session failed to reach a closed
+    Workshop), as projects[folder].mcpServers."""
+    if not isinstance(d, dict):
+        return None, {}
+    url = ((d.get('mcpServers') if isinstance(d.get('mcpServers'), dict) else {}).get(SERVER_NAME) or {}).get('url')
+    folders = {}
+    for f, p in (d.get('projects') if isinstance(d.get('projects'), dict) else {}).items():
+        s = (p.get('mcpServers') if isinstance(p, dict) and isinstance(p.get('mcpServers'), dict) else {}).get(SERVER_NAME)
+        if isinstance(s, dict) and s.get('url'):
+            folders[f] = s['url']
+    return url, folders
+
+
 def claude_code(addr):
     """Claude Code on this PC and the Workshop in it: {'here': bool, 'connected': 'yes' | 'old' (another address,
-    an earlier key) | 'no'}."""
-    url = None
+    an earlier key) | 'no', 'folders': [folders it is kept to, when not given to every folder]}."""
+    url, folders = None, {}
     try:
         with open(_claude_json(), encoding='utf-8') as f:
-            url = ((json.load(f).get('mcpServers') or {}).get(SERVER_NAME) or {}).get('url')
+            url, folders = _cc_entries(json.load(f))
     except (OSError, ValueError, AttributeError):
         pass
     here = bool(claude_cli() or os.path.isfile(_claude_json()))
-    return {'here': here, 'connected': 'no' if not url else 'yes' if url == addr else 'old'}
+    if not url and folders:
+        return {'here': here, 'connected': 'yes' if all(u == addr for u in folders.values()) else 'old',
+                'folders': sorted(folders)}
+    return {'here': here, 'connected': 'no' if not url else 'yes' if url == addr else 'old', 'folders': []}
+
+
+def _cc_refresh_folders(addr):
+    """Kept to some folders: give those the new address and leave every other folder alone. True when done."""
+    p = _claude_json()
+    try:
+        with open(p, encoding='utf-8') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False
+    url, folders = _cc_entries(d)
+    if url or not folders:
+        return False
+    for f in folders:
+        d['projects'][f]['mcpServers'][SERVER_NAME] = {'type': 'http', 'url': addr}
+    tmp = p + '.workshop-new'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, p)
+    return True
 
 
 def connect_claude_code(addr):
@@ -1077,7 +1115,9 @@ def connect_claude_code(addr):
     if not addr:
         raise EditError('Tick "Let coding agents connect" first.')
     cli = claude_cli()
-    if cli:
+    if _cc_refresh_folders(addr):
+        pass
+    elif cli:
         import subprocess
         import osplat
 

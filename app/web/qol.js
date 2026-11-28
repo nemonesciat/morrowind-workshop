@@ -309,23 +309,44 @@ async function qolReopen(){
   const v = qolLast(); if (!v || !v.key) return toast('No place to go back to yet.', true);
   showView('world'); await worldOpen(v.key); await qolRestoreView(v);
 }
-// the World map with no place open: find one, go back to the last one, the places you were in lately, or
-// build a new one (drawn each time the map shows with nothing open)
+// the World map with no place open: the Workshop's landing card since 2.9.20 (the user, 2026-11-27, liking a small
+// menu set on the 3D view better than a page of cards): find a place or go back to the last one, the places you
+// were in lately, make a new one, your mod, keys. Home keeps the rest, one click away. Drawn each time the map
+// shows with nothing open.
 function qolEmptyMap(){
   const box = $('#mapempty'); if (!box || W.key) return;
   if (box.contains(document.activeElement)) return;
   const v = qolLast(), recent = (typeof WP !== 'undefined' ? WP.places : []).filter(p => !v || p.name !== v.name).slice(0, 6);
+  const p = S.summary && S.summary.project, logo = document.querySelector('.brand svg');
+  const where = pl => pl.interior ? 'inside' : (pl.key && /^-?\d+\s*,\s*-?\d+$/.test(pl.key) ? pl.key.replace(/\s*,\s*/, ', ') : 'outside');
+  const kact = id => { try { const a = CF_ACT.find(x => x.id === id); const k = a ? cfKeysOf(a) : []; return k.length ? [k[0], a.label.replace(/\s*\(.*?\)/g, '').replace(/what's selected/g, 'it')] : null; } catch (e){ return null; } };
+  const keys = ['palette', 'search', 'save', 'undo', 'focus', 'dup', 'delete', 'keys'].map(kact).filter(Boolean);
   box.innerHTML = `<div class="me-card">
-    <h3>Open a place</h3>
-    <div class="dd"><input class="inp" id="me-goto" placeholder="Balmora, Seyda Neen, Caldera Mine…" autocomplete="off" spellcheck="false"><div class="ddlist" id="me-goto-l"></div></div>
-    ${v && v.key ? `<button class="btn primary" id="q-reopen">↺ Back to ${esc(v.name || v.key)}</button>` : ''}
-    ${recent.length ? `<div class="me-h">Lately</div><div class="me-places">${recent.map(p => `<button class="btn sm" data-mei="${WP.places.indexOf(p)}">${p.interior ? '🏠' : '🌄'} ${esc(p.name)}</button>`).join('')}</div>` : ''}
-    <div class="me-h">Or make a new one</div>
-    <div class="me-places"><button class="btn sm" data-mek="build">🏠 Build a house</button><button class="btn sm" data-mek="ruin">⚒ Make a dungeon</button><button class="btn sm" data-mek="town" title="A town or castle is drawn on open land: open the outdoor place first, then draw it in the ⛰ Land panel">🏘 A town or castle</button></div>
-    <div class="msg me-foot">Ctrl+K finds any place too, and every cell in Browse has "Open on map".</div></div>`;
+    <div class="me-hd">${logo ? logo.outerHTML : ''}<div><h3>Morrowind Workshop</h3><div class="msg">${p
+      ? `Working on <b>${esc(p.name)}</b> · ${fmtN(p.changes)} change${p.changes === 1 ? '' : 's'}${p.unsaved ? ' · <span class="home-warn">not saved</span>' : ''}`
+      : 'No mod open yet'}</div></div></div>
+    <div class="dd"><input class="inp" id="me-goto" placeholder="Open a place: Balmora, Seyda Neen, -2, -9…" autocomplete="off" spellcheck="false"><div class="ddlist" id="me-goto-l"></div></div>
+    ${v && v.key ? `<button class="btn primary me-back" id="q-reopen">↺ Back to ${esc(v.name || v.key)}</button>` : ''}
+    ${recent.length ? `<div class="me-h">Recent places</div><div class="me-recent">${recent.map(pl => `<button class="me-rp" data-mei="${WP.places.indexOf(pl)}" title="${esc(pl.name)}"><b>${esc(pl.name)}</b><code>${esc(where(pl))}</code></button>`).join('')}</div>` : ''}
+    <div class="me-h">Make a new one</div>
+    <div class="me-places"><button class="btn sm" data-mek="build">🏠 A house</button><button class="btn sm" data-mek="ruin">⚒ A dungeon</button><button class="btn sm" data-mek="town" title="A town or castle is drawn on open land: open the outdoor place first, then draw it in the ⛰ Land panel">🏘 A town or castle</button></div>
+    <div class="me-h">Your mod</div>
+    <div class="me-mod">${p ? `<b>${esc(p.plugin || p.name)}</b><span class="msg">${p.masters && p.masters.length ? `needs ${p.masters.length} other file${p.masters.length === 1 ? '' : 's'}` : ''}</span>
+        <button class="btn sm" data-mea="verify" title="Check the mod for problems">Check it</button><button class="btn sm primary" data-mea="play" title="Start OpenMW with your mod and the live link">▶ Play</button>`
+      : `<span class="msg">Your work goes into a mod of your own.</span><button class="btn sm primary" data-mea="new">＋ Start a mod</button>`}</div>
+    ${keys.length ? `<div class="me-h">Keys</div><div class="me-keys">${keys.map(([k, t]) => `<span><kbd>${esc(k)}</kbd>${esc(t)}</span>`).join('')}</div>` : ''}
+    <div class="me-foot"><span class="me-mouse"><span class="msg">Mouse</span>${typeof cfMousePicker === 'function' ? cfMousePicker() : ''}</span><button class="lnk" data-mea="home">Home &amp; tours →</button></div></div>`;
+  const lg = box.querySelector('.me-hd svg'); if (lg) lg.removeAttribute('class');
   ddSearch('me-goto', 'CELL', r => worldOpenIndex(r.i));
   const rb = $('#q-reopen'); if (rb) rb.onclick = e => { e.stopPropagation(); qolReopen(); };
   box.querySelectorAll('[data-mei]').forEach(b => b.onclick = () => wpPlaceOpen(+b.dataset.mei));
+  box.querySelectorAll('[data-mea]').forEach(b => b.onclick = () => {
+    const k = b.dataset.mea;
+    if (k === 'home') showView('guide');
+    else if (k === 'new') projectModal();
+    else if (k === 'verify'){ showView('health'); setTimeout(() => { const g = $('#verify-go'); if (g) g.click(); }, 400); }
+    else if (k === 'play') gameStart('/api/openmw/start', {mode: 'menu'}).then(ok => { if (ok) toast('Starting OpenMW…'); });
+  });
   box.querySelectorAll('[data-mek]').forEach(b => b.onclick = () => {
     const k = b.dataset.mek;
     // (a town or castle needs a place open to draw on: say so and put the cursor in the place box, 2026-11-04)
@@ -666,7 +687,7 @@ try { if (W.unseen === undefined) W.unseen = localStorage.getItem('ws-unseen') =
 // the toolbar at the top fits its row: no button squeezes; when the row is too long, words fold away to their
 // icons one button at a time (Build together's first, the AI button's last) until it fits (the user: "Me" lost
 // its sides and the reload button fell off the screen with the game linked)
-const HDR_FOLD = ['togetherbtn', 'helpbtn', 'omwbtn', 'filebtn', 'undobtn', 'redobtn'];
+const HDR_FOLD = ['togetherbtn', 'learnbtn'];      // (File, OpenMW, Help are words in the menu row since 2.9.20)
 function hdrFit(){
   const r = document.querySelector('.hdr-right'); if (!r) return;
   HDR_FOLD.forEach(id => { const b = document.getElementById(id); if (b) b.classList.remove('fold'); });

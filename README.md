@@ -94,7 +94,7 @@ repository is the source code it is built from.
   that fire as it lands, each second or as it ends, filtered by target and with a chance: health,
   magicka or fatigue, push, pull, launch, dash, grow or shrink, calm, frenzy, aura, leech, swap
   places, cast a spell, change the weather, transmute, teleport, place an object, set a global,
-  show a message, or your own Lua (checked, and the Assistant can write it).
+  show a message, or your own Lua (checked, and Write with AI can draft it).
 - **How it looks, part by part**: the casting glow, bolt, hit, area burst, particles, colour, speed and
   the four sounds, each taken from any of the game's effects.
 - **Icons from your own pictures** (PNG, JPG, DDS, TGA; from the Library or your PC) for effects and
@@ -116,7 +116,7 @@ repository is the source code it is built from.
   change anyone; **Someone who'd live here** for one person at the spot clicked.
 - **Words of their own**, written offline from templates: greetings for a first meeting and later, my
   trade, lines about each other (kin, the head of the house, servants, friends, rivals), a little secret
-  and a rumour. The Assistant only writes when asked (✦).
+  and a rumour. Write with AI only writes when asked (✦).
 - Learnt from the game's people: every place with people in it is read once (about 30 s), what kind of
   place it is, and who is there.
 
@@ -170,9 +170,10 @@ repository is the source code it is built from.
 - In the 3D view, a measuring grid that stays where you put it: level on a floor, upright along a wall,
   or set at and turned to the selected object.
 
-### Optional AI assistant
-Builds and changes things from a plain request, drafts dialogue and writes Lua for magic effects,
-using Claude through the user's own Anthropic API key. Everything else works without it.
+### Optional AI
+**Write with AI** drafts dialogue and Lua with a model running on your own PC (no account, no key).
+Coding agents you run yourself, such as Claude Code, can connect to the Workshop and use its tools
+(Settings › AI › Coding agents). Everything else works without either.
 
 ## How it learns to build and furnish
 
@@ -193,8 +194,8 @@ once, run in a separate process, and are cached.
 
 ## What it is made of
 
-- **`app/`**: the Workshop itself, a small web server written in Python (standard library, plus
-  Anthropic's `anthropic` library for the optional AI assistant and `zstandard` for Blender files)
+- **`app/`**: the Workshop itself, a small web server written in Python (standard library only,
+  plus the optional `zstandard` for compressed Blender files)
   and its page (`app/web`, plain HTML and JavaScript, with three.js and two fonts bundled in
   `app/web/vendor`).
   - `workshop.py` starts it and serves the page and its API. `database.py` and `esm.py` read
@@ -234,7 +235,7 @@ once, run in a separate process, and are cached.
   - **Game and people**: `link.py` and `link_scripts/` are the live link (OpenMW Lua scripts);
     `saves.py` reads OpenMW's saves for Play as; `together.py` and `upnp.py` are building together;
     `uses.py` is the Use report; `verify.py` and `release.py` Get ready to share; `merge.py` Merge
-    mods; `ai.py` the assistant.
+    mods; `ai.py` Write with AI; `mcpserver.py` the connection for coding agents.
   - In `app/web`: `panels.js` is the panel system, used by `worldpanels.js` (World map) and
     `pagepanels.js` (the other pages); `world3d.js` the 3D view; `planner.js` the room planner;
     `viewwin.js` and `objwin.js` the windows over the 3D view; `effects.js` the magic effect maker; `dialogue.js`, `convo.js` and `convbuild.js` the Dialogue
@@ -251,16 +252,21 @@ once, run in a separate process, and are cached.
 
 ## Requirements
 
-Windows 10 or 11 (64-bit), [OpenMW](https://openmw.org/downloads/) 0.49 or newer set up with its
-Launcher (0.50 or newer for custom and Tamriel Data magic effects; built and tested with 0.51), and
-Morrowind. It works only with OpenMW, not the original engine.
+- **Windows** 10 or 11 (64-bit): the installer or the portable zip.
+- **Linux** (beta): the `linux.tar.gz` from the releases, with Python 3.10 or newer; see
+  [`packaging/linux/README.md`](packaging/linux/README.md).
+- [OpenMW](https://openmw.org/downloads/) 0.49 or newer set up with its Launcher (0.50 or newer for
+  custom and Tamriel Data magic effects; built and tested with 0.51), and Morrowind. It works only with
+  OpenMW, not the original engine.
 
 ## Running it from the source
 
 1. Install OpenMW and set it up with its Launcher, so it knows where Morrowind is.
-2. Install [Python 3.13](https://www.python.org/downloads/) (64-bit).
-3. Double-click **`Start Morrowind Workshop.bat`**. It installs the `anthropic` and `zstandard`
-   libraries the first time and opens the Workshop in your browser.
+2. Install [Python](https://www.python.org/downloads/) 3.10 or newer (3.13 on Windows, as the installer
+   uses). The Workshop needs nothing beyond Python's own library; `zstandard` (`pip install zstandard`)
+   is optional and only opens compressed Blender files.
+3. On Windows, double-click **`Start Morrowind Workshop.bat`**; on Linux, run `python3 app/workshop.py`.
+   The Workshop opens in its own window or your browser.
 
 ## Building the installer
 
@@ -269,8 +275,9 @@ See [BUILDING.md](BUILDING.md).
 ## AI disclosure
 
 The code in this repository was written with the help of Claude, an AI by Anthropic, under the
-author's direction and testing. The Workshop contains no AI-generated game assets. Its optional
-assistant uses Claude through the user's own Anthropic API key.
+author's direction and testing. The Workshop contains no AI-generated game assets. It needs no AI
+and no account: its optional Write with AI uses a model running on your own PC, and coding agents
+you run yourself can connect to it (Settings › AI).
 
 ## Licence
 
@@ -280,8 +287,8 @@ change it, with credit, but not for commercial purposes. See [LICENSE](LICENSE).
 
 The bundled third-party files keep their own licences: three.js (MIT) and the Cinzel and Inter fonts
 (SIL Open Font License 1.1), in `app/web/vendor` with their licence texts in
-`app/web/vendor/licenses`. The installer also includes Python (PSF License), the `anthropic`
-library and its dependencies (MIT, BSD, Apache 2.0) and `zstandard` (BSD); the built installer lists them all in
+`app/web/vendor/licenses`. The installer also includes Python (PSF License) and `zstandard` (BSD)
+with the `cffi` it needs (MIT); the built installer lists them all in
 `THIRD_PARTY_NOTICES.txt`.
 
 Not made by or affiliated with Bethesda Softworks or the OpenMW project. Contains no Morrowind files.

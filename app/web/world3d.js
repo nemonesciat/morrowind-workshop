@@ -89,7 +89,7 @@ async function v3Enable(on){
   $('#map').style.display = on ? 'none' : 'block';
   document.querySelectorAll('#mapnav, .mapzoom').forEach(e => e.style.display = on ? 'none' : '');
   $('#v3tools').style.display = on ? 'flex' : 'none';
-  document.querySelectorAll('#viewsw .flatonly').forEach(e => e.style.display = on ? 'none' : '');   // (Show and the lock: on the 3D bar in 3D)
+  document.querySelectorAll('#world .flatonly').forEach(e => e.style.display = on ? 'none' : '');   // (Show and the lock: on the 3D bar in 3D)
   if (typeof tbApply === 'function') tbApply();          // (where you put the buttons, now they can be measured)
   document.querySelectorAll('[data-view3d]').forEach(b => b.classList.toggle('on', (b.dataset.view3d === '1') === on));
   try { localStorage.setItem('ws-3d', on ? '1' : '0'); } catch (e) {}
@@ -2463,7 +2463,7 @@ function v3Pick(e, any, skipKey){
     if (o.userData.ground) return lockedHit ? {locked: true} : {key: null, point: h.point, world, normal};
     if (o.userData.ref === skipKey) continue;
     const ob = V3.objs.get(o.userData.ref);
-    if (!any && ob && ob.r.arch && W.lockArch){ lockedHit = true; continue; }
+    if (!any && ob && ((ob.r.arch && W.lockArch) || W.locks.has(o.userData.ref))){ lockedHit = true; continue; }
     return {key: o.userData.ref, obj: ob, point: h.point, world, normal};
   }
   return lockedHit ? {locked: true} : null;
@@ -2520,9 +2520,9 @@ function v3BoxEnd(D, e){
   const R = v3BoxRect(D, e); if (R.x1 - R.x0 < 5 || R.y1 - R.y0 < 5) return;
   const T = THREE, v = new T.Vector3(), box = new T.Box3(), fwd = v3Dir();
   if (!D.box.add) W.multi.clear();
-  for (const o of V3.objs.values()){
+  for (const [key, o] of V3.objs){
     if (!o.r || !o.g.visible) continue;
-    if (o.r.arch && W.lockArch) continue;
+    if ((o.r.arch && W.lockArch) || W.locks.has(key)) continue;
     box.setFromObject(o.g); if (box.isEmpty()) continue;
     box.getCenter(v);
     if (v.clone().sub(V3.pos).dot(fwd) <= 0) continue;          // behind the camera
@@ -3188,25 +3188,31 @@ function v3Tools(){
   const opt = (vals, cur, fmt) => vals.map(v => `<option value="${v}" ${v === cur ? 'selected' : ''}>${fmt(v)}</option>`).join('');
   // (in groups you can drag about by their grip: see toolbar.js)
   const grip = typeof tbGrip === 'function' ? tbGrip() : '';
-  t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">✥ Move</button>
-    <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">⟳ Turn</button>
-    <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">⤡ Tilt</button>
-    <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">⤢ Scale</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.pivotOpen ? 'primary' : ''}" data-v3="pivotmenu" title="Pivot point: what several selected things turn, tilt and size about">⊙ Pivot <span class="v3snapnow">${PIVOTS.find(p => p[0] === pivotMode())[2]}</span> ▾</button>
+  // (an icon and its word: the docked bar shows the icons, the tooltip names them; floating groups show both)
+  const I = (n, w) => (typeof wsIcon === 'function' ? wsIcon(n) : '') + `<span class="tl"> ${w}</span>`;
+  t.innerHTML = `<div class="v3grp" data-grp="move">${grip}<button class="btn sm ${V3.mode === 'translate' ? 'primary' : ''}" data-v3="translate" title="Move (G)">${I('move', 'Move')}</button>
+    <button class="btn sm ${V3.mode === 'rotate' ? 'primary' : ''}" data-v3="rotate" title="Turn (R)">${I('turn', 'Turn')}</button>
+    <button class="btn sm ${V3.tilt ? 'primary' : ''}" data-v3="tilt" title="Lean what's selected forwards or sideways">${I('tilt', 'Tilt')}</button>
+    <button class="btn sm ${V3.mode === 'scale' ? 'primary' : ''}" data-v3="scale" title="Scale handles (3): drag any handle and it grows or shrinks evenly, ×0.5 to ×2, as the game sizes things. Several selected: the Scale dialog">${I('scale', 'Scale')}</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.pivotOpen ? 'primary' : ''}" data-v3="pivotmenu" title="Pivot point: what several selected things turn, tilt and size about">${I('pivot', 'Pivot')} <span class="v3snapnow">${PIVOTS.find(p => p[0] === pivotMode())[2]}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.pivotOpen ? 'block' : 'none'}">${PIVOTS.map(([k, lab, , tip]) => `<label title="${tip}" style="justify-content:flex-start"><input type="radio" name="v3pivot" data-v3p="${k}" ${k === pivotMode() ? 'checked' : ''}> ${lab}</label>`).join('')}</div></span>
-    <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">✛ World axes</button></div>
-    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">⊞ Snap <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
+    <button class="btn sm ${v3Space() === 'local' ? '' : 'primary'}" data-v3="space" title="${v3Space() === 'local' ? 'Off: handles on its own axes, front, side and up as it is turned. Click for the world\'s axes.' : 'On: handles on the world\'s axes, east, north and up. Click for its own axes, as it is turned.'}">${I('axes', 'World axes')}</button></div>
+    <div class="v3grp" data-grp="snap">${grip}<span class="v3viewwrap"><button class="btn sm ${V3.snapOpen ? 'primary' : ''}" data-v3="snapmenu" title="Steps for moving and turning, and snapping">${I('grid', 'Snap')} <span class="v3snapnow">${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span> ▾</button>
       <div class="v3viewmenu v3snapmenu" style="display:${V3.snapOpen ? 'block' : 'none'}">
         <label title="Move in steps">Move in steps of <select id="v3grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></label>
         <label title="Turn in steps">Turn in steps of <select id="v3angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></label>
         <label title="Line up with nearby walls, floors and pieces"><input type="checkbox" id="v3pieces" ${V3.pieces ? 'checked' : ''}> Snap to pieces</label>
         <label title="After a move, rest it on what's below"><input type="checkbox" id="v3rest" ${V3.rest ? 'checked' : ''}> Land on surfaces</label></div></span>
-    <button class="btn sm" data-v3="floor" title="Set it down on what's below (End)">⤓ Drop down</button>
-    <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">🧲 Physics</button></div>
-    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">✚ Create</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">🎨 Style</button><button class="btn sm ${typeof QM !== 'undefined' && QM.dock ? 'primary' : ''}" data-v3="quests" title="The quest maker: quests where they happen. Right-click a person, a thing or the ground for quest steps">🧩 ${typeof qmBarLabel === 'function' ? esc(qmBarLabel()) : 'Quests'}</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">⛰ Ground</button>` : ''}
-    ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Build out piece by piece from open edges">⬚ Extend</button>` : ''}
-    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">💡 Game light</button>
-    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">👁 View ▾</button>
+    <span class="v3q v3dock" title="Move in steps of (0: freely)">${typeof wsIcon === 'function' ? wsIcon('grid') : ''}<select data-q="grid">${opt([0, 8, 16, 32, 64, 128, 256], V3.grid, v => v ? v : 'off')}</select></span>
+    <span class="v3q v3dock" title="Turn in steps of">${typeof wsIcon === 'function' ? wsIcon('angle') : ''}<select data-q="angle">${opt([0, 5, 15, 45, 90], V3.angle, v => v ? v + '°' : 'off')}</select></span>
+    <button class="btn sm v3dock ${V3.pieces ? 'primary' : ''}" data-v3="pieces" title="Snap to pieces: line up with nearby walls, floors and pieces">${I('pieces', 'Pieces')}</button>
+    <button class="btn sm v3dock ${V3.rest ? 'primary' : ''}" data-v3="rest" title="Land on surfaces: after a move, rest it on what's below">${I('land', 'Land')}</button>
+    <button class="btn sm" data-v3="floor" title="Set it down on what's below (End)">${I('drop', 'Drop down')}</button>
+    <button class="btn sm ${typeof PH !== 'undefined' && PH.on ? 'primary' : ''}" data-v3="physics" title="Let loose things fall and be pushed; keep the result or put them back">${I('magnet', 'Physics')}</button></div>
+    <div class="v3grp" data-grp="look">${grip}<button class="btn sm" data-v3="create" title="Make something new: a place, a person, an item, a spell…">${I('plus', 'Create')}</button><button class="btn sm" data-v3="style" title="Building pieces, furniture and decor by style">${I('palette', 'Style')}</button><button class="btn sm ${typeof QM !== 'undefined' && QM.dock ? 'primary' : ''}" data-v3="quests" title="The quest maker: quests where they happen. Right-click a person, a thing or the ground for quest steps">${I('puzzle', typeof qmBarLabel === 'function' ? esc(qmBarLabel()) : 'Quests')}</button>${W.ext ? `<button class="btn sm ${V3.landOpen ? 'primary' : ''}" data-v3="land" title="Shape and paint the ground">${I('mountain', 'Ground')}</button>` : ''}
+    ${!W.ext ? `<button class="btn sm ${typeof EXM !== 'undefined' && EXM.on ? 'primary' : ''}" data-v3="extend" title="Build out piece by piece from open edges">${I('extend', 'Extend')}</button>` : ''}
+    <button class="btn sm ${v3LightMode() === 'game' ? 'primary' : ''}" data-v3="light" title="${v3LightMode() === 'game' ? 'Game lighting. Click for bright, even light.' : 'Bright, even light. Click for game lighting.'}">${I('bulb', 'Game light')}</button>
+    <span class="v3viewwrap"><button class="btn sm ${V3.viewOpen ? 'primary' : ''}" data-v3="view" title="Grid, wireframe, field of view and more">${I('eye', 'View')} ▾</button>
       <div class="v3viewmenu" style="display:${V3.viewOpen ? 'block' : 'none'}">
         <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
           <button class="btn sm ${V3.camSnap === 'top' ? 'primary' : ''}" data-v3="camsnap" data-k="top" title="From above, north up (Num 7)">⬒ Top</button>
@@ -3232,10 +3238,10 @@ function v3Tools(){
           style="display:block;margin-top:6px">View distance <b id="v3distv">${V3_DISTS[v3Dist()]}</b>
           <input type="range" id="v3dist" min="1" max="4" step="1" value="${v3Dist()}" style="width:100%"></label>` : ''}
       </div></span>
-    <button class="btn sm" data-v3="show" title="${SHOW_TIP}">☑ Show</button>
-    <button class="btn sm ${W.lockArch ? 'primary' : ''}" data-v3="lock" title="${lockTip()}">${lockLabel()}</button>
-    <button class="btn sm" data-v3="home" title="Back to the start view">◎</button>
-    <button class="btn sm" data-v3="help" title="Controls">?</button></div>`;
+    <button class="btn sm" data-v3="show" title="${SHOW_TIP}">${I('show', 'Show')}</button>
+    <button class="btn sm ${W.lockArch ? 'primary' : ''}" data-v3="lock" title="${lockTip()}">${I('lock', 'Lock walls')}</button>
+    <button class="btn sm" data-v3="home" title="Back to the start view">${I('target', 'Start view')}</button>
+    <button class="btn sm" data-v3="help" title="Controls">${I('help', 'Controls')}</button></div>`;
   if (typeof tbApply === 'function') tbApply();
   t.querySelectorAll('[data-v3]').forEach(b => b.onclick = () => {
     const a = b.dataset.v3;
@@ -3259,6 +3265,8 @@ function v3Tools(){
     else if (a === 'show') showToggle();
     else if (a === 'lock') lockToggle();
     else if (a === 'camsnap') v3ViewSnap(b.dataset.k);
+    else if (a === 'pieces'){ V3.pieces = !V3.pieces; v3Tools(); }
+    else if (a === 'rest'){ V3.rest = !V3.rest; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} v3Tools(); }
     else if (a === 'snapmenu'){ V3.snapOpen = !V3.snapOpen; V3.viewOpen = false; V3.pivotOpen = false; v3Tools(); }
     else if (a === 'gridsel') v3GridToSel(false);
     else if (a === 'gridturn') v3GridToSel(true);
@@ -3280,6 +3288,7 @@ function v3Tools(){
   const vf = $('#v3fov');
   if (vf) vf.oninput = () => { V3.fov = +vf.value; $('#v3fovv').textContent = V3.fov + '°'; if (V3.camera && !V3.flat){ V3.camera.fov = V3.fov; V3.camera.updateProjectionMatrix(); } try { localStorage.setItem('ws-fov', String(V3.fov)); } catch (e) {} };
   $('#v3grid').onchange = e => { V3.grid = +e.target.value; v3ApplyMode(); v3Tools(); V3.gridFor = null; };
+  t.querySelectorAll('[data-q]').forEach(q => q.onchange = () => { if (q.dataset.q === 'grid'){ V3.grid = +q.value; V3.gridFor = null; } else V3.angle = +q.value; v3ApplyMode(); v3Tools(); });
   $('#v3angle').onchange = e => { V3.angle = +e.target.value; v3ApplyMode(); v3Tools(); };
   $('#v3pieces').onchange = e => { V3.pieces = e.target.checked; };
   $('#v3rest').onchange = e => { V3.rest = e.target.checked; try { localStorage.setItem('ws-rest', V3.rest ? '1' : '0'); } catch (x) {} };

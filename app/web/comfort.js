@@ -258,7 +258,7 @@ function cfPickMany(list, add){
   else { const l = list[list.length - 1]; W.sel = {cell: l[0], k: l[1].k}; W.tab = 'sel'; toast(`Selected ${W.multi.size} objects.`); }
   renderWside(); drawMap(); if (V3.on) v3Refresh();
 }
-function cfSelectAll(){ cfPickMany(visibleRefs().filter(([ck, r]) => !(r.arch && W.lockArch) && (W.ext || ck === W.key))); }
+function cfSelectAll(){ cfPickMany(visibleRefs().filter(([ck, r]) => !refLocked(ck, r) && (W.ext || ck === W.key))); }
 async function cfSelectWithContents(ck, r){
   let c;
   try { c = await api('/api/ref/contents?' + new URLSearchParams({cell: ck, ref: r.k})); } catch (e){ return toast(e.message, true); }
@@ -644,6 +644,8 @@ function cfStatus(){
   else if (r) parts.push(`<span data-copy="${n1(r.p[0])}, ${n1(r.p[1])}, ${n1(r.p[2])}" title="What's selected (click to copy where it is)"><b>${esc(r.name || r.id)}</b> · ${n1(r.p[0])}, ${n1(r.p[1])}, ${n1(r.p[2])} · ${deg(r.p[5])}°${r.s && r.s !== 1 ? ' · ×' + r.s : ''}${r.mine ? ' · <span class="on">changed</span>' : ''}</span>`);
   if (W.onlyMine) parts.push('<span class="mode" title="Only what your mod changed is shown (☑ Show)">Only my changes</span>');
   if (W.hide.size) parts.push(`<span title="Hidden for now: Alt+H shows them again">◌ ${W.hide.size} hidden</span>`);
+  if (W.locks && W.locks.size) parts.push(`<span title="Locked in the Objects list (🔒): they can't be picked or moved">🔒 ${W.locks.size} locked</span>`);
+  if (V3.on) parts.push(`<span title="Move and turn in steps of (the bar over the view)">Snap ${V3.grid || 'off'} · ${V3.angle ? V3.angle + '°' : 'off'}</span>`);
   parts.push('<span class="grow"></span>');
   parts.push(typeof LINK !== 'undefined' && LINK.connected ? '<span class="on lk" title="The game is running and linked: changes show up in it">● In game</span>' : '<span class="lk" title="Start the game from the Workshop to see changes in it live">○ Game not linked</span>');
   parts.push('<span class="hint" title="Every command, place and record in one search box">Ctrl+K commands</span>');

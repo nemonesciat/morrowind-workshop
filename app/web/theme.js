@@ -18,12 +18,14 @@ const TH_THEMES = {
     bg: '#000000', panel: '#000000', panel2: '#0f0e0e', line: '#4d0009', line2: '#713339', text: '#f2e6e4', muted: '#a58d8d', faint: '#8c7878',
     gold: '#c70a00', gold2: '#d8544c', hover: '#181717', sel: '#380300', deep: '#000000', bg2: '#000000', bg3: '#000000', line0: '#2a0005', goldline: '#770600',
     red: '#ff5a3c', amber: '#ff9a3c', blue: '#7fa7d6', green: '#8fbf7a', view3d: '#330000'}, btn: '#110403'},
-  dwemer: {label: 'Dwemer', about: 'Verdigris on cold stone, with bronze', v: {
-    // (once olive-dark with a gold accent, too like Hlaalu, the user 2026-10-26: now the ruins' cool blue-grey
-    // stone, the patina's teal for accents and headings, bronze for the main buttons)
-    bg: '#0e1214', panel: '#151b1e', panel2: '#1c2428', line: '#2a383d', line2: '#3b4e55', text: '#e2ecee', muted: '#94a8ac', faint: '#7a8e92',
-    gold: '#4db3a0', gold2: '#8edccb', hover: '#1d282c', sel: '#1d3a36', deep: '#0a0d0f', bg2: '#121719', bg3: '#182024', line0: '#1b2427', goldline: '#2e7468',
-    green: '#9fca7e'}, btn: '#6b4a22'},
+  dwemer: {label: 'Dwemer', about: 'Cold slate and brass, plain headings', quiet: true, v: {
+    // (once olive-dark with a gold accent, too like Hlaalu, the user 2026-10-26; then verdigris teal on blue-grey
+    // stone with bronze buttons; since 2.9.20 the calmer editor's look the user asked for, 2026-11-27: cool slate,
+    // headings in the plain font (the Workshop's name keeps its own), brass kept for what's chosen, links and
+    // section names, the lines and icons grey)
+    bg: '#111418', panel: '#171b20', panel2: '#1d2228', line: '#272d34', line2: '#353d46', text: '#dde1e6', muted: '#939ba5', faint: '#7c848e',
+    gold: '#c9a45c', gold2: '#e3d2ad', hover: '#232930', sel: '#2e3036', deep: '#0c0e11', bg2: '#13171b', bg3: '#181c21', line0: '#1b2026', goldline: '#5d6670',
+    view3d: '#0b0d10'}, btn: '#4a3d24'},
   imperial: {label: 'Imperial', about: 'Ivory marble, Septim red and old gold', light: true, v: {
     // (marble rather than parchment: cooler ivory panels with firm warm lines, the Legion's red for what
     // matters and a deep gold for the rest)
@@ -143,7 +145,7 @@ function thApply(t){
   const names = ['bg', 'panel', 'panel2', 'line', 'line2', 'text', 'muted', 'faint', 'gold', 'gold2', 'hover', 'sel', 'deep', 'bg2', 'bg3', 'line0', 'goldline', 'red', 'amber', 'blue', 'green'];
   for (const k of names.concat(['text-b', 'text-c', 'text-d', 'muted-b', 'muted-c', 'muted-d', 'deep-b', 'deep-c', 'deep-d', 'bg2-b', 'bg3-b',
     'panel2-b', 'panel2-c', 'panel2-d', 'goldline-b', 'sel-b', 'btn-primary', 'btn-primary-hover', 'tag-mine', 'tag-flag', 'tag-flag-p', 'toast-err', 'hl',
-    'view3d', 'fs', 'font-head', 'font-body'])) root.style.removeProperty('--' + k);
+    'view3d', 'fs', 'font-head', 'font-body', 'font-title'])) root.style.removeProperty('--' + k);
   let cv = null;
   if (custom) cv = thCustomVars(t.custom);
   const v = Object.assign({}, cv ? cv.v : base.v);
@@ -176,11 +178,20 @@ function thApply(t){
   // the fonts and text size, whatever the theme ("font should be selectable across all themes", the user)
   const F = thFonts(t), h = TH_HEAD_FONTS[F.head], b = TH_BODY_FONTS[F.body];
   if (h && F.head !== 'cinzel') v['font-head'] = h[1];
+  // (Dwemer, a quiet theme: headings in the plain font unless you chose a heading font; the Workshop's name keeps Cinzel, by
+  // --font-title, which the font walker leaves alone since it names no font)
+  const quiet = !custom && !!base.quiet;
+  if (quiet && F.head === 'cinzel') v['font-head'] = b ? b[1] : 'Inter,"Segoe UI",system-ui,sans-serif';
+  v['font-title'] = h && F.head !== 'cinzel' ? h[1] : 'Cinzel,serif';
   if (b && F.body !== 'inter') v['font-body'] = b[1];
   if (+F.size && +F.size !== 1) v.fs = String(Math.max(0.8, Math.min(1.5, +F.size)));
   for (const [k, val] of Object.entries(v)) root.style.setProperty('--' + k, val);
   root.dataset.theme = light ? 'light' : 'dark';
   root.classList.toggle('th-calm', !!t.calm);
+  root.classList.toggle('th-quiet', quiet);
+  // (the flat map's ground indoors and with no place open, drawn on its canvas: a quiet theme's own deep shade)
+  window.TH_MAPBG = quiet ? v.deep : null;
+  if (typeof drawMap === 'function' && typeof W !== 'undefined' && W.w) try { drawMap(); } catch (e){}
   let st = document.getElementById('th-css');
   if (!st){ st = document.createElement('style'); st.id = 'th-css'; document.head.appendChild(st); }
   st.textContent = `
@@ -189,7 +200,11 @@ function thApply(t){
     html[data-theme=light] .modal-bg{background:color-mix(in srgb,var(--text) 40%,transparent)}
     html[data-theme=light] ::-webkit-scrollbar-thumb{background-color:var(--line2)}
     html[data-theme=light] .pfloat .pgroup,html[data-theme=light] .pmenu,html[data-theme=light] .modal{box-shadow:0 10px 32px color-mix(in srgb,var(--text) 22%,transparent)}
-    [style*="Cinzel"]{font-family:var(--font-head,Cinzel,serif)!important}`;
+    [style*="Cinzel"]{font-family:var(--font-head,Cinzel,serif)!important}
+    .th-quiet .me-card h3,.th-quiet .home-hero h1,.th-quiet #ab-modal h2{font-family:var(--font-title)!important}
+    .th-quiet h1,.th-quiet h2,.th-quiet h3{letter-spacing:0}
+    .th-quiet .btn{border-color:var(--line2)}
+    .th-quiet .mapwrap{background:var(--deep)}`;
   // (the 3D view's background, if it's open indoors)
   if (typeof v3ApplyLighting === 'function' && typeof V3 !== 'undefined' && V3.scene) try { v3ApplyLighting(); } catch (e){}
 }
@@ -231,6 +246,8 @@ function thSection(){
   <section class="card setsec"><h3>Working</h3>
     <div class="setrow"><span>The World map opens in</span><span><select id="th-3d" style="width:auto;margin:0"><option value="0" ${in3d ? '' : 'selected'}>the flat map</option><option value="1" ${in3d ? 'selected' : ''}>3D</option></select></span></div>
     <div class="setrow"><span>Keyboard shortcuts</span><span><button class="btn sm" id="th-keys">Change them… (Ctrl+/)</button></span></div>
+    <div class="setrow"><span>Buttons over the map and 3D</span><span><select id="th-tbdock" style="width:auto;margin:0"><option value="dock" ${typeof TB !== 'undefined' && TB.float ? '' : 'selected'}>one bar</option><option value="float" ${typeof TB !== 'undefined' && TB.float ? 'selected' : ''}>groups to drag about</option></select>
+      <select id="th-tbwords" style="width:auto;margin:0 0 0 6px" title="On the bar"><option value="0" ${typeof TB !== 'undefined' && TB.words ? '' : 'selected'}>icons</option><option value="1" ${typeof TB !== 'undefined' && TB.words ? 'selected' : ''}>icons and words</option></select></span></div>
     <div class="setrow"><span>Panels on every page</span><span><button class="btn sm" id="th-panels">Back to the starting layouts</button></span></div>
     <div class="setrow"><span>Who Play here starts as</span><span><button class="btn sm" id="th-playas">👤 ${esc((typeof QOL !== 'undefined' && QOL.playAs) || 'A new character')}…</button></span></div></section>`;
 }
@@ -347,6 +364,9 @@ function thBind(w){
   w.querySelector('#th-3d').onchange = e => { try { localStorage.setItem('ws-3d', e.target.value); } catch (x){} toast(e.target.value === '1' ? 'The World map opens in 3D from now on.' : 'The World map opens flat from now on.'); };
   w.querySelector('#th-keys').onclick = () => cfKeysModal();
   w.querySelector('#th-playas').onclick = () => qsPlayAs();
+  { const d = w.querySelector('#th-tbdock'), wd = w.querySelector('#th-tbwords');
+    if (d) d.onchange = () => tbSet('float', d.value === 'float');
+    if (wd) wd.onchange = () => tbSet('words', wd.value === '1'); }
   w.querySelector('#th-panels').onclick = () => {
     if (!confirm('Put the panels on every page back where they started? (Your saved layouts stay in the Panels menu.)')) return;
     for (const [name, sp] of Object.entries(PNL.spaces)) PNL.useLayout(name, sp.opts.presets[sp.opts.start]);

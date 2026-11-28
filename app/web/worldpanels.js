@@ -5,6 +5,11 @@
 const WP = {places: (() => { try { return JSON.parse(localStorage.getItem('ws-places') || '[]'); } catch (e){ return []; } })()};
 
 const WP_PRESETS = {
+  // (2.9.20, an editor's layout, the user's pick from a preview: things to place over what is in this place on the
+  // left, the selected thing on the right; the first layout for someone new)
+  'Editor': {left: {size: 320, groups: [{tabs: ['olist'], on: 'olist', grow: 1.1}, {tabs: ['objs'], on: 'objs', grow: 1}]},
+             right: {size: 320, groups: [{tabs: ['sel', 'place', 'sky', 'land', 'paths'], on: 'sel', grow: 1}]},
+             bottom: {size: 200, groups: []}, floats: []},
   'Building': {right: {size: 340, groups: [{tabs: ['place', 'sel', 'objs', 'sky', 'land', 'paths'], on: 'place', grow: 1}]},
                left: {size: 300, groups: []}, bottom: {size: 220, groups: []}, floats: []},
   'Furnishing': {right: {size: 360, groups: [{tabs: ['place', 'library', 'prefabs'], on: 'place', grow: 1.3}, {tabs: ['sel', 'objs'], on: 'sel', grow: 1}]},
@@ -22,7 +27,7 @@ const WP_PRESETS = {
 function worldPanelsInit(){
   if (PNL.spaces.world) return;
   PNL.space('world', $('#world'), $('#world .mapwrap'), {
-    presets: WP_PRESETS, start: 'Building',
+    presets: WP_PRESETS, start: 'Editor',
     onResize: () => { if ($('#world').classList.contains('on')){ sizeMap(); drawMap(); if (typeof V3 !== 'undefined' && V3.on) v3Resize(); } },
     onFull: on => { const b = $('#w-full'); if (b){ b.classList.toggle('on', on); b.title = on ? 'Back from full view' : 'Full view: only the map or 3D, its buttons and windows'; } },
   });
@@ -81,23 +86,26 @@ function worldPanelsInit(){
   // the button that lists every panel and the layouts
   const sw = $('#viewsw');
   if (sw && !$('#w-panels')){
-    const b = document.createElement('button'); b.id = 'w-panels'; b.title = 'Panels: open, close and arrange the tools; layouts'; b.textContent = '▤ Panels';
+    const b = document.createElement('button'); b.id = 'w-panels'; b.title = 'Panels: open, close and arrange the tools; layouts'; b.innerHTML = wpIc('panels', 'Panels');
     b.onclick = e => { e.stopPropagation(); PNL.windowsMenu('world', b); };
     sw.appendChild(b);
     // (on the flat map, Show and the lock here; in 3D they stand on the 3D bar beside View: v3Tools)
-    const s = document.createElement('button'); s.id = 'w-show'; s.className = 'flatonly'; s.title = SHOW_TIP; s.textContent = '☑ Show';
+    const s = document.createElement('button'); s.id = 'w-show'; s.className = 'flatonly'; s.title = SHOW_TIP; s.innerHTML = wpIc('show', 'Show');
     s.onclick = e => { e.stopPropagation(); showToggle(); };
     const k = document.createElement('button'); k.id = 'w-lockb'; k.className = 'flatonly';
     k.onclick = e => { e.stopPropagation(); lockToggle(); };
     sw.appendChild(s); sw.appendChild(k);
     // (full view: the map or 3D is the whole window; the panels' edge tabs fold one side at a time)
-    const f = document.createElement('button'); f.id = 'w-full'; f.title = 'Full view: only the map or 3D, its buttons and windows'; f.textContent = '⛶';
+    const f = document.createElement('button'); f.id = 'w-full'; f.title = 'Full view: only the map or 3D, its buttons and windows'; f.innerHTML = wpIc('full', '');
     f.onclick = e => { e.stopPropagation(); PNL.full('world'); };
     sw.appendChild(f);
     lockSync();
     if (typeof V3 !== 'undefined' && V3.on) sw.querySelectorAll('.flatonly').forEach(x => x.style.display = 'none');
+    if (typeof tbApply === 'function') tbApply();
   }
 }
+// (an icon and its word: the docked bar shows the icon, floating the word too)
+function wpIc(n, w){ return (typeof wsIcon === 'function' ? wsIcon(n) : '') + (w ? `<span class="tl"> ${w}</span>` : ''); }
 
 // (2.7.22) a layout kept from when Show was the View tab: taken out of the docks once; ☑ Show opens it as a window
 function wpShowWindow(){
@@ -194,6 +202,8 @@ function wpRenderPin(it){
 }
 
 // ----- another Objects list, with a filter of its own
+// (drawn again when a 👁 or 🔒 changes in any of them)
+function wpRefreshObjLists(){ const sp = PNL.spaces.world; if (!sp) return; for (const it of Object.values(sp.inst)) if (it.type === 'objs' && it.id !== 'objs' && it.el) wpRenderObjList(it); }
 function wpRenderObjList(it){
   const b = it.el, refs = (W.cells[W.key] || {refs: []}).refs;
   if (!b.querySelector('.wp-of')){
@@ -201,7 +211,7 @@ function wpRenderObjList(it){
     const inp = b.querySelector('.wp-of');
     inp.value = it.state.filter || '';
     inp.oninput = () => { it.state.filter = inp.value; PNL.retitle('world', it.id); draw(); };
-    b.querySelector('.wp-ol').onclick = e => { if (objFold(e, () => wpRenderObjList(it))) return; const ok = e.target.closest('[data-ok]'); if (!ok) return; const r = findRef(W.key, ok.dataset.ok); if (r){ selectRef(W.key, r.k); centerOn(r); } };
+    b.querySelector('.wp-ol').onclick = e => { if (objIconClick(e, (W.cells[W.key] || {refs: []}).refs)) return; if (objFold(e, () => wpRenderObjList(it))) return; const ok = e.target.closest('[data-ok]'); if (!ok) return; const r = findRef(W.key, ok.dataset.ok); if (r){ selectRef(W.key, r.k); centerOn(r); } };
   }
   const draw = () => {
     const o = objListHtml(refs, it.state.filter);

@@ -49,53 +49,55 @@ button{font:inherit;color:inherit}
 input[type=range]{margin-left:0;margin-right:0;max-width:100%}
 a{color:var(--gold2)}
 .app{display:grid;grid-template-rows:auto 1fr;grid-template-columns:minmax(0,1fr);height:100vh}
-header{display:flex;align-items:center;gap:14px;row-gap:6px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--line);background:linear-gradient(var(--bg3),var(--bg2))}
-/* the logo: a half Dwemer gear, MW over WS cut from straight strokes, WORKSHOP spaced to their width
-   (web/logo.svg is the same with fixed colours, for pages outside the app) */
-/* the header: the logo, the page buttons beside it (a fixed row, the same at any window width: the main
-   way round the Workshop), then the search over the toolbar, which take what room is left; in a window
-   too narrow for all three, the search and toolbar go under the buttons rather than squeeze them */
-header:has(.brand){padding-top:6px;padding-bottom:6px;align-items:center;gap:16px;row-gap:6px}
-.brand{display:flex;align-items:center;line-height:0;flex:none}
-.logo{height:76px;width:auto;display:block}
-.hdr-row{flex:1 1 440px;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:7px}
-/* (the search with your mod and the record count beside it; the toolbar under them) */
-.hdr-top{display:flex;align-items:center;gap:10px;min-width:0;color:var(--muted);font-size:12px;white-space:nowrap}
-.hdr-top .search{flex:1 1 240px;max-width:640px;min-width:0}
-.hdr-top .proj{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-/* the toolbar is one row in every state (the game linking adds only the small ⌖): in a narrower header its
-   words fold away to their icons, Build together's first, rather than the toolbar taking another row and
-   the header growing (which resized the 3D view when the game linked) */
-.hdr-row{container-type:inline-size}
-.hdr-row .hdr-right{margin-left:0;flex-wrap:nowrap;min-width:0}
+/* the top, as a desktop editor's (2.9.20; the user's pick from a preview with a width slider, 2026-11-27): a thin
+   menu row (the logo, File Edit View OpenMW Help, Undo Redo Group, then the search and your mod) over a row of
+   page tabs. Both rows keep one height at every window width; the page tabs keep their size and place (the main
+   way round the Workshop); only the search gives way */
+header{display:flex;flex-direction:column;border-bottom:1px solid var(--line);background:var(--bg2)}
+.mbar{display:flex;align-items:center;gap:2px;height:34px;padding:0 10px;background:var(--bg3);border-bottom:1px solid var(--line);white-space:nowrap;min-width:0}
+/* the logo: a half Dwemer gear, MW over WS cut from straight strokes (web/logo.svg is the whole one, with
+   WORKSHOP, in fixed colours, for pages outside the app) */
+.brand{display:flex;align-items:center;line-height:0;flex:none;margin-right:8px}
+.logo{height:24px;width:auto;display:block}
+.menus{display:flex;align-items:center;flex:none}
+.mb{background:none;border:0;color:var(--text);font-size:13px;padding:5px 9px;border-radius:5px;cursor:pointer}
+.mb:hover,.omwwrap:has(.omwmenu[style*="block"]) > .mb{background:var(--hover);color:var(--gold2)}
+#omwbtn.warn{color:var(--amber)}
+.menus .omwmenu{left:0;right:auto;top:calc(100% + 4px)}
+.msep{width:1px;height:18px;background:var(--line2);margin:0 6px;flex:none}
+.ib{background:none;border:1px solid transparent;color:var(--muted);font-size:15px;min-width:28px;height:26px;padding:0 6px;border-radius:5px;cursor:pointer;flex:none;line-height:1}
+.ib:hover:not(:disabled){background:var(--hover);color:var(--gold2)}
+.ib:disabled{opacity:.4;cursor:default}
+.ib .tl{display:none}
+/* (a group open: its count shows beside ⧉, gold, so it isn't forgotten) */
+#groupbtn.primary{background:var(--btn-primary);border-color:var(--goldline);color:var(--gold2)}
+#groupbtn.primary .tl{display:inline;font-size:12px}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 860px;justify-content:flex-end;color:var(--muted);font-size:12px}
+.hdr-right .search{flex:1 1 240px;max-width:520px;min-width:120px}
+.hdr-right .search input{padding-top:4px;padding-bottom:4px}
+.hdr-right .proj{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;padding:3px 11px}
+.hdr-right > :not(.search):not(.proj){flex:none}
+.hdr-right .btn{padding:3px 9px;font-size:12.5px}
 .btn.ico{min-width:32px;padding-left:0;padding-right:0;text-align:center}
-/* (no button squeezes: a row too long folds words away instead, one button at a time, hdrFit. Squeezed, Me lost
-   its sides and the reload button ran off the screen with the game linked, the user) */
-.hdr-row .hdr-right > *{flex:none}
 .hdr-right .fold .tl{display:none}
 /* (the jump-to-character button: a pin and a word, so room either side and the two centred on one line) */
 #jumpme{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding-left:8px;padding-right:9px}
 #jumpme svg{flex:none;display:block}
-@container (max-width:720px){#togetherbtn .tl{display:none}}
-@container (max-width:600px){#helpbtn .tl,#omwbtn .tl,#filebtn .tl,#undobtn .tl,#redobtn .tl,#groupbtn .tl{display:none}}
 .lg-g{fill:var(--gold)}.lg-h{fill:var(--bg3)}
 .lg-a,.lg-b{fill:none;stroke-width:10.5;stroke-linejoin:bevel;stroke-linecap:butt}
 .lg-a{stroke:var(--gold)}.lg-b{stroke:var(--gold2)}
 .lg-s{fill:var(--muted);font:600 19px Inter,"Segoe UI",sans-serif}
-/* short screens (a laptop): a slimmer top bar, so the work area keeps its room */
-@media (max-height:780px){header,header:has(.brand){padding:4px 14px;row-gap:4px}.logo{height:60px}nav button{height:58px;gap:5px}nav button svg{width:20px;height:20px}}
-/* the page buttons: an icon over the name, fixed in size (a desktop program's main toolbar) */
-nav{display:flex;flex:none;gap:3px}
-nav button{position:relative;min-width:78px;height:70px;padding:0 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
-  background:none;border:1px solid transparent;border-radius:9px;color:var(--muted);cursor:pointer;font:600 11.5px/1 Cinzel,serif;letter-spacing:.01em;white-space:nowrap}
-nav button svg{width:24px;height:24px;flex:none;fill:none;stroke:var(--goldline);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+/* the page tabs: the icon beside the name, each its own size, never stretched or squeezed */
+nav{display:flex;flex:none;gap:2px;height:38px;align-items:flex-end;padding:0 10px;overflow:hidden}
+nav button{position:relative;flex:none;height:32px;padding:0 10px;display:flex;align-items:center;gap:6px;
+  background:none;border:1px solid transparent;border-bottom:0;border-radius:7px 7px 0 0;color:var(--muted);cursor:pointer;font:500 12.5px/1 Inter,"Segoe UI",sans-serif;white-space:nowrap}
+nav button svg{width:16px;height:16px;flex:none;fill:none;stroke:var(--goldline);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 nav button:hover{color:var(--text);background:var(--hover)}
 nav button:hover svg{stroke:var(--gold)}
-nav button.on{color:var(--gold2);border-color:var(--line2);background:var(--panel2)}
+nav button.on{color:var(--gold2);border-color:var(--line);background:var(--bg);height:33px;margin-bottom:-1px}
 nav button.on svg{stroke:var(--gold)}
-/* (the count's holder sits on the button's corner, out of the stacking: an empty holder in the column took a
-   gap of its own and lifted Health check's icon and name above the others) */
-nav #hbadge{position:absolute;top:5px;right:8px;line-height:0}
+nav #hbadge{line-height:0}
+nav #hbadge:empty{display:none}
 nav .badge{display:inline-block;min-width:17px;padding:0 4px;border-radius:9px;background:var(--red);color:var(--bg);font:600 10.5px/17px Inter,sans-serif;text-align:center}
 .search{flex:1;max-width:640px;position:relative}
 .search input{width:100%;padding:9px 34px 9px 36px;text-overflow:ellipsis;border-radius:9px;border:1px solid var(--line2);background:var(--deep);color:var(--text);font:inherit;outline:none}
@@ -476,12 +478,30 @@ input,textarea,select,[contenteditable="true"],pre,code{-webkit-user-select:text
 .wtools .wt-wide{grid-column:1/-1;border-color:color-mix(in srgb,var(--gold) 45%,var(--line))}
 .wtools .wt-full{grid-column:1/-1}
 .mapempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--faint);text-align:center;padding:30px}
-.me-card{width:min(440px,92%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px 16px;text-align:left;color:var(--text);box-shadow:0 10px 40px #0005}
-.me-card h3{font-family:Cinzel,serif;color:var(--gold2);font-weight:600;font-size:19px;margin:0 0 10px}
-.me-card .dd{margin-bottom:10px}.me-card .dd .inp{width:100%}
-.me-card .me-h{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin:14px 0 6px}
+.me-card{width:min(460px,94%);background:color-mix(in srgb,var(--panel) 96%,transparent);border:1px solid var(--line2);border-radius:12px;padding:16px 18px 12px;text-align:left;color:var(--text);box-shadow:0 18px 60px #000a}
+.me-card .me-hd{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.me-card .me-hd svg{height:38px;width:auto;flex:none}
+.me-card .me-hd .msg{font-size:12px}
+.me-card .me-hd .msg b{color:var(--text);font-weight:500}
+.me-card h3{font-family:Cinzel,serif;color:var(--gold2);font-weight:600;font-size:17px;letter-spacing:.06em;margin:0}
+.me-card .dd{margin-bottom:8px}.me-card .dd .inp{width:100%}
+.me-card .me-back{width:100%}
+.me-card .me-h{color:var(--gold);font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin:13px 0 6px}
 .me-card .me-places{display:flex;flex-wrap:wrap;gap:6px}
-.me-card .me-foot{margin-top:14px;font-size:12px}
+.me-recent{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.me-rp{display:block;min-width:0;text-align:left;background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:5px 9px;cursor:pointer;color:var(--text)}
+.me-rp:hover{border-color:var(--goldline)}
+.me-rp b{display:block;font-weight:500;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me-rp code{font:10.5px var(--mono);color:var(--faint)}
+.me-mod{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 8px 6px 10px;font-size:12.5px;min-width:0}
+.me-mod b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.me-mod .msg{flex:1;font-size:12px;white-space:nowrap}
+.me-keys{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:12px;color:var(--muted)}
+.me-keys span{display:flex;gap:8px;align-items:center;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me-keys kbd{flex:none;min-width:58px;font:10.5px var(--mono);color:var(--text);background:var(--deep);border:1px solid var(--line2);border-radius:4px;padding:1px 6px}
+.me-card .me-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12px}
+.me-mouse{display:flex;align-items:center;gap:6px}
+.me-foot .lnk{background:none;border:0;color:var(--gold);cursor:pointer;padding:0;font-size:12px}
 .wside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px 16px 40px}
 .wside h3{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:18px 0 8px;font-weight:600}
 .wside h2{font-family:Cinzel,serif;color:var(--gold2);font-size:18px;margin:4px 0 2px;font-weight:600}
@@ -556,6 +576,15 @@ input,textarea,select,[contenteditable="true"],pre,code{-webkit-user-select:text
 .olist div.sel{background:var(--sel);color:var(--gold2)}
 .olist div.osec{font-weight:600;color:var(--gold2);padding-top:7px;user-select:none}
 .olist small{color:var(--faint);white-space:nowrap}
+/* (👁 and 🔒 at the end of each row and heading: faint until the row is pointed at, gold when on) */
+.olist div > span{flex:1 1 auto}
+.olist .oic{flex:none;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;color:var(--faint);opacity:.28;font-style:normal}
+.olist div:hover > .oic{opacity:.85}
+.olist .oic:hover{opacity:1;background:var(--hover);color:var(--text)}
+.olist .oic.on{opacity:1;color:var(--gold)}
+.olist .oic .wi{width:14px;height:14px;margin:0}
+.olist div.ohid > span{opacity:.5;text-decoration:line-through}
+.olist div.olk > span{color:var(--muted)}
 /* (the theme's own green over its own panel: a fixed dark green box hid its dark text in the light themes) */
 /* (the button fills itself as the learning goes, behind its text: the accent at 35% into the button's colour keeps
    the text at 5.8 to 1 or better in every theme, and the fill's edge is the full accent, seen even in Dagoth) */
@@ -855,8 +884,34 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
 </head>
 <body>
 <div class="app">
-<header>
-  <div class="brand"><svg class="logo" viewBox="33 5 191.0 132.9" role="img" aria-label="Morrowind Workshop"><title>Morrowind Workshop</title><path class="lg-g" d="M88,17 L83.5,17.2 L80.0,6.6 L68.2,9.8 L70.5,20.7 L62.7,25.2 L54.4,17.8 L45.8,26.4 L53.2,34.7 L48.7,42.5 L37.8,40.2 L34.6,52.0 L45.2,55.5 L45.2,64.5 L34.6,68.0 L37.8,79.8 L48.7,77.5 L53.2,85.3 L45.8,93.6 L54.4,102.2 L62.7,94.8 L70.5,99.3 L68.2,110.2 L80.0,113.4 L83.5,102.8 L88,103 Z"/><path class="lg-h" d="M88,34 A26,26 0 0 0 88,86 Z"/><path class="lg-g" d="M88,48 A12,12 0 0 0 88,72 Z"/><circle class="lg-h" cx="80" cy="60" r="4"/><polyline class="lg-a" points="105.2,58.0 105.2,13.2 129.0,37.0 152.8,13.2 152.8,58.0"/><polyline class="lg-a" points="170.2,8.0 170.2,52.8 194.0,29.0 217.8,52.8 217.8,8.0"/><polyline class="lg-b" points="105.2,62.0 105.2,106.8 129.0,83.0 152.8,106.8 152.8,62.0"/><polyline class="lg-b" points="217.8,67.2 170.2,67.2 170.2,87.0 217.8,87.0 217.8,106.8 170.2,106.8"/><text class="lg-s" x="34" y="135.9" textLength="189.0" lengthAdjust="spacing">WORKSHOP</text></svg></div>
+<header class="hdr2">
+  <div class="mbar">
+  <div class="brand" title="Home (right-click: About)"><svg class="logo mini" viewBox="33 5 191 110" role="img" aria-label="Morrowind Workshop"><title>Morrowind Workshop</title><path class="lg-g" d="M88,17 L83.5,17.2 L80.0,6.6 L68.2,9.8 L70.5,20.7 L62.7,25.2 L54.4,17.8 L45.8,26.4 L53.2,34.7 L48.7,42.5 L37.8,40.2 L34.6,52.0 L45.2,55.5 L45.2,64.5 L34.6,68.0 L37.8,79.8 L48.7,77.5 L53.2,85.3 L45.8,93.6 L54.4,102.2 L62.7,94.8 L70.5,99.3 L68.2,110.2 L80.0,113.4 L83.5,102.8 L88,103 Z"/><path class="lg-h" d="M88,34 A26,26 0 0 0 88,86 Z"/><path class="lg-g" d="M88,48 A12,12 0 0 0 88,72 Z"/><circle class="lg-h" cx="80" cy="60" r="4"/><polyline class="lg-a" points="105.2,58.0 105.2,13.2 129.0,37.0 152.8,13.2 152.8,58.0"/><polyline class="lg-a" points="170.2,8.0 170.2,52.8 194.0,29.0 217.8,52.8 217.8,8.0"/><polyline class="lg-b" points="105.2,62.0 105.2,106.8 129.0,83.0 152.8,106.8 152.8,62.0"/><polyline class="lg-b" points="217.8,67.2 170.2,67.2 170.2,87.0 217.8,87.0 217.8,106.8 170.2,106.8"/></svg></div>
+  <div class="menus">
+    <div class="omwwrap"><button class="mb" id="filebtn" title="New, open, save, earlier versions, your mods">File</button><div class="omwmenu filemenu" id="filemenu"></div></div>
+    <div class="omwwrap"><button class="mb" id="editbtn" title="Undo, redo, group, commands, shortcuts">Edit</button><div class="omwmenu filemenu" id="editmenu"></div></div>
+    <div class="omwwrap"><button class="mb" id="viewbtn" title="Home, full view, reload, the look">View</button><div class="omwmenu filemenu" id="viewmenu"></div></div>
+    <div class="omwwrap"><button class="mb" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">OpenMW</button><div class="omwmenu" id="omwmenu"></div></div>
+    <div class="omwwrap"><button class="mb" id="helpbtn" title="Getting started, settings, reporting a problem">Help</button><div class="omwmenu" id="helpmenu">
+        <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
+        <button data-help="settings"><b>Settings</b><small>OpenMW's folder, AI, backups.</small></button>
+        <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
+        <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
+        <button data-help="tours"><b>All tours…</b><small>Every guided tour, step by step over the real buttons, ticked when done.</small></button>
+        <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
+        <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
+        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div>
+  </div>
+  <span class="msep"></span>
+  <button class="ib" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶</button><button class="ib" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷</button><button class="ib" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button>
+  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><div class="omwwrap" id="learnwrap" style="display:none"><button class="btn" id="learnbtn" title="The Workshop is learning from your game's own places, once: click for what and why">📚<span class="tl"> Learning</span> <span id="learnn"></span><i class="learnbar"><i id="learnfill"></i></i></button><div class="omwmenu" id="learnmenu"></div></div><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button>
+  <div class="search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" placeholder="Search names, IDs, dialogue, meshes…" autocomplete="off" spellcheck="false">
+    <kbd>/</kbd>
+  </div>
+  <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span><span id="busychip" class="busychip" style="display:none"></span><button class="ib" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
+  </div>
   <nav>
     <button data-view="browse" class="on" title="Every record in your game: search, read, change"><svg viewBox="0 0 24 24"><path d="M4 6h9M4 11h6M4 16h5"/><circle cx="15.5" cy="14.5" r="4"/><path d="m18.5 17.5 3 3"/></svg>Browse</button>
     <button data-view="world" title="Places in 2D or 3D: build, place, furnish, shape the land, Play here"><svg viewBox="0 0 24 24"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></svg>World map</button>
@@ -870,25 +925,6 @@ tr.landrow.picked td{background:rgba(232,192,120,0.16)}
     <button data-view="health" title="Problems in your load order, and a check of your mod's records"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2.5-5H21"/></svg>Health check<span id="hbadge"></span></button>
     <button data-view="plugins" title="Switch plugins on or off and change their order"><svg viewBox="0 0 24 24"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>Load order</button>
   </nav>
-  <div class="hdr-row">
-  <div class="hdr-top">
-  <div class="search">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input id="q" placeholder="Search names, IDs, dialogue, meshes…" autocomplete="off" spellcheck="false">
-    <kbd>/</kbd>
-  </div>
-  <span id="projpill" class="proj none">Start a mod</span><span id="stat"></span><span id="busychip" class="busychip" style="display:none"></span>
-  </div>
-  <div class="hdr-right"><span id="linkdot" class="linkdot" style="display:none"></span><div class="omwwrap" id="learnwrap" style="display:none"><button class="btn" id="learnbtn" title="The Workshop is learning from your game's own places, once: click for what and why">📚<span class="tl"> Learning</span> <span id="learnn"></span><i class="learnbar"><i id="learnfill"></i></i></button><div class="omwmenu" id="learnmenu"></div></div><button class="btn" id="togetherbtn" style="display:none" title="Build this mod together with other people, live, from wherever they are">👥<span class="tl"> Build together</span></button><button class="btn ico" id="jumpme" style="display:none" title="Jump to my character: show where you are on the World map (or in 3D)" aria-label="Jump to my character"><svg width="10" height="13" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2.2C6.6 2.2 2.2 6.5 2.2 11.9c0 7.3 9.8 17 9.8 17s9.8-9.7 9.8-17c0-5.4-4.4-9.7-9.8-9.7z" fill="none" stroke="currentColor" stroke-width="2.6"/><circle cx="12" cy="11.6" r="3.4" fill="currentColor"/></svg>Me</button><div class="omwwrap"><button class="btn" id="helpbtn" title="Getting started, settings, reporting a problem">?<span class="tl"> Help</span> ▾</button><div class="omwmenu" id="helpmenu">
-        <button data-help="guide"><b>Home &amp; getting started</b><small>Where to begin, a guided first house, and how the Workshop works.</small></button>
-        <button data-help="settings"><b>Settings</b><small>OpenMW's folder, AI, backups.</small></button>
-        <button data-help="report"><b>Report a problem…</b><small>Makes a report with the details needed to fix it.</small></button>
-        <button data-help="messages"><b>Recent messages</b><small>The messages shown at the bottom, to read at leisure.</small></button>
-        <button data-help="tours"><b>All tours…</b><small>Every guided tour, step by step over the real buttons, ticked when done.</small></button>
-        <button data-help="guides"><b>Guides…</b><small>How to do things, step by step: shaping the land and more. Searchable.</small></button>
-        <button data-help="learning"><b>How the Workshop learns</b><small>Where its building and decorating know-how comes from: your own game, on your PC. No AI, no account.</small></button>
-        <button data-help="about"><b>About &amp; licences</b><small>Version, and what the Workshop is built with.</small></button></div></div><div class="omwwrap"><button class="btn" id="filebtn" title="New, open, save, earlier versions, your mods">📁<span class="tl"> File</span> ▾</button><div class="omwmenu filemenu" id="filemenu"></div></div><div class="omwwrap"><button class="btn" id="omwbtn" title="Start OpenMW, open its Launcher, or change the load order">▶<span class="tl"> OpenMW</span> ▾</button><div class="omwmenu" id="omwmenu"></div></div><button class="btn" id="undobtn" title="Undo (Ctrl+Z)" disabled>↶<span class="tl"> Undo</span></button><button class="btn" id="redobtn" title="Redo (Ctrl+Y)" disabled>↷<span class="tl"> Redo</span></button><button class="btn" id="groupbtn" disabled>⧉<span class="tl"> Group</span></button><button class="btn ico" id="reload" title="Reload: re-read your openmw.cfg and all plugins" aria-label="Reload">↻</button></div>
-  </div>
 </header>
 <main>
   <div class="loading" id="loading"><div class="inner">
@@ -2548,9 +2584,11 @@ const cv = $('#map'), g = cv.getContext('2d');
 
 function sizeMap(){
   const r = cv.parentElement.getBoundingClientRect();
+  // (the docked tool bar over the view takes its top: toolbar.js)
+  const top = $('#world').classList.contains('tb-dock') && typeof tbBarH === 'function' ? tbBarH() : 0, h = Math.max(1, r.height - top);
   W.dpr = window.devicePixelRatio || 1;
-  cv.width = Math.max(1, r.width * W.dpr); cv.height = Math.max(1, r.height * W.dpr);
-  W.w = r.width; W.h = r.height;
+  cv.width = Math.max(1, r.width * W.dpr); cv.height = Math.max(1, h * W.dpr);
+  W.w = r.width; W.h = h;
 }
 window.addEventListener('resize', () => { if ($('#world').classList.contains('on')) { sizeMap(); drawMap(); } });
 const toScreen = (x, y) => [(x - W.cam.x) * W.cam.z + W.w / 2, (W.cam.y - y) * W.cam.z + W.h / 2];
@@ -2815,6 +2853,11 @@ function refPos(r){
 // ----- several objects at once (Shift+click, Shift+drag a box)
 W.multi = new Map();
 const mkey = (ck, k) => ck + '\u0001' + k;
+// one thing locked (🔒 in the Objects list, 2.9.20): it can't be picked, dragged or box-selected, as walls can't with
+// Lock walls on. Kept by "cell|ref", the 3D view's own key, in this browser (ws-locks)
+W.locks = (() => { try { return new Set(JSON.parse(localStorage.getItem('ws-locks') || '[]')); } catch (e){ return new Set(); } })();
+function locksSave(){ try { localStorage.setItem('ws-locks', JSON.stringify([...W.locks].slice(-5000))); } catch (e){} }
+function refLocked(ck, r){ return !!(r && ((r.arch && W.lockArch) || W.locks.has(ck + '|' + r.k))); }
 function inMulti(ck, k){ return W.multi.has(mkey(ck, k)); }
 function multiRefs(){ return [...W.multi.values()].map(m => [m.cell, findRef(m.cell, m.k)]).filter(x => x[1]); }
 function toggleMulti(ck, k){
@@ -2878,7 +2921,7 @@ function drawMap(){
   if (V3.on){ v3Refresh(); return; }
   if (!W.w) sizeMap();
   g.setTransform(W.dpr, 0, 0, W.dpr, 0, 0);
-  g.fillStyle = W.ext ? '#16232b' : '#0e0d0a'; g.fillRect(0, 0, W.w, W.h);
+  g.fillStyle = W.ext ? '#16232b' : (window.TH_MAPBG || '#0e0d0a'); g.fillRect(0, 0, W.w, W.h);      // (TH_MAPBG: a quiet theme's own, theme.js)
   if (!W.key) return;
   const z = W.cam.z;
   if (W.ext){
@@ -3075,7 +3118,7 @@ function hitTest(sx, sy){
   const [wx, wy] = toWorld(sx, sy);
   let best = null, ba = 1e18, near = null, nd = 1e9, locked = false;
   for (const [ck, r] of visibleRefs()){
-    if (r.arch && W.lockArch){ if (!locked && footContains(r, wx, wy)) locked = true; continue; }
+    if (refLocked(ck, r)){ if (!locked && footContains(r, wx, wy)) locked = true; continue; }
     if (footContains(r, wx, wy)){
       const a = (r.b[3] - r.b[0]) * (r.b[4] - r.b[1]) * (r.s || 1) ** 2;
       if (a < ba){ ba = a; best = [ck, r]; }
@@ -3200,7 +3243,7 @@ cv.addEventListener('mousemove', e => {
   const hit = hitTest(e.offsetX, e.offsetY), tip = $('#maptip');
   tip.style.whiteSpace = ''; tip.style.maxWidth = ''; tip.style.width = '';
   if (!hit && typeof LM !== 'undefined' && LM.show && lmHover(e)) return;
-  if (hit){ const r = hit[1]; tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10) + 'px'; tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>${r.to ? ' → ' + esc(r.to.cell || r.to.label || 'outdoors') : ''}`; }
+  if (hit){ const r = hit[1]; tip.style.display = 'block'; tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10 + cv.offsetTop) + 'px'; tip.innerHTML = `<b>${esc(r.name || r.id)}</b> <span style="color:var(--faint)">${esc(S.typeLabels[r.type] || r.type || 'unknown')}</span>${r.to ? ' → ' + esc(r.to.cell || r.to.label || 'outdoors') : ''}`; }
   else tip.style.display = 'none';
 });
 window.addEventListener('mouseup', async e => {
@@ -3231,7 +3274,7 @@ window.addEventListener('mouseup', async e => {
     const x0 = Math.min(D.sx, D.ex), x1 = Math.max(D.sx, D.ex), y0 = Math.min(D.sy, D.ey), y1 = Math.max(D.sy, D.ey);
     if (x1 - x0 > 4 && y1 - y0 > 4){
       for (const [ck, r] of visibleRefs()){
-        if (r.arch && W.lockArch) continue;
+        if (refLocked(ck, r)) continue;
         const [sx, sy] = toScreen(r.p[0], r.p[1]);
         if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) W.multi.set(mkey(ck, r.k), {cell: ck, k: r.k});
       }
@@ -3607,7 +3650,7 @@ function showToggle(){
 }
 function lockLabel(){ return '🔒 Lock walls'; }       // (one name: lit when on, as Game light is)
 function lockTip(){ return W.lockArch ? 'On: you can\'t pick or move walls and buildings by accident. Click to turn it off.' : 'Off: walls and buildings can be picked and moved. Click to lock them.'; }
-function lockSync(){ const b = $('#w-lockb'); if (b){ b.textContent = lockLabel(); b.title = lockTip(); b.classList.toggle('on', !!W.lockArch); } }
+function lockSync(){ const b = $('#w-lockb'); if (b){ b.innerHTML = typeof wpIc === 'function' ? wpIc('lock', 'Lock walls') : lockLabel(); b.title = lockTip(); b.classList.toggle('on', !!W.lockArch); } }
 function lockToggle(){ W.lockArch = !W.lockArch; lockSync(); if (typeof v3Tools === 'function' && V3.on) v3Tools(); }
 W.tab = 'place';
 function thumbImg(id, type, size, cls){
@@ -3889,11 +3932,39 @@ function objListHtml(refs, filter){
   const html = [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([lab, list]) => {
     const shut = OBJ_SHUT.has(lab);
     list.sort((a, b) => nm(a) < nm(b) ? -1 : nm(a) > nm(b) ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-    return `<div class="osec" data-osec="${esc(lab)}" title="${shut ? 'Show them' : 'Fold them away'}"><span>${shut ? '▸' : '▾'} ${esc(lab)}</span><small>${list.length}</small></div>`
-      + (shut ? '' : list.slice(0, 300).map(r => `<div data-ok="${esc(r.k)}" data-hid="${esc(r.id)}" class="${W.sel && W.sel.k === r.k ? 'sel' : ''}"><span>${thumbImg(r.id, r.type, 48, 'sm')}${r.mine ? '✎ ' : ''}${esc(r.name || r.id)}</span><small>${esc(r.name && r.name !== r.id ? r.id : '')}</small></div>`).join('')
+    const ck = W.key, hid = r => W.hide.has(mkey(ck, r.k)), lk = r => W.locks.has(ck + '|' + r.k);
+    const allHid = list.every(hid), allLk = list.every(lk);
+    return `<div class="osec" data-osec="${esc(lab)}" title="${shut ? 'Show them' : 'Fold them away'}"><span>${shut ? '▸' : '▾'} ${esc(lab)}</span><small>${list.length}</small>${objIcons(allHid, allLk, true)}</div>`
+      + (shut ? '' : list.slice(0, 300).map(r => `<div data-ok="${esc(r.k)}" data-hid="${esc(r.id)}" class="${W.sel && W.sel.k === r.k ? 'sel' : ''}${hid(r) ? ' ohid' : ''}${lk(r) ? ' olk' : ''}"><span>${thumbImg(r.id, r.type, 48, 'sm')}${r.mine ? '✎ ' : ''}${esc(r.name || r.id)}</span><small>${esc(r.name && r.name !== r.id ? r.id : '')}</small>${objIcons(hid(r), lk(r))}</div>`).join('')
         + (list.length > 300 ? `<div class="msg">…and ${list.length - 300} more (the filter finds them)</div>` : ''));
   }).join('');
   return {html: html || '<div class="msg">Nothing matches.</div>', n};
+}
+// the 👁 and 🔒 at the end of a row, or of a kind's heading (all of them)
+function objIcons(hid, lk, all){
+  const ic = n => typeof wsIcon === 'function' ? wsIcon(n) : '';
+  return `<i class="oic${hid ? ' on' : ''}" data-oeye title="${hid ? 'Hidden: click to show ' + (all ? 'them' : 'it') : 'Hide ' + (all ? 'them all' : 'it') + ' in the view (for now)'}">${ic(hid ? 'eyeoff' : 'eye')}</i>`
+    + `<i class="oic${lk ? ' on' : ''}" data-olock title="${lk ? 'Locked: click to unlock' : 'Lock ' + (all ? 'them all' : 'it') + ': can\'t be picked or moved'}">${ic(lk ? 'lock' : 'unlock')}</i>`;
+}
+// a 👁 or 🔒 clicked in an Objects list (true when it was one): the row's thing, or every thing of the heading's kind
+function objIconClick(e, refs){
+  const ic = e.target.closest('[data-oeye], [data-olock]'); if (!ic) return false;
+  e.stopPropagation();
+  const ck = W.key, row = ic.parentElement, eye = ic.hasAttribute('data-oeye');
+  let list;
+  if (row.dataset.osec){ const lab = row.dataset.osec; list = refs.filter(r => (S.typeLabels[r.type] || r.type || 'Other') === lab); }
+  else { const r = refs.find(x => String(x.k) === row.dataset.ok); list = r ? [r] : []; }
+  if (!list.length) return true;
+  const key = r => eye ? mkey(ck, r.k) : ck + '|' + r.k, set = eye ? W.hide : W.locks;
+  const on = !list.every(r => set.has(key(r)));
+  for (const r of list) on ? set.add(key(r)) : set.delete(key(r));
+  if (!eye) locksSave();
+  // (what's selected and now hidden or locked is let go)
+  if (on && W.sel && list.some(r => r.k === W.sel.k)) W.sel = null;
+  if (on) for (const r of list) W.multi.delete(mkey(ck, r.k));
+  renderWside(); drawMap(); if (typeof V3 !== 'undefined' && V3.on && typeof v3Refresh === 'function') v3Refresh();
+  if (typeof wpRefreshObjLists === 'function') wpRefreshObjLists();
+  return true;
 }
 // a section's head clicked: fold it or open it (true when it was one)
 function objFold(e, redraw){
@@ -3905,7 +3976,7 @@ function objFold(e, redraw){
 function renderOList(refs){
   const box = $('#w-olist'); if (!box) return;
   box.innerHTML = objListHtml(refs, W.filter).html;
-  box.onclick = e => objFold(e, () => renderOList(W.cells[W.key].refs));
+  box.onclick = e => { if (objIconClick(e, W.cells[W.key].refs)) return; objFold(e, () => renderOList(W.cells[W.key].refs)); };
   if (box.closest('.wpane.on')) v3ThumbScan(box);
 }
 // recently placed things, for quick reuse

@@ -69,7 +69,7 @@ are still dragging puts it back, and Undo gets no step for it.
 
 **On the flat map**, drag it. Outdoors its height follows the ground.
 
-**⊞ Snap ▾** sets the steps for moving and turning, **Snap to pieces** lines up walls and floors with nearby
+The two boxes on the bar, **⊞** and **∠**, set the steps for moving and turning. **Snap to pieces** lines up walls and floors with nearby
 pieces as you move them (several selected snap as one), and **Land on surfaces** rests things on what's below after a move.
 
 **The Selected panel** has everything about the thing selected:
@@ -128,7 +128,7 @@ group anywhere later.
 |---|---|
 | Place | Go to a place, Play here, Create, Style palette, Second window; indoors **Auto-furnish**, **Find gaps**, **Check place**; placing. |
 | Selected | The thing selected (above). **📌 Pin** keeps one in its own panel, to compare or tweak several. |
-| Objects | Every object in the place in sections by kind, A to Z, with a filter (a name, an ID, a kind, or *your mod*). Click a section's name to fold it away. Open more Objects lists, each with its own filter. |
+| Objects | Every object in the place in sections by kind, A to Z, with a filter (a name, an ID, a kind, or *your mod*). Click a section's name to fold it away. **👁** hides a thing (or a whole kind, on its heading) for now; **🔒** locks it, so it can't be picked or moved by accident. Open more Objects lists, each with its own filter. |
 | ☑ Show | A window, opened by **☑ Show** on the bar (tick it in **▤ Panels** to have it as a tab instead): what's shown (buildings, doors, containers, lights, people, creatures, items), your changes, hidden things; indoors, **Floors** hides everything above a height to see lower storeys. |
 | Sky | Region, weather and time of day outdoors; an interior's lighting. See *Sky, regions and weather*. |
 | Land | Land shaping and height maps. See *Shaping the land*. |
@@ -136,8 +136,8 @@ group anywhere later.
 | 📋 Object list | Everything that can go into a place, one kind at a time (Static, Door, Light, NPC, Creature, Weapon…, or All): ID, name, how often the game uses it, its mod. Click a column to sort, **Mine** for your mod's own. Drag a row onto the map or the 3D view, or double-click it to place it; right-click for its record or a list of its own. Open several, one kind each. |
 | Library, Prefabs, Places, Recent changes, Find gaps, Check this place, 3D controls | Open them from **▤ Panels**. |
 
-**Layout: Lists** (in **▤ Panels**) puts the Object list on the left, the place's Objects below and Selected on the
-right. The small tabs at the view's edges (◂ ▸ ▾) fold a side away and back. **⛶** beside **▤ Panels** gives the map
+**Layout: Editor**, the first one, puts the Object list on the left with the place's Objects under it, and
+Selected on the right; **Lists** has the Objects along the bottom instead (both in **▤ Panels**). The small tabs at the view's edges (◂ ▸ ▾) fold a side away and back. **⛶** beside **▤ Panels** gives the map
 or 3D the whole window: only its buttons and the windows you open stay, floating over it; **⛶** again brings
 everything back.
 
