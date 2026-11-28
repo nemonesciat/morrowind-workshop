@@ -1122,7 +1122,8 @@ def connect_claude_code(addr):
         import osplat
 
         def run(*a):
-            return subprocess.run([cli] + list(a), capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+            return subprocess.run([cli] + list(a), capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                  timeout=120, stdin=subprocess.DEVNULL,
                                   creationflags=osplat.NO_WINDOW)
         run('mcp', 'remove', '--scope', 'user', SERVER_NAME)          # (an earlier address: none is fine)
         r = run('mcp', 'add', '--scope', 'user', '--transport', 'http', SERVER_NAME, addr)

@@ -216,6 +216,8 @@ table.t td.ty{color:var(--gold2);font-size:11px;text-transform:uppercase;white-s
 .issue .pl{color:var(--gold2);white-space:nowrap}
 .issue .d{color:var(--muted);font-size:13px}
 .issue .body{padding:0 14px 12px}
+.issue .acts{display:flex;gap:6px;margin:0 0 8px}
+.issue .more{color:var(--muted);font-size:12.5px;margin-top:6px}
 .filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .filters button.on{border-color:var(--gold);color:var(--gold2)}
 .prob{color:var(--red);font-size:12.5px}
@@ -455,6 +457,9 @@ body.embed #w-panels,body.embed #viewsw .tb-grip,body.embed #v3tools .tb-grip{di
 body.embed header{display:none}
 body.embed #world>.pdock,body.embed #world .pcenter>.pdock,body.embed #world>.pfloat,body.embed #world>.pdrop{display:none}
 input,textarea,select,[contenteditable="true"],pre,code{-webkit-user-select:text;user-select:text}
+/* (reports are for reading and passing on: their cells, a record's values and the findings select like a web page's,
+   for Ctrl+C into other tools; a tester on Nexus, 2026-11-28) */
+table.t td,table.t th,dl.fields dd,.issue .d,.issue .pl,#pc-panel .pc-i{-webkit-user-select:text;user-select:text}
 #v3land .v3lrow{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 #v3land input[type=range]{flex:1}
 #v3land .v3lrow span{min-width:34px;text-align:right;color:var(--text)}
@@ -1831,7 +1836,8 @@ function renderHealth(){
     <div class="card"><div class="big sev-info">${n.info}</div><div class="lab">Good to know: dirty edits and similar</div></div>
     <div class="card"><div class="big">${fmtN(H.sources.reduce((a,s)=>a+s.files,0))}</div><div class="lab">asset files found in ${H.sources.length} folders and archives</div></div>
   </div>
-  <div class="filters">${['all','error','warning','info'].map(f => `<button class="btn ${hFilter===f?'on':''}" data-hf="${f}">${f==='all'?'Everything':sevName[f]}</button>`).join('')}</div>`;
+  <div class="filters">${['all','error','warning','info'].map(f => `<button class="btn ${hFilter===f?'on':''}" data-hf="${f}">${f==='all'?'Everything':sevName[f]}</button>`).join('')}
+    <span style="flex:1"></span><button class="btn" id="h-copy" title="The whole report as plain text, to paste anywhere">⧉ Copy report</button><button class="btn" id="h-save" title="The whole report as a .txt file, to keep or compare later">⤓ Save as text</button></div>`;
   if (!shown.length) h += `<div class="card"><span class="sev-ok">✓</span> Nothing in this category. Your setup looks clean.</div>`;
   // the mod itself, record by record (what the Construction Set calls "verify")
   if (S.summary && S.summary.project){
@@ -1841,8 +1847,14 @@ function renderHealth(){
   }
   for (const i of shown){
     h += `<details class="issue ${i.severity}"><summary><span class="k sev-${i.severity}">${esc(i.kind)}</span><span class="pl">${esc(i.plugin)}</span><span class="d">${esc(i.detail)}</span></summary>`;
-    if (i.items.length){
-      h += `<div class="body"><table class="t"><tr><th>Kind</th><th>Missing file</th><th>Used by</th></tr>` +
+    const ix = H.issues.indexOf(i);
+    if (i.items.length && i.items[0].same_as !== undefined){
+      // (identical copies: each record, and the earlier file it repeats word for word)
+      h += `<div class="body"><div class="acts"><button class="btn sm" data-hcopy="${ix}" title="This list as plain text">⧉ Copy list</button></div><table class="t"><tr><th>Kind</th><th>Record</th><th>Same as in</th></tr>` +
+        i.items.map(it => `<tr><td class="ty">${esc(it.kind)}</td><td><span class="lnk" data-search="${esc(it.rec)}">${esc(it.rec)}</span></td><td class="path">${esc(it.same_as)}</td></tr>`).join('') + `</table>` +
+        (i.items.length < healthDirtyN(i) ? `<div class="more">The first ${fmtN(i.items.length)} of ${fmtN(healthDirtyN(i))}.</div>` : '') + `</div>`;
+    } else if (i.items.length){
+      h += `<div class="body"><div class="acts"><button class="btn sm" data-hcopy="${ix}" title="This list as plain text">⧉ Copy list</button></div><table class="t"><tr><th>Kind</th><th>Missing file</th><th>Used by</th></tr>` +
         i.items.map(it => `<tr><td class="ty">${esc(it.kind)}</td><td class="path">${esc(it.path)}</td><td>${it.used_by.map(u => `<span class="lnk" data-search="${esc(u)}">${esc(u)}</span>`).join(', ')}${it.uses > it.used_by.length ? ` +${it.uses - it.used_by.length}` : ''}</td></tr>`).join('') + `</table></div>`;
     }
     h += `</details>`;
@@ -1851,6 +1863,32 @@ function renderHealth(){
     H.sources.map(s => `<tr><td class="ty">${s.kind}</td><td class="path">${esc(s.path)}</td><td class="num" style="width:90px">${fmtN(s.files)}</td></tr>`).join('') +
     `</table><p class="lead" style="margin-top:10px;font-size:12.5px">Settings read from: ${H.config.config_files.map(esc).join(' and ')}</p>`;
   $('#healthwrap').innerHTML = h;
+}
+// (the count in "123 records are exact copies…", for "the first 2000 of …")
+function healthDirtyN(i){ const m = /^(\d+) records/.exec(i.detail); return m ? +m[1] : i.items.length; }
+// one finding as plain text: its heading, then its list one line each, tab-separated (pastes into a spreadsheet as columns)
+function healthIssueText(i){
+  const head = `[${{error: 'Needs fixing', warning: 'Worth a look', info: 'Good to know'}[i.severity]}] ${i.kind}: ${i.plugin}\n  ${i.detail}`;
+  const rows = i.items.map(it => it.same_as !== undefined ? `  ${it.kind}\t${it.rec}\t${it.same_as}`
+    : `  ${it.kind}\t${it.path}\t${it.used_by.join(', ')}${it.uses > it.used_by.length ? ` +${it.uses - it.used_by.length}` : ''}`);
+  return [head, ...rows].join('\n');
+}
+function healthText(){
+  const lines = [`Morrowind Workshop health check, ${new Date().toLocaleString()}`, ''];
+  lines.push('Load order:', ...H.plugins.filter(p => !p.lua_only).map(p => `  ${p.name}`), '');
+  if (!H.issues.length) lines.push('Nothing found.');
+  for (const i of H.issues) lines.push(healthIssueText(i), '');
+  if (H.verify && H.verify.findings.length){
+    lines.push('Check my mod:');
+    for (const f of H.verify.findings) lines.push(`  [${f.sev}] ${f.text}`);
+    lines.push('');
+  }
+  lines.push('Files read from:', ...H.sources.map(s => `  ${s.kind}\t${s.path}\t${s.files}`));
+  return lines.join('\n').replace(/\n/g, '\r\n');
+}
+async function healthCopy(text, what){
+  try { await navigator.clipboard.writeText(text); toast(`Copied ${what}.`); }
+  catch (e){ toast('The copy was refused: use Save as text instead.', true); }
 }
 function verifyHtml(v){
   const n = v.counts, sevName = {error: 'Needs fixing', warning: 'Worth a look', info: 'Good to know'};
@@ -1870,6 +1908,13 @@ async function runVerify(){
 }
 $('#healthwrap').addEventListener('click', e => {
   if (e.target.closest('#verify-go')){ runVerify(); return; }
+  if (e.target.closest('#h-copy')){ healthCopy(healthText(), 'the report'); return; }
+  if (e.target.closest('#h-save')){
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([healthText()], {type: 'text/plain'}));
+    a.download = `health check ${new Date().toISOString().slice(0, 10)}.txt`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    return;
+  }
+  const hc = e.target.closest('[data-hcopy]'); if (hc){ healthCopy(healthIssueText(H.issues[+hc.dataset.hcopy]).replace(/\n/g, '\r\n'), 'the list'); return; }
   if (e.target.closest('#verify-doorface')){ api('/api/doors/face', {method: 'POST', body: '{}'}).then(r => { toast(`${r.set} door arrival${r.set === 1 ? '' : 's'} set at their doors`); runVerify(); }).catch(err => toast(err.message)); return; }
   const vg = e.target.closest('[data-vgo]'); if (vg){ showView('browse'); openRecord(+vg.dataset.vgo, true); return; }
   const vc = e.target.closest('[data-vcell]'); if (vc){ showView('world'); worldOpen(vc.dataset.vcell); return; }
@@ -3203,7 +3248,9 @@ cv.addEventListener('mousedown', e => {
   // (only what is selected already moves: a press on anything else selects it if it's a click and pans the map if
   // it's a drag, so a thing you didn't see under the mouse isn't dragged away: the user's "if you accidentally click
   // where an item is placed, it ends up dragging that item")
-  if (hit && W.sel && W.sel.cell === hit[0] && W.sel.k === hit[1].k){
+  // (with no mod open nothing can move, so a drag from the selected thing pans like any other; it asked for a mod
+  // instead, after "Show me" in Check this place had selected it. A tester on Nexus, 2026-11-28)
+  if (hit && W.sel && W.sel.cell === hit[0] && W.sel.k === hit[1].k && S.summary && S.summary.project){
     W.drag = {kind: 'obj', cell: hit[0], ref: hit[1], sx: e.offsetX, sy: e.offsetY, moved: false};
   }
   else W.drag = {kind: 'pan', sx: e.offsetX, sy: e.offsetY, cx: W.cam.x, cy: W.cam.y, moved: false, pick: hit ? [hit[0], hit[1].k] : null};

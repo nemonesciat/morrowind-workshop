@@ -2219,7 +2219,10 @@ function v3Bind(el){
       if (h && h.obj){
         const same = W.sel && W.sel.cell === h.obj.ck && W.sel.k === h.obj.k;
         if (!same && e.button === 0){ v3Click(e); drag.clicked = true; }
-        if (same || e.button === 0) drag.classic = true;
+        // (no mod open: nothing can be moved, so the drag looks around as anywhere else instead of asking for a
+        // mod at every look. "Show me" in Check this place selects the thing; a tester on Nexus, 2026-11-28)
+        if ((same || e.button === 0) && !(S.summary && S.summary.project)) drag.noMod = true;
+        else if (same || e.button === 0) drag.classic = true;
       }
     }
     // drawing a box to select: drag from an empty spot (or anywhere with Shift)
@@ -2251,6 +2254,7 @@ function v3Bind(el){
     }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
+    if (drag.noMod && drag.moved && drag.b === 0 && !V3.noModSaid){ V3.noModSaid = true; toast('Nothing moves until you start a mod: Home → Start a mod. Right-drag looks around.'); }
     if (drag.classic){
       // (tried again as the mouse moves on: a thing just selected gets its handles a moment later)
       if (drag.moved && !V3.grab && !drag.started){

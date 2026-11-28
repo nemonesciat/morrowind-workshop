@@ -604,6 +604,7 @@ class Database:
         base = len(recs)
         proj = self.proj_pidx if before_project else None
         new = over = dirty = 0
+        dirty_items = []           # (the first 2000, listed in the Health check: kind, ID, the file it copies)
         pcrcs = pl['crcs']
         for i, (tag, rid, name, offset, extra, flags, key) in enumerate(pl['recs']):
             ri = base + i
@@ -619,6 +620,9 @@ class Database:
                     prev.append(ri)
                 if last is not None and crcs.get(last) == crc:
                     dirty += 1
+                    if len(dirty_items) < 2000:
+                        dirty_items.append({'kind': tag, 'rec': rid or name or key,
+                                            'same_as': self.plugins[recs[last][3]]['name']})
             else:
                 new += 1
                 by_key[(tag, key)] = [ri]
@@ -674,7 +678,7 @@ class Database:
                                           '("dirty edits"). %s' % (entry['dirty'],
                                           'This is normal for Bethesda\'s own expansions - nothing to fix.' if official else
                                           'Usually harmless, but they can silently undo changes from plugins '
-                                          'loaded between them.'), 'items': []})
+                                          'loaded between them.'), 'items': dirty_items})
 
     def _cell_info(self, data):
         name, region, flags, gx, gy = '', '', 0, 0, 0

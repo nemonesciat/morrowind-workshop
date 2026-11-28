@@ -238,9 +238,12 @@ def _in_process(jobs):
     flags = osplat.background_flags()
     # (a fixed hash seed: Python orders sets differently in every process, and the surveys settled ties between
     # equally common pieces by that order, so two first startings learnt different things and furnished 478 to 542)
-    env = dict(os.environ, PYTHONHASHSEED='0')
+    # (and UTF-8 both ways: the worker names places as the game does, "Città" in an Italian game, and on a Windows
+    # in another language it wrote them in that one's code page, which this end couldn't read)
+    env = dict(os.environ, PYTHONHASHSEED='0', PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
     try:
-        p = subprocess.Popen(args, cwd=here, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags, env=env)
+        p = subprocess.Popen(args, cwd=here, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                             encoding='utf-8', errors='replace', creationflags=flags, env=env)
     except Exception as e:
         print('survey process: %s' % e)
         return set()

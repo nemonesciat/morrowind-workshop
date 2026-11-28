@@ -77,6 +77,10 @@ language: **Needs fixing** (missing masters or plugins), **Worth a look** (missi
 (dirty edits and the like). It changes nothing. **Check my mod** checks every record of your mod the way the game's
 editor checks them.
 
+Click a finding to see its list: the missing files and who uses them, or each identical copy and the earlier file it
+repeats. Select any of it and copy it with Ctrl+C. **⧉ Copy list** copies one list, **⧉ Copy report** the whole
+report, and **⤓ Save as text** keeps it as a .txt file, to compare later or open in other tools.
+
 ## Load order
 
 The **Load order** page lists the mods OpenMW loads, top to bottom: when two change the same thing, the lower one

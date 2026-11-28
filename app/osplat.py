@@ -179,7 +179,7 @@ def process_running(program='openmw'):
     if WINDOWS:
         try:
             out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq %s.exe' % program, '/NH'], capture_output=True,
-                                 text=True, timeout=5, creationflags=NO_WINDOW)
+                                 text=True, encoding='utf-8', errors='replace', timeout=5, creationflags=NO_WINDOW)
             return ('%s.exe' % program) in out.stdout.lower()
         except Exception:
             return None
@@ -388,7 +388,7 @@ def to_trash(paths):
         return
     gio = shutil.which('gio')
     if gio:
-        r = subprocess.run([gio, 'trash', '--'] + paths, capture_output=True, text=True)
+        r = subprocess.run([gio, 'trash', '--'] + paths, capture_output=True, text=True, encoding='utf-8', errors='replace')
         if r.returncode == 0:
             return
     # (the freedesktop.org trash, as file managers keep it: the file in files/, where it came from in info/)
@@ -425,7 +425,8 @@ _PICKING = threading.Lock()
 # one in front: with the Workshop's window large the picker was wholly hidden, and "Choose another file" seemed to do
 # nothing (the user's 2.7.15, three pickers waiting behind the window, 2026-11-15). A form's TopMost set before it is
 # shown gave no topmost window (measured: the owner and the picker both plain).
-_PS_OWNER = ("Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
+_PS_OWNER = ("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+             "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
              "$a = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea; "
              "$o = New-Object System.Windows.Forms.Form; $o.ShowInTaskbar = $false; $o.FormBorderStyle = 'None'; "
              "$o.StartPosition = 'Manual'; $o.Opacity = 0; $o.Size = New-Object System.Drawing.Size(1, 1); "
@@ -439,7 +440,7 @@ def _ps_dialog(script):
         raise PickerOpen(ALREADY)
     try:
         r = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', _PS_OWNER + script + '; $o.Close()'],
-                           capture_output=True, text=True, creationflags=NO_WINDOW)
+                           capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=NO_WINDOW)
         return (r.stdout or '').strip()
     finally:
         _PICKING.release()
@@ -454,7 +455,7 @@ def _linux_dialog(zenity, kdialog):
     for exe, args in (('zenity', zenity), ('kdialog', kdialog), ('qarma', zenity)):
         path = shutil.which(exe)
         if path:
-            r = subprocess.run([path] + args, capture_output=True, text=True)
+            r = subprocess.run([path] + args, capture_output=True, text=True, encoding='utf-8', errors='replace')
             return (r.stdout or '').strip().splitlines()[0] if (r.stdout or '').strip() else ''
     return None
 

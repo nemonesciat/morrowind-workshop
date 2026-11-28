@@ -56,7 +56,12 @@ function tbCss(){
   main.tb-dock .vbar [data-v3="pivotmenu"] .v3snapnow{display:none}
   main.tb-dock .vbar .tb-over{display:none!important}
   main:not(.tb-dock) .v3dock{display:none}
-  main.tb-dock .vbar .v3viewmenu{position:fixed;z-index:60;overflow:auto;white-space:normal}
+  /* (solid: over a side panel, its words showed through) */
+  main.tb-dock .vbar .v3viewmenu{position:fixed;z-index:60;overflow:auto;white-space:normal;background:linear-gradient(var(--panel),var(--panel)) var(--bg)}
+  /* (the groups to drag about: an open menu on the window too, over the side panels; at 1280 wide the View panel ran
+     off the right edge and under the right-hand panels, 3.0.1's checks) */
+  main:not(.tb-dock) #v3tools .v3viewmenu{position:fixed;z-index:72;overflow:auto;white-space:normal;background:linear-gradient(var(--panel),var(--panel)) var(--bg)}
+  main:not(.tb-dock) #v3tools:has(.v3viewmenu[style*="block"]),main:not(.tb-dock) .mapwrap:has(#v3tools .v3viewmenu[style*="block"]){z-index:72}
   .v3panel{padding:8px 10px!important}
   .v3viewpanel{width:560px;max-width:calc(100vw - 12px)}
   .v3panel .v3cols{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
@@ -172,14 +177,14 @@ function tbApply(){
     if (p) tbPlace(g, p); else tbFree(g);
     if (!g.dataset.tbBound){ g.dataset.tbBound = '1'; g.addEventListener('contextmenu', tbMenu); }
   }
+  tbMenusPlace();
 }
 
 // (docked: the bar's menus, View, Pivot and the rest, are cut off by the bar if they hang inside it; the user,
 // 2026-11-28, couldn't find the sky or the field of view in 3.0.0. Each open one is put on the window under its button,
 // kept on the screen, as tall as there is room for)
 function tbMenusPlace(){
-  if (!tbDocked()) return;
-  for (const m of document.querySelectorAll('#vbar .v3viewmenu')){
+  for (const m of document.querySelectorAll(tbDocked() ? '#vbar .v3viewmenu' : '#v3tools .v3viewmenu')){
     if (m.style.display === 'none'){ continue; }
     const b = m.parentElement && m.parentElement.querySelector('button'); if (!b) continue;
     const r = b.getBoundingClientRect(), w = Math.max(m.offsetWidth, 200);
